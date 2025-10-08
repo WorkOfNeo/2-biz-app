@@ -3,12 +3,12 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "main": "dist/apps/orchestrator/src/index.js",
+  "types": "dist/apps/orchestrator/src/index.d.ts",
   "scripts": {
     "dev": "tsx src/index.ts",
     "build": "tsc -p tsconfig.build.json",
-    "start": "node dist/index.js"
+    "start": "node dist/apps/orchestrator/src/index.js"
   },
   "dependencies": {
     "@shared/types": "workspace:*",
@@ -23,4 +23,3 @@
     "typescript": "^5.4.5"
   }
 }
-
