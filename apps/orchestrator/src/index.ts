@@ -3,7 +3,8 @@ import { cors } from 'hono/cors';
 import { serve } from '@hono/node-server';
 import { z } from 'zod';
 import { createClient } from '@supabase/supabase-js';
-import { createRemoteJWKSet, jwtVerify, JWTPayload } from 'jose';
+import { createRemoteJWKSet, jwtVerify } from 'jose';
+import type { JWTPayload } from 'jose';
 import type { EnqueueRequestBody, EnqueueResponseBody, JobLogRow, JobResult, JobRow } from '@shared/types';
 
 const PORT = Number(process.env.PORT || 3000);
@@ -46,7 +47,11 @@ async function verifySupabaseJWT(authorization?: string): Promise<JWTPayload | n
 const enqueueSchema = z.object({
   type: z.literal('scrape_statistics'),
   payload: z.object({
-    toggles: z.record(z.boolean()).partial().default({}),
+    // Allow specific known key 'deep' to be optional, plus arbitrary boolean toggles
+    toggles: z
+      .object({ deep: z.boolean().optional() })
+      .catchall(z.boolean())
+      .default({}),
     requestedBy: z.string().email().optional()
   })
 });

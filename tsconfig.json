@@ -12,7 +12,10 @@
     "noUncheckedIndexedAccess": true,
     "verbatimModuleSyntax": true,
     "types": ["node"],
-    "baseUrl": "."
+    "baseUrl": ".",
+    "paths": {
+      "@shared/types": ["shared/types/src"]
+    }
   }
 }
 
