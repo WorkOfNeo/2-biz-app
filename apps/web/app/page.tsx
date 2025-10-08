@@ -7,7 +7,6 @@ export default function HomePage() {
   const [result, setResult] = useState<string | null>(null);
   const [enqueueResult, setEnqueueResult] = useState<string | null>(null);
   const [orchResult, setOrchResult] = useState<string | null>(null);
-  const [enqueueResult, setEnqueueResult] = useState<string | null>(null);
 
   return (
     <div>
@@ -94,32 +93,6 @@ export default function HomePage() {
         </div>
         {orchResult && (
           <pre style={{ marginTop: 8, background: '#f9f9f9', padding: 8, borderRadius: 6, overflowX: 'auto' }}>{orchResult}</pre>
-        )}
-      </div>
-      <div style={{ marginTop: 16, padding: 12, border: '1px solid #eee', borderRadius: 8 }}>
-        <strong>Enqueue Test Job (no login)</strong>
-        <div style={{ marginTop: 8 }}>
-          <button
-            disabled={loading}
-            onClick={async () => {
-              setLoading(true);
-              setEnqueueResult(null);
-              try {
-                const res = await fetch('/api/test-enqueue', { method: 'POST' });
-                const json = await res.json();
-                setEnqueueResult(JSON.stringify(json));
-              } catch (e: any) {
-                setEnqueueResult(String(e?.message ?? e));
-              } finally {
-                setLoading(false);
-              }
-            }}
-          >
-            {loading ? 'Submitting…' : 'Submit Test Job'}
-          </button>
-        </div>
-        {enqueueResult && (
-          <pre style={{ marginTop: 8, background: '#f9f9f9', padding: 8, borderRadius: 6, overflowX: 'auto' }}>{enqueueResult}</pre>
         )}
       </div>
     </div>
