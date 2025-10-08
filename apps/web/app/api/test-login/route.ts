@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { chromium } from 'playwright-core';
+export const runtime = 'nodejs';
 
 export const dynamic = 'force-dynamic';
 
@@ -17,6 +17,7 @@ export async function POST() {
   let context: import('playwright-core').BrowserContext | null = null;
   let page: import('playwright-core').Page | null = null;
   try {
+    const { chromium } = await import('playwright-core');
     browser = await chromium.connectOverCDP(BROWSERLESS_WS);
     context = await browser.newContext();
     page = await context.newPage();
