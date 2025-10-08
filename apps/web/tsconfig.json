@@ -3,7 +3,10 @@
   "compilerOptions": {
     "jsx": "react-jsx",
     "allowJs": false,
-    "baseUrl": "."
+    "baseUrl": ".",
+    "paths": {
+      "@shared/types": ["../../shared/types/src"]
+    }
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx"],
   "exclude": ["node_modules"]
