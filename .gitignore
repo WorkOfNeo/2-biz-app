@@ -1,0 +1,19 @@
+# dependencies
+node_modules/
+
+# build outputs
+**/dist/
+**/.next/
+.next/
+
+# env files (keep examples)
+.env
+.env.*
+!.env.example
+apps/*/.env
+apps/*/.env.*
+!apps/*/env.example
+
+# editor/system
+.DS_Store
+*.log
