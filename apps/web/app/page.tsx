@@ -76,7 +76,8 @@ export default function HomePage() {
               setOrchResult(null);
               try {
                 const res = await fetch('/api/test-orchestrated', { method: 'POST' });
-                const json = await res.json();
+                const text = await res.text();
+                let json: any = null; try { json = text ? JSON.parse(text) : null; } catch {}
                 setOrchResult(JSON.stringify(json));
                 if (json?.ok && json?.jobId) {
                   location.assign(`/admin/jobs/${json.jobId}`);
