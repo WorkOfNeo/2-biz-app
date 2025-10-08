@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
-import { chromium, Browser, BrowserContext, Page } from 'playwright-core';
+import { chromium } from 'playwright-core';
+import type { Browser, BrowserContext, Page } from 'playwright-core';
 import type { JobRow, JobResult } from '@shared/types';
 
 const SUPABASE_URL = process.env.SUPABASE_URL!;

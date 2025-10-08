@@ -1,0 +1,12 @@
+{
+  // Build only the Next.js app in apps/web
+  "buildCommand": "pnpm --filter @app/web build",
+  "installCommand": "pnpm install --frozen-lockfile",
+  "outputDirectory": "apps/web/.next",
+  "framework": "nextjs",
+  "git": {
+    "deploymentEnabled": {
+      "main": true
+    }
+  }
+}
