@@ -8,17 +8,46 @@ import type { JWTPayload } from 'jose';
 import type { EnqueueRequestBody, EnqueueResponseBody, JobLogRow, JobResult, JobRow } from '@shared/types';
 
 const PORT = Number(process.env.PORT || 3000);
-const SUPABASE_URL = process.env.SUPABASE_URL!;
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-const SUPABASE_JWKS_URL = process.env.SUPABASE_JWKS_URL!;
-const SUPERADMIN_EMAIL = process.env.SUPERADMIN_EMAIL!;
-const WEB_ORIGIN = process.env.WEB_ORIGIN!;
-const CRON_TOKEN = process.env.CRON_TOKEN!;
+const SUPABASE_URL = (process.env.SUPABASE_URL || '').trim();
+const SUPABASE_SERVICE_ROLE_KEY = (process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim();
+const SUPABASE_JWKS_URL = (process.env.SUPABASE_JWKS_URL || '').trim();
+const SUPERADMIN_EMAIL = (process.env.SUPERADMIN_EMAIL || '').trim();
+const WEB_ORIGIN = (process.env.WEB_ORIGIN || '').trim();
+const CRON_TOKEN = (process.env.CRON_TOKEN || '').trim();
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY || !SUPABASE_JWKS_URL || !SUPERADMIN_EMAIL || !WEB_ORIGIN || !CRON_TOKEN) {
   // eslint-disable-next-line no-console
   console.error('Missing required environment variables.');
 }
+
+function isValidHttpUrl(value: string): boolean {
+  try {
+    const u = new URL(value);
+    return u.protocol === 'http:' || u.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+function assertValidEnv() {
+  const errors: string[] = [];
+  if (!SUPABASE_URL) errors.push('SUPABASE_URL is empty');
+  else if (!isValidHttpUrl(SUPABASE_URL)) errors.push('SUPABASE_URL must be http(s) URL');
+  if (!SUPABASE_SERVICE_ROLE_KEY) errors.push('SUPABASE_SERVICE_ROLE_KEY is empty');
+  if (!SUPABASE_JWKS_URL) errors.push('SUPABASE_JWKS_URL is empty');
+  else if (!isValidHttpUrl(SUPABASE_JWKS_URL)) errors.push('SUPABASE_JWKS_URL must be http(s) URL');
+  if (!SUPERADMIN_EMAIL) errors.push('SUPERADMIN_EMAIL is empty');
+  if (!WEB_ORIGIN) errors.push('WEB_ORIGIN is empty');
+  else if (!isValidHttpUrl(WEB_ORIGIN)) errors.push('WEB_ORIGIN must be http(s) URL');
+  if (!CRON_TOKEN) errors.push('CRON_TOKEN is empty');
+  if (errors.length > 0) {
+    // eslint-disable-next-line no-console
+    console.error('[orchestrator] Invalid environment configuration:', errors.join('; '));
+    process.exit(1);
+  }
+}
+
+assertValidEnv();
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false }
