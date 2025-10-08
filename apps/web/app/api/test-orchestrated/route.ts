@@ -11,7 +11,9 @@ export async function POST() {
   }
 
   try {
-    const res = await fetch(`${ORCH_URL}/cron/enqueue`, {
+    const base = ORCH_URL.startsWith('http://') || ORCH_URL.startsWith('https://') ? ORCH_URL : `https://${ORCH_URL}`;
+    const target = new URL('/cron/enqueue', base).toString();
+    const res = await fetch(target, {
       method: 'POST',
       headers: { 'x-cron-token': CRON_TOKEN }
     });
