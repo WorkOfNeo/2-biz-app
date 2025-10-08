@@ -61,8 +61,9 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
 const app = new Hono();
 
 const allowedOrigins = WEB_ORIGIN.split(',').map((s) => s.trim()).filter(Boolean);
+const corsOrigin: string | string[] = allowedOrigins.length > 1 ? allowedOrigins : (allowedOrigins[0] as string);
 app.use('*', cors({
-  origin: allowedOrigins.length > 1 ? allowedOrigins : allowedOrigins[0],
+  origin: corsOrigin,
   allowMethods: ['GET', 'POST', 'OPTIONS'],
   allowHeaders: ['Authorization', 'Content-Type', 'X-Cron-Token']
 }));
@@ -145,6 +146,9 @@ app.post('/enqueue', async (c) => {
 app.post('/cron/enqueue', async (c) => {
   const token = c.req.header('x-cron-token');
   if (!token || token !== CRON_TOKEN) return c.json({ error: 'Unauthorized' }, 401);
+
+  // eslint-disable-next-line no-console
+  console.log('[orchestrator] /cron/enqueue called');
 
   const { data, error } = await supabase
     .from('jobs')
