@@ -1,7 +1,8 @@
 export type JobType = 'scrape_statistics';
 
 export interface ScrapeStatisticsPayload {
-  toggles: { deep?: boolean; [k: string]: boolean };
+  // Allow optional 'deep' along with arbitrary keys; values may be undefined pre-validation
+  toggles: { deep?: boolean; [k: string]: boolean | undefined };
   requestedBy?: string;
 }
 
