@@ -67,8 +67,8 @@ importers:
         specifier: ^14.2.15
         version: 14.2.33(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
       playwright-core:
-        specifier: ^1.48.2
-        version: 1.56.0
+        specifier: 1.48.2
+        version: 1.48.2
       react:
         specifier: ^18.3.1
         version: 18.3.1
@@ -491,6 +491,11 @@ packages:
   picocolors@1.1.1:
     resolution: {integrity: sha512-xceH2snhtb5M9liqDsmEw56le376mTZkEX/jEb/RxNFyegNul7eNslCXP9FDj/Lcu0X8KEyMceP2ntpaHrDEVA==}
 
+  playwright-core@1.48.2:
+    resolution: {integrity: sha512-sjjw+qrLFlriJo64du+EK0kJgZzoQPsabGF4lBvsid+3CNIZIYLgnMj9V6JY5VhM2Peh20DJWIVpVljLLnlawA==}
+    engines: {node: '>=18'}
+    hasBin: true
+
   playwright-core@1.56.0:
     resolution: {integrity: sha512-1SXl7pMfemAMSDn5rkPeZljxOCYAmQnYLBTExuh6E8USHXGSX3dx6lYZN/xPpTz1vimXmPA9CDnILvmJaB8aSQ==}
     engines: {node: '>=18'}
@@ -896,6 +901,8 @@ snapshots:
   object-assign@4.1.1: {}
 
   picocolors@1.1.1: {}
+
+  playwright-core@1.48.2: {}
 
   playwright-core@1.56.0: {}
 

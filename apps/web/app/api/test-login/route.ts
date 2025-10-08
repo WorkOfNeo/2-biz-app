@@ -17,7 +17,8 @@ export async function POST() {
   let context: import('playwright-core').BrowserContext | null = null;
   let page: import('playwright-core').Page | null = null;
   try {
-    const { chromium } = await import('playwright-core');
+    const pwModule: any = await (Function('return import("playwright-core")')());
+    const chromium = pwModule.chromium as typeof import('playwright-core').chromium;
     browser = await chromium.connectOverCDP(BROWSERLESS_WS);
     context = await browser.newContext();
     page = await context.newPage();
