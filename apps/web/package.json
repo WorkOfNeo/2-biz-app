@@ -4,7 +4,6 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "prebuild": "pnpm -w --filter @shared/types build",
     "dev": "next dev -p 3001",
     "build": "next build",
     "start": "next start -p 3001"
@@ -26,4 +25,3 @@
     "typescript": "^5.4.5"
   }
 }
-
