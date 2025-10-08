@@ -1,12 +1,9 @@
 {
-  // Build only the Next.js app in apps/web
-  "buildCommand": "pnpm --filter @app/web build",
-  "installCommand": "pnpm install --frozen-lockfile",
-  "outputDirectory": "apps/web/.next",
-  "framework": "nextjs",
-  "git": {
-    "deploymentEnabled": {
-      "main": true
-    }
-  }
+  "version": 2,
+  "builds": [
+    { "src": "apps/web/next.config.mjs", "use": "@vercel/next" }
+  ],
+  "routes": [
+    { "src": "/(.*)", "dest": "apps/web/$1" }
+  ]
 }
