@@ -1,0 +1,26 @@
+{
+  "name": "@app/orchestrator",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@shared/types": "workspace:*",
+    "@supabase/supabase-js": "^2.45.4",
+    "hono": "^4.5.7",
+    "@hono/node-server": "^1.11.3",
+    "jose": "^5.3.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "tsx": "^4.16.3",
+    "typescript": "^5.4.5"
+  }
+}
+
