@@ -1,9 +1,6 @@
 {
-  "version": 2,
-  "builds": [
-    { "src": "apps/web/next.config.mjs", "use": "@vercel/next" }
-  ],
-  "routes": [
-    { "src": "/(.*)", "dest": "apps/web/$1" }
-  ]
+  "buildCommand": "pnpm --filter @app/web build",
+  "installCommand": "pnpm install --frozen-lockfile",
+  "framework": "nextjs",
+  "outputDirectory": "apps/web/.next"
 }
