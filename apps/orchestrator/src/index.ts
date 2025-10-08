@@ -38,7 +38,12 @@ function assertValidEnv() {
   else if (!isValidHttpUrl(SUPABASE_JWKS_URL)) errors.push('SUPABASE_JWKS_URL must be http(s) URL');
   if (!SUPERADMIN_EMAIL) errors.push('SUPERADMIN_EMAIL is empty');
   if (!WEB_ORIGIN) errors.push('WEB_ORIGIN is empty');
-  else if (!isValidHttpUrl(WEB_ORIGIN)) errors.push('WEB_ORIGIN must be http(s) URL');
+  else {
+    const origins = WEB_ORIGIN.split(',').map((s) => s.trim()).filter(Boolean);
+    for (const o of origins) {
+      if (!isValidHttpUrl(o)) errors.push(`WEB_ORIGIN item must be http(s) URL: ${o}`);
+    }
+  }
   if (!CRON_TOKEN) errors.push('CRON_TOKEN is empty');
   if (errors.length > 0) {
     // eslint-disable-next-line no-console
@@ -55,8 +60,9 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
 
 const app = new Hono();
 
+const allowedOrigins = WEB_ORIGIN.split(',').map((s) => s.trim()).filter(Boolean);
 app.use('*', cors({
-  origin: WEB_ORIGIN,
+  origin: allowedOrigins.length > 1 ? allowedOrigins : allowedOrigins[0],
   allowMethods: ['GET', 'POST', 'OPTIONS'],
   allowHeaders: ['Authorization', 'Content-Type', 'X-Cron-Token']
 }));
