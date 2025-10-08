@@ -1,12 +1,25 @@
 "use client";
 import Link from 'next/link';
 import { useState } from 'react';
+import useSWR from 'swr';
+import type { JobRow, JobLogRow, JobResult } from '@shared/types';
+
+const ORCH_URL = process.env.NEXT_PUBLIC_ORCHESTRATOR_URL!;
+
+interface JobBundle { job: JobRow; logs: JobLogRow[]; result: JobResult | null }
+async function fetchJob(id: string): Promise<JobBundle> {
+  const res = await fetch(`${ORCH_URL}/jobs/${id}`, { cache: 'no-store' });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
 
 export default function HomePage() {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<string | null>(null);
   const [enqueueResult, setEnqueueResult] = useState<string | null>(null);
   const [orchResult, setOrchResult] = useState<string | null>(null);
+  const [currentJobId, setCurrentJobId] = useState<string | null>(null);
+  const { data: orchJob, error: orchJobErr } = useSWR(currentJobId ? `orch-job:${currentJobId}` : null, () => fetchJob(currentJobId as string), { refreshInterval: 3000 });
 
   return (
     <div>
@@ -80,7 +93,7 @@ export default function HomePage() {
                 let json: any = null; try { json = text ? JSON.parse(text) : null; } catch {}
                 setOrchResult(JSON.stringify(json));
                 if (json?.ok && json?.jobId) {
-                  location.assign(`/admin/jobs/${json.jobId}`);
+                  setCurrentJobId(json.jobId);
                 }
               } catch (e: any) {
                 setOrchResult(String(e?.message ?? e));
@@ -94,6 +107,25 @@ export default function HomePage() {
         </div>
         {orchResult && (
           <pre style={{ marginTop: 8, background: '#f9f9f9', padding: 8, borderRadius: 6, overflowX: 'auto' }}>{orchResult}</pre>
+        )}
+        {currentJobId && (
+          <div style={{ marginTop: 8 }}>
+            <strong>Live Job</strong>
+            {orchJobErr && <div style={{ color: 'red' }}>{String(orchJobErr)}</div>}
+            {orchJob && (
+              <div>
+                <div style={{ fontFamily: 'monospace', fontSize: 12 }}>Status: {orchJob.job.status} | Attempts: {orchJob.job.attempts}/{orchJob.job.max_attempts}</div>
+                <div style={{ fontFamily: 'monospace', fontSize: 12 }}>Started: {orchJob.job.started_at ?? '-'} | Finished: {orchJob.job.finished_at ?? '-'}</div>
+                <div style={{ maxHeight: 220, overflow: 'auto', border: '1px solid #eee', borderRadius: 8, padding: 8, marginTop: 6 }}>
+                  {(orchJob.logs ?? []).map((l) => (
+                    <div key={l.id} style={{ fontFamily: 'monospace', fontSize: 12 }}>
+                      <strong>[{l.level}]</strong> {l.ts}: {l.msg} {l.data ? JSON.stringify(l.data) : ''}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
         )}
       </div>
     </div>
