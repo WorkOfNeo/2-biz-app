@@ -16,6 +16,7 @@ const SUPERADMIN_EMAIL = (process.env.SUPERADMIN_EMAIL || '').trim();
 const WEB_ORIGIN = (process.env.WEB_ORIGIN || '').trim();
 const CRON_TOKEN = (process.env.CRON_TOKEN || '').trim();
 const CRON_ENABLED = ((process.env.CRON_ENABLED || 'false').trim().toLowerCase() === 'true');
+const CRON_MIN_INTERVAL_MINUTES = Math.max(0, Number(process.env.CRON_MIN_INTERVAL_MINUTES || '0') || 0);
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY || !SUPABASE_JWKS_URL || !SUPERADMIN_EMAIL || !WEB_ORIGIN || !CRON_TOKEN) {
   // eslint-disable-next-line no-console
@@ -246,6 +247,25 @@ app.post('/cron/enqueue', async (c) => {
     .limit(1);
   if (!findErr && existing && existing.length > 0) {
     return c.json({ skipped: true, reason: 'job already queued or running' });
+  }
+
+  // rate-limit: do not enqueue if last finished or started job was within X minutes
+  if (CRON_MIN_INTERVAL_MINUTES > 0) {
+    const sinceIso = new Date(Date.now() - CRON_MIN_INTERVAL_MINUTES * 60_000).toISOString();
+    const { data: recent, error: recentErr } = await supabase
+      .from('jobs')
+      .select('id, started_at, finished_at, status')
+      .eq('type', 'scrape_statistics')
+      .or('status.eq.succeeded,status.eq.failed,status.eq.cancelled')
+      .order('created_at', { ascending: false })
+      .limit(1);
+    if (!recentErr && recent && recent.length > 0) {
+      const r = recent[0] as any;
+      const ts = r.finished_at ?? r.started_at ?? r.created_at;
+      if (ts && new Date(ts).getTime() > Date.now() - CRON_MIN_INTERVAL_MINUTES * 60_000) {
+        return c.json({ skipped: true, reason: `last job within ${CRON_MIN_INTERVAL_MINUTES}m` });
+      }
+    }
   }
 
   const { data, error } = await supabase
