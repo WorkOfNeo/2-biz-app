@@ -73,17 +73,20 @@ export default function SalespersonsSettingsPage() {
                 <td className="p-2 border-b">
                   <select
                     className="rounded border px-2 py-1 text-sm"
-                    value={sp.currency}
+                    defaultValue={sp.currency}
                     onChange={async (e) => {
                       const val = e.target.value;
                       try {
                         console.log('[salespersons] change currency', sp.id, val);
+                        // optimistic UI
+                        (sp as any).currency = val;
                         const { error } = await supabase.from('salespersons').update({ currency: val }).eq('id', sp.id);
                         if (error) throw error;
                         await mutate();
                       } catch (err: any) {
                         console.error('[salespersons] currency update failed', err?.message || err);
                         alert(err?.message || 'Failed to update currency');
+                        await mutate();
                       }
                     }}
                   >
@@ -94,8 +97,8 @@ export default function SalespersonsSettingsPage() {
                   <input
                     type="number"
                     className="w-20 rounded border px-2 py-1 text-sm"
-                    value={sp.sort_index}
-                    onChange={async (e) => {
+                    defaultValue={sp.sort_index}
+                    onBlur={async (e) => {
                       const val = Number(e.target.value) || 0;
                       try {
                         console.log('[salespersons] change sort_index', sp.id, val);

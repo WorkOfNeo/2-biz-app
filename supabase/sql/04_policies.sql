@@ -25,3 +25,18 @@ using (true);
 -- No insert/update/delete allowed for anon/public, so no policies for those.
 
 
+-- salespersons policies: allow select for all, update for authenticated users
+drop policy if exists salespersons_select_all on public.salespersons;
+create policy salespersons_select_all on public.salespersons
+for select
+to public
+using (true);
+
+drop policy if exists salespersons_update_auth on public.salespersons;
+create policy salespersons_update_auth on public.salespersons
+for update
+to authenticated
+using (true)
+with check (true);
+
+
