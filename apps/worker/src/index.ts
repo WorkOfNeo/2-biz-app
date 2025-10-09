@@ -47,7 +47,10 @@ async function leaseNextJob(): Promise<Nullable<JobRow>> {
     console.error('lease_next_job error', error);
     return null;
   }
-  return (data as any) ?? null;
+  const row = (data as any) ?? null;
+  // Treat null-id (nullable record) as no job available
+  if (!row || !row.id) return null;
+  return row as JobRow;
 }
 
 async function updateJobHeartbeat(jobId: string) {
@@ -272,14 +275,6 @@ async function mainLoop() {
       continue;
     }
     idleMs = IDLE_SLEEP_MS; // reset backoff when we get a job
-
-    if (!job.id) {
-      // Defensive: skip if malformed
-      // eslint-disable-next-line no-console
-      console.warn('[worker] leased job without id; skipping');
-      await sleep(idleMs);
-      continue;
-    }
 
     const heartbeat = setInterval(() => updateJobHeartbeat(job.id).catch(() => {}), 45_000);
     try {
