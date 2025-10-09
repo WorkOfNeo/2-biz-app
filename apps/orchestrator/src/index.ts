@@ -11,6 +11,7 @@ const PORT = Number(process.env.PORT || 3000);
 const SUPABASE_URL = (process.env.SUPABASE_URL || '').trim();
 const SUPABASE_SERVICE_ROLE_KEY = (process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim();
 const SUPABASE_JWKS_URL = (process.env.SUPABASE_JWKS_URL || '').trim();
+const SUPABASE_JWT_SECRET = (process.env.SUPABASE_JWT_SECRET || '').trim();
 const SUPERADMIN_EMAIL = (process.env.SUPERADMIN_EMAIL || '').trim();
 const WEB_ORIGIN = (process.env.WEB_ORIGIN || '').trim();
 const CRON_TOKEN = (process.env.CRON_TOKEN || '').trim();
@@ -34,8 +35,9 @@ function assertValidEnv() {
   if (!SUPABASE_URL) errors.push('SUPABASE_URL is empty');
   else if (!isValidHttpUrl(SUPABASE_URL)) errors.push('SUPABASE_URL must be http(s) URL');
   if (!SUPABASE_SERVICE_ROLE_KEY) errors.push('SUPABASE_SERVICE_ROLE_KEY is empty');
-  if (!SUPABASE_JWKS_URL) errors.push('SUPABASE_JWKS_URL is empty');
-  else if (!isValidHttpUrl(SUPABASE_JWKS_URL)) errors.push('SUPABASE_JWKS_URL must be http(s) URL');
+  // Either JWKS URL (RS256) or HS256 secret must be provided
+  if (!SUPABASE_JWKS_URL && !SUPABASE_JWT_SECRET) errors.push('Provide SUPABASE_JWKS_URL (RS256) or SUPABASE_JWT_SECRET (HS256)');
+  if (SUPABASE_JWKS_URL && !isValidHttpUrl(SUPABASE_JWKS_URL)) errors.push('SUPABASE_JWKS_URL must be http(s) URL');
   // SUPERADMIN_EMAIL optional (we currently accept any authenticated user)
   if (!WEB_ORIGIN) errors.push('WEB_ORIGIN is empty');
   else {
@@ -87,21 +89,35 @@ async function verifySupabaseJWT(authorization?: string): Promise<JWTPayload | n
   if (!authorization) return null;
   const token = authorization.replace(/^Bearer\s+/i, '').trim();
   if (!token) return null;
-  const candidates = buildJwksCandidates();
-  let lastErr: unknown = null;
-  for (const url of candidates) {
-    try {
-      const JWKS = createRemoteJWKSet(url);
-      const { payload } = await jwtVerify(token, JWKS, { issuer: undefined, audience: undefined });
-      return payload;
-    } catch (err) {
-      lastErr = err;
-      // continue to next candidate
+  // Try RS256 via JWKS if configured
+  if (SUPABASE_JWKS_URL) {
+    const candidates = buildJwksCandidates();
+    let lastErr: unknown = null;
+    for (const url of candidates) {
+      try {
+        const JWKS = createRemoteJWKSet(url);
+        const { payload } = await jwtVerify(token, JWKS, { issuer: undefined, audience: undefined });
+        return payload;
+      } catch (err) {
+        lastErr = err;
+      }
+    }
+    // If JWKS failed but we have a secret, try HS256 fallback
+    if (!SUPABASE_JWT_SECRET) {
+      // eslint-disable-next-line no-console
+      console.error('[orchestrator] JWT verify failed via JWKS and no HS256 secret configured.');
+      throw lastErr;
     }
   }
-  // eslint-disable-next-line no-console
-  console.error('[orchestrator] JWT verify failed via JWKS candidates', candidates.map((u) => u.toString()), lastErr);
-  throw lastErr;
+
+  // HS256 fallback using project JWT secret
+  if (SUPABASE_JWT_SECRET) {
+    const secret = new TextEncoder().encode(SUPABASE_JWT_SECRET);
+    const { payload } = await jwtVerify(token, secret, { issuer: undefined, audience: undefined });
+    return payload;
+  }
+
+  return null;
 }
 
 const enqueueSchema = z.object({
