@@ -36,7 +36,7 @@ export default function StatisticsGeneralPage() {
           <details>
             <summary className="list-none inline-flex items-center gap-2 px-3 py-1.5 rounded-md border text-sm">☰ Menu</summary>
             <div className="absolute right-0 mt-2 w-56 bg-white border rounded-md shadow">
-              <Link className="block px-3 py-2 hover:bg-gray-50" href="/settings/customers/import">Import Statistic</Link>
+              <Link className="block px-3 py-2 hover:bg-gray-50" href="/statistics/general/import">Import Statistic</Link>
             </div>
           </details>
         </div>
