@@ -17,6 +17,7 @@ const WEB_ORIGIN = (process.env.WEB_ORIGIN || '').trim();
 const CRON_TOKEN = (process.env.CRON_TOKEN || '').trim();
 const CRON_ENABLED = ((process.env.CRON_ENABLED || 'false').trim().toLowerCase() === 'true');
 const CRON_MIN_INTERVAL_MINUTES = Math.max(0, Number(process.env.CRON_MIN_INTERVAL_MINUTES || '0') || 0);
+const CLEANUP_KEEP_DAYS = Math.max(1, Number(process.env.CLEANUP_KEEP_DAYS || '14') || 14);
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY || !SUPABASE_JWKS_URL || !SUPERADMIN_EMAIL || !WEB_ORIGIN || !CRON_TOKEN) {
   // eslint-disable-next-line no-console
@@ -295,6 +296,18 @@ app.post('/cron/enqueue', async (c) => {
   const jobId = (data as any)?.id;
   logRequest('/cron/enqueue inserted', c, { jobId, created_at: (data as any)?.created_at });
   return c.json({ jobId });
+});
+
+app.post('/cron/cleanup', async (c) => {
+  if (!CRON_ENABLED) return c.json({ error: 'Cron disabled' }, 403);
+  const token = c.req.header('x-cron-token');
+  if (!token || token !== CRON_TOKEN) return c.json({ error: 'Unauthorized' }, 401);
+  const cutoff = new Date(Date.now() - CLEANUP_KEEP_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  logRequest('/cron/cleanup called', c, { CLEANUP_KEEP_DAYS, cutoff });
+  const { data, error } = await supabase.rpc('cleanup_jobs', { p_cutoff: cutoff });
+  if (error) return c.json({ error: error.message }, 500);
+  logRequest('/cron/cleanup done', c, { data });
+  return c.json({ ok: true, data });
 });
 
 app.post('/import/customers', async (c) => {

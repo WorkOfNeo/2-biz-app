@@ -62,3 +62,42 @@ $$;
 
 grant execute on function public.delete_salesperson(uuid, boolean) to public;
 
+-- Purge old jobs, logs, results older than a cutoff; returns counts
+create or replace function public.cleanup_jobs(p_cutoff timestamptz)
+returns table(deleted_jobs int, deleted_logs int, deleted_results int)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_logs int := 0;
+  v_results int := 0;
+  v_jobs int := 0;
+begin
+  -- Delete logs tied to jobs older than cutoff
+  with t as (
+    delete from public.job_logs jl using public.jobs j
+    where jl.job_id = j.id and j.created_at < p_cutoff
+    returning 1
+  ) select count(*) into v_logs from t;
+
+  -- Delete results tied to jobs older than cutoff
+  with t as (
+    delete from public.job_results jr using public.jobs j
+    where jr.job_id = j.id and j.created_at < p_cutoff
+    returning 1
+  ) select count(*) into v_results from t;
+
+  -- Delete jobs themselves that are finished/failed/cancelled before cutoff
+  with t as (
+    delete from public.jobs j
+    where j.created_at < p_cutoff and j.status in ('succeeded','failed','cancelled')
+    returning 1
+  ) select count(*) into v_jobs from t;
+
+  return query select v_jobs, v_logs, v_results;
+end;
+$$;
+
+grant execute on function public.cleanup_jobs(timestamptz) to public;
+
