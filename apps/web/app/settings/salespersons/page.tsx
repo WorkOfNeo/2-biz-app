@@ -31,23 +31,35 @@ export default function SalespersonsSettingsPage() {
   }, [data?.length]);
   const idToIndex = useMemo(() => new Map((list ?? []).map((x, i) => [x.id, i])), [list]);
   const [dragId, setDragId] = useState<string | null>(null);
+  const [overId, setOverId] = useState<string | null>(null);
+  const [overBefore, setOverBefore] = useState<boolean>(false);
 
   function onDragStart(id: string) {
     setDragId(id);
   }
-  function onDragOver(e: React.DragEvent<HTMLTableRowElement>) {
+  function onDragOver(e: React.DragEvent<HTMLTableRowElement>, rowId: string) {
     e.preventDefault();
+    const rect = (e.currentTarget as HTMLTableRowElement).getBoundingClientRect();
+    const y = e.clientY;
+    const before = y < rect.top + rect.height / 2;
+    setOverId(rowId);
+    setOverBefore(before);
   }
-  async function onDrop(overId: string) {
+  async function onDrop(targetId: string) {
     if (!dragId || dragId === overId) return;
     const from = idToIndex.get(dragId);
-    const to = idToIndex.get(overId);
+    const toBase = idToIndex.get(targetId);
+    if (from === undefined || toBase === undefined) return;
+    // compute insertion index based on before/after
+    let to = toBase;
+    if (!overBefore && toBase >= from) to = toBase + 1; // dropping after shifts index
     if (from === undefined || to === undefined) return;
     const next = list.slice();
     const [moved] = next.splice(from, 1);
     next.splice(to, 0, moved);
     setList(next);
     setDragId(null);
+    setOverId(null);
     console.log('[salespersons] reorder', dragId, '->', overId);
     // Persist new order as sort_index (0..n-1)
     for (let i = 0; i < next.length; i++) {
@@ -114,9 +126,13 @@ export default function SalespersonsSettingsPage() {
                 key={sp.id}
                 draggable
                 onDragStart={() => onDragStart(sp.id)}
-                onDragOver={onDragOver}
+                onDragOver={(e) => onDragOver(e, sp.id)}
                 onDrop={() => onDrop(sp.id)}
-                className={dragId === sp.id ? 'bg-slate-50' : ''}
+                className={
+                  (dragId === sp.id ? 'bg-slate-50 ' : '') +
+                  (overId === sp.id && overBefore ? ' border-t-2 border-blue-500 ' : '') +
+                  (overId === sp.id && !overBefore ? ' border-b-2 border-blue-500 ' : '')
+                }
               >
                 <td className="p-2 border-b align-middle cursor-grab"><GripVertical className="h-4 w-4 text-gray-400" /></td>
                 <td className="p-2 border-b">{sp.name}</td>

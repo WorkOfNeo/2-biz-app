@@ -316,8 +316,8 @@ export default function StatisticsGeneralPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight text-balance">General Statistics</h1>
-          <p className="mt-2 text-gray-500">Compare seasonal performance across salespersons</p>
+          <h1 className="text-lg font-semibold tracking-tight text-balance text-slate-700">General statistics</h1>
+          <div className="mt-1 text-2xl sm:text-3xl font-bold tracking-tight">{getSeasonLabel(s1) || 'Season 1'} vs {getSeasonLabel(s2) || 'Season 2'}</div>
         </div>
         <div className="relative">
           <details>
@@ -328,6 +328,7 @@ export default function StatisticsGeneralPage() {
                 <button className="block w-full px-3 py-2 text-left hover:bg-gray-50">Print Report</button>
                 <button className="block w-full px-3 py-2 text-left hover:bg-gray-50">Download PDF</button>
                 <Link className="block px-3 py-2 hover:bg-gray-50" href="/statistics/general/import">Import Statistic</Link>
+                <Link className="block px-3 py-2 hover:bg-gray-50" href="/settings/seasons">Season Settings</Link>
                 <button className="block w-full px-3 py-2 text-left hover:bg-gray-50" onClick={handleUpdateStatistic}>Update Statistic</button>
               </div>
             </div>
@@ -335,45 +336,6 @@ export default function StatisticsGeneralPage() {
         </div>
       </div>
 
-      <div className="rounded-lg border bg-white">
-        <div className="p-4 sm:p-6">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
-            <div className="flex-1 min-w-[220px]">
-              <label className="text-sm font-medium text-gray-600">Season 1</label>
-              <select className="mt-1 w-full rounded-md border px-2 py-1.5 text-sm" value={s1} onChange={(e) => setS1(e.target.value)}>
-                <option value="">—</option>
-                {(seasons ?? []).map((s) => (
-                  <option key={s.id} value={s.id}>{s.name} {s.year ?? ''}</option>
-                ))}
-              </select>
-            </div>
-            <div className="hidden text-gray-500 sm:block">vs</div>
-            <div className="flex-1 min-w-[220px]">
-              <label className="text-sm font-medium text-gray-600">Season 2</label>
-              <select className="mt-1 w-full rounded-md border px-2 py-1.5 text-sm" value={s2} onChange={(e) => setS2(e.target.value)}>
-                <option value="">—</option>
-                {(seasons ?? []).map((s) => (
-                  <option key={s.id} value={s.id}>{s.name} {s.year ?? ''}</option>
-                ))}
-              </select>
-            </div>
-            {showSave && (
-              <button
-                className="ml-auto text-sm underline"
-                onClick={async () => {
-                  const value = { s1, s2 };
-                  if (saved) {
-                    await supabase.from('app_settings').update({ value }).eq('id', saved.id);
-                  } else {
-                    await supabase.from('app_settings').insert({ key: 'season_compare', value });
-                  }
-                  setShowSave(false);
-                }}
-              >Save to settings?</button>
-            )}
-          </div>
-        </div>
-      </div>
 
       <div className="space-y-4">
         {updating && (
