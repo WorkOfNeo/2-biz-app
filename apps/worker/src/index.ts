@@ -191,9 +191,9 @@ async function runJob(job: JobRow) {
       const salespeople = await page.$$eval('table.standardList tbody tr', (trs) => {
         const list: { name: string; href: string }[] = [];
         for (const tr of Array.from(trs)) {
-          const tds = tr.querySelectorAll('td');
-          if (!tds || tds.length < 2) continue;
-          const anchor = tds[1].querySelector('a');
+          const tds = Array.from(tr.querySelectorAll('td')) as HTMLElement[];
+          if (tds.length < 2) continue;
+          const anchor = tds[1]?.querySelector('a') as HTMLAnchorElement | null;
           const name = (anchor?.textContent || '').trim();
           const href = (anchor?.getAttribute('href') || '').trim();
           if (name && href) list.push({ name, href });
@@ -211,7 +211,7 @@ async function runJob(job: JobRow) {
         if (!trimmed) return { amount: 0, currency: null };
         // Handle European formatting like "1.335,00 DKK" or "5.926,25 DKK"
         const parts = trimmed.split(' ');
-        const currency = parts.length > 1 ? parts[parts.length - 1] : null;
+        const currency: string | null = parts.length > 1 ? (parts[parts.length - 1] || null) : null;
         const numPart = currency ? trimmed.slice(0, trimmed.length - (currency.length + 1)) : trimmed;
         const normalized = numPart.replace(/\./g, '').replace(/,/g, '.').replace(/[^0-9.\-]/g, '');
         const amount = Number(normalized) || 0;
