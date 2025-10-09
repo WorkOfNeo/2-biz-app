@@ -3,7 +3,7 @@ import { useState, useEffect, useMemo } from 'react';
 import useSWR from 'swr';
 import { supabase } from '../../../lib/supabaseClient';
 import Link from 'next/link';
-import { Menu, Eye, EyeOff, Trash2 } from 'lucide-react';
+import { Menu, EyeOff, Trash2, Ban } from 'lucide-react';
 import { ProgressBar } from '../../../components/ProgressBar';
 
 export default function StatisticsGeneralPage() {
@@ -52,6 +52,7 @@ export default function StatisticsGeneralPage() {
         const decoded = decodeURIComponent(m[2]);
         const exists = (salespersons ?? []).some(sp => sp.name === decoded);
         if (exists) setActivePerson(decoded);
+        console.log('[stats] read salesperson from hash', decoded);
       } catch {}
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -63,10 +64,12 @@ export default function StatisticsGeneralPage() {
       const url = new URL(window.location.href);
       url.hash = `sp=${encodeURIComponent(activePerson)}`;
       window.history.replaceState(null, '', url.toString());
+      console.log('[stats] set salesperson hash', activePerson);
     } else {
       const url = new URL(window.location.href);
       url.hash = '';
       window.history.replaceState(null, '', url.toString());
+      console.log('[stats] cleared salesperson hash');
     }
   }, [activePerson]);
 
@@ -178,6 +181,7 @@ export default function StatisticsGeneralPage() {
       }
       const { data, error } = await query.limit(100000);
       if (error) throw new Error(error.message);
+      console.log('[stats] fetched raw rows', (data ?? []).length);
 
       const map = new Map<string, RowOut>();
       for (const r of (data ?? []) as any[]) {
@@ -204,7 +208,9 @@ export default function StatisticsGeneralPage() {
         }
         map.set(key, item);
       }
-      return Array.from(map.values()).sort((a, b) => a.customer.localeCompare(b.customer));
+      const out = Array.from(map.values()).sort((a, b) => a.customer.localeCompare(b.customer));
+      console.log('[stats] aggregated rows', out.length, 'sample', out[0]);
+      return out;
     },
     { refreshInterval: 20000 }
   );
@@ -218,6 +224,9 @@ export default function StatisticsGeneralPage() {
     const val = (data?.value as any) || {};
     return { id: data?.id ?? null, value: { nulled: Array.isArray(val.nulled) ? val.nulled : [], hidden: Array.isArray(val.hidden) ? val.hidden : [] } } as { id: string | null, value: { nulled: string[]; hidden: string[] } };
   }, { refreshInterval: 0 });
+  useEffect(() => {
+    if (overridesKey) console.log('[stats] overrides', overridesKey, overrides);
+  }, [overridesKey, overrides?.id, overrides?.value]);
 
   const { data: closedCustomers } = useSWR('customers-closed', async () => {
     const { data, error } = await supabase.from('customers').select('customer_id, permanently_closed, excluded, nulled');
@@ -235,6 +244,7 @@ export default function StatisticsGeneralPage() {
 
   async function saveOverrides(next: { nulled: string[]; hidden: string[] }) {
     if (!overridesKey) return;
+    console.log('[stats] saveOverrides', overridesKey, next);
     if (overrides?.id) {
       const { error } = await supabase.from('app_settings').update({ value: next }).eq('id', overrides.id);
       if (error) throw new Error(error.message);
@@ -256,18 +266,21 @@ export default function StatisticsGeneralPage() {
     if (!s1) return alert('Select Season 1 first');
     const hidden = new Set(overrides?.value.hidden ?? []);
     if (hidden.has(account)) hidden.delete(account); else hidden.add(account);
+    console.log('[stats] toggleHide', account, '->', Array.from(hidden));
     await saveOverrides({ nulled: overrides?.value.nulled ?? [], hidden: Array.from(hidden) });
   }
   async function toggleNull(account: string) {
     if (!s1) return alert('Select Season 1 first');
     const nulled = new Set(overrides?.value.nulled ?? []);
     if (nulled.has(account)) nulled.delete(account); else nulled.add(account);
+    console.log('[stats] toggleNull', account, '->', Array.from(nulled));
     await saveOverrides({ nulled: Array.from(nulled), hidden: overrides?.value.hidden ?? [] });
   }
   async function permanentClose(account: string) {
     // Mark customer globally; also add seasonal null
     const { error } = await supabase.from('customers').update({ permanently_closed: true, nulled: true }).eq('customer_id', account);
     if (error) return alert(error.message);
+    console.log('[stats] permanentClose', account);
     await toggleNull(account);
   }
 
@@ -378,9 +391,9 @@ export default function StatisticsGeneralPage() {
           } else {
             groups.push({ title: activePerson, items: visibleRows.filter(r => r.salespersonName === activePerson) });
           }
+          console.log('[stats] groups', groups.map(g => ({ title: g.title, count: g.items.length })));
           return groups.map((g, i) => (
             <div key={g.title} className="rounded-lg border bg-white">
-              <div className="px-4 pt-3 text-sm font-semibold text-slate-700">{g.title}</div>
               <div className="overflow-x-auto">
                 <table className="min-w-full text-sm">
                   <thead>
@@ -415,13 +428,31 @@ export default function StatisticsGeneralPage() {
                       const devPrice = row.s1Price - row.s2Price;
                       const nulled = isNulled(row.account_no);
                       return (
-                        <tr key={row.account_no} className={"border-t " + (nulled ? 'opacity-60' : '')}>
-                          <td className={"p-2 font-medium " + (nulled ? 'line-through' : '')}>{row.customer}</td>
-                          <td className={"p-2 " + (nulled ? 'line-through' : '')}>{row.city}</td>
-                          <td className="p-2 text-center">{row.s1Qty}</td>
-                          <td className="p-2 text-center">{row.s1Price.toLocaleString()} DKK</td>
-                          <td className="p-2 text-center">{row.s2Qty}</td>
-                          <td className="p-2 text-center">{row.s2Price.toLocaleString()} DKK</td>
+                        <tr key={row.account_no} className={"border-t " + (nulled ? 'opacity-80' : '')}>
+                          <td className={"relative p-2 font-medium " + (nulled ? '' : '')}>
+                            {row.customer}
+                            {nulled && <div className="pointer-events-none absolute inset-x-0 top-1/2 -translate-y-1/2 h-px bg-gray-500/70" />}
+                          </td>
+                          <td className={"relative p-2 " + (nulled ? '' : '')}>
+                            {row.city}
+                            {nulled && <div className="pointer-events-none absolute inset-x-0 top-1/2 -translate-y-1/2 h-px bg-gray-500/70" />}
+                          </td>
+                          <td className="relative p-2 text-center">
+                            {row.s1Qty}
+                            {nulled && <div className="pointer-events-none absolute inset-x-0 top-1/2 -translate-y-1/2 h-px bg-gray-500/70" />}
+                          </td>
+                          <td className="relative p-2 text-center">
+                            {row.s1Price.toLocaleString()} DKK
+                            {nulled && <div className="pointer-events-none absolute inset-x-0 top-1/2 -translate-y-1/2 h-px bg-gray-500/70" />}
+                          </td>
+                          <td className="relative p-2 text-center">
+                            {row.s2Qty}
+                            {nulled && <div className="pointer-events-none absolute inset-x-0 top-1/2 -translate-y-1/2 h-px bg-gray-500/70" />}
+                          </td>
+                          <td className="relative p-2 text-center">
+                            {row.s2Price.toLocaleString()} DKK
+                            {nulled && <div className="pointer-events-none absolute inset-x-0 top-1/2 -translate-y-1/2 h-px bg-gray-500/70" />}
+                          </td>
                           <td className="p-2 text-center">
                             <span className={devQty > 0 ? 'text-green-600' : devQty < 0 ? 'text-red-600' : ''}>
                               {devQty > 0 ? '+' : ''}{devQty}
@@ -435,7 +466,7 @@ export default function StatisticsGeneralPage() {
                           <td className="p-2">
                             <div className="flex items-center justify-center gap-1.5">
                               {/* Hide from statistics */}
-                              <button className="rounded p-1 hover:bg-gray-100" aria-label="Hide from statistics" onClick={() => toggleHide(row.account_no)}><Eye className="h-4 w-4" /></button>
+                              <button className="rounded p-1 hover:bg-gray-100" aria-label="Hide from statistics" onClick={() => toggleHide(row.account_no)}><Ban className="h-4 w-4" /></button>
                               {/* Null for season */}
                               <button className="rounded p-1 hover:bg-gray-100" aria-label="Null for season" onClick={() => toggleNull(row.account_no)}><EyeOff className="h-4 w-4" /></button>
                               {/* Permanently close */}
