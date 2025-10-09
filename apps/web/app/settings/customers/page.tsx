@@ -4,6 +4,7 @@ import * as XLSX from 'xlsx';
 import { supabase } from '../../../lib/supabaseClient';
 import useSWR from 'swr';
 import type { CustomerRow, SalespersonRow } from '@shared/types';
+import { Modal } from '../../../components/Modal';
 
 type Row = Record<string, any>;
 
@@ -119,40 +120,43 @@ export default function CustomersSettingsPage() {
   }
 
   return (
-    <div className="space-y-4">
-      <h2 className="text-xl font-semibold">Customers Import</h2>
-      <div className="space-y-2">
+    <div className="space-y-6">
+      <h2 className="text-xl font-semibold">Customers</h2>
+      <div className="grid lg:grid-cols-3 gap-4">
+        <div className="lg:col-span-1 border rounded-md p-4 space-y-3">
+          <div className="text-lg font-semibold">Import</div>
+          <div className="text-sm text-gray-600">Upload your spreadsheet, map columns, preview, then import.</div>
         <input
-          type="file"
-          accept=".xlsx,.xls,.csv"
-          onChange={(e) => {
-            const f = e.target.files?.[0];
-            if (f) handleFile(f);
-          }}
-        />
-      </div>
-      {headers.length > 0 && (
-        <div className="space-y-2">
-          <div className="text-sm text-gray-600">Map your spreadsheet columns to customer fields</div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {CUSTOMER_FIELDS.map((f) => (
-              <label key={f} className="text-sm">
-                <div className="font-medium">{f}</div>
-                <select
-                  className="mt-1 w-full border rounded-md p-2 text-sm"
-                  value={mapping[f] ?? ''}
-                  onChange={(e) => setMapping((m) => ({ ...m, [f]: e.target.value }))}
-                >
-                  <option value="">—</option>
-                  {headers.map((h) => (
-                    <option key={h} value={h}>{h}</option>
-                  ))}
-                </select>
-              </label>
-            ))}
-          </div>
-        </div>
-      )}
+            className="w-full text-sm"
+            type="file"
+            accept=".xlsx,.xls,.csv"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) handleFile(f);
+            }}
+          />
+          {headers.length > 0 && (
+            <div className="space-y-2">
+              <div className="font-medium">Field Mapping</div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {CUSTOMER_FIELDS.map((f) => (
+                  <label key={f} className="text-sm">
+                    <div className="font-medium">{f}</div>
+                    <select
+                      className="mt-1 w-full border rounded-md p-2 text-sm"
+                      value={mapping[f] ?? ''}
+                      onChange={(e) => setMapping((m) => ({ ...m, [f]: e.target.value }))}
+                    >
+                      <option value="">—</option>
+                      {headers.map((h) => (
+                        <option key={h} value={h}>{h}</option>
+                      ))}
+                    </select>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
       {preview.length > 0 && (
         <div className="space-y-2">
           <div className="text-sm text-gray-600">Preview (first 5 rows)</div>
