@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { supabase } from '../../lib/supabaseClient';
 import type { JobRow } from '@shared/types';
 
-const ORCH_URL = process.env.NEXT_PUBLIC_ORCHESTRATOR_URL!;
+const ORCH_URL = (process.env.NEXT_PUBLIC_ORCHESTRATOR_URL || '').replace(/\/$/, '');
 
 async function fetchJobs(): Promise<JobRow[]> {
   const { data, error } = await supabase

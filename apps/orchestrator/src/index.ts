@@ -61,9 +61,12 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
 const app = new Hono();
 
 const allowedOrigins = WEB_ORIGIN.split(',').map((s) => s.trim()).filter(Boolean);
-const corsOrigin: string | string[] = allowedOrigins.length > 1 ? allowedOrigins : (allowedOrigins[0] as string);
 app.use('*', cors({
-  origin: corsOrigin,
+  origin: (origin) => {
+    if (!origin) return origin;
+    if (allowedOrigins.includes('*')) return origin;
+    return allowedOrigins.includes(origin) ? origin : '' as any;
+  },
   allowMethods: ['GET', 'POST', 'OPTIONS'],
   allowHeaders: ['Authorization', 'Content-Type', 'X-Cron-Token']
 }));
@@ -123,7 +126,8 @@ app.post('/enqueue', async (c) => {
   try {
     const payload = await verifySupabaseJWT(c.req.header('authorization'));
     const email = (payload?.email as string | undefined) ?? (payload?.user_metadata as any)?.email;
-    if (!email || email !== SUPERADMIN_EMAIL) return c.json({ error: 'Forbidden' }, 403);
+    // Accept any authenticated user (remove superadmin-only restriction)
+    if (!email) return c.json({ error: 'Unauthorized' }, 401);
 
     const body = enqueueSchema.parse(await c.req.json<EnqueueRequestBody>());
 
