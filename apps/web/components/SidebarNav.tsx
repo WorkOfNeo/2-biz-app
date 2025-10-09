@@ -10,8 +10,10 @@ function NavLink({ href, label }: { href: Route; label: string }) {
     <Link
       href={href}
       className={
-        'block px-3 py-2 rounded-md hover:bg-slate-800 ' +
-        (active ? 'bg-slate-800 text-white' : 'text-slate-200')
+        'block rounded-md px-3 py-2 text-sm transition-colors ' +
+        (active
+          ? 'bg-slate-800 text-white'
+          : 'text-slate-200 hover:bg-slate-800 hover:text-white')
       }
     >
       {label}
@@ -24,16 +26,16 @@ export function SidebarNav() {
     <nav className="space-y-2">
       <NavLink href="/" label="Home" />
       <div>
-        <div className="text-xs uppercase tracking-wider text-slate-400 mt-4 mb-1">Statistics</div>
-        <div className="space-y-1 ml-2">
-          <NavLink href="/admin" label="General" />
+        <div className="mt-4 mb-1 text-xs uppercase tracking-wider text-slate-400">Statistics</div>
+        <div className="ml-2 space-y-1">
+          <NavLink href="/statistics/general" label="General" />
           <NavLink href="/statistics/overview" label="Overview" />
           <NavLink href="/statistics/countries" label="Countries" />
         </div>
       </div>
       <div>
-        <div className="text-xs uppercase tracking-wider text-slate-400 mt-4 mb-1">Settings</div>
-        <div className="space-y-1 ml-2">
+        <div className="mt-4 mb-1 text-xs uppercase tracking-wider text-slate-400">Settings</div>
+        <div className="ml-2 space-y-1">
           <NavLink href="/settings/seasons" label="SEASONS" />
           <NavLink href="/settings/salespersons" label="SALESPERSONS" />
           <NavLink href="/settings/customers" label="CUSTOMERS" />
