@@ -132,6 +132,24 @@ const enqueueSchema = z.object({
   })
 });
 
+const importCustomersSchema = z.object({
+  rows: z.array(z.object({
+    customer_id: z.string().min(1),
+    company: z.string().optional(),
+    stats_display_name: z.string().optional(),
+    group_name: z.string().optional(),
+    salesperson_name: z.string().optional(),
+    email: z.string().optional(),
+    city: z.string().optional(),
+    postal: z.string().optional(),
+    country: z.string().optional(),
+    currency: z.string().optional(),
+    excluded: z.boolean().optional(),
+    nulled: z.boolean().optional(),
+    permanently_closed: z.boolean().optional()
+  }))
+});
+
 app.get('/health', (c) => c.json({ ok: true, ts: new Date().toISOString() }));
 
 app.get('/jobs/:id', async (c) => {
@@ -205,6 +223,90 @@ app.post('/cron/enqueue', async (c) => {
     .single();
   if (error) return c.json({ error: error.message }, 500);
   return c.json({ jobId: data?.id });
+});
+
+app.post('/import/customers', async (c) => {
+  try {
+    const payload = await verifySupabaseJWT(c.req.header('authorization'));
+    const email = (payload?.email as string | undefined) ?? (payload?.user_metadata as any)?.email;
+    if (!email) return c.json({ error: 'Unauthorized' }, 401);
+
+    const body = importCustomersSchema.parse(await c.req.json());
+
+    let imported = 0;
+    let updated = 0;
+    const salespersonCache = new Map<string, string>();
+
+    for (const r of body.rows) {
+      let salesperson_id: string | null = null;
+      if (r.salesperson_name && r.salesperson_name.trim().length > 0) {
+        const key = r.salesperson_name.trim();
+        if (salespersonCache.has(key)) {
+          salesperson_id = salespersonCache.get(key)!;
+        } else {
+          // find or create salesperson
+          const { data: spFind } = await supabase
+            .from('salespersons')
+            .select('id')
+            .ilike('name', key)
+            .maybeSingle();
+          if (spFind?.id) {
+            salesperson_id = spFind.id as string;
+          } else {
+            const { data: spIns, error: spErr } = await supabase
+              .from('salespersons')
+              .insert({ name: key })
+              .select('id')
+              .single();
+            if (spErr) return c.json({ error: spErr.message }, 500);
+            salesperson_id = spIns!.id as string;
+          }
+          salespersonCache.set(key, salesperson_id);
+        }
+      }
+
+      // upsert customer based on customer_id
+      const base = {
+        company: r.company ?? null,
+        stats_display_name: r.stats_display_name ?? null,
+        group_name: r.group_name ?? null,
+        salesperson_id,
+        email: r.email ?? null,
+        city: r.city ?? null,
+        postal: r.postal ?? null,
+        country: r.country ?? null,
+        currency: r.currency ?? null,
+        excluded: r.excluded ?? false,
+        nulled: r.nulled ?? false,
+        permanently_closed: r.permanently_closed ?? false
+      };
+
+      const { data: existing } = await supabase
+        .from('customers')
+        .select('id')
+        .eq('customer_id', r.customer_id)
+        .maybeSingle();
+
+      if (existing?.id) {
+        const { error: upErr } = await supabase
+          .from('customers')
+          .update(base)
+          .eq('id', existing.id);
+        if (upErr) return c.json({ error: upErr.message }, 500);
+        updated++;
+      } else {
+        const { error: insErr } = await supabase
+          .from('customers')
+          .insert({ customer_id: r.customer_id, ...base });
+        if (insErr) return c.json({ error: insErr.message }, 500);
+        imported++;
+      }
+    }
+
+    return c.json({ imported, updated });
+  } catch (err: any) {
+    return c.json({ error: err?.message ?? 'Invalid request' }, 400);
+  }
 });
 
 serve({ fetch: app.fetch, port: PORT });
