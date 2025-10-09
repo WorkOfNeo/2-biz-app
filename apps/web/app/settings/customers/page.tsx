@@ -216,6 +216,7 @@ export default function CustomersSettingsPage() {
           </table>
         </div>
       </div>
+      </div>
     </div>
   );
 }
