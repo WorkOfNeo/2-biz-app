@@ -102,6 +102,7 @@ export default function SeasonsSettingsPage() {
             <tr>
               <th className="text-left p-2 border-b">Name</th>
               <th className="text-left p-2 border-b">Year</th>
+              <th className="text-left p-2 border-b">Display Currency</th>
               <th className="text-left p-2 border-b">Created</th>
             </tr>
           </thead>
@@ -110,6 +111,20 @@ export default function SeasonsSettingsPage() {
               <tr key={s.id}>
                 <td className="p-2 border-b">{s.name}</td>
                 <td className="p-2 border-b">{s.year ?? '-'}</td>
+                <td className="p-2 border-b">
+                  <select
+                    className="rounded border px-2 py-1 text-sm"
+                    defaultValue={(s as any).display_currency ?? ''}
+                    onChange={async (e) => {
+                      const val = e.target.value || null;
+                      const { error } = await supabase.from('seasons').update({ display_currency: val }).eq('id', s.id);
+                      if (!error) mutate();
+                    }}
+                  >
+                    <option value="">(default)</option>
+                    {['DKK','SEK','NOK','EUR'].map((c) => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </td>
                 <td className="p-2 border-b">{new Date(s.created_at).toLocaleString()}</td>
               </tr>
             ))}

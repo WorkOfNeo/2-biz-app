@@ -12,4 +12,8 @@ alter table if exists public.salespersons
 alter table if exists public.salespersons
   add column if not exists sort_index int not null default 0;
 
+-- seasons: add display_currency (optional per-season currency override)
+alter table if exists public.seasons
+  add column if not exists display_currency text;
+
 

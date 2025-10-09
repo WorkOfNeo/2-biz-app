@@ -454,6 +454,32 @@ export default function StatisticsGeneralPage() {
                   </tbody>
                 </table>
               </div>
+              {/* KPI cards when a salesperson is selected */}
+              {activePerson && (
+                <div className="border-t p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                  <div className="rounded-md border p-3">
+                    <div className="text-xs text-gray-500">Total customers</div>
+                    <div className="text-xl font-semibold">{items.length}</div>
+                  </div>
+                  <div className="rounded-md border p-3">
+                    <div className="text-xs text-gray-500">Season 1 total</div>
+                    <div className="text-xl font-semibold">{items.reduce((a,b)=>a+b.s1Price,0).toLocaleString()} DKK</div>
+                    <div className="text-[11px] text-gray-400">local: varies per salesperson</div>
+                  </div>
+                  <div className="rounded-md border p-3">
+                    <div className="text-xs text-gray-500">Season 2 total</div>
+                    <div className="text-xl font-semibold">{items.reduce((a,b)=>a+b.s2Price,0).toLocaleString()} DKK</div>
+                    <div className="text-[11px] text-gray-400">local: varies per salesperson</div>
+                  </div>
+                  <div className="rounded-md border p-3">
+                    <div className="text-xs text-gray-500">Growth</div>
+                    <div className={"text-xl font-semibold " + ((items.reduce((a,b)=>a+b.s1Price,0) - items.reduce((a,b)=>a+b.s2Price,0))>=0? 'text-green-700':'text-red-700')}>
+                      {(items.reduce((a,b)=>a+b.s1Price,0) - items.reduce((a,b)=>a+b.s2Price,0)).toLocaleString()} DKK
+                    </div>
+                    <div className="text-[11px] text-gray-400">based on visible customers</div>
+                  </div>
+                </div>
+              )}
             </div>
           );
         })()}
