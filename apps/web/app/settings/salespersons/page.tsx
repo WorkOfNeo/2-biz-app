@@ -76,8 +76,15 @@ export default function SalespersonsSettingsPage() {
                     value={sp.currency}
                     onChange={async (e) => {
                       const val = e.target.value;
-                      await supabase.from('salespersons').update({ currency: val }).eq('id', sp.id);
-                      await mutate();
+                      try {
+                        console.log('[salespersons] change currency', sp.id, val);
+                        const { error } = await supabase.from('salespersons').update({ currency: val }).eq('id', sp.id);
+                        if (error) throw error;
+                        await mutate();
+                      } catch (err: any) {
+                        console.error('[salespersons] currency update failed', err?.message || err);
+                        alert(err?.message || 'Failed to update currency');
+                      }
                     }}
                   >
                     {['DKK','SEK','NOK','EUR'].map((c) => <option key={c} value={c}>{c}</option>)}
@@ -90,8 +97,15 @@ export default function SalespersonsSettingsPage() {
                     value={sp.sort_index}
                     onChange={async (e) => {
                       const val = Number(e.target.value) || 0;
-                      await supabase.from('salespersons').update({ sort_index: val }).eq('id', sp.id);
-                      await mutate();
+                      try {
+                        console.log('[salespersons] change sort_index', sp.id, val);
+                        const { error } = await supabase.from('salespersons').update({ sort_index: val }).eq('id', sp.id);
+                        if (error) throw error;
+                        await mutate();
+                      } catch (err: any) {
+                        console.error('[salespersons] sort_index update failed', err?.message || err);
+                        alert(err?.message || 'Failed to update order');
+                      }
                     }}
                   />
                 </td>
