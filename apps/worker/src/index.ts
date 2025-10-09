@@ -80,6 +80,16 @@ async function saveResult(jobId: string, summary: string, data: Record<string, a
   return inserted as JobResult;
 }
 
+async function captureHtmlSnippet(target: any, fallbackPage: Page): Promise<string> {
+  try {
+    const html: string | undefined = await (target?.content?.() ?? fallbackPage.content?.());
+    const trimmed = (html ?? '').replace(/\s+/g, ' ').trim();
+    return trimmed.slice(0, 10000); // cap to avoid oversized logs
+  } catch {
+    return '[unavailable]';
+  }
+}
+
 async function findFirst(page: Page, selectors: string[]): Promise<Nullable<import('playwright-core').Locator>> {
   for (const sel of selectors) {
     const loc = page.locator(sel);
@@ -117,6 +127,8 @@ async function runJob(job: JobRow) {
     await log(job.id, 'info', 'Loaded login page');
 
     const framePage = await maybeGetLoginFrame(page);
+    const loginHtml = await captureHtmlSnippet(framePage, page);
+    await log(job.id, 'info', 'Login page HTML', { html: loginHtml });
 
     const userInputLoc = await findFirst(framePage, ['input#username', 'input[name="username"]', 'input[type="text"]']);
     const passInputLoc = await findFirst(framePage, ['input#password', 'input[name="password"]', 'input[type="password"]']);
@@ -136,6 +148,8 @@ async function runJob(job: JobRow) {
     const markers = ['.dashboard', 'nav[aria-label="main"]', '.user-menu', '.logout', '[data-testid="main-shell"]'];
     await Promise.race(markers.map((m) => framePage.waitForSelector(m, { timeout: 60_000 }))).catch(() => null);
     await log(job.id, 'info', 'Logged in');
+    const postLoginHtml = await captureHtmlSnippet(framePage, page);
+    await log(job.id, 'info', 'Post-login page HTML', { html: postLoginHtml });
 
     const toggles = (job.payload?.toggles as Record<string, any>) || {};
     const deep = Boolean(toggles.deep);
