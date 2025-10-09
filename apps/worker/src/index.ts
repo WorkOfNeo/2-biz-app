@@ -196,7 +196,7 @@ async function runJob(job: JobRow) {
 
       // Extract headers (second header row has the real labels)
       const headers: string[] = await page.$$eval(
-        `${tableSelector} thead tr:nth-of-type(2) th`,
+        `${tableSelector} thead.table-fixed:not(.table-fixed--header):first-of-type tr:nth-of-type(2) th`,
         (ths) => ths.map((th) => ((th as HTMLElement).innerText || th.textContent || '').replace(/\s+/g, ' ').trim())
       );
 
@@ -225,7 +225,8 @@ async function runJob(job: JobRow) {
       const normalizedHeaders = headers.map((h, i) => (h && h.length > 0 ? h : `col_${i}`));
       const rowObjects = rowsRaw.map((cells) => {
         const obj: Record<string, string> = {};
-        for (let i = 0; i < Math.max(normalizedHeaders.length, cells.length); i++) {
+        const len = Math.min(normalizedHeaders.length, cells.length);
+        for (let i = 0; i < len; i++) {
           const key = normalizedHeaders[i] ?? `col_${i}`;
           obj[key] = cells[i] ?? '';
         }
@@ -234,6 +235,9 @@ async function runJob(job: JobRow) {
 
       await log(job.id, 'info', 'Topseller rows collected', {
         count: rowObjects.length,
+        headersLen: headers.length,
+        firstRowLen: rowsRaw[0]?.length ?? 0,
+        headers: headers,
         sample: rowObjects[0] ?? null,
         sampleCells: rowsRaw[0] ?? null
       });
