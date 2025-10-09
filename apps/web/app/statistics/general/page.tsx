@@ -90,7 +90,10 @@ export default function StatisticsGeneralPage() {
           for (const l of (logs ?? [])) {
             const msg = (l as any).msg as string;
             if (stepMap[msg] !== undefined) {
-              setUpdatePct((prev) => Math.max(prev, stepMap[msg]));
+              setUpdatePct((prev) => {
+                const nextVal = stepMap[msg] ?? prev;
+                return Math.max(prev, nextVal);
+              });
               if (msg === 'STEP:complete') {
                 clearInterval(timer);
                 setTimeout(() => setUpdating(false), 750);
