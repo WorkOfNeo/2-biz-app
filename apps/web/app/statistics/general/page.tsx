@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef, type ReactNode } from 'react';
 import useSWR from 'swr';
 import { supabase } from '../../../lib/supabaseClient';
 import Link from 'next/link';
@@ -27,7 +27,7 @@ export default function StatisticsGeneralPage() {
   });
   const [s1, setS1] = useState<string>('');
   const [s2, setS2] = useState<string>('');
-  const [activePerson, setActivePerson] = useState<string>('All');
+  const [activePerson, setActivePerson] = useState<string>('');
   const [showSave, setShowSave] = useState(false);
   const [updating, setUpdating] = useState(false);
   const [updatePct, setUpdatePct] = useState(0);
@@ -44,7 +44,7 @@ export default function StatisticsGeneralPage() {
     if (s1 || s2) setShowSave(true);
   }, [s1, s2]);
 
-  // Read salesperson from URL hash on load
+  // Read salesperson from URL hash on load; default to first salesperson
   useEffect(() => {
     const hash = typeof window !== 'undefined' ? window.location.hash : '';
     const m = hash.match(/(^#|&)sp=([^&]+)/);
@@ -56,12 +56,19 @@ export default function StatisticsGeneralPage() {
         console.log('[stats] read salesperson from hash', decoded);
       } catch {}
     }
+    if ((!m || !m[2]) && (salespersons ?? []).length > 0 && !activePerson) {
+      const first = ((salespersons ?? [])[0] as any)?.name as string | undefined;
+      if (first) {
+        setActivePerson(first);
+        console.log('[stats] default salesperson', first);
+      }
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [salespersons?.length]);
   // Update hash when selecting a salesperson
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    if (activePerson && activePerson !== 'All') {
+    if (activePerson) {
       const url = new URL(window.location.href);
       url.hash = `sp=${encodeURIComponent(activePerson)}`;
       window.history.replaceState(null, '', url.toString());
@@ -153,9 +160,9 @@ export default function StatisticsGeneralPage() {
   }
 
   // Resolve selected salesperson id (optional filter)
-  const selectedSalespersonId = activePerson === 'All'
-    ? null
-    : (salespersons ?? []).find((sp) => sp.name === activePerson)?.id ?? null;
+  const selectedSalespersonId = activePerson
+    ? (salespersons ?? []).find((sp) => sp.name === activePerson)?.id ?? null
+    : null;
 
   type RowOut = {
     account_no: string;
@@ -285,6 +292,26 @@ export default function StatisticsGeneralPage() {
     await toggleNull(account);
   }
 
+  function ActionBtn({ label, onClick, children }: { label: string; onClick: () => void; children: ReactNode }) {
+    const [show, setShow] = useState(false);
+    const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    return (
+      <button
+        className="relative rounded p-1 hover:bg-gray-100"
+        onMouseEnter={() => { timer.current = setTimeout(() => setShow(true), 2000); }}
+        onMouseLeave={() => { if (timer.current) clearTimeout(timer.current); setShow(false); }}
+        onClick={onClick}
+      >
+        {children}
+        {show && (
+          <span className="absolute left-1/2 -translate-x-1/2 translate-y-2 text-[10px] bg-black text-white rounded px-1.5 py-0.5 shadow">
+            {label}
+          </span>
+        )}
+      </button>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -357,7 +384,7 @@ export default function StatisticsGeneralPage() {
           </div>
         )}
         <div className="flex w-full gap-2 overflow-x-auto">
-          {(['All', ...((salespersons ?? []).map((sp) => sp.name))] as string[]).map((person) => {
+          {(((salespersons ?? []).map((sp) => sp.name)) as string[]).map((person) => {
             const active = person === activePerson;
             return (
               <button
@@ -374,27 +401,13 @@ export default function StatisticsGeneralPage() {
           })}
         </div>
 
-        {/* Grouped table when All salespersons, else a single section */}
+        {/* Single section for selected salesperson */}
         {(() => {
           const visibleRows = (rows ?? []).filter(r => !isHidden(r.account_no));
-          const groups: { title: string; items: RowOut[] }[] = [];
-          if (activePerson === 'All') {
-            const map = new Map<string, RowOut[]>();
-            for (const r of visibleRows) {
-              const title = r.salespersonName || '—';
-              const list = map.get(title) || [];
-              list.push(r);
-              map.set(title, list);
-            }
-            for (const [title, items] of Array.from(map.entries()).sort((a,b)=>a[0].localeCompare(b[0]))) {
-              groups.push({ title, items });
-            }
-          } else {
-            groups.push({ title: activePerson, items: visibleRows.filter(r => r.salespersonName === activePerson) });
-          }
-          console.log('[stats] groups', groups.map(g => ({ title: g.title, count: g.items.length })));
-          return groups.map((g, i) => (
-            <div key={g.title} className="rounded-lg border bg-white">
+          const items = activePerson ? visibleRows.filter(r => r.salespersonName === activePerson) : visibleRows;
+          console.log('[stats] table items', items.length);
+          return (
+            <div className="rounded-lg border bg-white">
               <div className="overflow-x-auto">
                 <table className="min-w-full text-sm">
                   <thead>
@@ -415,16 +428,11 @@ export default function StatisticsGeneralPage() {
                       <th className="p-2 text-center">Price</th>
                       <th className="p-2 text-center">Qty</th>
                       <th className="p-2 text-center">Price</th>
-                      <th className="p-2 text-center">
-                        <div className="flex items-center justify-center gap-2">
-                          <span className="rounded px-2 py-1 text-xs text-gray-600">Null = season only</span>
-                          <span className="rounded px-2 py-1 text-xs text-gray-600">Hide = stats only</span>
-                        </div>
-                      </th>
+                      <th className="p-2 text-center"></th>
                     </tr>
                   </thead>
                   <tbody>
-                    {g.items.map((row) => {
+                    {items.map((row) => {
                       const devQty = row.s1Qty - row.s2Qty;
                       const devPrice = row.s1Price - row.s2Price;
                       const nulled = isNulled(row.account_no);
@@ -466,22 +474,16 @@ export default function StatisticsGeneralPage() {
                             </span>
                           </td>
                           <td className="p-2">
-                            <div className="flex items-center justify-center gap-1.5">
-                              {/* Hide from statistics */}
-                              <button className="rounded p-1 hover:bg-gray-100 group" aria-label="Hide from statistics" onClick={() => toggleHide(row.account_no)}>
+                            <div className="relative flex items-center justify-center gap-1.5">
+                              <ActionBtn label="Hide" onClick={() => toggleHide(row.account_no)}>
                                 <Ban className="h-4 w-4" />
-                                <span className="pointer-events-none absolute translate-y-2 opacity-0 group-hover:opacity-0 group-[data-hovered=true]:opacity-100 transition-opacity delay-200 text-[10px] bg-black text-white rounded px-1.5 py-0.5">Hide</span>
-                              </button>
-                              {/* Null for season */}
-                              <button className="rounded p-1 hover:bg-gray-100 group" aria-label="Null for season" onClick={() => toggleNull(row.account_no)}>
+                              </ActionBtn>
+                              <ActionBtn label="Null (season)" onClick={() => toggleNull(row.account_no)}>
                                 <EyeOff className="h-4 w-4" />
-                                <span className="pointer-events-none absolute translate-y-2 opacity-0 group-hover:opacity-0 group-[data-hovered=true]:opacity-100 transition-opacity delay-200 text-[10px] bg-black text-white rounded px-1.5 py-0.5">Null (season)</span>
-                              </button>
-                              {/* Permanently close */}
-                              <button className="rounded p-1 hover:bg-gray-100 group" aria-label="Permanently close" onClick={() => permanentClose(row.account_no)}>
+                              </ActionBtn>
+                              <ActionBtn label="Close (perm)" onClick={() => permanentClose(row.account_no)}>
                                 <Trash2 className="h-4 w-4" />
-                                <span className="pointer-events-none absolute translate-y-2 opacity-0 group-hover:opacity-0 group-[data-hovered=true]:opacity-100 transition-opacity delay-200 text-[10px] bg-black text-white rounded px-1.5 py-0.5">Close (perm)</span>
-                              </button>
+                              </ActionBtn>
                             </div>
                           </td>
                         </tr>
@@ -490,9 +492,8 @@ export default function StatisticsGeneralPage() {
                   </tbody>
                 </table>
               </div>
-              {i < groups.length - 1 && <div className="h-px bg-gray-200 mx-4" />}
             </div>
-          ));
+          );
         })()}
       </div>
     </div>
