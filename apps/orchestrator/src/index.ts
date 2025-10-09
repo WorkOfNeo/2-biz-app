@@ -15,6 +15,7 @@ const SUPABASE_JWT_SECRET = (process.env.SUPABASE_JWT_SECRET || '').trim();
 const SUPERADMIN_EMAIL = (process.env.SUPERADMIN_EMAIL || '').trim();
 const WEB_ORIGIN = (process.env.WEB_ORIGIN || '').trim();
 const CRON_TOKEN = (process.env.CRON_TOKEN || '').trim();
+const CRON_ENABLED = ((process.env.CRON_ENABLED || 'false').trim().toLowerCase() === 'true');
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY || !SUPABASE_JWKS_URL || !SUPERADMIN_EMAIL || !WEB_ORIGIN || !CRON_TOKEN) {
   // eslint-disable-next-line no-console
@@ -47,6 +48,10 @@ function assertValidEnv() {
     }
   }
   if (!CRON_TOKEN) errors.push('CRON_TOKEN is empty');
+  // Optional: CRON_ENABLED flag
+  if (process.env.CRON_ENABLED && !['true','false','1','0'].includes(process.env.CRON_ENABLED.trim().toLowerCase())) {
+    errors.push('CRON_ENABLED must be true/false');
+  }
   if (errors.length > 0) {
     // eslint-disable-next-line no-console
     console.error('[orchestrator] Invalid environment configuration:', errors.join('; '));
@@ -225,11 +230,23 @@ app.post('/enqueue', async (c) => {
 });
 
 app.post('/cron/enqueue', async (c) => {
+  if (!CRON_ENABLED) return c.json({ error: 'Cron disabled' }, 403);
   const token = c.req.header('x-cron-token');
   if (!token || token !== CRON_TOKEN) return c.json({ error: 'Unauthorized' }, 401);
 
   // eslint-disable-next-line no-console
   console.log('[orchestrator] /cron/enqueue called');
+
+  // dedupe: if a job of this type is queued or running, skip
+  const { data: existing, error: findErr } = await supabase
+    .from('jobs')
+    .select('id,status')
+    .in('status', ['queued','running'])
+    .eq('type', 'scrape_statistics')
+    .limit(1);
+  if (!findErr && existing && existing.length > 0) {
+    return c.json({ skipped: true, reason: 'job already queued or running' });
+  }
 
   const { data, error } = await supabase
     .from('jobs')
