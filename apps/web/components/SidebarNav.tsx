@@ -1,8 +1,9 @@
 'use client';
 import Link from 'next/link';
+import type { Route } from 'next';
 import { usePathname } from 'next/navigation';
 
-function NavLink({ href, label }: { href: string; label: string }) {
+function NavLink({ href, label }: { href: Route; label: string }) {
   const pathname = usePathname();
   const active = pathname === href || pathname.startsWith(href + '/');
   return (

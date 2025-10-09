@@ -35,17 +35,30 @@ export default function CustomersSettingsPage() {
     reader.onload = (e) => {
       const data = new Uint8Array(e.target?.result as ArrayBuffer);
       const wb = XLSX.read(data, { type: 'array' });
-      const wsname = wb.SheetNames[0];
-      const ws = wb.Sheets[wsname];
+      const wsname = wb.SheetNames && wb.SheetNames.length > 0 ? wb.SheetNames[0] : undefined;
+      if (!wsname) {
+        setRows([]);
+        setHeaders([]);
+        setMapping({});
+        return;
+      }
+      const ws = wb.Sheets[wsname as string];
+      if (!ws) {
+        setRows([]);
+        setHeaders([]);
+        setMapping({});
+        return;
+      }
       const json: Row[] = XLSX.utils.sheet_to_json(ws, { defval: '' });
       setRows(json);
-      const hdr = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' })[0] as string[];
+      const headerRows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' }) as any[];
+      const hdr = Array.isArray(headerRows) && Array.isArray(headerRows[0]) ? (headerRows[0] as string[]) : [];
       setHeaders(hdr);
       const auto: Record<string, string> = {};
       for (const h of hdr) {
-        const k = h.toString().trim().toLowerCase().replace(/\s+/g, '_');
+        const k = String(h ?? '').trim().toLowerCase().replace(/\s+/g, '_');
         const match = CUSTOMER_FIELDS.find((f) => f === k);
-        if (match) auto[match] = h;
+        if (match) auto[match] = String(h);
       }
       setMapping(auto);
     };
