@@ -5,50 +5,6 @@ import { supabase } from '../../../lib/supabaseClient';
 import Link from 'next/link';
 import { Menu, Eye, EyeOff, Trash2 } from 'lucide-react';
 
-type MockRow = {
-  customer: string;
-  city: string;
-  season1Qty: number;
-  season1Price: number;
-  season2Qty: number;
-  season2Price: number;
-};
-
-const mockData: MockRow[] = [
-  {
-    customer: 'Nordic Retail AS',
-    city: 'Oslo',
-    season1Qty: 145,
-    season1Price: 125000,
-    season2Qty: 132,
-    season2Price: 118000,
-  },
-  {
-    customer: 'Copenhagen Trading',
-    city: 'Copenhagen',
-    season1Qty: 198,
-    season1Price: 165000,
-    season2Qty: 175,
-    season2Price: 152000,
-  },
-  {
-    customer: 'Stockholm Supplies',
-    city: 'Stockholm',
-    season1Qty: 167,
-    season1Price: 142000,
-    season2Qty: 156,
-    season2Price: 135000,
-  },
-  {
-    customer: 'Helsinki Distribution',
-    city: 'Helsinki',
-    season1Qty: 123,
-    season1Price: 98000,
-    season2Qty: 115,
-    season2Price: 92000,
-  },
-];
-
 export default function StatisticsGeneralPage() {
   const { data: seasons } = useSWR('seasons-all', async () => {
     const { data, error } = await supabase.from('seasons').select('*').order('created_at', { ascending: false });
@@ -94,6 +50,63 @@ export default function StatisticsGeneralPage() {
     const percentage = s2Qty === 0 ? 0 : (diff / s2Qty) * 100;
     return { diff, percentage: Number.isFinite(percentage) ? percentage : 0 };
   }
+
+  // Resolve selected salesperson id (optional filter)
+  const selectedSalespersonId = activePerson === 'All'
+    ? null
+    : (salespersons ?? []).find((sp) => sp.name === activePerson)?.id ?? null;
+
+  type RowOut = {
+    account_no: string;
+    customer: string;
+    city: string;
+    s1Qty: number;
+    s1Price: number;
+    s2Qty: number;
+    s2Price: number;
+  };
+
+  const { data: rows } = useSWR(
+    s1 && s2 ? ['general-stats', s1, s2, selectedSalespersonId ?? 'all'] : null,
+    async () => {
+      // Fetch both seasons at once and aggregate client-side by account_no
+      const query = supabase
+        .from('sales_stats')
+        .select('account_no, customer_name, city, qty, price, season_id, salesperson_id')
+        .in('season_id', [s1, s2]);
+      if (selectedSalespersonId) {
+        query.eq('salesperson_id', selectedSalespersonId);
+      }
+      const { data, error } = await query.limit(100000);
+      if (error) throw new Error(error.message);
+
+      const map = new Map<string, RowOut>();
+      for (const r of (data ?? []) as any[]) {
+        const key: string = r.account_no ?? `${r.customer_name ?? ''}:${r.city ?? ''}`;
+        const item = map.get(key) ?? {
+          account_no: r.account_no ?? key,
+          customer: r.customer_name ?? '-',
+          city: r.city ?? '-',
+          s1Qty: 0,
+          s1Price: 0,
+          s2Qty: 0,
+          s2Price: 0,
+        };
+        const qty = Number(r.qty ?? 0) || 0;
+        const price = Number(r.price ?? 0) || 0;
+        if (r.season_id === s1) {
+          item.s1Qty += qty;
+          item.s1Price += price;
+        } else if (r.season_id === s2) {
+          item.s2Qty += qty;
+          item.s2Price += price;
+        }
+        map.set(key, item);
+      }
+      return Array.from(map.values()).sort((a, b) => a.customer.localeCompare(b.customer));
+    },
+    { refreshInterval: 20000 }
+  );
 
   return (
     <div className="space-y-6">
@@ -206,25 +219,25 @@ export default function StatisticsGeneralPage() {
                 </tr>
               </thead>
               <tbody>
-                {mockData.map((row, idx) => {
-                  const dev = calculateDevelopment(row.season1Qty, row.season2Qty);
-                  const pct = Number.isFinite(dev.percentage) ? dev.percentage : 0;
+                {(rows ?? []).map((row) => {
+                  const devQty = row.s1Qty - row.s2Qty;
+                  const devPrice = row.s1Price - row.s2Price;
                   return (
-                    <tr key={idx} className="border-t">
+                    <tr key={row.account_no} className="border-t">
                       <td className="p-2 font-medium">{row.customer}</td>
                       <td className="p-2">{row.city}</td>
-                      <td className="p-2 text-center">{row.season1Qty}</td>
-                      <td className="p-2 text-center">{row.season1Price.toLocaleString()} DKK</td>
-                      <td className="p-2 text-center">{row.season2Qty}</td>
-                      <td className="p-2 text-center">{row.season2Price.toLocaleString()} DKK</td>
+                      <td className="p-2 text-center">{row.s1Qty}</td>
+                      <td className="p-2 text-center">{row.s1Price.toLocaleString()} DKK</td>
+                      <td className="p-2 text-center">{row.s2Qty}</td>
+                      <td className="p-2 text-center">{row.s2Price.toLocaleString()} DKK</td>
                       <td className="p-2 text-center">
-                        <span className={dev.diff > 0 ? 'text-green-600' : dev.diff < 0 ? 'text-red-600' : ''}>
-                          {dev.diff > 0 ? '+' : ''}{dev.diff}
+                        <span className={devQty > 0 ? 'text-green-600' : devQty < 0 ? 'text-red-600' : ''}>
+                          {devQty > 0 ? '+' : ''}{devQty}
                         </span>
                       </td>
                       <td className="p-2 text-center">
-                        <span className={pct > 0 ? 'text-green-600' : pct < 0 ? 'text-red-600' : ''}>
-                          {pct.toFixed(1)}%
+                        <span className={devPrice > 0 ? 'text-green-600' : devPrice < 0 ? 'text-red-600' : ''}>
+                          {devPrice > 0 ? '+' : ''}{devPrice.toLocaleString()} DKK
                         </span>
                       </td>
                       <td className="p-2">
