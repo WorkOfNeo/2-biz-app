@@ -48,6 +48,22 @@ export default function AdminPage() {
         <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
           <button onClick={async () => { const id = await enqueue(false); mutate(); location.assign(`/admin/jobs/${id}`); }}>Shallow</button>
           <button onClick={async () => { const id = await enqueue(true); mutate(); location.assign(`/admin/jobs/${id}`); }}>Deep</button>
+          <button onClick={async () => {
+            const {
+              data: { session }
+            } = await supabase.auth.getSession();
+            if (!session) return alert('No session');
+            const token = session.access_token;
+            const res = await fetch(`${ORCH_URL}/enqueue`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+              body: JSON.stringify({ type: 'scrape_statistics', payload: { toggles: { dryRun: true }, requestedBy: session.user.email } })
+            });
+            if (!res.ok) return alert('Failed to enqueue dry-run');
+            const json = await res.json();
+            mutate();
+            location.assign(`/admin/jobs/${json.jobId}`);
+          }}>Test pipeline (dry-run)</button>
         </div>
       </div>
 

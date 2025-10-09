@@ -139,6 +139,13 @@ async function runJob(job: JobRow) {
 
     const toggles = (job.payload?.toggles as Record<string, any>) || {};
     const deep = Boolean(toggles.deep);
+    const dryRun = Boolean((toggles as any).dryRun);
+
+    if (dryRun) {
+      await log(job.id, 'info', 'Dry-run mode: skipping browser automation', { toggles });
+      await saveResult(job.id, 'Dry-run completed', { ok: true, toggles });
+      return;
+    }
 
     if (deep) {
       // Placeholder deep scrape: visit a couple of sections and extract limited JSON

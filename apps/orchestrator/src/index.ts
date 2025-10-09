@@ -137,6 +137,13 @@ app.post('/enqueue', async (c) => {
     if (error) return c.json({ error: error.message }, 500);
 
     const jobId = data?.id as string;
+    // Write an initial enqueue log for visibility
+    await supabase.from('job_logs').insert({
+      job_id: jobId,
+      level: 'info',
+      msg: 'Enqueued job',
+      data: { requestedBy: body.payload?.requestedBy ?? email, toggles: body.payload?.toggles ?? {} }
+    });
     return c.json({ jobId } satisfies EnqueueResponseBody);
   } catch (err: any) {
     return c.json({ error: err?.message ?? 'Invalid request' }, 400);
