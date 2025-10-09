@@ -47,3 +47,46 @@ export interface EnqueueResponseBody {
   jobId: string;
 }
 
+// Domain types
+export interface SalespersonRow {
+  id: string;
+  name: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CustomerRow {
+  id: string;
+  customer_id: string;
+  company?: string | null;
+  stats_display_name?: string | null;
+  group_name?: string | null;
+  salesperson_id?: string | null;
+  email?: string | null;
+  city?: string | null;
+  postal?: string | null;
+  country?: string | null;
+  currency?: string | null;
+  excluded: boolean;
+  nulled: boolean;
+  permanently_closed: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SeasonRow {
+  id: string;
+  name: string;
+  created_at: string;
+}
+
+export interface SeasonStatisticsRow {
+  id: string;
+  customer_id: string;
+  season_id: string;
+  qty: number;
+  amount: number;
+  currency?: string | null;
+  created_at: string;
+}
+
