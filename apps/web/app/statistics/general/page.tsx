@@ -99,7 +99,7 @@ export default function StatisticsGeneralPage() {
       const orch = (process.env.NEXT_PUBLIC_ORCHESTRATOR_URL || '').replace(/\/$/, '');
       setUpdatePct(15);
       const body = { type: 'scrape_statistics', payload: { toggles: { deep: true }, requestedBy: session.user.email, seasonId: s1 } };
-      const res = await fetch(`${orch}/enqueue`, {
+      const res = await fetch(`/api/enqueue`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify(body)
@@ -345,7 +345,7 @@ export default function StatisticsGeneralPage() {
             {lastJobId && <div className="mt-1 text-[11px] text-gray-500">Job: {lastJobId}</div>}
           </div>
         )}
-        <div className="flex w-full gap-2 overflow-x-auto">
+        <div className="flex flex-wrap w-full gap-2">
           {(((salespersons ?? []).map((sp) => sp.name)) as string[]).map((person) => {
             const active = person === activePerson;
             return (
