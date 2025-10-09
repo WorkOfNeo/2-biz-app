@@ -250,16 +250,34 @@ async function runJob(job: JobRow) {
   }
 }
 
+const IDLE_SLEEP_MS = Math.max(500, Number(process.env.IDLE_SLEEP_MS || '2000') || 2000);
+const IDLE_SLEEP_MAX_MS = Math.max(IDLE_SLEEP_MS, Number(process.env.IDLE_SLEEP_MAX_MS || '60000') || 60000);
+
 async function mainLoop() {
   // eslint-disable-next-line no-console
   console.log('[worker] started', new Date().toISOString());
-
+  try {
+    const u = new URL(SUPABASE_URL);
+    // eslint-disable-next-line no-console
+    console.log('[worker] supabase host', u.host);
+  } catch {}
+  let idleMs = IDLE_SLEEP_MS;
   while (true) {
     const job = await leaseNextJob();
     if (!job) {
       // eslint-disable-next-line no-console
-      console.log('[worker] no jobs, sleeping');
-      await sleep(2000);
+      if (idleMs === IDLE_SLEEP_MS) console.log(`[worker] no jobs, sleeping ${idleMs}ms`);
+      await sleep(idleMs);
+      idleMs = Math.min(IDLE_SLEEP_MAX_MS, Math.floor(idleMs * 2));
+      continue;
+    }
+    idleMs = IDLE_SLEEP_MS; // reset backoff when we get a job
+
+    if (!job.id) {
+      // Defensive: skip if malformed
+      // eslint-disable-next-line no-console
+      console.warn('[worker] leased job without id; skipping');
+      await sleep(idleMs);
       continue;
     }
 
