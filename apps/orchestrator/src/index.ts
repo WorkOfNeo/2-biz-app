@@ -74,7 +74,8 @@ const corsOrigins: '*' | string[] = allowedOrigins.includes('*') ? '*' : allowed
 app.use('*', cors({
   origin: corsOrigins as any,
   allowMethods: ['GET', 'POST', 'OPTIONS'],
-  allowHeaders: ['Authorization', 'Content-Type', 'X-Cron-Token']
+  // Allow all request headers to satisfy preflight Access-Control-Request-Headers
+  allowHeaders: ['*']
 }));
 
 function logRequest(label: string, c: any, extra?: Record<string, any>) {
