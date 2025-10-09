@@ -79,6 +79,20 @@ app.use('*', cors({
   allowHeaders: ['Authorization', 'Content-Type', 'X-Cron-Token']
 }));
 
+function logRequest(label: string, c: any, extra?: Record<string, any>) {
+  const meta = {
+    ts: new Date().toISOString(),
+    ip:
+      c.req.header('x-forwarded-for') ||
+      c.req.header('cf-connecting-ip') ||
+      c.req.header('x-real-ip') ||
+      '',
+    ua: c.req.header('user-agent') || ''
+  };
+  // eslint-disable-next-line no-console
+  console.log(`[orchestrator] ${label}`, { ...meta, ...(extra || {}) });
+}
+
 function buildJwksCandidates(): URL[] {
   const list: URL[] = [];
   try { list.push(new URL(SUPABASE_JWKS_URL)); } catch {}
@@ -200,6 +214,7 @@ app.get('/jobs/:id', async (c) => {
 
 app.post('/enqueue', async (c) => {
   try {
+    logRequest('/enqueue start', c);
     const payload = await verifySupabaseJWT(c.req.header('authorization'));
     const email = (payload?.email as string | undefined) ?? (payload?.user_metadata as any)?.email;
     // Accept any authenticated user (remove superadmin-only restriction)
@@ -213,10 +228,11 @@ app.post('/enqueue', async (c) => {
       status: 'queued' as const,
       max_attempts: 3
     };
-    const { data, error } = await supabase.from('jobs').insert(insertBody).select('id').single();
+    const { data, error } = await supabase.from('jobs').insert(insertBody).select('id, created_at').single();
     if (error) return c.json({ error: error.message }, 500);
 
     const jobId = data?.id as string;
+    logRequest('/enqueue inserted', c, { jobId, created_at: (data as any)?.created_at, type: insertBody.type });
     // Write an initial enqueue log for visibility
     await supabase.from('job_logs').insert({
       job_id: jobId,
@@ -236,7 +252,7 @@ app.post('/cron/enqueue', async (c) => {
   if (!token || token !== CRON_TOKEN) return c.json({ error: 'Unauthorized' }, 401);
 
   // eslint-disable-next-line no-console
-  console.log('[orchestrator] /cron/enqueue called');
+  logRequest('/cron/enqueue called', c, { CRON_ENABLED, CRON_MIN_INTERVAL_MINUTES });
 
   // dedupe: if a job of this type is queued or running, skip
   const { data: existing, error: findErr } = await supabase
@@ -246,6 +262,7 @@ app.post('/cron/enqueue', async (c) => {
     .eq('type', 'scrape_statistics')
     .limit(1);
   if (!findErr && existing && existing.length > 0) {
+    logRequest('/cron/enqueue skipped', c, { reason: 'already queued or running' });
     return c.json({ skipped: true, reason: 'job already queued or running' });
   }
 
@@ -263,6 +280,7 @@ app.post('/cron/enqueue', async (c) => {
       const r = recent[0] as any;
       const ts = r.finished_at ?? r.started_at ?? r.created_at;
       if (ts && new Date(ts).getTime() > Date.now() - CRON_MIN_INTERVAL_MINUTES * 60_000) {
+        logRequest('/cron/enqueue skipped', c, { reason: 'rate-limited', sinceMinutes: CRON_MIN_INTERVAL_MINUTES });
         return c.json({ skipped: true, reason: `last job within ${CRON_MIN_INTERVAL_MINUTES}m` });
       }
     }
@@ -271,10 +289,12 @@ app.post('/cron/enqueue', async (c) => {
   const { data, error } = await supabase
     .from('jobs')
     .insert({ type: 'scrape_statistics', payload: { toggles: { deep: false }, requestedBy: 'cron' }, status: 'queued', max_attempts: 3 })
-    .select('id')
+    .select('id, created_at')
     .single();
   if (error) return c.json({ error: error.message }, 500);
-  return c.json({ jobId: data?.id });
+  const jobId = (data as any)?.id;
+  logRequest('/cron/enqueue inserted', c, { jobId, created_at: (data as any)?.created_at });
+  return c.json({ jobId });
 });
 
 app.post('/import/customers', async (c) => {
