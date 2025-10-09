@@ -8,7 +8,7 @@ import { ProgressBar } from '../../../components/ProgressBar';
 export default function SalespersonsSettingsPage() {
   const { data, mutate } = useSWR('salespersons-with-counts', async () => {
     // Fetch salespersons and customer counts
-    const { data: sps, error } = await supabase.from('salespersons').select('id, name');
+    const { data: sps, error } = await supabase.from('salespersons').select('id, name, currency, sort_index').order('sort_index', { ascending: true });
     if (error) throw new Error(error.message);
     const { data: counts, error: cntErr } = await supabase
       .from('customers')
@@ -20,7 +20,7 @@ export default function SalespersonsSettingsPage() {
       const id = c.salesperson_id as string;
       map.set(id, (map.get(id) ?? 0) + 1);
     }
-    return (sps ?? []).map((sp) => ({ id: sp.id, name: sp.name, customers: map.get(sp.id) ?? 0 }));
+    return (sps ?? []).map((sp) => ({ id: sp.id, name: sp.name, currency: sp.currency ?? 'DKK', sort_index: sp.sort_index ?? 0, customers: map.get(sp.id) ?? 0 }));
   }, { refreshInterval: 15000 });
 
   const [confirmId, setConfirmId] = useState<string | null>(null);
@@ -60,6 +60,8 @@ export default function SalespersonsSettingsPage() {
           <thead className="bg-gray-50">
             <tr>
               <th className="text-left p-2 border-b">Name</th>
+              <th className="text-left p-2 border-b">Currency</th>
+              <th className="text-left p-2 border-b">Order</th>
               <th className="text-left p-2 border-b">Customers</th>
               <th className="text-left p-2 border-b">Actions</th>
             </tr>
@@ -68,6 +70,31 @@ export default function SalespersonsSettingsPage() {
             {(data ?? []).map((sp: any) => (
               <tr key={sp.id}>
                 <td className="p-2 border-b">{sp.name}</td>
+                <td className="p-2 border-b">
+                  <select
+                    className="rounded border px-2 py-1 text-sm"
+                    value={sp.currency}
+                    onChange={async (e) => {
+                      const val = e.target.value;
+                      await supabase.from('salespersons').update({ currency: val }).eq('id', sp.id);
+                      await mutate();
+                    }}
+                  >
+                    {['DKK','SEK','NOK','EUR'].map((c) => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </td>
+                <td className="p-2 border-b">
+                  <input
+                    type="number"
+                    className="w-20 rounded border px-2 py-1 text-sm"
+                    value={sp.sort_index}
+                    onChange={async (e) => {
+                      const val = Number(e.target.value) || 0;
+                      await supabase.from('salespersons').update({ sort_index: val }).eq('id', sp.id);
+                      await mutate();
+                    }}
+                  />
+                </td>
                 <td className="p-2 border-b">{sp.customers}</td>
                 <td className="p-2 border-b">
                   <button

@@ -20,10 +20,10 @@ export default function StatisticsGeneralPage() {
   const { data: salespersons } = useSWR('salespersons-all', async () => {
     const { data, error } = await supabase
       .from('salespersons')
-      .select('id, name')
-      .order('name', { ascending: true });
+      .select('id, name, currency, sort_index')
+      .order('sort_index', { ascending: true });
     if (error) throw new Error(error.message);
-    return (data ?? []) as { id: string; name: string }[];
+    return (data ?? []) as { id: string; name: string; currency?: string | null; sort_index?: number | null }[];
   });
   const [s1, setS1] = useState<string>('');
   const [s2, setS2] = useState<string>('');
@@ -33,6 +33,7 @@ export default function StatisticsGeneralPage() {
   const [updatePct, setUpdatePct] = useState(0);
   const [lastJobId, setLastJobId] = useState<string | null>(null);
   const spNameById = useMemo(() => Object.fromEntries(((salespersons ?? []) as { id: string; name: string }[]).map(s => [s.id, s.name])), [salespersons]);
+  const spCurrencyById = useMemo(() => Object.fromEntries(((salespersons ?? []) as { id: string; currency?: string | null }[]).map(s => [s.id, s.currency ?? 'DKK'])), [salespersons]);
   useEffect(() => {
     if (saved?.value) {
       setS1(saved.value.s1 ?? '');
@@ -427,6 +428,7 @@ export default function StatisticsGeneralPage() {
                       const devQty = row.s1Qty - row.s2Qty;
                       const devPrice = row.s1Price - row.s2Price;
                       const nulled = isNulled(row.account_no);
+                      const currency = row.salespersonId ? (spCurrencyById[row.salespersonId] ?? 'DKK') : 'DKK';
                       return (
                         <tr key={row.account_no} className={"border-t " + (nulled ? 'opacity-80' : '')}>
                           <td className={"relative p-2 font-medium " + (nulled ? '' : '')}>
@@ -442,7 +444,7 @@ export default function StatisticsGeneralPage() {
                             {nulled && <div className="pointer-events-none absolute inset-x-0 top-1/2 -translate-y-1/2 h-px bg-gray-500/70" />}
                           </td>
                           <td className="relative p-2 text-center">
-                            {row.s1Price.toLocaleString()} DKK
+                            {row.s1Price.toLocaleString()} {currency}
                             {nulled && <div className="pointer-events-none absolute inset-x-0 top-1/2 -translate-y-1/2 h-px bg-gray-500/70" />}
                           </td>
                           <td className="relative p-2 text-center">
@@ -450,7 +452,7 @@ export default function StatisticsGeneralPage() {
                             {nulled && <div className="pointer-events-none absolute inset-x-0 top-1/2 -translate-y-1/2 h-px bg-gray-500/70" />}
                           </td>
                           <td className="relative p-2 text-center">
-                            {row.s2Price.toLocaleString()} DKK
+                            {row.s2Price.toLocaleString()} {currency}
                             {nulled && <div className="pointer-events-none absolute inset-x-0 top-1/2 -translate-y-1/2 h-px bg-gray-500/70" />}
                           </td>
                           <td className="p-2 text-center">
@@ -460,17 +462,26 @@ export default function StatisticsGeneralPage() {
                           </td>
                           <td className="p-2 text-center">
                             <span className={devPrice > 0 ? 'text-green-600' : devPrice < 0 ? 'text-red-600' : ''}>
-                              {devPrice > 0 ? '+' : ''}{devPrice.toLocaleString()} DKK
+                              {devPrice > 0 ? '+' : ''}{devPrice.toLocaleString()} {currency}
                             </span>
                           </td>
                           <td className="p-2">
                             <div className="flex items-center justify-center gap-1.5">
                               {/* Hide from statistics */}
-                              <button className="rounded p-1 hover:bg-gray-100" aria-label="Hide from statistics" onClick={() => toggleHide(row.account_no)}><Ban className="h-4 w-4" /></button>
+                              <button className="rounded p-1 hover:bg-gray-100 group" aria-label="Hide from statistics" onClick={() => toggleHide(row.account_no)}>
+                                <Ban className="h-4 w-4" />
+                                <span className="pointer-events-none absolute translate-y-2 opacity-0 group-hover:opacity-0 group-[data-hovered=true]:opacity-100 transition-opacity delay-200 text-[10px] bg-black text-white rounded px-1.5 py-0.5">Hide</span>
+                              </button>
                               {/* Null for season */}
-                              <button className="rounded p-1 hover:bg-gray-100" aria-label="Null for season" onClick={() => toggleNull(row.account_no)}><EyeOff className="h-4 w-4" /></button>
+                              <button className="rounded p-1 hover:bg-gray-100 group" aria-label="Null for season" onClick={() => toggleNull(row.account_no)}>
+                                <EyeOff className="h-4 w-4" />
+                                <span className="pointer-events-none absolute translate-y-2 opacity-0 group-hover:opacity-0 group-[data-hovered=true]:opacity-100 transition-opacity delay-200 text-[10px] bg-black text-white rounded px-1.5 py-0.5">Null (season)</span>
+                              </button>
                               {/* Permanently close */}
-                              <button className="rounded p-1 hover:bg-gray-100" aria-label="Permanently close" onClick={() => permanentClose(row.account_no)}><Trash2 className="h-4 w-4" /></button>
+                              <button className="rounded p-1 hover:bg-gray-100 group" aria-label="Permanently close" onClick={() => permanentClose(row.account_no)}>
+                                <Trash2 className="h-4 w-4" />
+                                <span className="pointer-events-none absolute translate-y-2 opacity-0 group-hover:opacity-0 group-[data-hovered=true]:opacity-100 transition-opacity delay-200 text-[10px] bg-black text-white rounded px-1.5 py-0.5">Close (perm)</span>
+                              </button>
                             </div>
                           </td>
                         </tr>
