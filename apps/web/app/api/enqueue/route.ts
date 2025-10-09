@@ -19,8 +19,8 @@ export async function POST(req: Request) {
     // Fallback: enqueue directly in Supabase
     const { createClient } = await import('@supabase/supabase-js');
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-    const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-    const supabase = createClient(url, anon);
+    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!; // server-only key
+    const supabase = createClient(url, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } });
     const insertBody = { type, payload, status: 'queued', max_attempts: 3 };
     const { data, error } = await supabase.from('jobs').insert(insertBody).select('id').single();
     if (error) return new Response(JSON.stringify({ error: error.message }), { status: 500 });
