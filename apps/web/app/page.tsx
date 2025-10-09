@@ -22,16 +22,17 @@ export default function HomePage() {
   const { data: orchJob, error: orchJobErr } = useSWR(currentJobId ? `orch-job:${currentJobId}` : null, () => fetchJob(currentJobId as string), { refreshInterval: 3000 });
 
   return (
-    <div>
-      <h1>Statistics Admin</h1>
-      <p>
-        Go to <Link href="/admin">/admin</Link> or <Link href="/signin">/signin</Link>.
+    <div className="space-y-4">
+      <h1 className="text-2xl font-semibold">Statistics Admin</h1>
+      <p className="text-sm text-gray-600">
+        Go to <Link className="underline" href="/admin">/admin</Link> or <Link className="underline" href="/signin">/signin</Link>.
       </p>
-      <div style={{ marginTop: 16, padding: 12, border: '1px solid #eee', borderRadius: 8 }}>
+      <div className="border rounded-md p-4">
         <strong>Test Login via Browserless</strong>
-        <div style={{ marginTop: 8 }}>
+        <div className="mt-2">
           <button
             disabled={loading}
+            className="inline-flex items-center rounded-md bg-slate-900 text-white px-3 py-1.5 text-sm hover:bg-slate-800 disabled:opacity-50"
             onClick={async () => {
               setLoading(true);
               setResult(null);
@@ -50,14 +51,15 @@ export default function HomePage() {
           </button>
         </div>
         {result && (
-          <pre style={{ marginTop: 8, background: '#f9f9f9', padding: 8, borderRadius: 6, overflowX: 'auto' }}>{result}</pre>
+          <pre className="mt-2 bg-gray-50 p-3 rounded border overflow-x-auto text-xs">{result}</pre>
         )}
       </div>
-      <div style={{ marginTop: 16, padding: 12, border: '1px solid #eee', borderRadius: 8 }}>
+      <div className="border rounded-md p-4">
         <strong>Enqueue Test Job (no login)</strong>
-        <div style={{ marginTop: 8 }}>
+        <div className="mt-2">
           <button
             disabled={loading}
+            className="inline-flex items-center rounded-md bg-slate-900 text-white px-3 py-1.5 text-sm hover:bg-slate-800 disabled:opacity-50"
             onClick={async () => {
               setLoading(true);
               setEnqueueResult(null);
@@ -76,14 +78,15 @@ export default function HomePage() {
           </button>
         </div>
         {enqueueResult && (
-          <pre style={{ marginTop: 8, background: '#f9f9f9', padding: 8, borderRadius: 6, overflowX: 'auto' }}>{enqueueResult}</pre>
+          <pre className="mt-2 bg-gray-50 p-3 rounded border overflow-x-auto text-xs">{enqueueResult}</pre>
         )}
       </div>
-      <div style={{ marginTop: 16, padding: 12, border: '1px solid #eee', borderRadius: 8 }}>
+      <div className="border rounded-md p-4">
         <strong>Orchestrator Enqueue (calls Railway orchestrator)</strong>
-        <div style={{ marginTop: 8 }}>
+        <div className="mt-2">
           <button
             disabled={loading}
+            className="inline-flex items-center rounded-md bg-slate-900 text-white px-3 py-1.5 text-sm hover:bg-slate-800 disabled:opacity-50"
             onClick={async () => {
               setLoading(true);
               setOrchResult(null);
@@ -106,19 +109,19 @@ export default function HomePage() {
           </button>
         </div>
         {orchResult && (
-          <pre style={{ marginTop: 8, background: '#f9f9f9', padding: 8, borderRadius: 6, overflowX: 'auto' }}>{orchResult}</pre>
+          <pre className="mt-2 bg-gray-50 p-3 rounded border overflow-x-auto text-xs">{orchResult}</pre>
         )}
         {currentJobId && (
-          <div style={{ marginTop: 8 }}>
+          <div className="mt-2">
             <strong>Live Job</strong>
-            {orchJobErr && <div style={{ color: 'red' }}>{String(orchJobErr)}</div>}
+            {orchJobErr && <div className="text-red-600 text-sm">{String(orchJobErr)}</div>}
             {orchJob && (
               <div>
-                <div style={{ fontFamily: 'monospace', fontSize: 12 }}>Status: {orchJob.job.status} | Attempts: {orchJob.job.attempts}/{orchJob.job.max_attempts}</div>
-                <div style={{ fontFamily: 'monospace', fontSize: 12 }}>Started: {orchJob.job.started_at ?? '-'} | Finished: {orchJob.job.finished_at ?? '-'}</div>
-                <div style={{ maxHeight: 220, overflow: 'auto', border: '1px solid #eee', borderRadius: 8, padding: 8, marginTop: 6 }}>
+                <div className="font-mono text-xs">Status: {orchJob.job.status} | Attempts: {orchJob.job.attempts}/{orchJob.job.max_attempts}</div>
+                <div className="font-mono text-xs">Started: {orchJob.job.started_at ?? '-'} | Finished: {orchJob.job.finished_at ?? '-'}</div>
+                <div className="max-h-56 overflow-auto border rounded-md p-2 mt-2">
                   {(orchJob.logs ?? []).map((l) => (
-                    <div key={l.id} style={{ fontFamily: 'monospace', fontSize: 12 }}>
+                    <div key={l.id} className="font-mono text-xs">
                       <strong>[{l.level}]</strong> {l.ts}: {l.msg} {l.data ? JSON.stringify(l.data) : ''}
                     </div>
                   ))}

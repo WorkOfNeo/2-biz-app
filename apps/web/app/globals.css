@@ -1,0 +1,16 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --sidebar-bg: #0b1220;
+}
+
+body { @apply bg-white text-gray-900; }
+
+.sidebar {
+  @apply bg-slate-900 text-slate-100;
+}
+
+.sidebar a { @apply block px-3 py-2 rounded-md hover:bg-slate-800; }
+
