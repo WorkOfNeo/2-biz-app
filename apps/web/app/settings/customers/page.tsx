@@ -1,28 +1,11 @@
 'use client';
-import { useMemo, useState } from 'react';
-import * as XLSX from 'xlsx';
+import { useState } from 'react';
 import { supabase } from '../../../lib/supabaseClient';
 import useSWR from 'swr';
 import type { CustomerRow, SalespersonRow } from '@shared/types';
 import { Modal } from '../../../components/Modal';
 
-type Row = Record<string, any>;
-
-const CUSTOMER_FIELDS = [
-  'customer_id',
-  'company',
-  'stats_display_name',
-  'group_name',
-  'salesperson_name',
-  'email',
-  'city',
-  'postal',
-  'country',
-  'currency',
-  'excluded',
-  'nulled',
-  'permanently_closed'
-];
+// Import moved to /settings/customers/import
 
 export default function CustomersSettingsPage() {
   const { data: customers, mutate } = useSWR('customers', async () => {
@@ -39,8 +22,6 @@ export default function CustomersSettingsPage() {
     if (error) throw new Error(error.message);
     return data as SalespersonRow[];
   });
-  // Import removed to dedicated subpage
-
   return (
     <div className="space-y-6">
       <h2 className="text-xl font-semibold">Customers</h2>
@@ -66,7 +47,6 @@ export default function CustomersSettingsPage() {
             </tbody>
           </table>
         </div>
-      </div>
       </div>
     </div>
   );
