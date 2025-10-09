@@ -70,12 +70,9 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
 const app = new Hono();
 
 const allowedOrigins = WEB_ORIGIN.split(',').map((s) => s.trim()).filter(Boolean);
+const corsOrigins: '*' | string[] = allowedOrigins.includes('*') ? '*' : allowedOrigins;
 app.use('*', cors({
-  origin: (origin) => {
-    if (!origin) return origin;
-    if (allowedOrigins.includes('*')) return origin;
-    return allowedOrigins.includes(origin) ? origin : '' as any;
-  },
+  origin: corsOrigins as any,
   allowMethods: ['GET', 'POST', 'OPTIONS'],
   allowHeaders: ['Authorization', 'Content-Type', 'X-Cron-Token']
 }));
