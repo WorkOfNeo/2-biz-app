@@ -4,6 +4,7 @@ export interface ScrapeStatisticsPayload {
   // Allow optional 'deep' along with arbitrary keys; values may be undefined pre-validation
   toggles: { deep?: boolean; [k: string]: boolean | undefined };
   requestedBy?: string;
+  seasonId?: string; // target season for imported sales stats
 }
 
 export interface JobRow {

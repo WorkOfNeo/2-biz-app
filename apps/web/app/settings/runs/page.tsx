@@ -13,13 +13,26 @@ async function fetchLatest() {
     .select('*')
     .order('created_at', { ascending: false })
     .limit(10);
+  const jobIds = (jobs ?? []).map((j: any) => j.id);
+  let logsByJob: Record<string, string[]> = {};
+  if (jobIds.length > 0) {
+    const { data: logs } = await supabase
+      .from('job_logs')
+      .select('job_id,msg,ts')
+      .in('job_id', jobIds)
+      .order('ts', { ascending: true });
+    for (const l of (logs ?? []) as any[]) {
+      const id = l.job_id as string;
+      (logsByJob[id] ||= []).push(l.msg as string);
+    }
+  }
   const { data: cleanupLogs } = await supabase
     .from('job_logs')
     .select('*')
     .ilike('msg', '%cleanup%')
     .order('ts', { ascending: false })
     .limit(1);
-  return { jobs: jobs ?? [], lastCleanup: cleanupLogs?.[0]?.ts ?? null };
+  return { jobs: jobs ?? [], lastCleanup: cleanupLogs?.[0]?.ts ?? null, logsByJob };
 }
 
 async function enqueueTestRun(dryRun: boolean) {
@@ -37,7 +50,7 @@ async function enqueueTestRun(dryRun: boolean) {
 }
 
 export default function RunsSettingsPage() {
-  const { data, mutate } = useSWR('runs:latest', fetchLatest, { refreshInterval: 5000 });
+  const { data, mutate } = useSWR('runs:latest', fetchLatest, { refreshInterval: 3000 });
   const [enqueuing, setEnqueuing] = useState(false);
   const [progress, setProgress] = useState(0);
   const [jobId, setJobId] = useState<string | null>(null);
@@ -85,20 +98,38 @@ export default function RunsSettingsPage() {
               <th className="text-left p-2 border-b">Attempts</th>
               <th className="text-left p-2 border-b">Started</th>
               <th className="text-left p-2 border-b">Finished</th>
+              <th className="text-left p-2 border-b">Progress</th>
               <th className="text-left p-2 border-b">Result</th>
             </tr>
           </thead>
           <tbody>
-            {(data?.jobs ?? []).map((j: any) => (
-              <tr key={j.id}>
-                <td className="p-2 border-b"><Link href={`/admin/jobs/${j.id}`}>{j.id.slice(0,8)}…</Link></td>
-                <td className="p-2 border-b">{j.status}</td>
-                <td className="p-2 border-b">{j.attempts}/{j.max_attempts}</td>
-                <td className="p-2 border-b">{j.started_at ? new Date(j.started_at).toLocaleString() : '—'}</td>
-                <td className="p-2 border-b">{j.finished_at ? new Date(j.finished_at).toLocaleString() : '—'}</td>
-                <td className="p-2 border-b">{j.status === 'succeeded' ? <span className="text-green-700">OK</span> : (j.error ? <span className="text-red-700">{j.error}</span> : '—')}</td>
-              </tr>
-            ))}
+            {(data?.jobs ?? []).map((j: any) => {
+              const msgs = data?.logsByJob?.[j.id] ?? [];
+              const stepMap: Record<string, number> = {
+                'STEP:begin_deep': 20,
+                'STEP:topseller_ready': 40,
+                'STEP:salespersons_total': 50,
+                'STEP:salesperson_start': 55,
+                'STEP:salesperson_done': 85,
+                'STEP:complete': 100
+              };
+              let pct = 0;
+              for (const m of msgs) {
+                if (stepMap[m] !== undefined) pct = Math.max(pct, stepMap[m]);
+              }
+              if (j.status === 'succeeded') pct = 100;
+              return (
+                <tr key={j.id}>
+                  <td className="p-2 border-b"><Link href={`/admin/jobs/${j.id}`}>{j.id.slice(0,8)}…</Link></td>
+                  <td className="p-2 border-b">{j.status}</td>
+                  <td className="p-2 border-b">{j.attempts}/{j.max_attempts}</td>
+                  <td className="p-2 border-b">{j.started_at ? new Date(j.started_at).toLocaleString() : '—'}</td>
+                  <td className="p-2 border-b">{j.finished_at ? new Date(j.finished_at).toLocaleString() : '—'}</td>
+                  <td className="p-2 border-b" style={{minWidth:180}}>{j.status === 'running' || pct > 0 ? <ProgressBar value={pct} /> : '—'}</td>
+                  <td className="p-2 border-b">{j.status === 'succeeded' ? <span className="text-green-700">OK</span> : (j.error ? <span className="text-red-700">{j.error}</span> : '—')}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
