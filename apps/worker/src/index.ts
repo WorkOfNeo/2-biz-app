@@ -168,11 +168,44 @@ async function runJob(job: JobRow) {
       const data = { sections: ['overview', 'details'], rowsCollected: 5 };
       await saveResult(job.id, 'Deep scrape placeholder complete', data);
     } else {
-      // Placeholder shallow scrape: capture a few KPI texts
+      // Shallow scrape: navigate to Topseller table and extract rows
       await log(job.id, 'info', 'Starting shallow scrape');
-      await page.waitForTimeout(1000);
-      const data = { kpis: [{ key: 'visitors', value: '123' }, { key: 'sales', value: '45' }] };
-      await saveResult(job.id, 'Shallow scrape placeholder complete', data);
+      const topsellerUrl = new URL('confident.php?mode=Topseller', SPY_BASE_URL).toString();
+      await page.goto(topsellerUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+      await page.waitForTimeout(1200);
+      await log(job.id, 'info', 'Topseller page loaded', { url: topsellerUrl });
+
+      const tableSelector = 'table.standardList.sortTable.table-fixed--set.selector_selection_set[name="top_sellers"]';
+      await page.waitForSelector(tableSelector, { timeout: 30_000 });
+
+      // Extract headers (second header row has the real labels)
+      const headers: string[] = await page.$$eval(
+        `${tableSelector} thead tr:nth-of-type(2) th`,
+        (ths) => ths.map((th) => (th.textContent || '').replace(/\s+/g, ' ').trim())
+      );
+
+      // Extract body rows (cap to 100 rows)
+      const rowsRaw: string[][] = await page.$$eval(
+        `${tableSelector} tbody tr`,
+        (trs) =>
+          Array.from(trs)
+            .slice(0, 100)
+            .map((tr) => Array.from(tr.querySelectorAll('td')).map((td) => (td.textContent || '').replace(/\s+/g, ' ').trim()))
+      );
+
+      // Build objects using headers where possible
+      const normalizedHeaders = headers.map((h, i) => (h && h.length > 0 ? h : `col_${i}`));
+      const rowObjects = rowsRaw.map((cells) => {
+        const obj: Record<string, string> = {};
+        for (let i = 0; i < Math.max(normalizedHeaders.length, cells.length); i++) {
+          const key = normalizedHeaders[i] ?? `col_${i}`;
+          obj[key] = cells[i] ?? '';
+        }
+        return obj;
+      });
+
+      await log(job.id, 'info', 'Topseller rows collected', { count: rowObjects.length, sample: rowObjects[0] ?? null });
+      await saveResult(job.id, 'Topseller shallow snapshot', { headers: normalizedHeaders, rows: rowObjects });
     }
   } finally {
     try { await page?.close(); } catch {}
