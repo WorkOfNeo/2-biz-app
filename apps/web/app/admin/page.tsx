@@ -3,6 +3,7 @@ import useSWR from 'swr';
 import Link from 'next/link';
 import { supabase } from '../../lib/supabaseClient';
 import type { JobRow } from '@shared/types';
+import { useState } from 'react';
 
 const ORCH_URL = (process.env.NEXT_PUBLIC_ORCHESTRATOR_URL || '').replace(/\/$/, '');
 
@@ -39,10 +40,27 @@ function Status({ status }: { status: JobRow['status'] }) {
 
 export default function AdminPage() {
   const { data: jobs, mutate, isLoading, error } = useSWR('jobs', fetchJobs, { refreshInterval: 5000 });
+  const { data: seasons } = useSWR('seasons-simple', async () => {
+    const { data, error } = await supabase.from('seasons').select('*').order('created_at', { ascending: false });
+    if (error) throw new Error(error.message);
+    return data as { id: string; name: string; year: number | null }[];
+  });
+  const [s1, setS1] = useState<string>('');
+  const [s2, setS2] = useState<string>('');
 
   return (
     <div>
-      <h1>Admin Dashboard</h1>
+      <div className="flex items-center justify-between">
+        <h1>Admin Dashboard</h1>
+        <div className="relative">
+          <details className="cursor-pointer">
+            <summary className="list-none inline-flex items-center gap-2 px-3 py-1.5 rounded-md border text-sm">☰ Menu</summary>
+            <div className="absolute right-0 mt-2 w-56 bg-white border rounded-md shadow">
+              <Link className="block px-3 py-2 hover:bg-gray-50" href="/settings/customers/import">Import Statistic</Link>
+            </div>
+          </details>
+        </div>
+      </div>
       <div style={{ margin: '16px 0', padding: 12, border: '1px solid #eee', borderRadius: 8 }}>
         <strong>Run now</strong>
         <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
@@ -64,6 +82,62 @@ export default function AdminPage() {
             mutate();
             location.assign(`/admin/jobs/${json.jobId}`);
           }}>Test pipeline (dry-run)</button>
+        </div>
+      </div>
+
+      <div className="border rounded-md p-4 mt-4">
+        <div className="flex items-end gap-3">
+          <div>
+            <label className="text-sm">Season 1</label>
+            <select className="mt-1 border rounded p-1 text-sm" value={s1} onChange={(e) => setS1(e.target.value)}>
+              <option value="">—</option>
+              {(seasons ?? []).map((s) => (
+                <option key={s.id} value={s.id}>{s.name} {s.year ?? ''}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="text-sm">Season 2</label>
+            <select className="mt-1 border rounded p-1 text-sm" value={s2} onChange={(e) => setS2(e.target.value)}>
+              <option value="">—</option>
+              {(seasons ?? []).map((s) => (
+                <option key={s.id} value={s.id}>{s.name} {s.year ?? ''}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+        <div className="mt-4 overflow-auto border rounded-md">
+          <table className="min-w-full text-sm">
+            <thead>
+              <tr>
+                <th className="text-left p-2 border-b">Customer</th>
+                <th className="text-left p-2 border-b">City</th>
+                <th className="text-left p-2 border-b">Season 1</th>
+                <th className="text-left p-2 border-b">Season 2</th>
+                <th className="text-left p-2 border-b">Development</th>
+                <th className="text-left p-2 border-b">Actions</th>
+              </tr>
+              <tr className="bg-gray-50">
+                <th className="text-left p-2 border-b"></th>
+                <th className="text-left p-2 border-b"></th>
+                <th className="text-left p-2 border-b">Qty · Price</th>
+                <th className="text-left p-2 border-b">Qty · Price</th>
+                <th className="text-left p-2 border-b">Qty · Price</th>
+                <th className="text-left p-2 border-b">—</th>
+              </tr>
+            </thead>
+            <tbody>
+              {/* Placeholder rows; later populate by joining season_statistics */}
+              <tr>
+                <td className="p-2 border-b">—</td>
+                <td className="p-2 border-b">—</td>
+                <td className="p-2 border-b">0 · 0</td>
+                <td className="p-2 border-b">0 · 0</td>
+                <td className="p-2 border-b">0 · 0</td>
+                <td className="p-2 border-b">—</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </div>
 
