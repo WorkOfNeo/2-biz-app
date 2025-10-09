@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import useSWR from 'swr';
 import { supabase } from '../../../lib/supabaseClient';
 import Link from 'next/link';
@@ -32,6 +32,7 @@ export default function StatisticsGeneralPage() {
   const [updating, setUpdating] = useState(false);
   const [updatePct, setUpdatePct] = useState(0);
   const [lastJobId, setLastJobId] = useState<string | null>(null);
+  const spNameById = useMemo(() => Object.fromEntries(((salespersons ?? []) as { id: string; name: string }[]).map(s => [s.id, s.name])), [salespersons]);
   useEffect(() => {
     if (saved?.value) {
       setS1(saved.value.s1 ?? '');
@@ -41,6 +42,33 @@ export default function StatisticsGeneralPage() {
   useEffect(() => {
     if (s1 || s2) setShowSave(true);
   }, [s1, s2]);
+
+  // Read salesperson from URL hash on load
+  useEffect(() => {
+    const hash = typeof window !== 'undefined' ? window.location.hash : '';
+    const m = hash.match(/(^#|&)sp=([^&]+)/);
+    if (m && m[2]) {
+      try {
+        const decoded = decodeURIComponent(m[2]);
+        const exists = (salespersons ?? []).some(sp => sp.name === decoded);
+        if (exists) setActivePerson(decoded);
+      } catch {}
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [salespersons?.length]);
+  // Update hash when selecting a salesperson
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (activePerson && activePerson !== 'All') {
+      const url = new URL(window.location.href);
+      url.hash = `sp=${encodeURIComponent(activePerson)}`;
+      window.history.replaceState(null, '', url.toString());
+    } else {
+      const url = new URL(window.location.href);
+      url.hash = '';
+      window.history.replaceState(null, '', url.toString());
+    }
+  }, [activePerson]);
 
   function getSeasonLabel(seasonId: string | undefined) {
     if (!seasonId) return '';
@@ -133,6 +161,8 @@ export default function StatisticsGeneralPage() {
     s1Price: number;
     s2Qty: number;
     s2Price: number;
+    salespersonId: string | null;
+    salespersonName: string;
   };
 
   const { data: rows } = useSWR(
@@ -160,6 +190,8 @@ export default function StatisticsGeneralPage() {
           s1Price: 0,
           s2Qty: 0,
           s2Price: 0,
+          salespersonId: r.salesperson_id ?? null,
+          salespersonName: spNameById[r.salesperson_id as string] ?? (r.salesperson_id ? 'Unknown' : '—')
         };
         const qty = Number(r.qty ?? 0) || 0;
         const price = Number(r.price ?? 0) || 0;
@@ -176,6 +208,68 @@ export default function StatisticsGeneralPage() {
     },
     { refreshInterval: 20000 }
   );
+
+  // Seasonal overrides (null/hidden) stored in app_settings per season
+  const overridesKey = s1 ? `season_overrides:${s1}` : null;
+  const { data: overrides, mutate: mutateOverrides } = useSWR(overridesKey, async () => {
+    if (!overridesKey) return { id: null, value: { nulled: [], hidden: [] as string[] } };
+    const { data, error } = await supabase.from('app_settings').select('id, value').eq('key', overridesKey).maybeSingle();
+    if (error) throw new Error(error.message);
+    const val = (data?.value as any) || {};
+    return { id: data?.id ?? null, value: { nulled: Array.isArray(val.nulled) ? val.nulled : [], hidden: Array.isArray(val.hidden) ? val.hidden : [] } } as { id: string | null, value: { nulled: string[]; hidden: string[] } };
+  }, { refreshInterval: 0 });
+
+  const { data: closedCustomers } = useSWR('customers-closed', async () => {
+    const { data, error } = await supabase.from('customers').select('customer_id, permanently_closed, excluded, nulled');
+    if (error) throw new Error(error.message);
+    const setClosed = new Set<string>();
+    const setExcluded = new Set<string>();
+    const setNulled = new Set<string>();
+    for (const c of (data ?? []) as any[]) {
+      if (c.permanently_closed) setClosed.add(c.customer_id);
+      if (c.excluded) setExcluded.add(c.customer_id);
+      if (c.nulled) setNulled.add(c.customer_id);
+    }
+    return { setClosed, setExcluded, setNulled };
+  });
+
+  async function saveOverrides(next: { nulled: string[]; hidden: string[] }) {
+    if (!overridesKey) return;
+    if (overrides?.id) {
+      const { error } = await supabase.from('app_settings').update({ value: next }).eq('id', overrides.id);
+      if (error) throw new Error(error.message);
+    } else {
+      const { error } = await supabase.from('app_settings').insert({ key: overridesKey, value: next });
+      if (error) throw new Error(error.message);
+    }
+    await mutateOverrides();
+  }
+
+  function isHidden(account: string): boolean {
+    return Boolean(overrides?.value.hidden.includes(account)) || Boolean(closedCustomers?.setExcluded.has(account));
+  }
+  function isNulled(account: string): boolean {
+    return Boolean(overrides?.value.nulled.includes(account)) || Boolean(closedCustomers?.setNulled.has(account)) || Boolean(closedCustomers?.setClosed.has(account));
+  }
+
+  async function toggleHide(account: string) {
+    if (!s1) return alert('Select Season 1 first');
+    const hidden = new Set(overrides?.value.hidden ?? []);
+    if (hidden.has(account)) hidden.delete(account); else hidden.add(account);
+    await saveOverrides({ nulled: overrides?.value.nulled ?? [], hidden: Array.from(hidden) });
+  }
+  async function toggleNull(account: string) {
+    if (!s1) return alert('Select Season 1 first');
+    const nulled = new Set(overrides?.value.nulled ?? []);
+    if (nulled.has(account)) nulled.delete(account); else nulled.add(account);
+    await saveOverrides({ nulled: Array.from(nulled), hidden: overrides?.value.hidden ?? [] });
+  }
+  async function permanentClose(account: string) {
+    // Mark customer globally; also add seasonal null
+    const { error } = await supabase.from('customers').update({ permanently_closed: true, nulled: true }).eq('customer_id', account);
+    if (error) return alert(error.message);
+    await toggleNull(account);
+  }
 
   return (
     <div className="space-y-6">
@@ -266,71 +360,98 @@ export default function StatisticsGeneralPage() {
           })}
         </div>
 
-        <div className="rounded-lg border bg-white">
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-sm">
-              <thead>
-                <tr className="border-b-2">
-                  <th className="p-2 text-left font-semibold">Customer</th>
-                  <th className="p-2 text-left font-semibold">City</th>
-                  <th className="p-2 text-center font-semibold" colSpan={2}>{getSeasonLabel(s1) || 'Season 1'}</th>
-                  <th className="p-2 text-center font-semibold" colSpan={2}>{getSeasonLabel(s2) || 'Season 2'}</th>
-                  <th className="p-2 text-center font-semibold" colSpan={2}>Development</th>
-                  <th className="p-2 text-left font-semibold">Actions</th>
-                </tr>
-                <tr className="bg-gray-50">
-                  <th className="p-2 text-left"></th>
-                  <th className="p-2 text-left"></th>
-                  <th className="p-2 text-center">Qty</th>
-                  <th className="p-2 text-center">Price</th>
-                  <th className="p-2 text-center">Qty</th>
-                  <th className="p-2 text-center">Price</th>
-                  <th className="p-2 text-center">Qty</th>
-                  <th className="p-2 text-center">Price</th>
-                  <th className="p-2 text-center">
-                    <div className="flex items-center justify-center gap-2">
-                      <button className="rounded px-2 py-1 text-xs text-gray-600 hover:bg-gray-100">Null</button>
-                      <button className="rounded px-2 py-1 text-xs text-gray-600 hover:bg-gray-100">Hide</button>
-                    </div>
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {(rows ?? []).map((row) => {
-                  const devQty = row.s1Qty - row.s2Qty;
-                  const devPrice = row.s1Price - row.s2Price;
-                  return (
-                    <tr key={row.account_no} className="border-t">
-                      <td className="p-2 font-medium">{row.customer}</td>
-                      <td className="p-2">{row.city}</td>
-                      <td className="p-2 text-center">{row.s1Qty}</td>
-                      <td className="p-2 text-center">{row.s1Price.toLocaleString()} DKK</td>
-                      <td className="p-2 text-center">{row.s2Qty}</td>
-                      <td className="p-2 text-center">{row.s2Price.toLocaleString()} DKK</td>
-                      <td className="p-2 text-center">
-                        <span className={devQty > 0 ? 'text-green-600' : devQty < 0 ? 'text-red-600' : ''}>
-                          {devQty > 0 ? '+' : ''}{devQty}
-                        </span>
-                      </td>
-                      <td className="p-2 text-center">
-                        <span className={devPrice > 0 ? 'text-green-600' : devPrice < 0 ? 'text-red-600' : ''}>
-                          {devPrice > 0 ? '+' : ''}{devPrice.toLocaleString()} DKK
-                        </span>
-                      </td>
-                      <td className="p-2">
-                        <div className="flex items-center justify-center gap-1.5">
-                          <button className="rounded p-1 hover:bg-gray-100" aria-label="Show"><Eye className="h-4 w-4" /></button>
-                          <button className="rounded p-1 hover:bg-gray-100" aria-label="Hide"><EyeOff className="h-4 w-4" /></button>
-                          <button className="rounded p-1 hover:bg-gray-100" aria-label="Delete"><Trash2 className="h-4 w-4" /></button>
-                        </div>
-                      </td>
+        {/* Grouped table when All salespersons, else a single section */}
+        {(() => {
+          const visibleRows = (rows ?? []).filter(r => !isHidden(r.account_no));
+          const groups: { title: string; items: RowOut[] }[] = [];
+          if (activePerson === 'All') {
+            const map = new Map<string, RowOut[]>();
+            for (const r of visibleRows) {
+              const title = r.salespersonName || '—';
+              const list = map.get(title) || [];
+              list.push(r);
+              map.set(title, list);
+            }
+            for (const [title, items] of Array.from(map.entries()).sort((a,b)=>a[0].localeCompare(b[0]))) {
+              groups.push({ title, items });
+            }
+          } else {
+            groups.push({ title: activePerson, items: visibleRows.filter(r => r.salespersonName === activePerson) });
+          }
+          return groups.map((g, i) => (
+            <div key={g.title} className="rounded-lg border bg-white">
+              <div className="px-4 pt-3 text-sm font-semibold text-slate-700">{g.title}</div>
+              <div className="overflow-x-auto">
+                <table className="min-w-full text-sm">
+                  <thead>
+                    <tr className="border-b-2">
+                      <th className="p-2 text-left font-semibold">Customer</th>
+                      <th className="p-2 text-left font-semibold">City</th>
+                      <th className="p-2 text-center font-semibold" colSpan={2}>{getSeasonLabel(s1) || 'Season 1'}</th>
+                      <th className="p-2 text-center font-semibold" colSpan={2}>{getSeasonLabel(s2) || 'Season 2'}</th>
+                      <th className="p-2 text-center font-semibold" colSpan={2}>Development</th>
+                      <th className="p-2 text-left font-semibold">Actions</th>
                     </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
+                    <tr className="bg-gray-50">
+                      <th className="p-2 text-left"></th>
+                      <th className="p-2 text-left"></th>
+                      <th className="p-2 text-center">Qty</th>
+                      <th className="p-2 text-center">Price</th>
+                      <th className="p-2 text-center">Qty</th>
+                      <th className="p-2 text-center">Price</th>
+                      <th className="p-2 text-center">Qty</th>
+                      <th className="p-2 text-center">Price</th>
+                      <th className="p-2 text-center">
+                        <div className="flex items-center justify-center gap-2">
+                          <span className="rounded px-2 py-1 text-xs text-gray-600">Null = season only</span>
+                          <span className="rounded px-2 py-1 text-xs text-gray-600">Hide = stats only</span>
+                        </div>
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {g.items.map((row) => {
+                      const devQty = row.s1Qty - row.s2Qty;
+                      const devPrice = row.s1Price - row.s2Price;
+                      const nulled = isNulled(row.account_no);
+                      return (
+                        <tr key={row.account_no} className={"border-t " + (nulled ? 'opacity-60' : '')}>
+                          <td className={"p-2 font-medium " + (nulled ? 'line-through' : '')}>{row.customer}</td>
+                          <td className={"p-2 " + (nulled ? 'line-through' : '')}>{row.city}</td>
+                          <td className="p-2 text-center">{row.s1Qty}</td>
+                          <td className="p-2 text-center">{row.s1Price.toLocaleString()} DKK</td>
+                          <td className="p-2 text-center">{row.s2Qty}</td>
+                          <td className="p-2 text-center">{row.s2Price.toLocaleString()} DKK</td>
+                          <td className="p-2 text-center">
+                            <span className={devQty > 0 ? 'text-green-600' : devQty < 0 ? 'text-red-600' : ''}>
+                              {devQty > 0 ? '+' : ''}{devQty}
+                            </span>
+                          </td>
+                          <td className="p-2 text-center">
+                            <span className={devPrice > 0 ? 'text-green-600' : devPrice < 0 ? 'text-red-600' : ''}>
+                              {devPrice > 0 ? '+' : ''}{devPrice.toLocaleString()} DKK
+                            </span>
+                          </td>
+                          <td className="p-2">
+                            <div className="flex items-center justify-center gap-1.5">
+                              {/* Hide from statistics */}
+                              <button className="rounded p-1 hover:bg-gray-100" aria-label="Hide from statistics" onClick={() => toggleHide(row.account_no)}><Eye className="h-4 w-4" /></button>
+                              {/* Null for season */}
+                              <button className="rounded p-1 hover:bg-gray-100" aria-label="Null for season" onClick={() => toggleNull(row.account_no)}><EyeOff className="h-4 w-4" /></button>
+                              {/* Permanently close */}
+                              <button className="rounded p-1 hover:bg-gray-100" aria-label="Permanently close" onClick={() => permanentClose(row.account_no)}><Trash2 className="h-4 w-4" /></button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              {i < groups.length - 1 && <div className="h-px bg-gray-200 mx-4" />}
+            </div>
+          ));
+        })()}
       </div>
     </div>
   );
