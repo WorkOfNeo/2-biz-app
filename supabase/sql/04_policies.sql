@@ -39,4 +39,11 @@ to authenticated
 using (true)
 with check (true);
 
+-- jobs: allow insert for authenticated (web) users
+drop policy if exists jobs_insert_auth on public.jobs;
+create policy jobs_insert_auth on public.jobs
+for insert
+to authenticated
+with check (true);
+
 
