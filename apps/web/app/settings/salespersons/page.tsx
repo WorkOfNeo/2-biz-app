@@ -1,9 +1,10 @@
 'use client';
 import useSWR from 'swr';
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../../lib/supabaseClient';
 import { Modal } from '../../../components/Modal';
 import { ProgressBar } from '../../../components/ProgressBar';
+import { GripVertical } from 'lucide-react';
 
 export default function SalespersonsSettingsPage() {
   const { data, mutate } = useSWR('salespersons-with-counts', async () => {
@@ -22,6 +23,47 @@ export default function SalespersonsSettingsPage() {
     }
     return (sps ?? []).map((sp) => ({ id: sp.id, name: sp.name, currency: sp.currency ?? 'DKK', sort_index: sp.sort_index ?? 0, customers: map.get(sp.id) ?? 0 }));
   }, { refreshInterval: 15000 });
+
+  // Local list for drag-and-drop ordering
+  const [list, setList] = useState<any[]>([]);
+  useEffect(() => {
+    if (Array.isArray(data)) setList(data);
+  }, [data?.length]);
+  const idToIndex = useMemo(() => new Map((list ?? []).map((x, i) => [x.id, i])), [list]);
+  const [dragId, setDragId] = useState<string | null>(null);
+
+  function onDragStart(id: string) {
+    setDragId(id);
+  }
+  function onDragOver(e: React.DragEvent<HTMLTableRowElement>) {
+    e.preventDefault();
+  }
+  async function onDrop(overId: string) {
+    if (!dragId || dragId === overId) return;
+    const from = idToIndex.get(dragId);
+    const to = idToIndex.get(overId);
+    if (from === undefined || to === undefined) return;
+    const next = list.slice();
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    setList(next);
+    setDragId(null);
+    console.log('[salespersons] reorder', dragId, '->', overId);
+    // Persist new order as sort_index (0..n-1)
+    for (let i = 0; i < next.length; i++) {
+      const it = next[i];
+      try {
+        // Only update if changed
+        if (it.sort_index !== i) {
+          await supabase.from('salespersons').update({ sort_index: i }).eq('id', it.id);
+          it.sort_index = i;
+        }
+      } catch (err: any) {
+        console.error('[salespersons] sort_index persist failed', it.id, err?.message || err);
+      }
+    }
+    await mutate();
+  }
 
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [confirmName, setConfirmName] = useState<string>('');
@@ -59,16 +101,24 @@ export default function SalespersonsSettingsPage() {
         <table className="min-w-full text-sm">
           <thead className="bg-gray-50">
             <tr>
+              <th className="text-left p-2 border-b w-8"></th>
               <th className="text-left p-2 border-b">Name</th>
               <th className="text-left p-2 border-b">Currency</th>
-              <th className="text-left p-2 border-b">Order</th>
               <th className="text-left p-2 border-b">Customers</th>
               <th className="text-left p-2 border-b">Actions</th>
             </tr>
           </thead>
           <tbody>
-            {(data ?? []).map((sp: any) => (
-              <tr key={sp.id}>
+            {(list ?? []).map((sp: any) => (
+              <tr
+                key={sp.id}
+                draggable
+                onDragStart={() => onDragStart(sp.id)}
+                onDragOver={onDragOver}
+                onDrop={() => onDrop(sp.id)}
+                className={dragId === sp.id ? 'bg-slate-50' : ''}
+              >
+                <td className="p-2 border-b align-middle cursor-grab"><GripVertical className="h-4 w-4 text-gray-400" /></td>
                 <td className="p-2 border-b">{sp.name}</td>
                 <td className="p-2 border-b">
                   <select
@@ -92,25 +142,6 @@ export default function SalespersonsSettingsPage() {
                   >
                     {['DKK','SEK','NOK','EUR'].map((c) => <option key={c} value={c}>{c}</option>)}
                   </select>
-                </td>
-                <td className="p-2 border-b">
-                  <input
-                    type="number"
-                    className="w-20 rounded border px-2 py-1 text-sm"
-                    defaultValue={sp.sort_index}
-                    onBlur={async (e) => {
-                      const val = Number(e.target.value) || 0;
-                      try {
-                        console.log('[salespersons] change sort_index', sp.id, val);
-                        const { error } = await supabase.from('salespersons').update({ sort_index: val }).eq('id', sp.id);
-                        if (error) throw error;
-                        await mutate();
-                      } catch (err: any) {
-                        console.error('[salespersons] sort_index update failed', err?.message || err);
-                        alert(err?.message || 'Failed to update order');
-                      }
-                    }}
-                  />
                 </td>
                 <td className="p-2 border-b">{sp.customers}</td>
                 <td className="p-2 border-b">
