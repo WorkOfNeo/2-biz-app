@@ -181,7 +181,7 @@ async function runJob(job: JobRow) {
       // Extract headers (second header row has the real labels)
       const headers: string[] = await page.$$eval(
         `${tableSelector} thead tr:nth-of-type(2) th`,
-        (ths) => ths.map((th) => (th.textContent || '').replace(/\s+/g, ' ').trim())
+        (ths) => ths.map((th) => ((th as HTMLElement).innerText || th.textContent || '').replace(/\s+/g, ' ').trim())
       );
 
       // Extract body rows (cap to 100 rows)
@@ -190,7 +190,14 @@ async function runJob(job: JobRow) {
         (trs) =>
           Array.from(trs)
             .slice(0, 100)
-            .map((tr) => Array.from(tr.querySelectorAll('td')).map((td) => (td.textContent || '').replace(/\s+/g, ' ').trim()))
+            .map((tr) =>
+              Array.from(tr.querySelectorAll('td')).map((td) => {
+                const el = td as HTMLElement;
+                const txt = (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
+                const sort = (el.getAttribute('data-sort-value') || '').trim();
+                return txt || sort;
+              })
+            )
       );
 
       // Build objects using headers where possible
