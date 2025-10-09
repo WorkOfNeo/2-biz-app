@@ -132,7 +132,7 @@ const enqueueSchema = z.object({
   })
 });
 
-app.get('/health', (c) => c.json({ ok: true }));
+app.get('/health', (c) => c.json({ ok: true, ts: new Date().toISOString() }));
 
 app.get('/jobs/:id', async (c) => {
   const id = c.req.param('id');

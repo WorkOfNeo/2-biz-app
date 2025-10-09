@@ -216,7 +216,7 @@ async function runJob(job: JobRow) {
 
 async function mainLoop() {
   // eslint-disable-next-line no-console
-  console.log('[worker] started');
+  console.log('[worker] started', new Date().toISOString());
 
   while (true) {
     const job = await leaseNextJob();
