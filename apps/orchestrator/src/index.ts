@@ -147,7 +147,8 @@ const enqueueSchema = z.object({
       .object({ deep: z.boolean().optional() })
       .catchall(z.boolean())
       .default({}),
-    requestedBy: z.string().email().optional()
+    requestedBy: z.string().email().optional(),
+    seasonId: z.string().uuid().optional()
   })
 });
 

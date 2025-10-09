@@ -170,11 +170,161 @@ async function runJob(job: JobRow) {
     }
 
     if (deep) {
-      // Placeholder deep scrape: visit a couple of sections and extract limited JSON
-      await log(job.id, 'info', 'Starting deep scrape');
-      await page.waitForTimeout(1500);
-      const data = { sections: ['overview', 'details'], rowsCollected: 5 };
-      await saveResult(job.id, 'Deep scrape placeholder complete', data);
+      // Deep scrape: Topseller list -> iterate salesperson detail pages -> upsert to DB
+      const payloadSeasonId = (job.payload?.seasonId as string | undefined) || '';
+      if (!payloadSeasonId) throw new Error('seasonId missing in payload');
+
+      await log(job.id, 'info', 'STEP:begin_deep', { seasonId: payloadSeasonId });
+      const topsellerUrl = new URL('confident.php?mode=Topseller', SPY_BASE_URL).toString();
+      await page.goto(topsellerUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+      await page.waitForTimeout(500);
+      const stdTableSel = 'table.standardList';
+      await page.waitForSelector(stdTableSel, { timeout: 60_000 });
+      // Success criteria: tbody has at least 3 rows
+      await page.waitForFunction(() => {
+        const tb = document.querySelector('table.standardList tbody');
+        return !!tb && tb.querySelectorAll('tr').length >= 3;
+      }, {}, { timeout: 60_000 });
+      await log(job.id, 'info', 'STEP:topseller_ready');
+
+      // Extract salesperson rows: take 2nd td link and name
+      const salespeople = await page.$$eval('table.standardList tbody tr', (trs) => {
+        const list: { name: string; href: string }[] = [];
+        for (const tr of Array.from(trs)) {
+          const tds = tr.querySelectorAll('td');
+          if (!tds || tds.length < 2) continue;
+          const anchor = tds[1].querySelector('a');
+          const name = (anchor?.textContent || '').trim();
+          const href = (anchor?.getAttribute('href') || '').trim();
+          if (name && href) list.push({ name, href });
+        }
+        return list;
+      });
+      await log(job.id, 'info', 'STEP:salespersons_total', { total: salespeople.length });
+
+      // helpers
+      function toAbs(href: string): string {
+        try { return new URL(href, SPY_BASE_URL).toString(); } catch { return href; }
+      }
+      function parseAmount(value: string): { amount: number; currency: string | null } {
+        const trimmed = (value || '').replace(/\s+/g, ' ').trim();
+        if (!trimmed) return { amount: 0, currency: null };
+        // Handle European formatting like "1.335,00 DKK" or "5.926,25 DKK"
+        const parts = trimmed.split(' ');
+        const currency = parts.length > 1 ? parts[parts.length - 1] : null;
+        const numPart = currency ? trimmed.slice(0, trimmed.length - (currency.length + 1)) : trimmed;
+        const normalized = numPart.replace(/\./g, '').replace(/,/g, '.').replace(/[^0-9.\-]/g, '');
+        const amount = Number(normalized) || 0;
+        return { amount, currency };
+      }
+
+      async function ensureSalespersonId(name: string): Promise<string | null> {
+        if (!name) return null;
+        const { data: found } = await supabase.from('salespersons').select('id').ilike('name', name).maybeSingle();
+        if (found?.id) return found.id as string;
+        const { data: inserted, error } = await supabase.from('salespersons').insert({ name }).select('id').single();
+        if (error) throw error;
+        return inserted!.id as string;
+      }
+
+      async function ensureCustomerIdByAccount(accountNo: string, fields: { company?: string | null; city?: string | null; country?: string | null; salesperson_id?: string | null }): Promise<string | null> {
+        if (!accountNo) return null;
+        const { data: existing } = await supabase.from('customers').select('id').eq('customer_id', accountNo).maybeSingle();
+        if (existing?.id) return existing.id as string;
+        const { data: ins, error: insErr } = await supabase
+          .from('customers')
+          .insert({ customer_id: accountNo, ...fields })
+          .select('id')
+          .single();
+        if (insErr) throw insErr;
+        return ins!.id as string;
+      }
+
+      let processed = 0;
+      let totalRowsUpserted = 0;
+      for (const sp of salespeople) {
+        processed++;
+        await log(job.id, 'info', 'STEP:salesperson_start', { index: processed, total: salespeople.length, name: sp.name });
+        const url = toAbs(sp.href);
+        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+
+        // Wait for the single table and at least 1 row
+        const tableSel = 'table';
+        await page.waitForSelector(tableSel, { timeout: 60_000 });
+        await page.waitForFunction(() => {
+          const t = document.querySelector('table');
+          if (!t) return false;
+          return !!t.querySelector('tbody tr');
+        }, {}, { timeout: 60_000 });
+
+        // Parse headers to find column indices
+        const headers: string[] = await page.$$eval('table thead th', (ths) => ths.map((th) => (th.textContent || '').replace(/\s+/g, ' ').trim()));
+        const idx = {
+          customer: headers.findIndex((h) => /^customer$/i.test(h)),
+          account: headers.findIndex((h) => /^account$/i.test(h)),
+          country: headers.findIndex((h) => /^country$/i.test(h)),
+          qty: headers.findIndex((h) => /qty/i.test(h)),
+          amountCus: headers.findIndex((h) => /T\.\s*Amount.*Cus/i.test(h) || /Amount \(Cus\. Cur\.\)/i.test(h)),
+          salesperson: headers.findIndex((h) => /^salesperson$/i.test(h))
+        };
+
+        const rows = await page.$$eval('table tbody tr', (trs, idx) => {
+          function cellText(tr: HTMLTableRowElement, i: number): string {
+            const el = tr.querySelectorAll('td')[i] as HTMLElement | undefined;
+            if (!el) return '';
+            const link = el.querySelector('a') as HTMLElement | null;
+            const span = el.querySelector('span') as HTMLElement | null;
+            return ((el.innerText || link?.innerText || span?.innerText || el.textContent || '') as string).replace(/\s+/g, ' ').trim();
+          }
+          const out: { customer: string; account: string; country: string; qty: string; amount: string; salesperson: string }[] = [];
+          for (const tr of Array.from(trs) as HTMLTableRowElement[]) {
+            out.push({
+              customer: idx.customer >= 0 ? cellText(tr, idx.customer) : '',
+              account: idx.account >= 0 ? cellText(tr, idx.account) : '',
+              country: idx.country >= 0 ? cellText(tr, idx.country) : '',
+              qty: idx.qty >= 0 ? cellText(tr, idx.qty) : '0',
+              amount: idx.amountCus >= 0 ? cellText(tr, idx.amountCus) : '0',
+              salesperson: idx.salesperson >= 0 ? cellText(tr, idx.salesperson) : ''
+            });
+          }
+          return out;
+        }, idx as any);
+
+        // Upsert rows into DB
+        const salespersonId = await ensureSalespersonId(sp.name);
+        let upsertedForSp = 0;
+        for (const r of rows) {
+          const qty = Number((r.qty || '0').replace(/[^0-9.\-]/g, '')) || 0;
+          const { amount: price, currency } = parseAmount(r.amount || '');
+          const accountNo = (r.account || '').trim();
+          const customerName = (r.customer || '').trim();
+          const country = (r.country || '').trim();
+          // Ensure customer exists
+          const customerUuid = await ensureCustomerIdByAccount(accountNo, { company: customerName || null, country: country || null, salesperson_id: salespersonId });
+          const insertRow: any = {
+            season_id: payloadSeasonId,
+            account_no: accountNo,
+            customer_id: customerUuid,
+            customer_name: customerName || null,
+            city: null,
+            salesperson_id: salespersonId,
+            salesperson_name: sp.name,
+            qty,
+            price,
+            currency: currency || null
+          };
+          const { error: upErr } = await supabase
+            .from('sales_stats')
+            .upsert(insertRow, { onConflict: 'season_id,account_no' });
+          if (upErr) throw upErr;
+          upsertedForSp++;
+        }
+        totalRowsUpserted += upsertedForSp;
+        await log(job.id, 'info', 'STEP:salesperson_done', { index: processed, total: salespeople.length, upserted: upsertedForSp, name: sp.name });
+      }
+
+      await saveResult(job.id, 'Deep scrape completed', { seasonId: payloadSeasonId, salespersons: salespeople.length, rowsUpserted: totalRowsUpserted });
+      await log(job.id, 'info', 'STEP:complete', { rows: totalRowsUpserted });
     } else {
       // Shallow scrape: navigate to Topseller table and extract rows
       await log(job.id, 'info', 'Starting shallow scrape');

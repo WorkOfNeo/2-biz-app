@@ -4,6 +4,7 @@ import useSWR from 'swr';
 import { supabase } from '../../../lib/supabaseClient';
 import Link from 'next/link';
 import { Menu, Eye, EyeOff, Trash2 } from 'lucide-react';
+import { ProgressBar } from '../../../components/ProgressBar';
 
 export default function StatisticsGeneralPage() {
   const { data: seasons } = useSWR('seasons-all', async () => {
@@ -28,6 +29,9 @@ export default function StatisticsGeneralPage() {
   const [s2, setS2] = useState<string>('');
   const [activePerson, setActivePerson] = useState<string>('All');
   const [showSave, setShowSave] = useState(false);
+  const [updating, setUpdating] = useState(false);
+  const [updatePct, setUpdatePct] = useState(0);
+  const [lastJobId, setLastJobId] = useState<string | null>(null);
   useEffect(() => {
     if (saved?.value) {
       setS1(saved.value.s1 ?? '');
@@ -43,6 +47,68 @@ export default function StatisticsGeneralPage() {
     const s = (seasons ?? []).find((x) => x.id === seasonId);
     if (!s) return '';
     return `${s.name}${s.year ? ' ' + s.year : ''}`;
+  }
+
+  async function handleUpdateStatistic() {
+    if (!s1) return alert('Select Season 1 to update');
+    try {
+      setUpdating(true);
+      setUpdatePct(5);
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error('Not signed in');
+      const token = session.access_token;
+      const orch = (process.env.NEXT_PUBLIC_ORCHESTRATOR_URL || '').replace(/\/$/, '');
+      setUpdatePct(15);
+      const body = { type: 'scrape_statistics', payload: { toggles: { deep: true }, requestedBy: session.user.email, seasonId: s1 } };
+      const res = await fetch(`${orch}/enqueue`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(body)
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const json = await res.json();
+      setLastJobId(json.jobId);
+      setUpdatePct(35);
+      // Poll logs to reflect steps
+      const start = Date.now();
+      const stepMap: Record<string, number> = {
+        'STEP:begin_deep': 35,
+        'STEP:topseller_ready': 50,
+        'STEP:salespersons_total': 60,
+        'STEP:salesperson_start': 65,
+        'STEP:salesperson_done': 85,
+        'STEP:complete': 100
+      };
+      const timer = setInterval(async () => {
+        try {
+          const { data: logs } = await supabase
+            .from('job_logs')
+            .select('msg, ts')
+            .eq('job_id', json.jobId)
+            .order('ts', { ascending: false })
+            .limit(50);
+          for (const l of (logs ?? [])) {
+            const msg = (l as any).msg as string;
+            if (stepMap[msg] !== undefined) {
+              setUpdatePct((prev) => Math.max(prev, stepMap[msg]));
+              if (msg === 'STEP:complete') {
+                clearInterval(timer);
+                setTimeout(() => setUpdating(false), 750);
+              }
+              break;
+            }
+          }
+          // Safety cap
+          if (Date.now() - start > 5 * 60 * 1000) {
+            clearInterval(timer);
+            setUpdating(false);
+          }
+        } catch {}
+      }, 1500);
+    } catch (e: any) {
+      alert(e?.message || 'Failed to enqueue');
+      setUpdating(false);
+    }
   }
 
   function calculateDevelopment(s1Qty: number, s2Qty: number) {
@@ -124,6 +190,7 @@ export default function StatisticsGeneralPage() {
                 <button className="block w-full px-3 py-2 text-left hover:bg-gray-50">Print Report</button>
                 <button className="block w-full px-3 py-2 text-left hover:bg-gray-50">Download PDF</button>
                 <Link className="block px-3 py-2 hover:bg-gray-50" href="/statistics/general/import">Import Statistic</Link>
+                <button className="block w-full px-3 py-2 text-left hover:bg-gray-50" onClick={handleUpdateStatistic}>Update Statistic</button>
               </div>
             </div>
           </details>
@@ -171,6 +238,13 @@ export default function StatisticsGeneralPage() {
       </div>
 
       <div className="space-y-4">
+        {updating && (
+          <div className="rounded-md border p-3">
+            <div className="mb-2 text-sm text-gray-600">Updating statistics…</div>
+            <ProgressBar value={updatePct} />
+            {lastJobId && <div className="mt-1 text-[11px] text-gray-500">Job: {lastJobId}</div>}
+          </div>
+        )}
         <div className="flex w-full gap-2 overflow-x-auto">
           {(['All', ...((salespersons ?? []).map((sp) => sp.name))] as string[]).map((person) => {
             const active = person === activePerson;
