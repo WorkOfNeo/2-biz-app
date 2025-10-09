@@ -150,6 +150,21 @@ const importCustomersSchema = z.object({
   }))
 });
 
+const updateCustomerSchema = z.object({
+  company: z.string().optional(),
+  stats_display_name: z.string().optional(),
+  group_name: z.string().optional(),
+  salesperson_name: z.string().optional(),
+  email: z.string().optional(),
+  city: z.string().optional(),
+  postal: z.string().optional(),
+  country: z.string().optional(),
+  currency: z.string().optional(),
+  excluded: z.boolean().optional(),
+  nulled: z.boolean().optional(),
+  permanently_closed: z.boolean().optional()
+});
+
 app.get('/health', (c) => c.json({ ok: true, ts: new Date().toISOString() }));
 
 app.get('/jobs/:id', async (c) => {
@@ -304,6 +319,41 @@ app.post('/import/customers', async (c) => {
     }
 
     return c.json({ imported, updated });
+  } catch (err: any) {
+    return c.json({ error: err?.message ?? 'Invalid request' }, 400);
+  }
+});
+
+app.patch('/customers/:id', async (c) => {
+  try {
+    const payload = await verifySupabaseJWT(c.req.header('authorization'));
+    const email = (payload?.email as string | undefined) ?? (payload?.user_metadata as any)?.email;
+    if (!email) return c.json({ error: 'Unauthorized' }, 401);
+    const id = c.req.param('id');
+    const body = updateCustomerSchema.parse(await c.req.json());
+
+    let salesperson_id: string | null | undefined = undefined;
+    if (body.salesperson_name && body.salesperson_name.trim().length > 0) {
+      const key = body.salesperson_name.trim();
+      const { data: spFind } = await supabase.from('salespersons').select('id').ilike('name', key).maybeSingle();
+      if (spFind?.id) salesperson_id = spFind.id as string;
+      else {
+        const { data: spIns, error: spErr } = await supabase.from('salespersons').insert({ name: key }).select('id').single();
+        if (spErr) return c.json({ error: spErr.message }, 500);
+        salesperson_id = spIns!.id as string;
+      }
+    } else if (body.salesperson_name === '') {
+      // Explicitly clear salesperson
+      salesperson_id = null;
+    }
+
+    const updateFields: Record<string, any> = { ...body };
+    delete updateFields.salesperson_name;
+    if (salesperson_id !== undefined) updateFields.salesperson_id = salesperson_id;
+
+    const { error: upErr } = await supabase.from('customers').update(updateFields).eq('id', id);
+    if (upErr) return c.json({ error: upErr.message }, 500);
+    return c.json({ ok: true });
   } catch (err: any) {
     return c.json({ error: err?.message ?? 'Invalid request' }, 400);
   }

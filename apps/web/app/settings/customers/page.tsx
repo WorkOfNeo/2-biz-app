@@ -2,6 +2,8 @@
 import { useMemo, useState } from 'react';
 import * as XLSX from 'xlsx';
 import { supabase } from '../../../lib/supabaseClient';
+import useSWR from 'swr';
+import type { CustomerRow, SalespersonRow } from '@shared/types';
 
 type Row = Record<string, any>;
 
@@ -22,6 +24,20 @@ const CUSTOMER_FIELDS = [
 ];
 
 export default function CustomersSettingsPage() {
+  const { data: customers, mutate } = useSWR('customers', async () => {
+    const { data, error } = await supabase
+      .from('customers')
+      .select('*, salespersons(name)')
+      .order('company', { ascending: true })
+      .limit(5000);
+    if (error) throw new Error(error.message);
+    return data as any[];
+  }, { refreshInterval: 10000 });
+  const { data: salespersons } = useSWR('salespersons', async () => {
+    const { data, error } = await supabase.from('salespersons').select('*').order('name', { ascending: true });
+    if (error) throw new Error(error.message);
+    return data as SalespersonRow[];
+  });
   const [rows, setRows] = useState<Row[]>([]);
   const [headers, setHeaders] = useState<string[]>([]);
   const [mapping, setMapping] = useState<Record<string, string>>({});
@@ -172,7 +188,103 @@ export default function CustomersSettingsPage() {
         </button>
         {submitResult && <div className="mt-2 text-sm">{submitResult}</div>}
       </div>
+
+      <div className="space-y-2">
+        <h3 className="text-lg font-semibold mt-6">Customers</h3>
+        <div className="overflow-auto border rounded-md">
+          <table className="min-w-full text-sm">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="text-left p-2 border-b">Company</th>
+                <th className="text-left p-2 border-b">Customer ID</th>
+                <th className="text-left p-2 border-b">Salesperson</th>
+                <th className="text-left p-2 border-b">City</th>
+                <th className="text-left p-2 border-b">Country</th>
+                <th className="text-left p-2 border-b">Excluded</th>
+                <th className="text-left p-2 border-b">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(customers ?? []).map((c) => (
+                <CustomerRowItem key={c.id} row={c} salespersons={salespersons ?? []} onSaved={mutate} />
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
+  );
+}
+
+function CustomerRowItem({ row, salespersons, onSaved }: { row: any; salespersons: SalespersonRow[]; onSaved: () => void }) {
+  const [edit, setEdit] = useState(false);
+  const [company, setCompany] = useState<string>(row.company ?? '');
+  const [salespersonName, setSalespersonName] = useState<string>(row.salespersons?.name ?? '');
+  const [excluded, setExcluded] = useState<boolean>(!!row.excluded);
+  const [saving, setSaving] = useState(false);
+  return (
+    <tr>
+      <td className="p-2 border-b">
+        {edit ? (
+          <input className="border rounded p-1 text-sm w-64" value={company} onChange={(e) => setCompany(e.target.value)} />
+        ) : (
+          company || '-'
+        )}
+      </td>
+      <td className="p-2 border-b font-mono text-xs">{row.customer_id}</td>
+      <td className="p-2 border-b">
+        {edit ? (
+          <input
+            className="border rounded p-1 text-sm w-48"
+            list={`sp-${row.id}`}
+            value={salespersonName}
+            onChange={(e) => setSalespersonName(e.target.value)}
+            placeholder="Salesperson name"
+          />
+        ) : (
+          row.salespersons?.name || '-'
+        )}
+        <datalist id={`sp-${row.id}`}>
+          {salespersons.map((sp) => (
+            <option key={sp.id} value={sp.name} />
+          ))}
+        </datalist>
+      </td>
+      <td className="p-2 border-b">{row.city || '-'}</td>
+      <td className="p-2 border-b">{row.country || '-'}</td>
+      <td className="p-2 border-b">{excluded ? 'Yes' : 'No'}</td>
+      <td className="p-2 border-b">
+        {!edit ? (
+          <button className="text-blue-600 hover:underline" onClick={() => setEdit(true)}>Edit</button>
+        ) : (
+          <div className="flex items-center gap-2">
+            <button
+              disabled={saving}
+              className="text-green-600 hover:underline disabled:opacity-50"
+              onClick={async () => {
+                try {
+                  setSaving(true);
+                  const { data: { session } } = await supabase.auth.getSession();
+                  if (!session) throw new Error('Not signed in');
+                  const token = session.access_token;
+                  const res = await fetch(`${process.env.NEXT_PUBLIC_ORCHESTRATOR_URL}/customers/${row.id}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                    body: JSON.stringify({ company, salesperson_name: salespersonName, excluded })
+                  });
+                  if (!res.ok) throw new Error(await res.text());
+                  setEdit(false);
+                  onSaved();
+                } finally {
+                  setSaving(false);
+                }
+              }}
+            >Save</button>
+            <button className="text-gray-600 hover:underline" onClick={() => { setEdit(false); setCompany(row.company ?? ''); setSalespersonName(row.salespersons?.name ?? ''); }}>Cancel</button>
+          </div>
+        )}
+      </td>
+    </tr>
   );
 }
 
