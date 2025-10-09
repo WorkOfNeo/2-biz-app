@@ -1,9 +1,12 @@
 'use client';
 import useSWR from 'swr';
+import { useState } from 'react';
 import { supabase } from '../../../lib/supabaseClient';
+import { Modal } from '../../../components/Modal';
+import { ProgressBar } from '../../../components/ProgressBar';
 
 export default function SalespersonsSettingsPage() {
-  const { data } = useSWR('salespersons-with-counts', async () => {
+  const { data, mutate } = useSWR('salespersons-with-counts', async () => {
     // Fetch salespersons and customer counts
     const { data: sps, error } = await supabase.from('salespersons').select('id, name');
     if (error) throw new Error(error.message);
@@ -18,7 +21,37 @@ export default function SalespersonsSettingsPage() {
       map.set(id, (map.get(id) ?? 0) + 1);
     }
     return (sps ?? []).map((sp) => ({ id: sp.id, name: sp.name, customers: map.get(sp.id) ?? 0 }));
-  });
+  }, { refreshInterval: 15000 });
+
+  const [confirmId, setConfirmId] = useState<string | null>(null);
+  const [confirmName, setConfirmName] = useState<string>('');
+  const [alsoCustomers, setAlsoCustomers] = useState<boolean>(false);
+  const [progress, setProgress] = useState<number>(0);
+  const [deleting, setDeleting] = useState<boolean>(false);
+  async function onDelete() {
+    if (!confirmId) return;
+    try {
+      setDeleting(true);
+      setProgress(10);
+      // Ensure auth
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error('Not signed in');
+      setProgress(30);
+      // Call RPC directly from browser
+      const { error } = await supabase.rpc('delete_salesperson', {
+        p_salesperson_id: confirmId,
+        p_delete_customers: alsoCustomers
+      });
+      if (error) throw new Error(error.message);
+      setProgress(90);
+      await mutate();
+      setProgress(100);
+      setConfirmId(null);
+      setAlsoCustomers(false);
+    } finally {
+      setDeleting(false);
+    }
+  }
   return (
     <div className="space-y-4">
       <h2 className="text-xl font-semibold">Salespersons</h2>
@@ -28,6 +61,7 @@ export default function SalespersonsSettingsPage() {
             <tr>
               <th className="text-left p-2 border-b">Name</th>
               <th className="text-left p-2 border-b">Customers</th>
+              <th className="text-left p-2 border-b">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -35,11 +69,42 @@ export default function SalespersonsSettingsPage() {
               <tr key={sp.id}>
                 <td className="p-2 border-b">{sp.name}</td>
                 <td className="p-2 border-b">{sp.customers}</td>
+                <td className="p-2 border-b">
+                  <button
+                    className="text-red-600 hover:underline"
+                    onClick={() => { setConfirmId(sp.id); setConfirmName(sp.name); setAlsoCustomers(false); setProgress(0); }}
+                  >Delete</button>
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+
+      <Modal
+        open={confirmId !== null}
+        onClose={() => { if (!deleting) setConfirmId(null); }}
+        title="Delete Salesperson"
+        footer={(
+          <>
+            <button className="px-3 py-1.5 text-sm" disabled={deleting} onClick={() => setConfirmId(null)}>Cancel</button>
+            <button
+              className="inline-flex items-center rounded-md bg-red-600 text-white px-3 py-1.5 text-sm hover:bg-red-500 disabled:opacity-50"
+              disabled={deleting}
+              onClick={onDelete}
+            >Delete</button>
+          </>
+        )}
+      >
+        <div className="space-y-3">
+          <p>Are you sure you want to delete <span className="font-semibold">{confirmName}</span>?</p>
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={alsoCustomers} onChange={(e) => setAlsoCustomers(e.target.checked)} />
+            Also delete all customers assigned to this salesperson
+          </label>
+          {deleting && <ProgressBar value={progress} />}
+        </div>
+      </Modal>
     </div>
   );
 }

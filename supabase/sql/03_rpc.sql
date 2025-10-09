@@ -35,3 +35,30 @@ end;
 $$;
 
 
+-- Delete a salesperson, optionally deleting associated customers as well
+-- Note: season_statistics has ON DELETE CASCADE via customers; sales_stats references are nulled
+create or replace function public.delete_salesperson(p_salesperson_id uuid, p_delete_customers boolean default false)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if p_delete_customers then
+    delete from public.customers where salesperson_id = p_salesperson_id;
+  else
+    update public.customers set salesperson_id = null where salesperson_id = p_salesperson_id;
+  end if;
+
+  -- Clean up loose references in raw sales stats
+  update public.sales_stats
+  set salesperson_id = null,
+      salesperson_name = null
+  where salesperson_id = p_salesperson_id;
+
+  delete from public.salespersons where id = p_salesperson_id;
+end;
+$$;
+
+grant execute on function public.delete_salesperson(uuid, boolean) to public;
+
