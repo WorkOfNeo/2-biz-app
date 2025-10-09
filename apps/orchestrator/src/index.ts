@@ -36,7 +36,7 @@ function assertValidEnv() {
   if (!SUPABASE_SERVICE_ROLE_KEY) errors.push('SUPABASE_SERVICE_ROLE_KEY is empty');
   if (!SUPABASE_JWKS_URL) errors.push('SUPABASE_JWKS_URL is empty');
   else if (!isValidHttpUrl(SUPABASE_JWKS_URL)) errors.push('SUPABASE_JWKS_URL must be http(s) URL');
-  if (!SUPERADMIN_EMAIL) errors.push('SUPERADMIN_EMAIL is empty');
+  // SUPERADMIN_EMAIL optional (we currently accept any authenticated user)
   if (!WEB_ORIGIN) errors.push('WEB_ORIGIN is empty');
   else {
     const origins = WEB_ORIGIN.split(',').map((s) => s.trim()).filter(Boolean);
@@ -71,16 +71,37 @@ app.use('*', cors({
   allowHeaders: ['Authorization', 'Content-Type', 'X-Cron-Token']
 }));
 
+function buildJwksCandidates(): URL[] {
+  const list: URL[] = [];
+  try { list.push(new URL(SUPABASE_JWKS_URL)); } catch {}
+  // Add Supabase well-known fallback if not already
+  try {
+    const u = new URL(SUPABASE_JWKS_URL);
+    const wellKnown = new URL('/auth/v1/.well-known/jwks.json', u.origin);
+    if (wellKnown.toString() !== u.toString()) list.push(wellKnown);
+  } catch {}
+  return list;
+}
+
 async function verifySupabaseJWT(authorization?: string): Promise<JWTPayload | null> {
   if (!authorization) return null;
   const token = authorization.replace(/^Bearer\s+/i, '').trim();
   if (!token) return null;
-  const JWKS = createRemoteJWKSet(new URL(SUPABASE_JWKS_URL));
-  const { payload } = await jwtVerify(token, JWKS, {
-    issuer: undefined,
-    audience: undefined
-  });
-  return payload;
+  const candidates = buildJwksCandidates();
+  let lastErr: unknown = null;
+  for (const url of candidates) {
+    try {
+      const JWKS = createRemoteJWKSet(url);
+      const { payload } = await jwtVerify(token, JWKS, { issuer: undefined, audience: undefined });
+      return payload;
+    } catch (err) {
+      lastErr = err;
+      // continue to next candidate
+    }
+  }
+  // eslint-disable-next-line no-console
+  console.error('[orchestrator] JWT verify failed via JWKS candidates', candidates.map((u) => u.toString()), lastErr);
+  throw lastErr;
 }
 
 const enqueueSchema = z.object({
