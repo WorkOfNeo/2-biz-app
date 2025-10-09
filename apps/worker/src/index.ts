@@ -27,6 +27,11 @@ async function sleep(ms: number) {
 }
 
 async function log(jobId: string, level: 'info' | 'error', msg: string, data?: Record<string, any>) {
+  // Mirror to console for Railway logs
+  try {
+    // eslint-disable-next-line no-console
+    console.log(`[job ${jobId}] [${level}] ${msg}`, data ?? '');
+  } catch {}
   await supabase.from('job_logs').insert({ job_id: jobId, level, msg, data: data ?? null });
 }
 
@@ -177,6 +182,17 @@ async function runJob(job: JobRow) {
 
       const tableSelector = 'table.standardList.sortTable.table-fixed--set.selector_selection_set[name="top_sellers"]';
       await page.waitForSelector(tableSelector, { timeout: 30_000 });
+      // Wait for rows to actually contain text or data-sort-value
+      await page.waitForFunction((sel: string) => {
+        const table = document.querySelector(sel);
+        if (!table) return false;
+        const first = table.querySelector('tbody tr');
+        if (!first) return false;
+        const tds = Array.from(first.querySelectorAll('td')) as HTMLElement[];
+        return tds.some((td) => (td.innerText && td.innerText.trim().length > 0) || (td.getAttribute('data-sort-value') || '').trim().length > 0);
+      }, tableSelector, { timeout: 60_000 });
+      const firstRowHtml = await page.$eval(`${tableSelector} tbody tr`, (tr) => (tr as HTMLElement).innerHTML);
+      await log(job.id, 'info', 'First table row HTML', { html: (firstRowHtml || '').slice(0, 1000) });
 
       // Extract headers (second header row has the real labels)
       const headers: string[] = await page.$$eval(
@@ -193,7 +209,12 @@ async function runJob(job: JobRow) {
             .map((tr) =>
               Array.from(tr.querySelectorAll('td')).map((td) => {
                 const el = td as HTMLElement;
-                const txt = (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
+                // Try multiple sources for content
+                const link = el.querySelector('a') as HTMLElement | null;
+                const span = el.querySelector('span') as HTMLElement | null;
+                const txt = (el.innerText || link?.innerText || span?.innerText || el.textContent || '')
+                  .replace(/\s+/g, ' ')
+                  .trim();
                 const sort = (el.getAttribute('data-sort-value') || '').trim();
                 return txt || sort;
               })
@@ -211,7 +232,11 @@ async function runJob(job: JobRow) {
         return obj;
       });
 
-      await log(job.id, 'info', 'Topseller rows collected', { count: rowObjects.length, sample: rowObjects[0] ?? null });
+      await log(job.id, 'info', 'Topseller rows collected', {
+        count: rowObjects.length,
+        sample: rowObjects[0] ?? null,
+        sampleCells: rowsRaw[0] ?? null
+      });
       await saveResult(job.id, 'Topseller shallow snapshot', { headers: normalizedHeaders, rows: rowObjects });
     }
   } finally {
