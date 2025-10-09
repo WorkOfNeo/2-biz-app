@@ -5,17 +5,6 @@ import { supabase } from '../../../lib/supabaseClient';
 import Link from 'next/link';
 import { Menu, Eye, EyeOff, Trash2 } from 'lucide-react';
 
-const salespersons: string[] = [
-  'All',
-  'John Anderson',
-  'Sarah Nielsen',
-  'Michael Jensen',
-  'Emma Larsen',
-  'David Olsen',
-  'Lisa Hansen',
-  'Thomas Pedersen',
-];
-
 type MockRow = {
   customer: string;
   city: string;
@@ -70,6 +59,14 @@ export default function StatisticsGeneralPage() {
     const { data, error } = await supabase.from('app_settings').select('*').eq('key', 'season_compare').maybeSingle();
     if (error) throw new Error(error.message);
     return data as { id: string; key: string; value: { s1?: string; s2?: string } } | null;
+  });
+  const { data: salespersons } = useSWR('salespersons-all', async () => {
+    const { data, error } = await supabase
+      .from('salespersons')
+      .select('id, name')
+      .order('name', { ascending: true });
+    if (error) throw new Error(error.message);
+    return (data ?? []) as { id: string; name: string }[];
   });
   const [s1, setS1] = useState<string>('');
   const [s2, setS2] = useState<string>('');
@@ -162,7 +159,7 @@ export default function StatisticsGeneralPage() {
 
       <div className="space-y-4">
         <div className="flex w-full gap-2 overflow-x-auto">
-          {salespersons.map((person) => {
+          {(['All', ...((salespersons ?? []).map((sp) => sp.name))] as string[]).map((person) => {
             const active = person === activePerson;
             return (
               <button
