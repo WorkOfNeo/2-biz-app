@@ -2,6 +2,9 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../../../lib/supabaseClient';
 import useSWR from 'swr';
+import { ProgressBar } from '../../../components/ProgressBar';
+
+const ORCH_URL = (process.env.NEXT_PUBLIC_ORCHESTRATOR_URL || '').replace(/\/$/, '');
 
 export default function SeasonsSettingsPage() {
   const { data: seasons, mutate } = useSWR('seasons', async () => {
@@ -26,9 +29,48 @@ export default function SeasonsSettingsPage() {
       setS2(savedCompare.value.s2 ?? '');
     }
   }, [savedCompare?.id]);
+  const [enqueuing, setEnqueuing] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [lastJobId, setLastJobId] = useState<string | null>(null);
+
+  async function onUpdateSeasons() {
+    try {
+      setEnqueuing(true);
+      setProgress(10);
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error('Not signed in');
+      const token = session.access_token;
+      const res = await fetch(`${ORCH_URL}/enqueue`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ type: 'scrape_statistics', payload: { toggles: { seasons: true }, requestedBy: session.user.email } })
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const json = await res.json();
+      setLastJobId(json.jobId as string);
+      setProgress(35);
+      // Give SWR time, then refresh the list after some delay
+      setTimeout(() => { setProgress(80); }, 1200);
+      setTimeout(() => { mutate(); setProgress(100); }, 2500);
+    } catch (e: any) {
+      alert(e?.message || 'Failed to enqueue seasons update');
+    } finally {
+      setEnqueuing(false);
+    }
+  }
+
   return (
     <div className="space-y-4">
-      <h2 className="text-xl font-semibold">Seasons</h2>
+      <div className="flex items-center justify-between">
+        <h2 className="text-xl font-semibold">Seasons</h2>
+        <button
+          className="inline-flex items-center rounded-md bg-slate-900 text-white px-3 py-1.5 text-sm hover:bg-slate-800 disabled:opacity-50"
+          onClick={onUpdateSeasons}
+          disabled={enqueuing}
+        >UPDATE SEASONS</button>
+      </div>
+      {enqueuing && <div className="rounded-md border p-3"><ProgressBar value={progress} /></div>}
+      {lastJobId && <div className="text-xs text-gray-500">Last enqueued job: {lastJobId}</div>}
 
       {/* General statistics comparison selection */}
       <div className="border rounded-md p-4 space-y-3">

@@ -159,16 +159,65 @@ async function runJob(job: JobRow) {
 
     const toggles = (job.payload?.toggles as Record<string, any>) || {};
     const deep = Boolean(toggles.deep);
+  const doSeasons = Boolean((toggles as any).seasons);
     const dryRun = Boolean((toggles as any).dryRun);
 
-    if (dryRun) {
+  if (dryRun) {
       await log(job.id, 'info', 'Dry-run mode: skipping browser automation', { toggles });
       await saveResult(job.id, 'Dry-run completed', { ok: true, toggles });
       await log(job.id, 'info', 'STEP:complete');
       return;
     }
 
-    if (deep) {
+  if (doSeasons) {
+    // Scrape seasons list and upsert into Supabase
+    await log(job.id, 'info', 'STEP:seasons_scrape_begin');
+    const seasonsUrl = new URL('?controller=Admin%5CSettings%5CStyle%5CSeason&action=List', SPY_BASE_URL).toString();
+    await page.goto(seasonsUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+    await page.waitForSelector('table.standardList tbody tr', { timeout: 60_000 });
+    const rows = await page.$$eval('table.standardList tbody tr', (trs) => {
+      function parseSeason(text: string): { yy: number; name: string } | null {
+        const t = (text || '').trim();
+        const m = t.match(/^(\d{2})\s+(.+)$/);
+        if (!m) return null;
+        return { yy: Number(m[1]), name: m[2].trim() };
+      }
+      const out: { spyId: string; label: string; parsed: { yy: number; name: string } | null }[] = [];
+      for (const tr of Array.from(trs)) {
+        const tds = Array.from(tr.querySelectorAll('td')) as HTMLElement[];
+        const a = tds[1]?.querySelector('a[href*="season_id="]') as HTMLAnchorElement | null;
+        if (!a) continue;
+        const href = a.getAttribute('href') || '';
+        const m = href.match(/season_id=(\d+)/);
+        const spyId = m ? m[1] : '';
+        const label = (a.textContent || '').trim();
+        out.push({ spyId, label, parsed: parseSeason(label) });
+      }
+      return out;
+    });
+    await log(job.id, 'info', 'STEP:seasons_rows', { count: rows.length });
+    let upserted = 0;
+    for (const r of rows) {
+      if (!r.parsed) continue;
+      const year = 2000 + (r.parsed.yy || 0);
+      const displayName = `${r.parsed.name} ${year}`.trim();
+      try {
+        const { data: existing } = await supabase.from('seasons').select('id').ilike('name', displayName).maybeSingle();
+        if (!existing?.id) {
+          const { error: insErr } = await supabase.from('seasons').insert({ name: displayName, year });
+          if (insErr) throw insErr;
+          upserted++;
+        }
+      } catch (e: any) {
+        await log(job.id, 'error', 'STEP:seasons_upsert_error', { name: displayName, error: e?.message || String(e) });
+      }
+    }
+    await saveResult(job.id, 'Seasons scrape completed', { upserted, total: rows.length });
+    await log(job.id, 'info', 'STEP:complete', { upserted });
+    return;
+  }
+
+  if (deep) {
       // Deep scrape: Topseller list -> iterate salesperson detail pages -> upsert to DB
       // Determine seasonId: prefer payload, else read selected from Spy dropdown
       let targetSeasonId: string | null = (job.payload?.seasonId as string | undefined) || null;
