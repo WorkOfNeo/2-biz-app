@@ -410,6 +410,7 @@ async function runJob(job: JobRow) {
         matchedCustomerId?: string | null;
         salespersonName?: string | null;
       }>> {
+        await log(job.id, 'info', 'STEP:invoiced_begin');
         const url = new URL('?controller=Sale%5CInvoiced&action=List', SPY_BASE_URL).toString();
         await page!.goto(url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
         // Determine display label like "25 WINTER" from seasons table
@@ -420,6 +421,7 @@ async function runJob(job: JobRow) {
           const year = (seasonRow?.year as number | null) ?? undefined;
           if (year && name) displayLabel = String(year).slice(-2) + ' ' + name;
         } catch {}
+        await log(job.id, 'info', 'STEP:invoiced_season_label', { label: displayLabel ?? '(auto)' });
 
         // Select matching season option if possible
         try {
@@ -434,7 +436,7 @@ async function runJob(job: JobRow) {
           }, displayLabel);
           // Click search (try to find a submit button)
           const submitBtn = await findFirst(page!, ['form button[type="submit"]', 'form input[type="submit"]', 'button.search', '.btn.btn-primary']);
-          if (submitBtn) await submitBtn.click({ timeout: 30_000 }).catch(() => {});
+          if (submitBtn) { await submitBtn.click({ timeout: 30_000 }).catch(() => {}); await log(job.id, 'info', 'STEP:invoiced_search_clicked'); }
         } catch {}
 
         // Wait for the results table
@@ -443,6 +445,25 @@ async function runJob(job: JobRow) {
           const tr = document.querySelector('table.standardList tbody tr');
           return !!tr && (tr as HTMLElement).innerText.trim().length > 0;
         }, {}, { timeout: 60_000 }).catch(() => {});
+        await log(job.id, 'info', 'STEP:invoiced_ready');
+
+        // Attempt to load all rows: scroll to bottom repeatedly until count stabilizes
+        try {
+          let last = 0;
+          for (let i = 0; i < 20; i++) {
+            const count = await page!.$$eval('table.standardList tbody tr', (trs) => trs.length);
+            await log(job.id, 'info', 'STEP:invoiced_rows_count', { iteration: i + 1, count });
+            if (count > last) {
+              last = count;
+              await page!.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+              await page!.waitForTimeout(800);
+            } else {
+              break;
+            }
+          }
+        } catch (e: any) {
+          await log(job.id, 'error', 'STEP:invoiced_scroll_error', { error: e?.message ?? String(e) });
+        }
 
         // Extract rows according to header mapping (Customer, Qty, amounts)
         const rows: Array<{ customerName: string; qty: number; userCurr: string; custCurr: string; invoiceNo?: string; invoiceDate?: string }> = await page!.$$eval(
@@ -462,6 +483,7 @@ async function runJob(job: JobRow) {
             });
           }
         );
+        await (async () => { try { await log(job.id, 'info', 'STEP:invoiced_lines', { count: rows.length }); } catch {} })();
 
         const out: Array<{ customerName: string; qty: number; userCurrencyAmount: { amount: number; currency: string | null } | null; customerCurrencyAmount: { amount: number; currency: string | null } | null; invoiceNo?: string; invoiceDate?: string; matchedCustomerId?: string | null; salespersonName?: string | null; }> = [];
         for (const r of rows) {
