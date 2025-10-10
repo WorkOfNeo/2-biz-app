@@ -166,6 +166,7 @@ async function runJob(job: JobRow) {
     if (dryRun) {
       await log(job.id, 'info', 'Dry-run mode: skipping browser automation', { toggles });
       await saveResult(job.id, 'Dry-run completed', { ok: true, toggles });
+      await log(job.id, 'info', 'STEP:complete');
       return;
     }
 
@@ -395,6 +396,7 @@ async function runJob(job: JobRow) {
         sampleCells: rowsRaw[0] ?? null
       });
       await saveResult(job.id, 'Topseller shallow snapshot', { headers: normalizedHeaders, rows: rowObjects });
+      await log(job.id, 'info', 'STEP:complete');
     }
   } finally {
     try { await page?.close(); } catch {}
