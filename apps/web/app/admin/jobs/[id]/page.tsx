@@ -85,15 +85,43 @@ export default function JobDetailPage() {
 
       <div className="border rounded">
         <div className="px-3 py-2 font-semibold bg-gray-50">Logs</div>
-        <div className="max-h-[50vh] overflow-auto p-2 text-xs">
-          {(data?.logs ?? []).map((l: any) => (
-            <div key={l.id} className="border-b py-1">
-              <span className="text-gray-500">{new Date(l.ts).toLocaleTimeString()}</span>
-              <span className={"ml-2 px-1 rounded " + (l.level === 'error' ? 'bg-red-600 text-white' : 'bg-slate-800 text-white')}>{l.level}</span>
-              <span className="ml-2">{l.msg}</span>
-              {l.data && <pre className="mt-1 text-[10px] bg-gray-50 p-1 rounded overflow-auto">{JSON.stringify(l.data, null, 2)}</pre>}
-            </div>
-          ))}
+        <div className="max-h-[60vh] overflow-auto p-2 text-xs">
+          <table className="min-w-full text-xs">
+            <thead className="bg-gray-50 sticky top-0">
+              <tr>
+                <th className="text-left p-2 border-b w-[110px]">Time</th>
+                <th className="text-left p-2 border-b w-[90px]">Level</th>
+                <th className="text-left p-2 border-b">Message</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(data?.logs ?? []).map((l: any) => (
+                <tr key={l.id} className="align-top">
+                  <td className="p-2 border-b whitespace-nowrap text-gray-500">{new Date(l.ts).toLocaleTimeString()}</td>
+                  <td className="p-2 border-b"><span className={"px-1 rounded " + (l.level === 'error' ? 'bg-red-600 text-white' : 'bg-slate-800 text-white')}>{l.level}</span></td>
+                  <td className="p-2 border-b">
+                    <div className="font-medium mb-1">{l.msg}</div>
+                    {l.data && (
+                      <div className="overflow-x-auto">
+                        <table className="min-w-[600px] border text-[11px]">
+                          <tbody>
+                            {Object.entries(l.data as Record<string, any>).map(([k, v]) => (
+                              <tr key={k}>
+                                <td className="border px-2 py-1 text-gray-600 whitespace-nowrap">{k}</td>
+                                <td className="border px-2 py-1">
+                                  {typeof v === 'object' ? <pre className="whitespace-pre-wrap break-words">{JSON.stringify(v, null, 2)}</pre> : String(v)}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </div>
     </div>
