@@ -185,12 +185,14 @@ async function runJob(job: JobRow) {
           const seasonInfo = await page.evaluate(() => {
             const sel = document.querySelector('#s_season_id') as HTMLSelectElement | null;
             if (!sel) return null;
-            const opt = sel.selectedOptions?.[0] || sel.querySelector('option[selected]');
-            if (!opt) return null;
-            return { value: (opt as HTMLOptionElement).value || '', text: ((opt as HTMLOptionElement).textContent || '').trim() };
+            const selectedIndex = sel.selectedIndex >= 0 ? sel.selectedIndex : 0;
+            const opt = sel.options?.[selectedIndex] || sel.selectedOptions?.[0] || sel.querySelector('option[selected]');
+            const value = sel.value || (opt as HTMLOptionElement | null)?.value || '';
+            const text = ((opt as HTMLOptionElement | null)?.textContent || '').trim();
+            return { value, text };
           });
           if (seasonInfo && seasonInfo.text) {
-            spySeasonId = seasonInfo.value || null;
+            spySeasonId = (seasonInfo.value && seasonInfo.value !== '0') ? seasonInfo.value : null;
             function normalizeSeasonLabel(label: string): { name: string; year: number } {
               const parts = label.trim().split(/\s+/);
               const yy = parts.shift() || '';
