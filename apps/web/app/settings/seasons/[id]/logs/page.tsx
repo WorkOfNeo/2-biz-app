@@ -34,7 +34,7 @@ export default function SeasonLogsPage() {
       .maybeSingle();
     const nulledSet = new Set<string>(Array.isArray((overrides?.value as any)?.nulled) ? (overrides!.value as any).nulled : []);
 
-    // group by salesperson
+    // group by salesperson (topseller/sales_stats)
     const groups = new Map<string, any[]>();
     for (const r of (stats ?? []) as any[]) {
       const key = (r.salesperson_name || '—') as string;
@@ -52,7 +52,33 @@ export default function SeasonLogsPage() {
       });
       groups.set(key, list);
     }
-    return { groups } as { groups: Map<string, any[]> };
+    // invoiced lines from latest matching job_result for this season
+    const { data: results } = await supabase
+      .from('job_results')
+      .select('job_id, created_at, data')
+      .order('created_at', { ascending: false })
+      .limit(10);
+    let invoicedLines: any[] = [];
+    for (const r of (results ?? []) as any[]) {
+      const payloadSeason = (r.data as any)?.seasonId as string | undefined;
+      if (!payloadSeason || payloadSeason !== seasonId) continue;
+      const parsed = (r.data as any)?.parsed;
+      if (parsed?.invoiced?.lines && Array.isArray(parsed.invoiced.lines)) {
+        invoicedLines = parsed.invoiced.lines;
+        break;
+      }
+    }
+
+    // Group invoiced by salesperson, then by customer for display
+    const invoicedGroups = new Map<string, any[]>();
+    for (const l of invoicedLines) {
+      const sp = (l.salespersonName || '—') as string;
+      const arr = invoicedGroups.get(sp) ?? [];
+      arr.push(l);
+      invoicedGroups.set(sp, arr);
+    }
+
+    return { groups, invoicedGroups, invoicedCount: invoicedLines.length } as { groups: Map<string, any[]>; invoicedGroups: Map<string, any[]>; invoicedCount: number };
   }, { refreshInterval: 15000 });
 
   return (
@@ -84,6 +110,42 @@ export default function SeasonLogsPage() {
                       <td className="p-2 border-b text-right">{r.qty}</td>
                       <td className="p-2 border-b text-right">{r.price.toLocaleString()} {r.currency}</td>
                       <td className="p-2 border-b">{r.nulled ? 'Yes' : 'No'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </details>
+        ))}
+      </div>
+
+      {/* Invoiced rows grouped by salesperson */}
+      <div className="space-y-2">
+        <h3 className="text-lg font-semibold">Invoiced <span className="text-[12px] text-gray-500">{data?.invoicedCount ?? 0} rows</span></h3>
+        {Array.from((data?.invoicedGroups ?? new Map()).entries()).map(([salesperson, rows]) => (
+          <details key={salesperson} className="border rounded">
+            <summary className="cursor-pointer select-none px-3 py-2 font-medium">{salesperson} <span className="ml-2 text-[11px] text-gray-500">{rows.length} rows</span></summary>
+            <div className="overflow-auto px-2 pb-2">
+              <table className="min-w-full text-sm">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="text-left p-2 border-b">Customer</th>
+                    <th className="text-right p-2 border-b">Qty</th>
+                    <th className="text-right p-2 border-b">User Curr.</th>
+                    <th className="text-right p-2 border-b">Customer Curr.</th>
+                    <th className="text-left p-2 border-b">Invoice</th>
+                    <th className="text-left p-2 border-b">Date</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(rows as any[]).map((r: any, i: number) => (
+                    <tr key={i}>
+                      <td className="p-2 border-b">{r.customerName}</td>
+                      <td className="p-2 border-b text-right">{r.qty}</td>
+                      <td className="p-2 border-b text-right">{r.userCurrencyAmount?.amount} {r.userCurrencyAmount?.currency ?? ''}</td>
+                      <td className="p-2 border-b text-right">{r.customerCurrencyAmount?.amount} {r.customerCurrencyAmount?.currency ?? ''}</td>
+                      <td className="p-2 border-b">{r.invoiceNo ?? '-'}</td>
+                      <td className="p-2 border-b">{r.invoiceDate ?? '-'}</td>
                     </tr>
                   ))}
                 </tbody>
