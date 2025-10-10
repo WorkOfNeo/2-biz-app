@@ -40,7 +40,8 @@ export default function SeasonsSettingsPage() {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) throw new Error('Not signed in');
       const token = session.access_token;
-      const res = await fetch(`${ORCH_URL}/enqueue`, {
+      // Use the internal proxy to avoid CORS, same approach as General → Update Statistics
+      const res = await fetch(`/api/enqueue`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ type: 'scrape_statistics', payload: { toggles: { seasons: true }, requestedBy: session.user.email } })
