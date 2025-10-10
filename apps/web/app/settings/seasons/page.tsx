@@ -145,8 +145,10 @@ export default function SeasonsSettingsPage() {
             <tr>
               <th className="text-left p-2 border-b">Name</th>
               <th className="text-left p-2 border-b">Year</th>
+              <th className="text-left p-2 border-b">Spy ID</th>
               <th className="text-left p-2 border-b">Display Currency</th>
               <th className="text-left p-2 border-b">Created</th>
+              <th className="text-left p-2 border-b">Hide</th>
             </tr>
           </thead>
           <tbody>
@@ -154,6 +156,7 @@ export default function SeasonsSettingsPage() {
               <tr key={s.id}>
                 <td className="p-2 border-b"><a className="underline" href={`/settings/seasons/${s.id}/logs`}>{s.name}</a></td>
                 <td className="p-2 border-b">{s.year ?? '-'}</td>
+                <td className="p-2 border-b">{(s as any).spy_season_id ?? '—'}</td>
                 <td className="p-2 border-b">
                   <select
                     className="rounded border px-2 py-1 text-sm"
@@ -169,6 +172,16 @@ export default function SeasonsSettingsPage() {
                   </select>
                 </td>
                 <td className="p-2 border-b">{new Date(s.created_at).toLocaleString()}</td>
+                <td className="p-2 border-b">
+                  <button
+                    className={"rounded px-2 py-1 text-xs " + ((s as any).hidden ? 'bg-slate-200' : 'bg-slate-900 text-white hover:bg-slate-800')}
+                    onClick={async () => {
+                      const next = !((s as any).hidden);
+                      const { error } = await supabase.from('seasons').update({ hidden: next }).eq('id', s.id);
+                      if (!error) mutate();
+                    }}
+                  >{(s as any).hidden ? 'Hidden' : 'Hide'}</button>
+                </td>
               </tr>
             ))}
           </tbody>

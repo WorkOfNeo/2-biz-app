@@ -162,7 +162,7 @@ async function runJob(job: JobRow) {
   const doSeasons = Boolean((toggles as any).seasons);
     const dryRun = Boolean((toggles as any).dryRun);
 
-  if (dryRun) {
+    if (dryRun) {
       await log(job.id, 'info', 'Dry-run mode: skipping browser automation', { toggles });
       await saveResult(job.id, 'Dry-run completed', { ok: true, toggles });
       await log(job.id, 'info', 'STEP:complete');
@@ -204,11 +204,17 @@ async function runJob(job: JobRow) {
       const year = 2000 + Number(r.parsed.yy || 0);
       const displayName = `${String(r.parsed.name || '').trim()} ${year}`.trim();
       try {
-        const { data: existing } = await supabase.from('seasons').select('id').ilike('name', displayName).maybeSingle();
+        const { data: existing } = await supabase.from('seasons').select('id, spy_season_id').ilike('name', displayName).maybeSingle();
         if (!existing?.id) {
-          const { error: insErr } = await supabase.from('seasons').insert({ name: displayName, year });
+          const { error: insErr } = await supabase.from('seasons').insert({ name: displayName, year, spy_season_id: Number(r.spyId || 0) || null });
           if (insErr) throw insErr;
           upserted++;
+        } else {
+          // Update spy_season_id if missing
+          const spyIdNum = Number(r.spyId || 0) || null;
+          if (spyIdNum && !((existing as any).spy_season_id)) {
+            await supabase.from('seasons').update({ spy_season_id: spyIdNum }).eq('id', existing.id as string);
+          }
         }
       } catch (e: any) {
         await log(job.id, 'error', 'STEP:seasons_upsert_error', { name: displayName, error: e?.message || String(e) });
@@ -216,10 +222,10 @@ async function runJob(job: JobRow) {
     }
     await saveResult(job.id, 'Seasons scrape completed', { upserted, total: rows.length });
     await log(job.id, 'info', 'STEP:complete', { upserted });
-    return;
-  }
+      return;
+    }
 
-  if (deep) {
+    if (deep) {
       // Deep scrape: Topseller list -> iterate salesperson detail pages -> upsert to DB
       // Determine seasonId: prefer payload, else read selected from Spy dropdown
       let targetSeasonId: string | null = (job.payload?.seasonId as string | undefined) || null;

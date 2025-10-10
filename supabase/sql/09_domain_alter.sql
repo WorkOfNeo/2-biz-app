@@ -5,6 +5,13 @@
 alter table if exists public.seasons
   add column if not exists year int;
 
+-- seasons: add Spy system season id (integer) and hidden flag
+alter table if exists public.seasons
+  add column if not exists spy_season_id int;
+
+alter table if exists public.seasons
+  add column if not exists hidden boolean not null default false;
+
 -- salespersons: add currency and sort_index for ordering
 alter table if exists public.salespersons
   add column if not exists currency text;
