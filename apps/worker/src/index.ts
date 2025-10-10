@@ -390,11 +390,93 @@ async function runJob(job: JobRow) {
         await log(job.id, 'info', 'STEP:salesperson_done', { index: processed, total: salespeople.length, upserted: upsertedForSp, name: sp.name, rows: upsertedRowsForLog });
       }
 
+      // After seasonal totals per salesperson, fetch invoiced list for the same season
+      async function scrapeInvoicedLines(seasonId: string): Promise<Array<{
+        customerName: string;
+        qty: number;
+        userCurrencyAmount: { amount: number; currency: string | null } | null;
+        customerCurrencyAmount: { amount: number; currency: string | null } | null;
+        invoiceNo?: string;
+        invoiceDate?: string;
+        matchedCustomerId?: string | null;
+      }>> {
+        const url = new URL('?controller=Sale%5CInvoiced&action=List', SPY_BASE_URL).toString();
+        await page!.goto(url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+        // Determine display label like "25 WINTER" from seasons table
+        let displayLabel: string | null = null;
+        try {
+          const { data: seasonRow } = await supabase.from('seasons').select('name, year').eq('id', seasonId).maybeSingle();
+          const name = (seasonRow?.name || '').toUpperCase().replace(/^BASIC\s*-\s*/i, '').trim();
+          const year = (seasonRow?.year as number | null) ?? undefined;
+          if (year && name) displayLabel = String(year).slice(-2) + ' ' + name;
+        } catch {}
+
+        // Select matching season option if possible
+        try {
+          await page!.waitForSelector('select#Spy\\.Model\\.Sale\\.Invoiced\\.InvoicedReportSearch\\[iSeasonID\\]', { timeout: 30_000 });
+          await page!.evaluate((label) => {
+            const sel = document.querySelector('select#Spy\\.Model\\.Sale\\.Invoiced\\.InvoicedReportSearch\\[iSeasonID\\]') as HTMLSelectElement | null;
+            if (!sel || !label) return;
+            for (const opt of Array.from(sel.options)) {
+              const t = (opt.textContent || '').trim().toUpperCase();
+              if (t === label.toUpperCase()) { sel.value = opt.value; sel.dispatchEvent(new Event('change', { bubbles: true })); break; }
+            }
+          }, displayLabel);
+          // Click search (try to find a submit button)
+          const submitBtn = await findFirst(page!, ['form button[type="submit"]', 'form input[type="submit"]', 'button.search', '.btn.btn-primary']);
+          if (submitBtn) await submitBtn.click({ timeout: 30_000 }).catch(() => {});
+        } catch {}
+
+        // Wait for the results table
+        await page!.waitForSelector('table.standardList tbody tr', { timeout: 60_000 });
+        await page!.waitForFunction(() => {
+          const tr = document.querySelector('table.standardList tbody tr');
+          return !!tr && (tr as HTMLElement).innerText.trim().length > 0;
+        }, {}, { timeout: 60_000 }).catch(() => {});
+
+        // Extract rows according to header mapping (Customer, Qty, amounts)
+        const rows: Array<{ customerName: string; qty: number; userCurr: string; custCurr: string; invoiceNo?: string; invoiceDate?: string }> = await page!.$$eval(
+          'table.standardList tbody tr',
+          (trs) => {
+            function parseNumEu(s: string): number { const n = (s || '').replace(/\./g, '').replace(/,/g, '.').replace(/[^0-9.\-]/g, ''); return Number(n) || 0; }
+            return Array.from(trs).map((tr) => {
+              const tds = Array.from(tr.querySelectorAll('td')) as HTMLElement[];
+              const customerDiv = tds[2]?.querySelector('div') as HTMLElement | null;
+              const customerName = (customerDiv?.textContent || tds[2]?.textContent || '').trim();
+              const qty = parseNumEu((tds[10]?.textContent || '').trim());
+              const userCurrText = (tds[12]?.textContent || '').trim();
+              const custCurrText = (tds[13]?.textContent || '').trim();
+              const invoiceNo = (tds[7]?.textContent || '').trim();
+              const invoiceDate = (tds[8]?.textContent || '').trim();
+              return { customerName, qty, userCurr: userCurrText, custCurr: custCurrText, invoiceNo, invoiceDate };
+            });
+          }
+        );
+
+        const out: Array<{ customerName: string; qty: number; userCurrencyAmount: { amount: number; currency: string | null } | null; customerCurrencyAmount: { amount: number; currency: string | null } | null; invoiceNo?: string; invoiceDate?: string; matchedCustomerId?: string | null; }> = [];
+        for (const r of rows) {
+          const user = parseAmount(r.userCurr);
+          const cust = parseAmount(r.custCurr);
+          let matchedCustomerId: string | null = null;
+          if (r.customerName) {
+            try {
+              const { data: found } = await supabase.from('customers').select('id').ilike('company', r.customerName).maybeSingle();
+              if (found?.id) matchedCustomerId = found.id as string;
+            } catch {}
+          }
+          out.push({ customerName: r.customerName, qty: r.qty, userCurrencyAmount: { amount: user.amount, currency: user.currency }, customerCurrencyAmount: { amount: cust.amount, currency: cust.currency }, invoiceNo: r.invoiceNo, invoiceDate: r.invoiceDate, matchedCustomerId });
+        }
+        return out;
+      }
+
+      const invoicedLines = await scrapeInvoicedLines(targetSeasonId);
+
       await saveResult(job.id, 'Deep scrape completed', {
         seasonId: targetSeasonId,
         salespersons: salespeople.length,
         rowsUpserted: totalRowsUpserted,
-        samples: resultSamples
+        samples: resultSamples,
+        invoiced: { count: invoicedLines.length, lines: invoicedLines }
       });
       await log(job.id, 'info', 'STEP:complete', { rows: totalRowsUpserted });
     } else {
