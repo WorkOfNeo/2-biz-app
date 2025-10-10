@@ -1,14 +1,13 @@
 'use client';
 import { useParams } from 'next/navigation';
 import useSWR from 'swr';
-import { useMemo, useState } from 'react';
 import { supabase } from '../../../../../lib/supabaseClient';
 
 export default function SeasonLogsPage() {
   const params = useParams<{ id: string }>();
   const seasonId = params.id;
 
-  const { data, error, isLoading, mutate } = useSWR(seasonId ? ['season-logs', seasonId] : null, async () => {
+  const { data, error, isLoading } = useSWR(seasonId ? ['season-logs', seasonId] : null, async () => {
     // Fetch recent jobs that wrote to this season
     const { data: results, error: resErr } = await supabase
       .from('job_results')
@@ -27,34 +26,43 @@ export default function SeasonLogsPage() {
     return { runs: filtered, overrides: { id: overrides?.id ?? null, value } } as { runs: any[]; overrides: { id: string | null; value: { qty_overrides?: Record<string, number>; price_overrides?: Record<string, number> } } };
   }, { refreshInterval: 10000 });
 
-  async function saveOverrides(next: { qty_overrides?: Record<string, number>; price_overrides?: Record<string, number> }) {
-    const key = `season_overrides:${seasonId}`;
-    const existing = data?.overrides?.id;
-    if (existing) {
-      const { error } = await supabase.from('app_settings').update({ value: next }).eq('id', existing);
-      if (error) throw new Error(error.message);
-    } else {
-      const { error } = await supabase.from('app_settings').insert({ key, value: next });
-      if (error) throw new Error(error.message);
-    }
-    mutate();
-  }
-
   return (
     <div className="space-y-4">
       <h2 className="text-xl font-semibold">Season logs</h2>
       {isLoading && <div>Loading…</div>}
       {error && <div className="text-red-600 text-sm">{String(error)}</div>}
 
-      {/* Override form */}
+      {/* Overrides (read-only for now) */}
       <div className="border rounded p-4 space-y-3">
-        <div className="text-sm text-gray-700">Overrides (force values regardless of scrape)</div>
-        <div className="text-xs text-gray-500">Enter account numbers with Qty and Amount. These will override display and calculations.</div>
-        <OverridesEditor
-          initialQty={data?.overrides?.value?.qty_overrides ?? {}}
-          initialPrice={data?.overrides?.value?.price_overrides ?? {}}
-          onSave={saveOverrides}
-        />
+        <div className="text-sm text-gray-700">Overrides (read-only)</div>
+        <div className="overflow-auto">
+          <table className="min-w-full text-sm">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="text-left p-2 border-b">Account</th>
+                <th className="text-left p-2 border-b">Qty override</th>
+                <th className="text-left p-2 border-b">Amount override</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(() => {
+                const qty = (data?.overrides?.value?.qty_overrides ?? {}) as Record<string, number>;
+                const price = (data?.overrides?.value?.price_overrides ?? {}) as Record<string, number>;
+                const accounts = Array.from(new Set([...Object.keys(qty), ...Object.keys(price)]));
+                if (accounts.length === 0) return (
+                  <tr><td className="p-2" colSpan={3}>No overrides set for this season.</td></tr>
+                );
+                return accounts.map((a) => (
+                  <tr key={a}>
+                    <td className="p-2 border-b font-mono">{a}</td>
+                    <td className="p-2 border-b">{qty[a] ?? '-'}</td>
+                    <td className="p-2 border-b">{price[a] ?? '-'}</td>
+                  </tr>
+                ));
+              })()}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {/* Recent runs for this season */}
@@ -84,60 +92,6 @@ export default function SeasonLogsPage() {
             </tbody>
           </table>
         </div>
-      </div>
-    </div>
-  );
-}
-
-type RowEntry = { account: string; qty: string | number; amount: string | number };
-
-function OverridesEditor({ initialQty, initialPrice, onSave }: { initialQty: Record<string, number>; initialPrice: Record<string, number>; onSave: (v: { qty_overrides?: Record<string, number>; price_overrides?: Record<string, number> }) => Promise<void> }) {
-  const initialRows = useMemo(() => {
-    const accounts = Array.from(new Set([...(Object.keys(initialQty || {})), ...(Object.keys(initialPrice || {}))]));
-    return accounts.map((a) => ({ account: a, qty: (initialQty as any)?.[a] ?? '', amount: (initialPrice as any)?.[a] ?? '' })) as RowEntry[];
-  }, [initialQty, initialPrice]);
-  const [state, setState] = useState<RowEntry[]>(initialRows.length > 0 ? initialRows : [{ account: '', qty: '', amount: '' }]);
-
-  return (
-    <div className="space-y-2">
-      <table className="min-w-full text-sm">
-        <thead className="bg-gray-50">
-          <tr>
-            <th className="text-left p-2 border-b">Account</th>
-            <th className="text-left p-2 border-b">Qty</th>
-            <th className="text-left p-2 border-b">Amount</th>
-            <th className="text-left p-2 border-b">Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {state.map((r, i) => (
-            <tr key={i}>
-              <td className="p-2 border-b"><input className="border rounded px-2 py-1 text-sm w-40" value={r.account} onChange={(e) => {
-                const next = [...state]; next[i] = { account: e.target.value, qty: next[i].qty, amount: next[i].amount }; setState(next);
-              }} placeholder="CUST123" /></td>
-              <td className="p-2 border-b"><input className="border rounded px-2 py-1 text-sm w-32" type="number" value={r.qty as any} onChange={(e) => {
-                const next = [...state]; next[i] = { account: next[i].account, qty: e.target.value, amount: next[i].amount }; setState(next);
-              }} /></td>
-              <td className="p-2 border-b"><input className="border rounded px-2 py-1 text-sm w-40" type="number" value={r.amount as any} onChange={(e) => {
-                const next = [...state]; next[i] = { account: next[i].account, qty: next[i].qty, amount: e.target.value }; setState(next);
-              }} /></td>
-              <td className="p-2 border-b"><button className="text-red-600 text-xs underline" onClick={() => setState(state.filter((_, idx) => idx !== i))}>Remove</button></td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      <div className="flex items-center gap-2">
-        <button className="text-sm underline" onClick={() => setState([...state, { account: '', qty: '', amount: '' }])}>Add row</button>
-        <button className="ml-auto inline-flex items-center rounded-md bg-slate-900 text-white px-3 py-1.5 text-sm hover:bg-slate-800" onClick={async () => {
-          const qty_overrides: Record<string, number> = {};
-          const price_overrides: Record<string, number> = {};
-          for (const r of state) {
-            if (!r.account) continue;
-            if (r.qty !== '' && !Number.isNaN(Number(r.qty))) qty_overrides[r.account] = Number(r.qty);
-            if (r.amount !== '' && !Number.isNaN(Number(r.amount))) price_overrides[r.account] = Number(r.amount);
-          }
-          await onSave({ qty_overrides, price_overrides });
-        }}>Save overrides</button>
       </div>
     </div>
   );
