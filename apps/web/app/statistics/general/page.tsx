@@ -5,6 +5,7 @@ import { supabase } from '../../../lib/supabaseClient';
 import Link from 'next/link';
 import { Menu, EyeOff, Trash2, Ban } from 'lucide-react';
 import { ProgressBar } from '../../../components/ProgressBar';
+import { Modal } from '../../../components/Modal';
 
 export default function StatisticsGeneralPage() {
   const { data: seasons } = useSWR('seasons-all', async () => {
@@ -181,6 +182,48 @@ export default function StatisticsGeneralPage() {
     salespersonId: string | null;
     salespersonName: string;
   };
+
+  // Details modal state
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [detailsRow, setDetailsRow] = useState<RowOut | null>(null);
+  const [detailsLoading, setDetailsLoading] = useState(false);
+  const [detailsS1, setDetailsS1] = useState<any[]>([]);
+  const [detailsS2, setDetailsS2] = useState<any[]>([]);
+
+  async function openDetails(row: RowOut) {
+    if (!s1 && !s2) return;
+    setDetailsRow(row);
+    setDetailsOpen(true);
+    setDetailsLoading(true);
+    try {
+      const hasAccount = !!row.account_no && !row.account_no.includes(':');
+      const buildQuery = (seasonId: string | undefined) => {
+        let q = supabase
+          .from('sales_stats')
+          .select('account_no, customer_name, city, qty, price, season_id, salesperson_id')
+          .eq('season_id', seasonId ?? '');
+        if (row.salespersonId) q = q.eq('salesperson_id', row.salespersonId);
+        if (hasAccount) {
+          q = q.eq('account_no', row.account_no);
+        } else {
+          q = q.eq('customer_name', row.customer).eq('city', row.city);
+        }
+        return q.limit(10000);
+      };
+      const [r1, r2] = await Promise.all([
+        s1 ? buildQuery(s1) : Promise.resolve({ data: [], error: null } as any),
+        s2 ? buildQuery(s2) : Promise.resolve({ data: [], error: null } as any)
+      ]);
+      if ((r1 as any).error) throw new Error((r1 as any).error.message);
+      if ((r2 as any).error) throw new Error((r2 as any).error.message);
+      setDetailsS1(((r1 as any).data ?? []) as any[]);
+      setDetailsS2(((r2 as any).data ?? []) as any[]);
+    } catch (e: any) {
+      alert(e?.message || 'Failed to load details');
+    } finally {
+      setDetailsLoading(false);
+    }
+  }
 
   const { data: rows } = useSWR(
     s1 && s2 ? ['general-stats', s1, s2, selectedSalespersonId ?? 'all'] : null,
@@ -377,7 +420,8 @@ export default function StatisticsGeneralPage() {
           console.log('[stats] table items', items.length);
           const tableCurrency = activePerson && selectedSalespersonId ? (spCurrencyById[selectedSalespersonId] ?? 'DKK') : 'DKK';
           return (
-            <div className="rounded-lg border bg-white">
+            <>
+              <div className="rounded-lg border bg-white">
               <div className="overflow-x-auto">
                 <table className="min-w-full text-sm">
                   <thead>
@@ -445,6 +489,10 @@ export default function StatisticsGeneralPage() {
                           </td>
                           <td className="p-2">
                             <div className="relative flex items-center justify-center gap-1.5">
+                              <button
+                                className="rounded border px-2 py-0.5 text-xs"
+                                onClick={() => openDetails(row)}
+                              >Details</button>
                               <ActionBtn label="Hide" onClick={() => toggleHide(row.account_no)}>
                                 <Ban className="h-4 w-4" />
                               </ActionBtn>
@@ -587,6 +635,97 @@ export default function StatisticsGeneralPage() {
                 </div>
               )}
             </div>
+            {/* Details modal */}
+            <Modal
+              open={detailsOpen}
+              onClose={() => setDetailsOpen(false)}
+              title={detailsRow ? `${detailsRow.customer} · ${detailsRow.city}` : 'Details'}
+              footer={
+                <button className="rounded border px-3 py-1.5 text-sm" onClick={() => setDetailsOpen(false)}>Close</button>
+              }
+            >
+              {detailsLoading ? (
+                <div className="text-sm text-gray-600">Loading…</div>
+              ) : (
+                <div className="space-y-4">
+                  <div>
+                    <div className="font-medium mb-1">{getSeasonLabel(s1) || 'Season 1'}</div>
+                    <table className="min-w-full text-sm">
+                      <thead>
+                        <tr className="bg-gray-50">
+                          <th className="text-left p-2 border-b">Account</th>
+                          <th className="text-left p-2 border-b">Customer</th>
+                          <th className="text-left p-2 border-b">City</th>
+                          <th className="text-right p-2 border-b">Qty</th>
+                          <th className="text-right p-2 border-b">Price</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {detailsS1.map((r, idx) => (
+                          <tr key={idx}>
+                            <td className="p-2 border-b">{r.account_no}</td>
+                            <td className="p-2 border-b">{r.customer_name}</td>
+                            <td className="p-2 border-b">{r.city}</td>
+                            <td className="p-2 border-b text-right">{Number(r.qty ?? 0)}</td>
+                            <td className="p-2 border-b text-right">{Number(r.price ?? 0).toLocaleString('da-DK')}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot>
+                        {(() => {
+                          const s = detailsS1.reduce((a, r) => ({ qty: a.qty + Number(r.qty ?? 0), price: a.price + Number(r.price ?? 0) }), { qty: 0, price: 0 });
+                          return (
+                            <tr className="bg-gray-50 font-semibold">
+                              <td className="p-2" colSpan={3}>TOTAL</td>
+                              <td className="p-2 text-right">{s.qty}</td>
+                              <td className="p-2 text-right">{s.price.toLocaleString('da-DK')}</td>
+                            </tr>
+                          );
+                        })()}
+                      </tfoot>
+                    </table>
+                  </div>
+                  <div>
+                    <div className="font-medium mb-1">{getSeasonLabel(s2) || 'Season 2'}</div>
+                    <table className="min-w-full text-sm">
+                      <thead>
+                        <tr className="bg-gray-50">
+                          <th className="text-left p-2 border-b">Account</th>
+                          <th className="text-left p-2 border-b">Customer</th>
+                          <th className="text-left p-2 border-b">City</th>
+                          <th className="text-right p-2 border-b">Qty</th>
+                          <th className="text-right p-2 border-b">Price</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {detailsS2.map((r, idx) => (
+                          <tr key={idx}>
+                            <td className="p-2 border-b">{r.account_no}</td>
+                            <td className="p-2 border-b">{r.customer_name}</td>
+                            <td className="p-2 border-b">{r.city}</td>
+                            <td className="p-2 border-b text-right">{Number(r.qty ?? 0)}</td>
+                            <td className="p-2 border-b text-right">{Number(r.price ?? 0).toLocaleString('da-DK')}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot>
+                        {(() => {
+                          const s = detailsS2.reduce((a, r) => ({ qty: a.qty + Number(r.qty ?? 0), price: a.price + Number(r.price ?? 0) }), { qty: 0, price: 0 });
+                          return (
+                            <tr className="bg-gray-50 font-semibold">
+                              <td className="p-2" colSpan={3}>TOTAL</td>
+                              <td className="p-2 text-right">{s.qty}</td>
+                              <td className="p-2 text-right">{s.price.toLocaleString('da-DK')}</td>
+                            </tr>
+                          );
+                        })()}
+                      </tfoot>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </Modal>
+            </>
           );
         })()}
       </div>
