@@ -113,13 +113,13 @@ function OverridesEditor({ initialQty, initialPrice, onSave }: { initialQty: Rec
           {state.map((r, i) => (
             <tr key={i}>
               <td className="p-2 border-b"><input className="border rounded px-2 py-1 text-sm w-40" value={r.account} onChange={(e) => {
-                const next = [...state]; next[i] = { ...next[i], account: e.target.value }; setState(next);
+                const next = [...state]; next[i] = { account: e.target.value, qty: next[i].qty, amount: next[i].amount }; setState(next);
               }} placeholder="CUST123" /></td>
               <td className="p-2 border-b"><input className="border rounded px-2 py-1 text-sm w-32" type="number" value={r.qty as any} onChange={(e) => {
-                const next = [...state]; next[i] = { ...next[i], qty: e.target.value }; setState(next);
+                const next = [...state]; next[i] = { account: next[i].account, qty: e.target.value, amount: next[i].amount }; setState(next);
               }} /></td>
               <td className="p-2 border-b"><input className="border rounded px-2 py-1 text-sm w-40" type="number" value={r.amount as any} onChange={(e) => {
-                const next = [...state]; next[i] = { ...next[i], amount: e.target.value }; setState(next);
+                const next = [...state]; next[i] = { account: next[i].account, qty: next[i].qty, amount: e.target.value }; setState(next);
               }} /></td>
               <td className="p-2 border-b"><button className="text-red-600 text-xs underline" onClick={() => setState(state.filter((_, idx) => idx !== i))}>Remove</button></td>
             </tr>
