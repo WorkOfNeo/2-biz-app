@@ -172,13 +172,54 @@ async function runJob(job: JobRow) {
 
     if (deep) {
       // Deep scrape: Topseller list -> iterate salesperson detail pages -> upsert to DB
-      const payloadSeasonId = (job.payload?.seasonId as string | undefined) || '';
-      if (!payloadSeasonId) throw new Error('seasonId missing in payload');
+      // Determine seasonId: prefer payload, else read selected from Spy dropdown
+      let targetSeasonId: string | null = (job.payload?.seasonId as string | undefined) || null;
 
-      await log(job.id, 'info', 'STEP:begin_deep', { seasonId: payloadSeasonId });
       const topsellerUrl = new URL('confident.php?mode=Topseller', SPY_BASE_URL).toString();
       await page.goto(topsellerUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
       await page.waitForTimeout(500);
+
+      // If seasonId not provided, read from select#s_season_id (selected option text like "25 WINTER")
+      if (!targetSeasonId) {
+        try {
+          const seasonInfo = await page.evaluate(() => {
+            const sel = document.querySelector('#s_season_id') as HTMLSelectElement | null;
+            if (!sel) return null;
+            const opt = sel.selectedOptions?.[0] || sel.querySelector('option[selected]');
+            if (!opt) return null;
+            return { value: (opt as HTMLOptionElement).value || '', text: ((opt as HTMLOptionElement).textContent || '').trim() };
+          });
+          if (seasonInfo && seasonInfo.text) {
+            function normalizeSeasonLabel(label: string): { name: string; year: number } {
+              const parts = label.trim().split(/\s+/);
+              const yy = parts.shift() || '';
+              const year = 2000 + (parseInt(yy, 10) || 0);
+              let name = parts.join(' ').toUpperCase();
+              // Strip prefixes like "BASIC - "
+              name = name.replace(/^BASIC\s*-\s*/i, '').trim();
+              return { name, year: isFinite(year) ? year : new Date().getFullYear() };
+            }
+            const { name, year } = normalizeSeasonLabel(seasonInfo.text);
+            const displayName = `${name} ${year}`;
+            // Find or create season by display name
+            const { data: found } = await supabase.from('seasons').select('id').ilike('name', displayName).maybeSingle();
+            if (found?.id) {
+              targetSeasonId = found.id as string;
+            } else {
+              const { data: ins, error: insErr } = await supabase
+                .from('seasons')
+                .insert({ name: displayName, year })
+                .select('id')
+                .single();
+              if (!insErr) targetSeasonId = ins!.id as string;
+            }
+            await log(job.id, 'info', 'STEP:season_selected', { label: seasonInfo.text, seasonName: displayName, seasonId: targetSeasonId });
+          }
+        } catch {}
+      }
+
+      if (!targetSeasonId) throw new Error('seasonId could not be determined');
+
       const stdTableSel = 'table.standardList';
       await page.waitForSelector(stdTableSel, { timeout: 60_000 });
       // Success criteria: tbody has at least 3 rows
@@ -186,6 +227,7 @@ async function runJob(job: JobRow) {
         const tb = document.querySelector('table.standardList tbody');
         return !!tb && tb.querySelectorAll('tr').length >= 3;
       }, {}, { timeout: 60_000 });
+      await log(job.id, 'info', 'STEP:begin_deep', { seasonId: targetSeasonId });
       await log(job.id, 'info', 'STEP:topseller_ready');
 
       // Extract salesperson rows: take 2nd td link and name
@@ -308,7 +350,7 @@ async function runJob(job: JobRow) {
           // Ensure customer exists
           const customerUuid = await ensureCustomerIdByAccount(accountNo, { company: customerName || null, country: country || null, salesperson_id: salespersonId });
           const insertRow: any = {
-            season_id: payloadSeasonId,
+            season_id: targetSeasonId,
             account_no: accountNo,
             customer_id: customerUuid,
             customer_name: customerName || null,
@@ -329,7 +371,7 @@ async function runJob(job: JobRow) {
         await log(job.id, 'info', 'STEP:salesperson_done', { index: processed, total: salespeople.length, upserted: upsertedForSp, name: sp.name });
       }
 
-      await saveResult(job.id, 'Deep scrape completed', { seasonId: payloadSeasonId, salespersons: salespeople.length, rowsUpserted: totalRowsUpserted });
+      await saveResult(job.id, 'Deep scrape completed', { seasonId: targetSeasonId, salespersons: salespeople.length, rowsUpserted: totalRowsUpserted });
       await log(job.id, 'info', 'STEP:complete', { rows: totalRowsUpserted });
     } else {
       // Shallow scrape: navigate to Topseller table and extract rows
