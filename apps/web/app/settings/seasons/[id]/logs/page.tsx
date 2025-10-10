@@ -7,91 +7,90 @@ export default function SeasonLogsPage() {
   const params = useParams<{ id: string }>();
   const seasonId = params.id;
 
-  const { data, error, isLoading } = useSWR(seasonId ? ['season-logs', seasonId] : null, async () => {
-    // Fetch recent jobs that wrote to this season
-    const { data: results, error: resErr } = await supabase
-      .from('job_results')
-      .select('job_id, summary, data, created_at')
-      .order('created_at', { ascending: false })
-      .limit(50);
-    if (resErr) throw new Error(resErr.message);
-    const filtered = (results ?? []).filter((r: any) => (r.data?.seasonId || r.data?.season_id) === seasonId);
-    // Fetch overrides for this season
+  const { data, error, isLoading } = useSWR(seasonId ? ['season-stats', seasonId] : null, async () => {
+    // sales stats for this season
+    const { data: stats, error: stErr } = await supabase
+      .from('sales_stats')
+      .select('account_no, customer_name, city, qty, price, currency, salesperson_id, salesperson_name')
+      .eq('season_id', seasonId)
+      .order('salesperson_name', { ascending: true })
+      .limit(100000);
+    if (stErr) throw new Error(stErr.message);
+
+    // customers flags
+    const { data: customers } = await supabase
+      .from('customers')
+      .select('customer_id, city, nulled, permanently_closed, excluded');
+    const flags = new Map<string, { nulled: boolean }>();
+    for (const c of (customers ?? []) as any[]) {
+      flags.set(c.customer_id as string, { nulled: Boolean(c.nulled || c.permanently_closed) });
+    }
+
+    // seasonal overrides for nulled (if any)
     const { data: overrides } = await supabase
       .from('app_settings')
-      .select('id, key, value')
+      .select('value')
       .eq('key', `season_overrides:${seasonId}`)
       .maybeSingle();
-    const value = (overrides?.value as any) || { qty_overrides: {}, price_overrides: {} };
-    return { runs: filtered, overrides: { id: overrides?.id ?? null, value } } as { runs: any[]; overrides: { id: string | null; value: { qty_overrides?: Record<string, number>; price_overrides?: Record<string, number> } } };
-  }, { refreshInterval: 10000 });
+    const nulledSet = new Set<string>(Array.isArray((overrides?.value as any)?.nulled) ? (overrides!.value as any).nulled : []);
+
+    // group by salesperson
+    const groups = new Map<string, any[]>();
+    for (const r of (stats ?? []) as any[]) {
+      const key = (r.salesperson_name || '—') as string;
+      const list = groups.get(key) ?? [];
+      const account = r.account_no as string;
+      const isNulled = nulledSet.has(account) || Boolean(flags.get(account)?.nulled);
+      list.push({
+        account,
+        customer: r.customer_name ?? '-',
+        city: r.city ?? (flags.get(account) ? '' : '-'),
+        qty: Number(r.qty ?? 0),
+        price: Number(r.price ?? 0),
+        currency: r.currency ?? 'DKK',
+        nulled: isNulled
+      });
+      groups.set(key, list);
+    }
+    return { groups } as { groups: Map<string, any[]> };
+  }, { refreshInterval: 15000 });
 
   return (
     <div className="space-y-4">
-      <h2 className="text-xl font-semibold">Season logs</h2>
+      <h2 className="text-xl font-semibold">Season data</h2>
       {isLoading && <div>Loading…</div>}
       {error && <div className="text-red-600 text-sm">{String(error)}</div>}
 
-      {/* Overrides (read-only for now) */}
-      <div className="border rounded p-4 space-y-3">
-        <div className="text-sm text-gray-700">Overrides (read-only)</div>
-        <div className="overflow-auto">
-          <table className="min-w-full text-sm">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="text-left p-2 border-b">Account</th>
-                <th className="text-left p-2 border-b">Qty override</th>
-                <th className="text-left p-2 border-b">Amount override</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(() => {
-                const qty = (data?.overrides?.value?.qty_overrides ?? {}) as Record<string, number>;
-                const price = (data?.overrides?.value?.price_overrides ?? {}) as Record<string, number>;
-                const accounts = Array.from(new Set([...Object.keys(qty), ...Object.keys(price)]));
-                if (accounts.length === 0) return (
-                  <tr><td className="p-2" colSpan={3}>No overrides set for this season.</td></tr>
-                );
-                return accounts.map((a) => (
-                  <tr key={a}>
-                    <td className="p-2 border-b font-mono">{a}</td>
-                    <td className="p-2 border-b">{qty[a] ?? '-'}</td>
-                    <td className="p-2 border-b">{price[a] ?? '-'}</td>
+      <div className="space-y-2">
+        {Array.from((data?.groups ?? new Map()).entries()).map(([salesperson, rows]) => (
+          <details key={salesperson} className="border rounded">
+            <summary className="cursor-pointer select-none px-3 py-2 font-medium">{salesperson} <span className="ml-2 text-[11px] text-gray-500">{rows.length} rows</span></summary>
+            <div className="overflow-auto px-2 pb-2">
+              <table className="min-w-full text-sm">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="text-left p-2 border-b">Customer</th>
+                    <th className="text-left p-2 border-b">City</th>
+                    <th className="text-right p-2 border-b">Qty</th>
+                    <th className="text-right p-2 border-b">Amount</th>
+                    <th className="text-left p-2 border-b">Nulled?</th>
                   </tr>
-                ));
-              })()}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* Recent runs for this season */}
-      <div className="border rounded">
-        <div className="px-3 py-2 font-semibold bg-gray-50">Recent runs</div>
-        <div className="overflow-auto">
-          <table className="min-w-full text-sm">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="text-left p-2 border-b">Job</th>
-                <th className="text-left p-2 border-b">Created</th>
-                <th className="text-left p-2 border-b">Rows upserted</th>
-                <th className="text-left p-2 border-b">Samples</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(data?.runs ?? []).map((r: any) => (
-                <tr key={r.job_id}>
-                  <td className="p-2 border-b"><a className="underline" href={`/admin/jobs/${r.job_id}`} target="_blank" rel="noreferrer">{r.job_id.slice(0,8)}…</a></td>
-                  <td className="p-2 border-b whitespace-nowrap">{new Date(r.created_at).toLocaleString()}</td>
-                  <td className="p-2 border-b">{r.data?.rowsUpserted ?? '-'}</td>
-                  <td className="p-2 border-b text-xs">
-                    {Array.isArray(r.data?.samples) ? r.data.samples.map((s: any) => s.salesperson).slice(0, 5).join(', ') : '—'}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+                </thead>
+                <tbody>
+                  {rows.map((r: any, i: number) => (
+                    <tr key={i} className={r.nulled ? 'opacity-70' : ''}>
+                      <td className="p-2 border-b">{r.customer}</td>
+                      <td className="p-2 border-b">{r.city || '-'}</td>
+                      <td className="p-2 border-b text-right">{r.qty}</td>
+                      <td className="p-2 border-b text-right">{r.price.toLocaleString()} {r.currency}</td>
+                      <td className="p-2 border-b">{r.nulled ? 'Yes' : 'No'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </details>
+        ))}
       </div>
     </div>
   );
