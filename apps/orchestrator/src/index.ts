@@ -286,18 +286,36 @@ app.post('/cron/enqueue', async (c) => {
     }
   }
 
+  // Determine seasonId for deep run: prefer query param, else app_settings.season_compare.s1
+  let seasonId: string | null = null;
+  try {
+    const seasonIdParam = c.req.query('seasonId');
+    if (seasonIdParam && seasonIdParam.trim().length > 0) {
+      seasonId = seasonIdParam.trim();
+    } else {
+      const { data: compare } = await supabase
+        .from('app_settings')
+        .select('value')
+        .eq('key', 'season_compare')
+        .maybeSingle();
+      const s1 = (compare?.value as any)?.s1 as string | undefined;
+      if (s1 && s1.trim().length > 0) seasonId = s1.trim();
+    }
+  } catch {}
+
   const { data, error } = await supabase
     .from('jobs')
-    .insert(() => {
-      // Determine seasonId for deep run: prefer app_settings.season_compare.s1, fallback latest season
-      // Note: using a function to allow async-like clarity; object returned immediately
-      return { type: 'scrape_statistics', payload: { toggles: { deep: true }, requestedBy: 'cron' }, status: 'queued', max_attempts: 3 } as any;
+    .insert({
+      type: 'scrape_statistics',
+      payload: { toggles: { deep: true }, requestedBy: 'cron', ...(seasonId ? { seasonId } : {}) } as any,
+      status: 'queued',
+      max_attempts: 3
     })
     .select('id, created_at')
     .single();
   if (error) return c.json({ error: error.message }, 500);
   const jobId = (data as any)?.id;
-  logRequest('/cron/enqueue inserted', c, { jobId, created_at: (data as any)?.created_at });
+  logRequest('/cron/enqueue inserted', c, { jobId, created_at: (data as any)?.created_at, seasonId: seasonId ?? '(auto)' });
   return c.json({ jobId });
 });
 
