@@ -417,12 +417,12 @@ export default function StatisticsGeneralPage() {
                             {row.city}
                             {nulled && <div className="pointer-events-none absolute inset-x-0 top-1/2 -translate-y-1/2 h-px bg-gray-500/70" />}
                           </td>
-                          <td className="relative p-2 text-center">
+                          <td className={"relative p-2 text-center " + (row.s1Qty < row.s2Qty ? 'text-red-600' : '')}>
                             {row.s1Qty}
                             {nulled && <div className="pointer-events-none absolute inset-x-0 top-1/2 -translate-y-1/2 h-px bg-gray-500/70" />}
                           </td>
-                          <td className="relative p-2 text-center">
-                            {row.s1Price.toLocaleString()} {currency}
+                          <td className={"relative p-2 text-center " + (row.s1Price < row.s2Price ? 'text-red-600' : '')}>
+                            {row.s1Price.toLocaleString('da-DK')} {currency}
                             {nulled && <div className="pointer-events-none absolute inset-x-0 top-1/2 -translate-y-1/2 h-px bg-gray-500/70" />}
                           </td>
                           <td className="relative p-2 text-center">
@@ -430,7 +430,7 @@ export default function StatisticsGeneralPage() {
                             {nulled && <div className="pointer-events-none absolute inset-x-0 top-1/2 -translate-y-1/2 h-px bg-gray-500/70" />}
                           </td>
                           <td className="relative p-2 text-center">
-                            {row.s2Price.toLocaleString()} {currency}
+                            {row.s2Price.toLocaleString('da-DK')} {currency}
                             {nulled && <div className="pointer-events-none absolute inset-x-0 top-1/2 -translate-y-1/2 h-px bg-gray-500/70" />}
                           </td>
                           <td className="p-2 text-center">
@@ -544,28 +544,46 @@ export default function StatisticsGeneralPage() {
               })()}
               {/* KPI cards when a salesperson is selected */}
               {activePerson && (
-                <div className="border-t p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                  <div className="rounded-md border p-3">
-                    <div className="text-xs text-gray-500">Total customers</div>
-                    <div className="text-xl font-semibold">{items.length}</div>
-                  </div>
-                  <div className="rounded-md border p-3">
-                    <div className="text-xs text-gray-500">Season 1 total</div>
-                    <div className="text-xl font-semibold">{items.reduce((a,b)=>a+b.s1Price,0).toLocaleString()} DKK</div>
-                    <div className="text-[11px] text-gray-400">local: varies per salesperson</div>
-                  </div>
-                  <div className="rounded-md border p-3">
-                    <div className="text-xs text-gray-500">Season 2 total</div>
-                    <div className="text-xl font-semibold">{items.reduce((a,b)=>a+b.s2Price,0).toLocaleString()} DKK</div>
-                    <div className="text-[11px] text-gray-400">local: varies per salesperson</div>
-                  </div>
-                  <div className="rounded-md border p-3">
-                    <div className="text-xs text-gray-500">Growth</div>
-                    <div className={"text-xl font-semibold " + ((items.reduce((a,b)=>a+b.s1Price,0) - items.reduce((a,b)=>a+b.s2Price,0))>=0? 'text-green-700':'text-red-700')}>
-                      {(items.reduce((a,b)=>a+b.s1Price,0) - items.reduce((a,b)=>a+b.s2Price,0)).toLocaleString()} DKK
-                    </div>
-                    <div className="text-[11px] text-gray-400">based on visible customers</div>
-                  </div>
+                <div className="border-t p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+                  {(() => {
+                    const rates = { DKK: 1, ...(currencyRatesRow ?? {}) } as Record<string, number>;
+                    const s1Local = items.reduce((a,b)=>a+b.s1Price,0);
+                    const s2Local = items.reduce((a,b)=>a+b.s2Price,0);
+                    const s1Dkk = Math.round(items.reduce((a, r) => { const c = r.salespersonId ? (spCurrencyById[r.salespersonId] ?? 'DKK') : 'DKK'; const rate = rates[c] ?? 1; return a + r.s1Price * rate; }, 0));
+                    const s2Dkk = Math.round(items.reduce((a, r) => { const c = r.salespersonId ? (spCurrencyById[r.salespersonId] ?? 'DKK') : 'DKK'; const rate = rates[c] ?? 1; return a + r.s2Price * rate; }, 0));
+                    const nulledSeasonal = new Set(overrides?.value.nulled ?? []);
+                    const nulledCount = items.reduce((a, r) => a + (nulledSeasonal.has(r.account_no) ? 1 : 0), 0);
+                    const permClosedCount = items.reduce((a, r) => a + (closedCustomers?.setClosed.has(r.account_no) ? 1 : 0), 0);
+                    return (
+                      <>
+                        <div className="rounded-md border p-3">
+                          <div className="text-xs text-gray-500">Total customers</div>
+                          <div className="text-xl font-semibold">{items.length}</div>
+                        </div>
+                        <div className="rounded-md border p-3">
+                          <div className="text-xs text-gray-500">Season 1 total</div>
+                          <div className="text-xl font-semibold">{s1Dkk.toLocaleString('da-DK')} DKK</div>
+                          <div className="text-[11px] text-gray-400">{s1Local.toLocaleString('da-DK')} local</div>
+                        </div>
+                        <div className="rounded-md border p-3">
+                          <div className="text-xs text-gray-500">Season 2 total</div>
+                          <div className="text-xl font-semibold">{s2Dkk.toLocaleString('da-DK')} DKK</div>
+                          <div className="text-[11px] text-gray-400">{s2Local.toLocaleString('da-DK')} local</div>
+                        </div>
+                        <div className="rounded-md border p-3">
+                          <div className="text-xs text-gray-500">Growth</div>
+                          <div className={"text-xl font-semibold " + ((s1Dkk - s2Dkk)>=0? 'text-green-700':'text-red-700')}>
+                            {(s1Dkk - s2Dkk).toLocaleString('da-DK')} DKK
+                          </div>
+                          <div className="text-[11px] text-gray-400">based on visible customers</div>
+                        </div>
+                        <div className="rounded-md border p-3">
+                          <div className="text-xs text-gray-500">Nulled · Perm Closed</div>
+                          <div className="text-xl font-semibold">{nulledCount} · {permClosedCount}</div>
+                        </div>
+                      </>
+                    );
+                  })()}
                 </div>
               )}
             </div>
