@@ -203,18 +203,30 @@ async function runJob(job: JobRow) {
       if (!r.parsed) continue;
       const year = 2000 + Number(r.parsed.yy || 0);
       const displayName = `${String(r.parsed.name || '').trim()} ${year}`.trim();
+      const sourceName = displayName;
       try {
-        const { data: existing } = await supabase.from('seasons').select('id, spy_season_id').ilike('name', displayName).maybeSingle();
-        if (!existing?.id) {
-          const { error: insErr } = await supabase.from('seasons').insert({ name: displayName, year, spy_season_id: Number(r.spyId || 0) || null });
+        // Prefer matching by spy_season_id when available to avoid conflicts with manually edited names
+        const spyIdNum = Number(r.spyId || 0) || null;
+        let existingId: string | null = null;
+        if (spyIdNum) {
+          const { data: bySpy } = await supabase.from('seasons').select('id').eq('spy_season_id', spyIdNum).maybeSingle();
+          existingId = (bySpy?.id as string | undefined) || null;
+        }
+        if (!existingId) {
+          const { data: byName } = await supabase.from('seasons').select('id').ilike('name', displayName).maybeSingle();
+          existingId = (byName?.id as string | undefined) || null;
+        }
+
+        if (!existingId) {
+          const { error: insErr } = await supabase.from('seasons').insert({ name: displayName, source_name: sourceName, year, spy_season_id: spyIdNum });
           if (insErr) throw insErr;
           upserted++;
         } else {
-          // Update spy_season_id if missing
-          const spyIdNum = Number(r.spyId || 0) || null;
-          if (spyIdNum && !((existing as any).spy_season_id)) {
-            await supabase.from('seasons').update({ spy_season_id: spyIdNum }).eq('id', existing.id as string);
-          }
+          // Update spy_season_id if missing, and keep source_name up to date
+          const updates: Record<string, any> = {};
+          if (spyIdNum) updates.spy_season_id = spyIdNum;
+          updates.source_name = sourceName;
+          await supabase.from('seasons').update(updates).eq('id', existingId);
         }
       } catch (e: any) {
         await log(job.id, 'error', 'STEP:seasons_upsert_error', { name: displayName, error: e?.message || String(e) });

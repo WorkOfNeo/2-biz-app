@@ -24,3 +24,21 @@ alter table if exists public.seasons
   add column if not exists display_currency text;
 
 
+-- seasons: allow manual name edits without scrape override
+-- 1) drop unique on name (if created by initial DDL)
+alter table if exists public.seasons
+  drop constraint if exists seasons_name_key;
+
+-- 2) add source_name (scraped) and name_overridden flag
+alter table if exists public.seasons
+  add column if not exists source_name text;
+
+alter table if exists public.seasons
+  add column if not exists name_overridden boolean not null default false;
+
+-- 3) ensure unique mapping by spy_season_id when present
+create unique index if not exists idx_seasons_spy_season_id_unique
+  on public.seasons(spy_season_id)
+  where spy_season_id is not null;
+
+

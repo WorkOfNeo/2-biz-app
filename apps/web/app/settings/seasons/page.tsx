@@ -22,6 +22,8 @@ export default function SeasonsSettingsPage() {
   const [saving, setSaving] = useState(false);
   const [s1, setS1] = useState<string>('');
   const [s2, setS2] = useState<string>('');
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingName, setEditingName] = useState<string>('');
 
   useEffect(() => {
     if (savedCompare?.value) {
@@ -149,12 +151,47 @@ export default function SeasonsSettingsPage() {
               <th className="text-left p-2 border-b">Display Currency</th>
               <th className="text-left p-2 border-b">Created</th>
               <th className="text-left p-2 border-b">Hide</th>
+              <th className="text-left p-2 border-b">Edit</th>
             </tr>
           </thead>
           <tbody>
             {(seasons ?? []).map((s) => (
               <tr key={s.id}>
-                <td className="p-2 border-b"><a className="underline" href={`/settings/seasons/${s.id}/logs`}>{s.name}</a></td>
+                <td className="p-2 border-b">
+                  {editingId === s.id ? (
+                    <div className="flex items-center gap-2">
+                      <input
+                        className="border rounded px-2 py-1 text-sm"
+                        value={editingName}
+                        onChange={(e) => setEditingName(e.target.value)}
+                      />
+                      <button
+                        className="rounded bg-slate-900 text-white px-2 py-1 text-xs"
+                        onClick={async () => {
+                          const next = editingName.trim();
+                          if (!next) return;
+                          await supabase.from('seasons').update({ name: next, name_overridden: true }).eq('id', s.id);
+                          setEditingId(null); setEditingName('');
+                          mutate();
+                        }}
+                      >Save</button>
+                      <button
+                        className="rounded border px-2 py-1 text-xs"
+                        onClick={() => { setEditingId(null); setEditingName(''); }}
+                      >Cancel</button>
+                      <button
+                        className="rounded border px-2 py-1 text-xs"
+                        onClick={async () => {
+                          await supabase.from('seasons').update({ name: (s as any).source_name ?? s.name, name_overridden: false }).eq('id', s.id);
+                          setEditingId(null); setEditingName('');
+                          mutate();
+                        }}
+                      >Reset</button>
+                    </div>
+                  ) : (
+                    <a className="underline" href={`/settings/seasons/${s.id}/logs`}>{s.name}</a>
+                  )}
+                </td>
                 <td className="p-2 border-b">{s.year ?? '-'}</td>
                 <td className="p-2 border-b">{(s as any).spy_season_id ?? '—'}</td>
                 <td className="p-2 border-b">
@@ -181,6 +218,11 @@ export default function SeasonsSettingsPage() {
                       if (!error) mutate();
                     }}
                   >{(s as any).hidden ? 'Hidden' : 'Hide'}</button>
+                </td>
+                <td className="p-2 border-b">
+                  {editingId === s.id ? null : (
+                    <button className="rounded border px-2 py-1 text-xs" onClick={() => { setEditingId(s.id); setEditingName(s.name); }}>Edit</button>
+                  )}
                 </td>
               </tr>
             ))}
