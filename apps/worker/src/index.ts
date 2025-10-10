@@ -172,6 +172,8 @@ async function runJob(job: JobRow) {
       // Deep scrape: Topseller list -> iterate salesperson detail pages -> upsert to DB
       // Determine seasonId: prefer payload, else read selected from Spy dropdown
       let targetSeasonId: string | null = (job.payload?.seasonId as string | undefined) || null;
+      // Also capture Spy's internal season ID from the Topseller dropdown for robust invoiced navigation
+      let spySeasonId: string | null = null;
 
       const topsellerUrl = new URL('confident.php?mode=Topseller', SPY_BASE_URL).toString();
       await page.goto(topsellerUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
@@ -188,6 +190,7 @@ async function runJob(job: JobRow) {
             return { value: (opt as HTMLOptionElement).value || '', text: ((opt as HTMLOptionElement).textContent || '').trim() };
           });
           if (seasonInfo && seasonInfo.text) {
+            spySeasonId = seasonInfo.value || null;
             function normalizeSeasonLabel(label: string): { name: string; year: number } {
               const parts = label.trim().split(/\s+/);
               const yy = parts.shift() || '';
@@ -400,7 +403,7 @@ async function runJob(job: JobRow) {
       }
 
       // After seasonal totals per salesperson, fetch invoiced list for the same season
-      async function scrapeInvoicedLines(seasonId: string): Promise<Array<{
+      async function scrapeInvoicedLines(seasonId: string, spySeasonIdParam: string | null): Promise<Array<{
         customerName: string;
         qty: number;
         userCurrencyAmount: { amount: number; currency: string | null } | null;
@@ -411,8 +414,14 @@ async function runJob(job: JobRow) {
         salespersonName?: string | null;
       }>> {
         await log(job.id, 'info', 'STEP:invoiced_begin');
-        const url = new URL('?controller=Sale%5CInvoiced&action=List', SPY_BASE_URL).toString();
+        let url = new URL('?controller=Sale%5CInvoiced&action=List', SPY_BASE_URL).toString();
+        if (spySeasonIdParam && spySeasonIdParam.trim().length > 0) {
+          // Force search with iSeasonID to ensure correct result set
+          const force = `?controller=Sale%5CInvoiced&action=List&Spy%5CModel%5CSale%5CInvoiced%5CInvoicedReportSearch%5BbForceSearch%5D=true&Spy%5CModel%5CSale%5CInvoiced%5CInvoicedReportSearch%5BiSeasonID%5D=${encodeURIComponent(spySeasonIdParam)}`;
+          url = new URL(force, SPY_BASE_URL).toString();
+        }
         await page!.goto(url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+        await log(job.id, 'info', 'STEP:invoiced_url', { url, spySeasonId: spySeasonIdParam ?? null });
         // Determine display label like "25 WINTER" from seasons table
         let displayLabel: string | null = null;
         try {
@@ -423,41 +432,43 @@ async function runJob(job: JobRow) {
         } catch {}
         await log(job.id, 'info', 'STEP:invoiced_season_label', { label: displayLabel ?? '(auto)' });
 
-        // Select matching season option if possible
-        try {
-          await page!.waitForSelector('select#Spy\\.Model\\.Sale\\.Invoiced\\.InvoicedReportSearch\\[iSeasonID\\]', { timeout: 30_000 });
-          await page!.evaluate((label) => {
-            const sel = document.querySelector('select#Spy\\.Model\\.Sale\\.Invoiced\\.InvoicedReportSearch\\[iSeasonID\\]') as HTMLSelectElement | null;
-            if (!sel || !label) return;
-            for (const opt of Array.from(sel.options)) {
-              const t = (opt.textContent || '').trim().toUpperCase();
-              if (t === label.toUpperCase()) { sel.value = opt.value; sel.dispatchEvent(new Event('change', { bubbles: true })); break; }
+        // If we didn't include seasonId in URL, fall back to selecting by label and clicking Search
+        if (!spySeasonIdParam) {
+          try {
+            await page!.waitForSelector('select#Spy\\.Model\\.Sale\\.Invoiced\\.InvoicedReportSearch\\[iSeasonID\\]', { timeout: 30_000 });
+            await page!.evaluate((label) => {
+              const sel = document.querySelector('select#Spy\\.Model\\.Sale\\.Invoiced\\.InvoicedReportSearch\\[iSeasonID\\]') as HTMLSelectElement | null;
+              if (!sel || !label) return;
+              for (const opt of Array.from(sel.options)) {
+                const t = (opt.textContent || '').trim().toUpperCase();
+                if (t === label.toUpperCase()) { sel.value = opt.value; sel.dispatchEvent(new Event('change', { bubbles: true })); break; }
+              }
+            }, displayLabel);
+            // Click search (try to find a submit button)
+            const submitBtn = await findFirst(page!, [
+              'button[name="search"][type="submit"]',
+              'button[name="search"]',
+              'form button[name="search"]',
+              'form button[type="submit"]',
+              'form input[type="submit"]',
+              'button.search',
+              '.btn.btn-primary'
+            ]);
+            if (submitBtn) {
+              await submitBtn.click({ timeout: 30_000 }).catch(() => {});
+              await log(job.id, 'info', 'STEP:invoiced_search_clicked');
+            } else {
+              // Fallback: try submitting the first form on the page
+              try {
+                await page!.evaluate(() => {
+                  const f = document.querySelector('form') as HTMLFormElement | null;
+                  if (f) f.requestSubmit ? f.requestSubmit() : f.submit();
+                });
+                await log(job.id, 'info', 'STEP:invoiced_search_submit_fallback');
+              } catch {}
             }
-          }, displayLabel);
-          // Click search (try to find a submit button)
-          const submitBtn = await findFirst(page!, [
-            'button[name="search"][type="submit"]',
-            'button[name="search"]',
-            'form button[name="search"]',
-            'form button[type="submit"]',
-            'form input[type="submit"]',
-            'button.search',
-            '.btn.btn-primary'
-          ]);
-          if (submitBtn) {
-            await submitBtn.click({ timeout: 30_000 }).catch(() => {});
-            await log(job.id, 'info', 'STEP:invoiced_search_clicked');
-          } else {
-            // Fallback: try submitting the first form on the page
-            try {
-              await page!.evaluate(() => {
-                const f = document.querySelector('form') as HTMLFormElement | null;
-                if (f) f.requestSubmit ? f.requestSubmit() : f.submit();
-              });
-              await log(job.id, 'info', 'STEP:invoiced_search_submit_fallback');
-            } catch {}
-          }
-        } catch {}
+          } catch {}
+        }
 
         // Wait for the results table
         await page!.waitForSelector('table.standardList tbody tr', { timeout: 60_000 });
@@ -524,7 +535,7 @@ async function runJob(job: JobRow) {
         return out;
       }
 
-      const invoicedLines = await scrapeInvoicedLines(targetSeasonId);
+      const invoicedLines = await scrapeInvoicedLines(targetSeasonId, spySeasonId);
 
       await saveResult(job.id, 'Deep scrape completed', {
         seasonId: targetSeasonId,
