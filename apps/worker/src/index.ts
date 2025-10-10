@@ -180,7 +180,9 @@ async function runJob(job: JobRow) {
         const t = (text || '').trim();
         const m = t.match(/^(\d{2})\s+(.+)$/);
         if (!m) return null;
-        return { yy: Number(m[1]), name: m[2].trim() };
+        const yyStr = (m[1] ?? '0');
+        const nameStr = (m[2] ?? '').trim();
+        return { yy: Number(yyStr), name: nameStr };
       }
       const out: { spyId: string; label: string; parsed: { yy: number; name: string } | null }[] = [];
       for (const tr of Array.from(trs)) {
@@ -189,7 +191,7 @@ async function runJob(job: JobRow) {
         if (!a) continue;
         const href = a.getAttribute('href') || '';
         const m = href.match(/season_id=(\d+)/);
-        const spyId = m ? m[1] : '';
+        const spyId: string = (m?.[1] ?? '') + '';
         const label = (a.textContent || '').trim();
         out.push({ spyId, label, parsed: parseSeason(label) });
       }
@@ -199,8 +201,8 @@ async function runJob(job: JobRow) {
     let upserted = 0;
     for (const r of rows) {
       if (!r.parsed) continue;
-      const year = 2000 + (r.parsed.yy || 0);
-      const displayName = `${r.parsed.name} ${year}`.trim();
+      const year = 2000 + Number(r.parsed.yy || 0);
+      const displayName = `${String(r.parsed.name || '').trim()} ${year}`.trim();
       try {
         const { data: existing } = await supabase.from('seasons').select('id').ilike('name', displayName).maybeSingle();
         if (!existing?.id) {
