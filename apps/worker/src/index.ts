@@ -284,6 +284,7 @@ async function runJob(job: JobRow) {
       let processed = 0;
       let totalRowsUpserted = 0;
       const resultSamples: Array<{ salesperson: string; rows: Array<{ customer: string; account: string; country: string; qty: string; amount: string; salesperson: string }> }> = [];
+      const topsellerDump: Array<{ salesperson: string; rows: Array<{ customer: string; account: string; country: string; qty: number; amount: number; currency: string | null }> }> = [];
       for (const sp of salespeople) {
         processed++;
         await log(job.id, 'info', 'STEP:salesperson_start', { index: processed, total: salespeople.length, name: sp.name });
@@ -344,6 +345,14 @@ async function runJob(job: JobRow) {
         try {
           resultSamples.push({ salesperson: sp.name, rows: rows.slice(0, Math.min(5, rows.length)) });
         } catch {}
+        // Collect all rows (with numeric amounts) for logs (cap to avoid over-large payloads)
+        try {
+          const normalized = rows.slice(0, 500).map((r) => {
+            const { amount, currency } = parseAmount(r.amount || '');
+            return { customer: r.customer, account: r.account, country: r.country, qty: Number((r.qty || '0').replace(/[^0-9.\-]/g, '')) || 0, amount, currency };
+          });
+          topsellerDump.push({ salesperson: sp.name, rows: normalized });
+        } catch {}
         const upsertedRowsForLog: Array<{ account: string; customer: string; qty: number; price: number; currency: string | null; op: 'created' | 'updated' }> = [];
         for (const r of rows) {
           const qty = Number((r.qty || '0').replace(/[^0-9.\-]/g, '')) || 0;
@@ -399,6 +408,7 @@ async function runJob(job: JobRow) {
         invoiceNo?: string;
         invoiceDate?: string;
         matchedCustomerId?: string | null;
+        salespersonName?: string | null;
       }>> {
         const url = new URL('?controller=Sale%5CInvoiced&action=List', SPY_BASE_URL).toString();
         await page!.goto(url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
@@ -453,18 +463,21 @@ async function runJob(job: JobRow) {
           }
         );
 
-        const out: Array<{ customerName: string; qty: number; userCurrencyAmount: { amount: number; currency: string | null } | null; customerCurrencyAmount: { amount: number; currency: string | null } | null; invoiceNo?: string; invoiceDate?: string; matchedCustomerId?: string | null; }> = [];
+        const out: Array<{ customerName: string; qty: number; userCurrencyAmount: { amount: number; currency: string | null } | null; customerCurrencyAmount: { amount: number; currency: string | null } | null; invoiceNo?: string; invoiceDate?: string; matchedCustomerId?: string | null; salespersonName?: string | null; }> = [];
         for (const r of rows) {
           const user = parseAmount(r.userCurr);
           const cust = parseAmount(r.custCurr);
           let matchedCustomerId: string | null = null;
+          let salespersonName: string | null = null;
           if (r.customerName) {
             try {
-              const { data: found } = await supabase.from('customers').select('id').ilike('company', r.customerName).maybeSingle();
+              const { data: found } = await supabase.from('customers').select('id, salespersons(name)').ilike('company', r.customerName).maybeSingle();
               if (found?.id) matchedCustomerId = found.id as string;
+              // @ts-ignore
+              salespersonName = (found as any)?.salespersons?.name ?? null;
             } catch {}
           }
-          out.push({ customerName: r.customerName, qty: r.qty, userCurrencyAmount: { amount: user.amount, currency: user.currency }, customerCurrencyAmount: { amount: cust.amount, currency: cust.currency }, invoiceNo: r.invoiceNo, invoiceDate: r.invoiceDate, matchedCustomerId });
+          out.push({ customerName: r.customerName, qty: r.qty, userCurrencyAmount: { amount: user.amount, currency: user.currency }, customerCurrencyAmount: { amount: cust.amount, currency: cust.currency }, invoiceNo: r.invoiceNo, invoiceDate: r.invoiceDate, matchedCustomerId, salespersonName });
         }
         return out;
       }
@@ -476,7 +489,7 @@ async function runJob(job: JobRow) {
         salespersons: salespeople.length,
         rowsUpserted: totalRowsUpserted,
         samples: resultSamples,
-        invoiced: { count: invoicedLines.length, lines: invoicedLines }
+        parsed: { topseller: topsellerDump, invoiced: { count: invoicedLines.length, lines: invoicedLines } }
       });
       await log(job.id, 'info', 'STEP:complete', { rows: totalRowsUpserted });
     } else {
