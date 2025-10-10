@@ -141,6 +141,7 @@ export default function SeasonsSettingsPage() {
           >Add</button>
         </div>
       </div>
+      {/* Visible seasons */}
       <div className="overflow-auto border rounded-md">
         <table className="min-w-full text-sm">
           <thead className="bg-gray-50">
@@ -152,10 +153,11 @@ export default function SeasonsSettingsPage() {
               <th className="text-left p-2 border-b">Created</th>
               <th className="text-left p-2 border-b">Hide</th>
               <th className="text-left p-2 border-b">Edit</th>
+              <th className="text-left p-2 border-b">Delete</th>
             </tr>
           </thead>
           <tbody>
-            {(seasons ?? []).map((s) => (
+            {((seasons ?? []).filter((s: any) => !s.hidden)).map((s) => (
               <tr key={s.id}>
                 <td className="p-2 border-b">
                   {editingId === s.id ? (
@@ -191,4 +193,91 @@ export default function SeasonsSettingsPage() {
                       >Reset</button>
                     </div>
                   ) : (
-                    <a className="underline" href={`/settings/seasons/${s.id}/logs`
+                    <a className="underline" href={`/settings/seasons/${s.id}/logs`}>{s.name}</a>
+                  )}
+                </td>
+                <td className="p-2 border-b">{s.year ?? '-'}</td>
+                <td className="p-2 border-b">{(s as any).spy_season_id ?? '—'}</td>
+                <td className="p-2 border-b">
+                  <select
+                    className="rounded border px-2 py-1 text-sm"
+                    defaultValue={(s as any).display_currency ?? ''}
+                    onChange={async (e) => {
+                      const val = e.target.value || null;
+                      const { error } = await supabase.from('seasons').update({ display_currency: val }).eq('id', s.id);
+                      if (!error) mutate();
+                    }}
+                  >
+                    <option value="">(default)</option>
+                    {['DKK','SEK','NOK','EUR'].map((c) => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </td>
+                <td className="p-2 border-b">{new Date(s.created_at).toLocaleString()}</td>
+                <td className="p-2 border-b">
+                  <button
+                    className={"rounded px-2 py-1 text-xs " + ((s as any).hidden ? 'bg-slate-200' : 'bg-slate-900 text-white hover:bg-slate-800')}
+                    onClick={async () => {
+                      const next = !((s as any).hidden);
+                      const { error } = await supabase.from('seasons').update({ hidden: next }).eq('id', s.id);
+                      if (!error) mutate();
+                    }}
+                  >{(s as any).hidden ? 'Hidden' : 'Hide'}</button>
+                </td>
+                <td className="p-2 border-b">
+                  {editingId === s.id ? null : (
+                    <button className="rounded border px-2 py-1 text-xs" onClick={() => { setEditingId(s.id); setEditingName(s.name); }}>Edit</button>
+                  )}
+                </td>
+                <td className="p-2 border-b">
+                  <button
+                    className="rounded border px-2 py-1 text-xs text-red-700"
+                    onClick={async () => {
+                      if (!confirm('Delete this season? This removes only the season row; related stats rows are already ON DELETE CASCADE.')) return;
+                      const { error } = await supabase.from('seasons').delete().eq('id', s.id);
+                      if (error) { alert(error.message); return; }
+                      mutate();
+                    }}
+                  >Delete</button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Hidden seasons accordion */}
+      <details className="border rounded">
+        <summary className="cursor-pointer select-none px-3 py-2 font-medium">Hidden ({(seasons ?? []).filter((s: any) => s.hidden).length})</summary>
+        <div className="overflow-auto px-2 pb-2">
+          <table className="min-w-full text-sm">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="text-left p-2 border-b">Name</th>
+                <th className="text-left p-2 border-b">Year</th>
+                <th className="text-left p-2 border-b">Spy ID</th>
+                <th className="text-left p-2 border-b">Created</th>
+                <th className="text-left p-2 border-b">Unhide</th>
+              </tr>
+            </thead>
+            <tbody>
+              {((seasons ?? []).filter((s: any) => s.hidden)).map((s) => (
+                <tr key={s.id}>
+                  <td className="p-2 border-b">{s.name}</td>
+                  <td className="p-2 border-b">{(s as any).year ?? '-'}</td>
+                  <td className="p-2 border-b">{(s as any).spy_season_id ?? '—'}</td>
+                  <td className="p-2 border-b">{new Date(s.created_at).toLocaleString()}</td>
+                  <td className="p-2 border-b">
+                    <button
+                      className="rounded px-2 py-1 text-xs bg-slate-900 text-white"
+                      onClick={async () => {
+                        const { error } = await supabase.from('seasons').update({ hidden: false }).eq('id', s.id);
+                        if (!error) mutate();
+                      }}
+                    >Unhide</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </details>

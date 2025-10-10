@@ -19,4 +19,11 @@ to authenticated
 using (true)
 with check (true);
 
+-- Allow DELETEs for authenticated users (explicit confirmation in UI)
+drop policy if exists seasons_delete_authenticated on public.seasons;
+create policy seasons_delete_authenticated on public.seasons
+for delete
+to authenticated
+using (true);
+
 
