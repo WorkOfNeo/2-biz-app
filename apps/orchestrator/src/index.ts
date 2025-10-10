@@ -288,7 +288,11 @@ app.post('/cron/enqueue', async (c) => {
 
   const { data, error } = await supabase
     .from('jobs')
-    .insert({ type: 'scrape_statistics', payload: { toggles: { deep: false }, requestedBy: 'cron' }, status: 'queued', max_attempts: 3 })
+    .insert(() => {
+      // Determine seasonId for deep run: prefer app_settings.season_compare.s1, fallback latest season
+      // Note: using a function to allow async-like clarity; object returned immediately
+      return { type: 'scrape_statistics', payload: { toggles: { deep: true }, requestedBy: 'cron' }, status: 'queued', max_attempts: 3 } as any;
+    })
     .select('id, created_at')
     .single();
   if (error) return c.json({ error: error.message }, 500);

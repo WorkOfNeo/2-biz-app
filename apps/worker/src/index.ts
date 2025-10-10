@@ -251,12 +251,17 @@ async function runJob(job: JobRow) {
 
         // Wait for the single table and at least 1 row
         const tableSel = 'table';
-        await page.waitForSelector(tableSel, { timeout: 60_000 });
-        await page.waitForFunction(() => {
-          const t = document.querySelector('table');
-          if (!t) return false;
-          return !!t.querySelector('tbody tr');
-        }, {}, { timeout: 60_000 });
+        try {
+          await page.waitForSelector(tableSel, { timeout: 60_000 });
+          await page.waitForFunction(() => {
+            const t = document.querySelector('table');
+            if (!t) return false;
+            return !!t.querySelector('tbody tr');
+          }, {}, { timeout: 60_000 });
+        } catch (e) {
+          await log(job.id, 'error', 'STEP:salesperson_timeout', { name: sp.name });
+          continue; // skip to next salesperson instead of failing job
+        }
 
         // Parse headers to find column indices
         const headers: string[] = await page.$$eval('table thead th', (ths) => ths.map((th) => (th.textContent || '').replace(/\s+/g, ' ').trim()));
