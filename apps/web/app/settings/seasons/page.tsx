@@ -281,3 +281,6 @@ export default function SeasonsSettingsPage() {
           </table>
         </div>
       </details>
+    </div>
+  );
+}
