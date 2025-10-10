@@ -435,8 +435,28 @@ async function runJob(job: JobRow) {
             }
           }, displayLabel);
           // Click search (try to find a submit button)
-          const submitBtn = await findFirst(page!, ['form button[type="submit"]', 'form input[type="submit"]', 'button.search', '.btn.btn-primary']);
-          if (submitBtn) { await submitBtn.click({ timeout: 30_000 }).catch(() => {}); await log(job.id, 'info', 'STEP:invoiced_search_clicked'); }
+          const submitBtn = await findFirst(page!, [
+            'button[name="search"][type="submit"]',
+            'button[name="search"]',
+            'form button[name="search"]',
+            'form button[type="submit"]',
+            'form input[type="submit"]',
+            'button.search',
+            '.btn.btn-primary'
+          ]);
+          if (submitBtn) {
+            await submitBtn.click({ timeout: 30_000 }).catch(() => {});
+            await log(job.id, 'info', 'STEP:invoiced_search_clicked');
+          } else {
+            // Fallback: try submitting the first form on the page
+            try {
+              await page!.evaluate(() => {
+                const f = document.querySelector('form') as HTMLFormElement | null;
+                if (f) f.requestSubmit ? f.requestSubmit() : f.submit();
+              });
+              await log(job.id, 'info', 'STEP:invoiced_search_submit_fallback');
+            } catch {}
+          }
         } catch {}
 
         // Wait for the results table
