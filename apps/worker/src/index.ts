@@ -344,7 +344,7 @@ async function runJob(job: JobRow) {
         try {
           resultSamples.push({ salesperson: sp.name, rows: rows.slice(0, Math.min(5, rows.length)) });
         } catch {}
-        const upsertedRowsForLog: Array<{ account: string; customer: string; qty: number; price: number; currency: string | null }> = [];
+        const upsertedRowsForLog: Array<{ account: string; customer: string; qty: number; price: number; currency: string | null; op: 'created' | 'updated' }> = [];
         for (const r of rows) {
           const qty = Number((r.qty || '0').replace(/[^0-9.\-]/g, '')) || 0;
           const { amount: price, currency } = parseAmount(r.amount || '');
@@ -365,13 +365,25 @@ async function runJob(job: JobRow) {
             price,
             currency: currency || null
           };
+          // Determine whether this will create or update
+          let op: 'created' | 'updated' = 'created';
+          try {
+            const { data: existing } = await supabase
+              .from('sales_stats')
+              .select('id')
+              .eq('season_id', targetSeasonId)
+              .eq('account_no', accountNo)
+              .maybeSingle();
+            if (existing?.id) op = 'updated';
+          } catch {}
+
           const { error: upErr } = await supabase
             .from('sales_stats')
             .upsert(insertRow, { onConflict: 'season_id,account_no' });
           if (upErr) throw upErr;
           upsertedForSp++;
           if (upsertedRowsForLog.length < 10) {
-            upsertedRowsForLog.push({ account: accountNo, customer: customerName, qty, price, currency: currency || null });
+            upsertedRowsForLog.push({ account: accountNo, customer: customerName, qty, price, currency: currency || null, op });
           }
         }
         totalRowsUpserted += upsertedForSp;
