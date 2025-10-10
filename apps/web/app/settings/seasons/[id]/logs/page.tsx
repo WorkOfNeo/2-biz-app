@@ -89,12 +89,14 @@ export default function SeasonLogsPage() {
   );
 }
 
+type RowEntry = { account: string; qty: string | number; amount: string | number };
+
 function OverridesEditor({ initialQty, initialPrice, onSave }: { initialQty: Record<string, number>; initialPrice: Record<string, number>; onSave: (v: { qty_overrides?: Record<string, number>; price_overrides?: Record<string, number> }) => Promise<void> }) {
   const initialRows = useMemo(() => {
     const accounts = Array.from(new Set([...(Object.keys(initialQty || {})), ...(Object.keys(initialPrice || {}))]));
-    return accounts.map((a) => ({ account: a, qty: (initialQty as any)?.[a] ?? '', amount: (initialPrice as any)?.[a] ?? '' }));
+    return accounts.map((a) => ({ account: a, qty: (initialQty as any)?.[a] ?? '', amount: (initialPrice as any)?.[a] ?? '' })) as RowEntry[];
   }, [initialQty, initialPrice]);
-  const [state, setState] = useState(initialRows.length > 0 ? initialRows : [{ account: '', qty: '', amount: '' }]);
+  const [state, setState] = useState<RowEntry[]>(initialRows.length > 0 ? initialRows : [{ account: '', qty: '', amount: '' }]);
 
   return (
     <div className="space-y-2">
