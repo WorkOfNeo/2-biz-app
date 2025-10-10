@@ -109,7 +109,7 @@ export default function SeasonsSettingsPage() {
           <tbody>
             {(seasons ?? []).map((s) => (
               <tr key={s.id}>
-                <td className="p-2 border-b">{s.name}</td>
+                <td className="p-2 border-b"><a className="underline" href={`/settings/seasons/${s.id}/logs`}>{s.name}</a></td>
                 <td className="p-2 border-b">{s.year ?? '-'}</td>
                 <td className="p-2 border-b">
                   <select

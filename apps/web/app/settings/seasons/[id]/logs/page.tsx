@@ -1,6 +1,7 @@
 'use client';
 import { useParams } from 'next/navigation';
 import useSWR from 'swr';
+import { useMemo, useState } from 'react';
 import { supabase } from '../../../../../lib/supabaseClient';
 
 export default function SeasonLogsPage() {
@@ -89,11 +90,11 @@ export default function SeasonLogsPage() {
 }
 
 function OverridesEditor({ initialQty, initialPrice, onSave }: { initialQty: Record<string, number>; initialPrice: Record<string, number>; onSave: (v: { qty_overrides?: Record<string, number>; price_overrides?: Record<string, number> }) => Promise<void> }) {
-  const [rows, setRows] = (function init() {
-    const accounts = Array.from(new Set([...Object.keys(initialQty || {}), ...Object.keys(initialPrice || {})]));
-    return useSWR.mutate ? useState(accounts.map((a) => ({ account: a, qty: initialQty?.[a] ?? '', amount: initialPrice?.[a] ?? '' })))[0] : useState([] as any)[0];
-  })();
-  const [state, setState] = useState(rows.length > 0 ? rows : [{ account: '', qty: '', amount: '' }]);
+  const initialRows = useMemo(() => {
+    const accounts = Array.from(new Set([...(Object.keys(initialQty || {})), ...(Object.keys(initialPrice || {}))]));
+    return accounts.map((a) => ({ account: a, qty: (initialQty as any)?.[a] ?? '', amount: (initialPrice as any)?.[a] ?? '' }));
+  }, [initialQty, initialPrice]);
+  const [state, setState] = useState(initialRows.length > 0 ? initialRows : [{ account: '', qty: '', amount: '' }]);
 
   return (
     <div className="space-y-2">
