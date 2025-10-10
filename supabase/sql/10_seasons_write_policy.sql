@@ -11,4 +11,12 @@ for insert
 to authenticated
 with check (true);
 
+-- Allow UPDATEs for authenticated users (UI edits: name, hidden, display_currency)
+drop policy if exists seasons_update_authenticated on public.seasons;
+create policy seasons_update_authenticated on public.seasons
+for update
+to authenticated
+using (true)
+with check (true);
+
 

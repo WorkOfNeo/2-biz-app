@@ -170,7 +170,8 @@ export default function SeasonsSettingsPage() {
                         onClick={async () => {
                           const next = editingName.trim();
                           if (!next) return;
-                          await supabase.from('seasons').update({ name: next, name_overridden: true }).eq('id', s.id);
+                          const { error } = await supabase.from('seasons').update({ name: next, name_overridden: true }).eq('id', s.id);
+                          if (error) { alert(error.message); return; }
                           setEditingId(null); setEditingName('');
                           mutate();
                         }}
@@ -182,54 +183,12 @@ export default function SeasonsSettingsPage() {
                       <button
                         className="rounded border px-2 py-1 text-xs"
                         onClick={async () => {
-                          await supabase.from('seasons').update({ name: (s as any).source_name ?? s.name, name_overridden: false }).eq('id', s.id);
+                          const { error } = await supabase.from('seasons').update({ name: (s as any).source_name ?? s.name, name_overridden: false }).eq('id', s.id);
+                          if (error) { alert(error.message); return; }
                           setEditingId(null); setEditingName('');
                           mutate();
                         }}
                       >Reset</button>
                     </div>
                   ) : (
-                    <a className="underline" href={`/settings/seasons/${s.id}/logs`}>{s.name}</a>
-                  )}
-                </td>
-                <td className="p-2 border-b">{s.year ?? '-'}</td>
-                <td className="p-2 border-b">{(s as any).spy_season_id ?? '—'}</td>
-                <td className="p-2 border-b">
-                  <select
-                    className="rounded border px-2 py-1 text-sm"
-                    defaultValue={(s as any).display_currency ?? ''}
-                    onChange={async (e) => {
-                      const val = e.target.value || null;
-                      const { error } = await supabase.from('seasons').update({ display_currency: val }).eq('id', s.id);
-                      if (!error) mutate();
-                    }}
-                  >
-                    <option value="">(default)</option>
-                    {['DKK','SEK','NOK','EUR'].map((c) => <option key={c} value={c}>{c}</option>)}
-                  </select>
-                </td>
-                <td className="p-2 border-b">{new Date(s.created_at).toLocaleString()}</td>
-                <td className="p-2 border-b">
-                  <button
-                    className={"rounded px-2 py-1 text-xs " + ((s as any).hidden ? 'bg-slate-200' : 'bg-slate-900 text-white hover:bg-slate-800')}
-                    onClick={async () => {
-                      const next = !((s as any).hidden);
-                      const { error } = await supabase.from('seasons').update({ hidden: next }).eq('id', s.id);
-                      if (!error) mutate();
-                    }}
-                  >{(s as any).hidden ? 'Hidden' : 'Hide'}</button>
-                </td>
-                <td className="p-2 border-b">
-                  {editingId === s.id ? null : (
-                    <button className="rounded border px-2 py-1 text-xs" onClick={() => { setEditingId(s.id); setEditingName(s.name); }}>Edit</button>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
-
+                    <a className="underline" href={`/settings/seasons/${s.id}/logs`
