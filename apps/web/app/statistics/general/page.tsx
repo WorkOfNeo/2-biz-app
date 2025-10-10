@@ -328,6 +328,7 @@ export default function StatisticsGeneralPage() {
                 <button className="block w-full px-3 py-2 text-left hover:bg-gray-50">Print Report</button>
                 <button className="block w-full px-3 py-2 text-left hover:bg-gray-50">Download PDF</button>
                 <Link className="block px-3 py-2 hover:bg-gray-50" href="/statistics/general/import">Import Statistic</Link>
+                <Link className="block px-3 py-2 hover:bg-gray-50" href="/statistics/general/last-runs">Last Runs</Link>
                 <Link className="block px-3 py-2 hover:bg-gray-50" href="/settings/seasons">Season Settings</Link>
                 <button className="block w-full px-3 py-2 text-left hover:bg-gray-50" onClick={handleUpdateStatistic}>Update Statistic</button>
               </div>
