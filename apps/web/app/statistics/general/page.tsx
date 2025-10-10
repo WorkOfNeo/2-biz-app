@@ -25,6 +25,12 @@ export default function StatisticsGeneralPage() {
     if (error) throw new Error(error.message);
     return (data ?? []) as { id: string; name: string; currency?: string | null; sort_index?: number | null }[];
   });
+  // Currency rates (from Misc settings) – 1 unit equals how many DKK
+  const { data: currencyRatesRow } = useSWR('app-settings:currency-rates', async () => {
+    const { data, error } = await supabase.from('app_settings').select('*').eq('key', 'currency_rates').maybeSingle();
+    if (error) throw new Error(error.message);
+    return (data?.value as Record<string, number> | undefined) ?? {};
+  });
   const [s1, setS1] = useState<string>('');
   const [s2, setS2] = useState<string>('');
   const [activePerson, setActivePerson] = useState<string>('');
@@ -452,6 +458,49 @@ export default function StatisticsGeneralPage() {
                         </tr>
                       );
                     })}
+                    {/* Totals row */}
+                    {(() => {
+                      const sum = items.reduce((acc, r) => {
+                        acc.s1Qty += r.s1Qty; acc.s1Price += r.s1Price; acc.s2Qty += r.s2Qty; acc.s2Price += r.s2Price; return acc;
+                      }, { s1Qty: 0, s1Price: 0, s2Qty: 0, s2Price: 0 });
+                      return (
+                        <tr className="border-t bg-gray-50 font-semibold">
+                          <td className="p-2">TOTAL</td>
+                          <td className="p-2"></td>
+                          <td className="p-2 text-center">{sum.s1Qty}</td>
+                          <td className="p-2 text-center">{sum.s1Price.toLocaleString()} DKK</td>
+                          <td className="p-2 text-center">{sum.s2Qty}</td>
+                          <td className="p-2 text-center">{sum.s2Price.toLocaleString()} DKK</td>
+                          <td className="p-2 text-center">{(sum.s1Qty - sum.s2Qty) >= 0 ? `+${sum.s1Qty - sum.s2Qty}` : (sum.s1Qty - sum.s2Qty)}</td>
+                          <td className="p-2 text-center">{(sum.s1Price - sum.s2Price).toLocaleString()} DKK</td>
+                          <td className="p-2"></td>
+                        </tr>
+                      );
+                    })()}
+                    {/* Totals in DKK (converted) */}
+                    {(() => {
+                      const rates = { DKK: 1, ...(currencyRatesRow ?? {}) } as Record<string, number>;
+                      const sumDkk = items.reduce((acc, r) => {
+                        const currency = r.salespersonId ? (spCurrencyById[r.salespersonId] ?? 'DKK') : 'DKK';
+                        const rate = rates[currency] ?? 1; // 1 unit equals how many DKK
+                        acc.s1Price += r.s1Price * rate;
+                        acc.s2Price += r.s2Price * rate;
+                        return acc;
+                      }, { s1Price: 0, s2Price: 0 });
+                      return (
+                        <tr className="border-t bg-gray-100">
+                          <td className="p-2">TOTAL (DKK)</td>
+                          <td className="p-2"></td>
+                          <td className="p-2 text-center">—</td>
+                          <td className="p-2 text-center">{Math.round(sumDkk.s1Price).toLocaleString()} DKK</td>
+                          <td className="p-2 text-center">—</td>
+                          <td className="p-2 text-center">{Math.round(sumDkk.s2Price).toLocaleString()} DKK</td>
+                          <td className="p-2 text-center">—</td>
+                          <td className="p-2 text-center">{Math.round(sumDkk.s1Price - sumDkk.s2Price).toLocaleString()} DKK</td>
+                          <td className="p-2"></td>
+                        </tr>
+                      );
+                    })()}
                   </tbody>
                 </table>
               </div>
