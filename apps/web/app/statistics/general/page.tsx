@@ -460,7 +460,7 @@ export default function StatisticsGeneralPage() {
                       );
                     })}
                   </tbody>
-                  <tfoot>
+                  <tfoot className="sticky bottom-0 z-10">
                     {(() => {
                       const sum = items.reduce((acc, r) => {
                         acc.s1Qty += r.s1Qty; acc.s1Price += r.s1Price; acc.s2Qty += r.s2Qty; acc.s2Price += r.s2Price; return acc;
@@ -470,11 +470,11 @@ export default function StatisticsGeneralPage() {
                           <td className="p-2">TOTAL</td>
                           <td className="p-2"></td>
                           <td className="p-2 text-center">{sum.s1Qty}</td>
-                          <td className="p-2 text-center">{sum.s1Price.toLocaleString()} {tableCurrency}</td>
+                          <td className="p-2 text-center">{sum.s1Price.toLocaleString('da-DK')} {tableCurrency}</td>
                           <td className="p-2 text-center">{sum.s2Qty}</td>
-                          <td className="p-2 text-center">{sum.s2Price.toLocaleString()} {tableCurrency}</td>
+                          <td className="p-2 text-center">{sum.s2Price.toLocaleString('da-DK')} {tableCurrency}</td>
                           <td className="p-2 text-center">{(sum.s1Qty - sum.s2Qty) >= 0 ? `+${sum.s1Qty - sum.s2Qty}` : (sum.s1Qty - sum.s2Qty)}</td>
-                          <td className="p-2 text-center">{(sum.s1Price - sum.s2Price).toLocaleString()} {tableCurrency}</td>
+                          <td className="p-2 text-center">{(sum.s1Price - sum.s2Price).toLocaleString('da-DK')} {tableCurrency}</td>
                           <td className="p-2"></td>
                         </tr>
                       );
@@ -493,11 +493,11 @@ export default function StatisticsGeneralPage() {
                           <td className="p-2">TOTAL (DKK)</td>
                           <td className="p-2"></td>
                           <td className="p-2 text-center">—</td>
-                          <td className="p-2 text-center">{Math.round(sumDkk.s1Price).toLocaleString()} DKK</td>
+                          <td className="p-2 text-center">{Math.round(sumDkk.s1Price).toLocaleString('da-DK')} DKK</td>
                           <td className="p-2 text-center">—</td>
-                          <td className="p-2 text-center">{Math.round(sumDkk.s2Price).toLocaleString()} DKK</td>
+                          <td className="p-2 text-center">{Math.round(sumDkk.s2Price).toLocaleString('da-DK')} DKK</td>
                           <td className="p-2 text-center">—</td>
-                          <td className="p-2 text-center">{Math.round(sumDkk.s1Price - sumDkk.s2Price).toLocaleString()} DKK</td>
+                          <td className="p-2 text-center">{Math.round(sumDkk.s1Price - sumDkk.s2Price).toLocaleString('da-DK')} DKK</td>
                           <td className="p-2"></td>
                         </tr>
                       );
@@ -505,32 +505,7 @@ export default function StatisticsGeneralPage() {
                   </tfoot>
                 </table>
               </div>
-              {/* Sticky footer summary */}
-              {(() => {
-                const sum = items.reduce((acc, r) => {
-                  acc.s1Qty += r.s1Qty; acc.s1Price += r.s1Price; acc.s2Qty += r.s2Qty; acc.s2Price += r.s2Price; return acc;
-                }, { s1Qty: 0, s1Price: 0, s2Qty: 0, s2Price: 0 });
-                const rates = { DKK: 1, ...(currencyRatesRow ?? {}) } as Record<string, number>;
-                const sumDkk = items.reduce((acc, r) => {
-                  const c = r.salespersonId ? (spCurrencyById[r.salespersonId] ?? 'DKK') : 'DKK';
-                  const rate = rates[c] ?? 1; acc.s1Price += r.s1Price * rate; acc.s2Price += r.s2Price * rate; return acc;
-                }, { s1Price: 0, s2Price: 0 });
-                return (
-                  <div className="sticky bottom-0 z-10 bg-white/95 backdrop-blur border-t px-3 py-2 text-xs sm:text-sm">
-                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-                      <div className="font-semibold">TOTAL:</div>
-                      <div>S1 {sum.s1Qty} · {sum.s1Price.toLocaleString()} {tableCurrency}</div>
-                      <div>S2 {sum.s2Qty} · {sum.s2Price.toLocaleString()} {tableCurrency}</div>
-                      <div>Δ {((sum.s1Price - sum.s2Price)).toLocaleString()} {tableCurrency}</div>
-                      <div className="ml-auto" />
-                      <div className="font-semibold">TOTAL (DKK):</div>
-                      <div>S1 {Math.round(sumDkk.s1Price).toLocaleString()} DKK</div>
-                      <div>S2 {Math.round(sumDkk.s2Price).toLocaleString()} DKK</div>
-                      <div>Δ {Math.round(sumDkk.s1Price - sumDkk.s2Price).toLocaleString()} DKK</div>
-                    </div>
-                  </div>
-                );
-              })()}
+              {/* Sticky footer summary removed per request; totals are frozen in tfoot */}
               {/* KPI cards when a salesperson is selected */}
               {activePerson && (
                 <div className="border-t p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
