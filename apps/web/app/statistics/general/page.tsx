@@ -334,7 +334,7 @@ export default function StatisticsGeneralPage() {
                 <button className="block w-full px-3 py-2 text-left hover:bg-gray-50">Print Report</button>
                 <button className="block w-full px-3 py-2 text-left hover:bg-gray-50">Download PDF</button>
                 <Link className="block px-3 py-2 hover:bg-gray-50" href="/statistics/general/import">Import Statistic</Link>
-                <Link className="block px-3 py-2 hover:bg-gray-50" href="/statistics/general/last-runs">Last Runs</Link>
+                <Link className="block px-3 py-2 hover:bg-gray-50" href={'/statistics/general/last-runs' as any}>Last Runs</Link>
                 <Link className="block px-3 py-2 hover:bg-gray-50" href="/settings/seasons">Season Settings</Link>
                 <button className="block w-full px-3 py-2 text-left hover:bg-gray-50" onClick={handleUpdateStatistic}>Update Statistic</button>
               </div>
@@ -458,7 +458,8 @@ export default function StatisticsGeneralPage() {
                         </tr>
                       );
                     })}
-                    {/* Totals row */}
+                  </tbody>
+                  <tfoot>
                     {(() => {
                       const sum = items.reduce((acc, r) => {
                         acc.s1Qty += r.s1Qty; acc.s1Price += r.s1Price; acc.s2Qty += r.s2Qty; acc.s2Price += r.s2Price; return acc;
@@ -477,18 +478,17 @@ export default function StatisticsGeneralPage() {
                         </tr>
                       );
                     })()}
-                    {/* Totals in DKK (converted) */}
                     {(() => {
                       const rates = { DKK: 1, ...(currencyRatesRow ?? {}) } as Record<string, number>;
                       const sumDkk = items.reduce((acc, r) => {
                         const currency = r.salespersonId ? (spCurrencyById[r.salespersonId] ?? 'DKK') : 'DKK';
-                        const rate = rates[currency] ?? 1; // 1 unit equals how many DKK
+                        const rate = rates[currency] ?? 1;
                         acc.s1Price += r.s1Price * rate;
                         acc.s2Price += r.s2Price * rate;
                         return acc;
                       }, { s1Price: 0, s2Price: 0 });
                       return (
-                        <tr className="border-t bg-gray-100">
+                        <tr className="bg-gray-100">
                           <td className="p-2">TOTAL (DKK)</td>
                           <td className="p-2"></td>
                           <td className="p-2 text-center">—</td>
@@ -501,7 +501,7 @@ export default function StatisticsGeneralPage() {
                         </tr>
                       );
                     })()}
-                  </tbody>
+                  </tfoot>
                 </table>
               </div>
               {/* KPI cards when a salesperson is selected */}
