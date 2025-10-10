@@ -285,6 +285,7 @@ async function runJob(job: JobRow) {
 
       let processed = 0;
       let totalRowsUpserted = 0;
+      const resultSamples: Array<{ salesperson: string; rows: Array<{ customer: string; account: string; country: string; qty: string; amount: string; salesperson: string }> }> = [];
       for (const sp of salespeople) {
         processed++;
         await log(job.id, 'info', 'STEP:salesperson_start', { index: processed, total: salespeople.length, name: sp.name });
@@ -341,6 +342,10 @@ async function runJob(job: JobRow) {
         // Upsert rows into DB
         const salespersonId = await ensureSalespersonId(sp.name);
         let upsertedForSp = 0;
+        // Collect up to 5 sample rows for results visibility
+        try {
+          resultSamples.push({ salesperson: sp.name, rows: rows.slice(0, Math.min(5, rows.length)) });
+        } catch {}
         for (const r of rows) {
           const qty = Number((r.qty || '0').replace(/[^0-9.\-]/g, '')) || 0;
           const { amount: price, currency } = parseAmount(r.amount || '');
@@ -371,7 +376,12 @@ async function runJob(job: JobRow) {
         await log(job.id, 'info', 'STEP:salesperson_done', { index: processed, total: salespeople.length, upserted: upsertedForSp, name: sp.name });
       }
 
-      await saveResult(job.id, 'Deep scrape completed', { seasonId: targetSeasonId, salespersons: salespeople.length, rowsUpserted: totalRowsUpserted });
+      await saveResult(job.id, 'Deep scrape completed', {
+        seasonId: targetSeasonId,
+        salespersons: salespeople.length,
+        rowsUpserted: totalRowsUpserted,
+        samples: resultSamples
+      });
       await log(job.id, 'info', 'STEP:complete', { rows: totalRowsUpserted });
     } else {
       // Shallow scrape: navigate to Topseller table and extract rows

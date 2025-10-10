@@ -45,6 +45,40 @@ export default function JobDetailPage() {
         <div className="border rounded p-3">
           <div className="font-semibold">Result</div>
           <div className="text-sm">Summary: {data.result.summary}</div>
+          {/* Samples table if present */}
+          {Array.isArray((data.result.data as any)?.samples) && (
+            <div className="mt-3">
+              <div className="text-sm font-medium mb-1">Sample rows per salesperson</div>
+              <div className="overflow-auto border rounded">
+                <table className="min-w-full text-xs">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="text-left p-2 border-b">Salesperson</th>
+                      <th className="text-left p-2 border-b">Customer</th>
+                      <th className="text-left p-2 border-b">Account</th>
+                      <th className="text-left p-2 border-b">Country</th>
+                      <th className="text-left p-2 border-b">Qty</th>
+                      <th className="text-left p-2 border-b">Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {((data.result.data as any).samples as any[]).flatMap((s: any) =>
+                      (s.rows || []).map((r: any, i: number) => (
+                        <tr key={`${s.salesperson}-${i}`}>
+                          <td className="p-2 border-b whitespace-nowrap">{s.salesperson}</td>
+                          <td className="p-2 border-b">{r.customer}</td>
+                          <td className="p-2 border-b font-mono">{r.account}</td>
+                          <td className="p-2 border-b">{r.country}</td>
+                          <td className="p-2 border-b text-right">{r.qty}</td>
+                          <td className="p-2 border-b text-right">{r.amount}</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
           <pre className="mt-2 text-xs bg-gray-50 p-2 rounded overflow-auto">{JSON.stringify(data.result.data, null, 2)}</pre>
         </div>
       )}
