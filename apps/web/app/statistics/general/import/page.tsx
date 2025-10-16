@@ -51,6 +51,16 @@ export default function ImportStatsPage() {
     reader.readAsArrayBuffer(file);
   }
 
+  function normalizeName(name: string) {
+    return String(name || '').trim().toUpperCase();
+  }
+
+  function chunk<T>(arr: T[], size: number): T[][] {
+    const out: T[][] = [];
+    for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+    return out;
+  }
+
   async function submit() {
     if (!seasonId) { setSubmitResult('Choose a season'); return; }
     setSubmitting(true);
@@ -62,62 +72,96 @@ export default function ImportStatsPage() {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) throw new Error('Not signed in');
       const token = session.access_token;
-      let count = 0;
-      for (const r of rows) {
+      // Normalize incoming rows
+      const normalized = rows.map((r) => {
         const account_no = mapping['account_no'] ? r[mapping['account_no']] : '';
-        if (!account_no) continue;
         const customer_name = mapping['customer_name'] ? r[mapping['customer_name']] : null;
         const city = mapping['city'] ? r[mapping['city']] : null;
         const qty = Number(mapping['qty'] ? r[mapping['qty']] : 0) || 0;
         const price = Number(mapping['price'] ? r[mapping['price']] : 0) || 0;
         const salesmanName = mapping['salesman'] ? String(r[mapping['salesman']]) : '';
+        return { account_no: String(account_no || ''), customer_name, city, qty, price, salesmanName };
+      }).filter((r) => r.account_no);
 
-        // resolve or create salesperson
-        let salesperson_id: string | null = null;
-        if (salesmanName) {
-          const { data: spFind } = await supabase.from('salespersons').select('id').ilike('name', salesmanName).maybeSingle();
-          if (spFind?.id) salesperson_id = spFind.id as string;
-          else {
-            const { data: spIns, error: spErr } = await supabase.from('salespersons').insert({ name: salesmanName }).select('id').single();
-            if (!spErr) salesperson_id = spIns!.id as string;
-          }
-        }
+      // Build unique keys
+      const uniqueAccounts = Array.from(new Set(normalized.map((r) => r.account_no)));
+      const uniqueSalesNames = Array.from(new Set(normalized.map((r) => normalizeName(r.salesmanName)).filter(Boolean)));
 
-        // resolve customer by account_no, create stub if missing
-        let customer_id: string | null = null;
-        const { data: cFind } = await supabase.from('customers').select('id, city').eq('customer_id', String(account_no)).maybeSingle();
-        if (cFind?.id) {
-          customer_id = cFind.id as string;
-          // If DB city is empty but import has city, update it
-          const dbCity = (cFind as any).city ? String((cFind as any).city) : '';
-          if ((!dbCity || dbCity.trim().length === 0) && city && String(city).trim().length > 0) {
-            await supabase.from('customers').update({ city: String(city) }).eq('id', cFind.id as string);
-          }
-        }
-        else if (customer_name) {
-          const { data: cIns } = await supabase
-            .from('customers')
-            .insert({ customer_id: String(account_no), company: String(customer_name), stats_display_name: String(customer_name), city: city ?? null })
-            .select('id')
-            .single();
-          if (cIns?.id) customer_id = cIns.id as string;
-        }
+      // Fetch existing salespersons and customers
+      const [{ data: spAll }, { data: custAll }] = await Promise.all([
+        supabase.from('salespersons').select('id,name'),
+        uniqueAccounts.length ? supabase.from('customers').select('id,customer_id,city').in('customer_id', uniqueAccounts) : Promise.resolve({ data: [] as any[] })
+      ]);
 
-        // upsert into sales_stats by (season_id, account_no)
-        await supabase.from('sales_stats').upsert({
+      const spMap = new Map<string, { id: string; name: string }>();
+      for (const sp of (spAll ?? []) as any[]) spMap.set(normalizeName(sp.name), { id: sp.id, name: sp.name });
+      const missingSales: string[] = [];
+      for (const n of uniqueSalesNames) if (!spMap.has(n)) missingSales.push(n);
+      if (missingSales.length) {
+        const insertRows = missingSales.map((n) => ({ name: n }));
+        const { data: ins } = await supabase.from('salespersons').insert(insertRows).select('id,name');
+        for (const sp of (ins ?? []) as any[]) spMap.set(normalizeName(sp.name), { id: sp.id, name: sp.name });
+      }
+
+      const custMap = new Map<string, { id: string; city: string | null }>();
+      for (const c of (custAll ?? []) as any[]) custMap.set(String(c.customer_id), { id: c.id, city: c.city ?? null });
+
+      // Insert missing customers in bulk
+      const toInsertCustomers: { customer_id: string; company: string | null; stats_display_name: string | null; city: string | null }[] = [];
+      const firstCityByAccount = new Map<string, string | null>();
+      for (const r of normalized) if (!firstCityByAccount.has(r.account_no)) firstCityByAccount.set(r.account_no, r.city ? String(r.city) : null);
+      for (const r of normalized) {
+        if (!custMap.has(r.account_no) && r.customer_name) {
+          toInsertCustomers.push({ customer_id: r.account_no, company: String(r.customer_name), stats_display_name: String(r.customer_name), city: firstCityByAccount.get(r.account_no) ?? null });
+          custMap.set(r.account_no, { id: '', city: firstCityByAccount.get(r.account_no) ?? null });
+        }
+      }
+      if (toInsertCustomers.length) {
+        const { data: inserted } = await supabase.from('customers').insert(toInsertCustomers).select('id,customer_id,city');
+        for (const c of (inserted ?? []) as any[]) custMap.set(String(c.customer_id), { id: c.id, city: c.city ?? null });
+      }
+
+      // Update city for existing customers where DB city is null and import has a city
+      const cityUpdates: Array<{ customer_id: string; city: string }> = [];
+      for (const r of normalized) {
+        const cur = custMap.get(r.account_no);
+        const importCity = r.city ? String(r.city).trim() : '';
+        if (cur && (!cur.city || String(cur.city).trim().length === 0) && importCity.length > 0) {
+          cityUpdates.push({ customer_id: r.account_no, city: importCity });
+          cur.city = importCity;
+        }
+      }
+      // Perform per-account updates (small loop)
+      for (const u of cityUpdates) {
+        await supabase.from('customers').update({ city: u.city }).eq('customer_id', u.customer_id).is('city', null);
+      }
+
+      // Prepare deduped sales_stats rows (one per account)
+      const perAccount = new Map<string, any>();
+      for (const r of normalized) {
+        const sp = spMap.get(normalizeName(r.salesmanName));
+        const cust = custMap.get(r.account_no);
+        perAccount.set(r.account_no, {
           season_id: seasonId,
-          account_no: String(account_no),
-          customer_id,
-          customer_name,
-          city,
-          salesperson_id,
-          salesperson_name: salesmanName || null,
-          qty,
-          price,
+          account_no: String(r.account_no),
+          customer_id: cust?.id ?? null,
+          customer_name: r.customer_name,
+          city: r.city ?? null,
+          salesperson_id: sp?.id ?? null,
+          salesperson_name: r.salesmanName || null,
+          qty: r.qty,
+          price: r.price,
           currency: null
-        }, { onConflict: 'season_id,account_no' });
-        count++;
-        setProcessed(count);
+        });
+      }
+
+      const upsertRows = Array.from(perAccount.values());
+      setTotal(upsertRows.length);
+      let doneCount = 0;
+      for (const part of chunk(upsertRows, 500)) {
+        await supabase.from('sales_stats').upsert(part, { onConflict: 'season_id,account_no' });
+        doneCount += part.length;
+        setProcessed(doneCount);
       }
       setSubmitResult('Import completed');
     } catch (e: any) {
