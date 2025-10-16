@@ -61,8 +61,8 @@ export default function HomePage() {
     return jobs ?? [];
   }, { refreshInterval: 10000 });
 
-  const s1Tot: SeasonTotals = s1 && totals && totals[s1!] ? totals[s1!] : { qty: 0, price: 0 };
-  const s2Tot: SeasonTotals = s2 && totals && totals[s2!] ? totals[s2!] : { qty: 0, price: 0 };
+  const s1Tot: SeasonTotals = s1 && totals ? (totals[s1] ?? { qty: 0, price: 0 }) : { qty: 0, price: 0 };
+  const s2Tot: SeasonTotals = s2 && totals ? (totals[s2] ?? { qty: 0, price: 0 }) : { qty: 0, price: 0 };
   const diff = { qty: (s1Tot.qty - s2Tot.qty), price: (s1Tot.price - s2Tot.price) };
 
   return (
