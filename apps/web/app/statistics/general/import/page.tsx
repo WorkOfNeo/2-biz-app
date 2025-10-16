@@ -20,6 +20,9 @@ export default function ImportStatsPage() {
   const [mapping, setMapping] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
   const [submitResult, setSubmitResult] = useState<string | null>(null);
+  const [processed, setProcessed] = useState(0);
+  const [total, setTotal] = useState(0);
+  const [startedAt, setStartedAt] = useState<number | null>(null);
 
   const preview = useMemo(() => rows.slice(0, 5), [rows]);
 
@@ -52,10 +55,14 @@ export default function ImportStatsPage() {
     if (!seasonId) { setSubmitResult('Choose a season'); return; }
     setSubmitting(true);
     setSubmitResult(null);
+    setProcessed(0);
+    setTotal(rows.length);
+    setStartedAt(Date.now());
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) throw new Error('Not signed in');
       const token = session.access_token;
+      let count = 0;
       for (const r of rows) {
         const account_no = mapping['account_no'] ? r[mapping['account_no']] : '';
         if (!account_no) continue;
@@ -78,8 +85,15 @@ export default function ImportStatsPage() {
 
         // resolve customer by account_no, create stub if missing
         let customer_id: string | null = null;
-        const { data: cFind } = await supabase.from('customers').select('id').eq('customer_id', String(account_no)).maybeSingle();
-        if (cFind?.id) customer_id = cFind.id as string;
+        const { data: cFind } = await supabase.from('customers').select('id, city').eq('customer_id', String(account_no)).maybeSingle();
+        if (cFind?.id) {
+          customer_id = cFind.id as string;
+          // If DB city is empty but import has city, update it
+          const dbCity = (cFind as any).city ? String((cFind as any).city) : '';
+          if ((!dbCity || dbCity.trim().length === 0) && city && String(city).trim().length > 0) {
+            await supabase.from('customers').update({ city: String(city) }).eq('id', cFind.id as string);
+          }
+        }
         else if (customer_name) {
           const { data: cIns } = await supabase
             .from('customers')
@@ -102,6 +116,8 @@ export default function ImportStatsPage() {
           price,
           currency: null
         }, { onConflict: 'season_id,account_no' });
+        count++;
+        setProcessed(count);
       }
       setSubmitResult('Import completed');
     } catch (e: any) {
@@ -186,6 +202,18 @@ export default function ImportStatsPage() {
         </button>
         {submitResult && <div className="mt-2 text-sm">{submitResult}</div>}
       </div>
+
+      {submitting || processed > 0 ? (
+        <div className="mt-3">
+          <div className="flex justify-between text-xs text-gray-600 mb-1">
+            <div>{processed}/{total} rows</div>
+            <div>{Math.round(total ? (processed / Math.max(1,total)) * 100 : 0)}%</div>
+          </div>
+          <div className="h-1.5 w-full rounded bg-gray-200 overflow-hidden">
+            <div className="h-full bg-slate-900 transition-[width] duration-300 ease-out" style={{ width: `${Math.round(total ? (processed / Math.max(1,total)) * 100 : 0)}%` }} />
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
