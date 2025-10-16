@@ -613,6 +613,18 @@ async function runJob(job: JobRow) {
         return out;
       }
 
+      // Ensure we have SPY season id before visiting invoiced page: prefer mapping if not yet set
+      if (!spySeasonId && targetSeasonId) {
+        try {
+          const { data: seasonRow } = await supabase.from('seasons').select('spy_season_id').eq('id', targetSeasonId).maybeSingle();
+          const spyId = (seasonRow?.spy_season_id as number | null) ?? null;
+          if (spyId && String(spyId).trim().length > 0) {
+            spySeasonId = String(spyId);
+            await log(job.id, 'info', 'STEP:invoiced_spy_id_from_mapping', { spySeasonId });
+          }
+        } catch {}
+      }
+      await log(job.id, 'info', 'STEP:invoiced_call', { targetSeasonId, spySeasonId: spySeasonId ?? null });
       const invoicedLines = await scrapeInvoicedLines(targetSeasonId, spySeasonId);
 
       await saveResult(job.id, 'Deep scrape completed', {
