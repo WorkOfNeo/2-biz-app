@@ -1,4 +1,5 @@
 export const dynamic = 'force-dynamic';
+export const runtime = 'nodejs';
 
 async function handle(req: Request) {
   // Authorization disabled to ensure Vercel cron runs reliably.
