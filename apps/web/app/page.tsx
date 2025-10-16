@@ -14,16 +14,51 @@ export default function HomePage() {
   const s1 = seasonCompare?.s1 as string | null;
   const s2 = seasonCompare?.s2 as string | null;
 
-  const { data: totals } = useSWR(s1 && s2 ? ['home:totals', s1, s2] : null, async () => {
+  // Load base currency + rates (DKK per 1 unit)
+  const { data: ratesData } = useSWR('misc:rates', async () => {
+    const defaults: Record<string, number> = { DKK: 1, SEK: 0.68, NOK: 0.64, EUR: 7.47 };
+    const { data: base } = await supabase.from('app_settings').select('*').eq('key', 'base_currency').maybeSingle();
+    const { data: rates } = await supabase.from('app_settings').select('*').eq('key', 'currency_rates').maybeSingle();
+    const merged = { ...defaults, ...((rates?.value as any) || {}) } as Record<string, number>;
+    return { base: ((base?.value as any)?.code as string) || 'DKK', rates: merged };
+  });
+
+  // Salesperson currency map (fallback when row currency is missing)
+  const { data: spRows } = useSWR('salespersons:map', async () => {
+    const { data, error } = await supabase.from('salespersons').select('id, currency');
+    if (error) throw new Error(error.message);
+    return data as { id: string; currency: string | null }[];
+  });
+  const spCurrencyById = new Map<string, string>(
+    (spRows ?? []).map((r) => [r.id, r.currency || (ratesData?.base || 'DKK')])
+  );
+
+  // Season labels
+  const { data: allSeasons } = useSWR('seasons:all', async () => {
+    const { data, error } = await supabase.from('seasons').select('id, name, year');
+    if (error) throw new Error(error.message);
+    return data as { id: string; name: string; year: number | null }[];
+  });
+  function seasonLabel(id: string | null | undefined): string {
+    if (!id) return '';
+    const s = (allSeasons ?? []).find((x) => x.id === id);
+    if (!s) return '';
+    return `${s.name}${s.year ? ' ' + s.year : ''}`;
+  }
+
+  const { data: totals } = useSWR(s1 && s2 ? ['home:totals', s1, s2, JSON.stringify(ratesData?.rates || {})] : null, async () => {
     const { data, error } = await supabase
       .from('sales_stats')
-      .select('season_id, qty, price');
+      .select('season_id, qty, price, currency, salesperson_id');
     if (error) throw new Error(error.message);
     const k1 = s1 as string; const k2 = s2 as string;
     const out: { [key: string]: SeasonTotals } = { [k1]: { qty: 0, price: 0 }, [k2]: { qty: 0, price: 0 } };
     for (const r of (data ?? []) as any[]) {
-      if (r.season_id === k1) { const t = out[k1]!; t.qty += Number(r.qty||0); t.price += Number(r.price||0); }
-      if (r.season_id === k2) { const t = out[k2]!; t.qty += Number(r.qty||0); t.price += Number(r.price||0); }
+      const code: string = (r.currency || spCurrencyById.get(r.salesperson_id as string) || (ratesData?.base || 'DKK')) as string;
+      const rate = (ratesData?.rates?.[code] ?? 1);
+      const priceDKK = (Number(r.price || 0) || 0) * rate;
+      if (r.season_id === k1) { const t = out[k1]!; t.qty += Number(r.qty||0); t.price += priceDKK; }
+      if (r.season_id === k2) { const t = out[k2]!; t.qty += Number(r.qty||0); t.price += priceDKK; }
     }
     return out;
   });
@@ -67,44 +102,44 @@ export default function HomePage() {
 
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        <div className="rounded-md border bg-white p-4">
-          <div className="text-xs text-gray-500">Season 1 total</div>
-          <div className="mt-1 text-xl font-semibold">Qty: {s1Tot.qty}</div>
-          <div className="text-xl font-semibold">Price: {s1Tot.price.toLocaleString()} DKK</div>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+        <div className="rounded-md border bg-white p-3">
+          <div className="text-xs text-gray-500">{seasonLabel(s1) || 'Season 1'} total</div>
+          <div className="mt-1 text-lg font-semibold">Qty: {s1Tot.qty.toLocaleString()}</div>
+          <div className="text-lg font-semibold">Price: {Math.round(s1Tot.price).toLocaleString()} DKK</div>
         </div>
-        <div className="rounded-md border bg-white p-4">
-          <div className="text-xs text-gray-500">Season 2 total</div>
-          <div className="mt-1 text-xl font-semibold">Qty: {s2Tot.qty}</div>
-          <div className="text-xl font-semibold">Price: {s2Tot.price.toLocaleString()} DKK</div>
+        <div className="rounded-md border bg-white p-3">
+          <div className="text-xs text-gray-500">{seasonLabel(s2) || 'Season 2'} total</div>
+          <div className="mt-1 text-lg font-semibold">Qty: {s2Tot.qty.toLocaleString()}</div>
+          <div className="text-lg font-semibold">Price: {Math.round(s2Tot.price).toLocaleString()} DKK</div>
         </div>
-        <div className="rounded-md border bg-white p-4">
+        <div className="rounded-md border bg-white p-3">
           <div className="text-xs text-gray-500">Difference</div>
-          <div className={"mt-1 text-xl font-semibold " + (diff.qty>=0?'text-green-700':'text-red-700')}>Qty: {diff.qty}</div>
-          <div className={"text-xl font-semibold " + (diff.price>=0?'text-green-700':'text-red-700')}>Price: {diff.price.toLocaleString()} DKK</div>
+          <div className={"mt-1 text-lg font-semibold " + (diff.qty>=0?'text-green-700':'text-red-700')}>Qty: {diff.qty.toLocaleString()}</div>
+          <div className={"text-lg font-semibold " + (diff.price>=0?'text-green-700':'text-red-700')}>Price: {Math.round(diff.price).toLocaleString()} DKK</div>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
         <div className="rounded-md border bg-white">
-          <div className="p-3 text-sm font-medium">Topsellers</div>
+          <div className="p-2 text-xs font-medium">Topsellers</div>
           <div className="overflow-x-auto">
-            <table className="min-w-full text-sm">
+            <table className="min-w-full text-xs">
               <thead className="bg-gray-50">
                 <tr>
-                  <th className="text-left p-2 border-b">Salesperson</th>
-                  <th className="text-right p-2 border-b">Qty</th>
-                  <th className="text-right p-2 border-b">Price</th>
-                  <th className="text-right p-2 border-b">Customers Left</th>
+                  <th className="text-left p-1 border-b">Salesperson</th>
+                  <th className="text-right p-1 border-b">Qty</th>
+                  <th className="text-right p-1 border-b">Price</th>
+                  <th className="text-right p-1 border-b">Customers Left</th>
                 </tr>
               </thead>
               <tbody>
                 {(tops ?? []).map((r: PersonRow) => (
                   <tr key={r.salesperson}>
-                    <td className="p-2 border-b">{r.salesperson}</td>
-                    <td className="p-2 border-b text-right">{r.qty}</td>
-                    <td className="p-2 border-b text-right">{r.price.toLocaleString()} DKK</td>
-                    <td className="p-2 border-b text-right">{r.customersLeft}</td>
+                    <td className="p-1 border-b">{r.salesperson}</td>
+                    <td className="p-1 border-b text-right">{r.qty.toLocaleString()}</td>
+                    <td className="p-1 border-b text-right">{r.price.toLocaleString()} DKK</td>
+                    <td className="p-1 border-b text-right">{r.customersLeft.toLocaleString()}</td>
                   </tr>
                 ))}
               </tbody>
@@ -112,10 +147,10 @@ export default function HomePage() {
           </div>
         </div>
         <div className="rounded-md border bg-white">
-          <div className="p-3 text-sm font-medium">Recent runs</div>
-          <div className="divide-y">
+          <div className="p-2 text-xs font-medium">Recent runs</div>
+          <div className="divide-y text-xs">
             {(recent ?? []).map((j: any) => (
-              <div key={j.id} className="flex items-center justify-between p-3 text-sm">
+              <div key={j.id} className="flex items-center justify-between p-2">
                 <Link className="underline" href={`/admin/jobs/${j.id}`}>{j.id.slice(0,8)}…</Link>
                 <div className="text-gray-600">{j.status}</div>
                 <div className="text-gray-500">{j.started_at ? new Date(j.started_at).toLocaleString() : new Date(j.created_at).toLocaleString()}</div>
