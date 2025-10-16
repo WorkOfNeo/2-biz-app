@@ -1,6 +1,5 @@
 'use client';
 import React, { useEffect } from 'react';
-import React from 'react';
 
 export function Toast({ open, pct, elapsedSec, done, onClose }: { open: boolean; pct: number; elapsedSec: number; done: boolean; onClose: () => void }) {
   useEffect(() => {
