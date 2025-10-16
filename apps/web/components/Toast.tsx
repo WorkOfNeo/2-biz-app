@@ -1,5 +1,6 @@
 'use client';
 import { useEffect } from 'react';
+import React from 'react';
 
 export function Toast({ open, pct, elapsedSec, done, onClose }: { open: boolean; pct: number; elapsedSec: number; done: boolean; onClose: () => void }) {
   useEffect(() => {
@@ -25,6 +26,57 @@ export function Toast({ open, pct, elapsedSec, done, onClose }: { open: boolean;
       </div>
     </div>
   );
+}
+
+export function useRunningJobsToast() {
+  const [open, setOpen] = React.useState(false);
+  const [pct, setPct] = React.useState(0);
+  const [elapsedSec, setElapsedSec] = React.useState(0);
+  const [done, setDone] = React.useState(false);
+  const timerRef = React.useRef<ReturnType<typeof setInterval> | null>(null);
+
+  React.useEffect(() => {
+    let mounted = true;
+    async function poll() {
+      try {
+        const { createClientComponentClient } = await import('@supabase/auth-helpers-nextjs');
+        const supabase = createClientComponentClient();
+        const { data: jobs } = await supabase
+          .from('jobs')
+          .select('id,status,created_at')
+          .in('status', ['queued','running'])
+          .order('created_at', { ascending: false })
+          .limit(1);
+        const running = (jobs ?? []).length > 0;
+        if (!mounted) return;
+        if (running) {
+          if (!open) {
+            setOpen(true);
+            setDone(false);
+            setPct(15);
+            setElapsedSec(0);
+            if (timerRef.current) clearInterval(timerRef.current);
+            timerRef.current = setInterval(() => setElapsedSec((v) => v + 1), 1000);
+          }
+        } else if (open) {
+          setPct(100);
+          setDone(true);
+          if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+          setTimeout(() => setOpen(false), 1500);
+        }
+      } catch {}
+    }
+    const iv = setInterval(poll, 2000);
+    poll();
+    return () => { mounted = false; clearInterval(iv); if (timerRef.current) clearInterval(timerRef.current); };
+  }, [open]);
+
+  return { open, pct, elapsedSec, done, close: () => setOpen(false) } as const;
+}
+
+export function ToastStack() {
+  const { open, pct, elapsedSec, done, close } = useRunningJobsToast();
+  return <Toast open={open} pct={pct} elapsedSec={elapsedSec} done={done} onClose={close} />;
 }
 
 
