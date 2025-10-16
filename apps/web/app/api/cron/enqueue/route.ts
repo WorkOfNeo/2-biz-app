@@ -2,9 +2,11 @@ export const dynamic = 'force-dynamic';
 
 export async function POST(req: Request) {
   try {
-    const token = req.headers.get('x-cron-token') || '';
+    const token = req.headers.get('x-cron-token') || new URL(req.url).searchParams.get('token') || '';
+    const vercelCron = req.headers.get('x-vercel-cron');
     const expected = (process.env.CRON_TOKEN || '').trim();
-    if (!expected || token !== expected) {
+    // Allow either matching CRON_TOKEN or Vercel Cron header
+    if (!((expected && token === expected) || vercelCron)) {
       return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 });
     }
 
