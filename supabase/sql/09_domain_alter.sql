@@ -23,6 +23,10 @@ alter table if exists public.salespersons
 alter table if exists public.seasons
   add column if not exists display_currency text;
 
+-- seasons: add spy_season_id mapping (numeric ID used by legacy SPY system)
+alter table if exists public.seasons
+  add column if not exists spy_season_id int;
+
 
 -- seasons: allow manual name edits without scrape override
 -- 1) drop unique on name (if created by initial DDL)

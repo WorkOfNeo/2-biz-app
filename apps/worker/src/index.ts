@@ -262,6 +262,14 @@ async function runJob(job: JobRow) {
           });
           if (seasonInfo && seasonInfo.text) {
             spySeasonId = (seasonInfo.value && seasonInfo.value !== '0') ? seasonInfo.value : null;
+            // If not present in settings, try seasons.spy_season_id mapping
+            if (!spySeasonId) {
+              try {
+                const { data: seasonRow } = await supabase.from('seasons').select('spy_season_id').eq('id', targetSeasonId).maybeSingle();
+                const spyId = (seasonRow?.spy_season_id as number | null) ?? null;
+                if (spyId && String(spyId).trim().length > 0) spySeasonId = String(spyId);
+              } catch {}
+            }
             function normalizeSeasonLabel(label: string): { name: string; year: number } {
               const parts = label.trim().split(/\s+/);
               const yy = parts.shift() || '';
