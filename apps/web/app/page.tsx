@@ -6,6 +6,56 @@ import { supabase } from '../lib/supabaseClient';
 type SeasonTotals = { qty: number; price: number };
 type PersonRow = { salesperson: string; qty: number; price: number; customersLeft: number };
 
+function formatTimeDots(d: Date) {
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  const ss = String(d.getSeconds()).padStart(2, '0');
+  return `${hh}.${mm}.${ss}`;
+}
+
+function startOfISOWeek(d: Date) {
+  const date = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const day = (date.getDay() + 6) % 7; // 0 = Monday
+  date.setDate(date.getDate() - day);
+  date.setHours(0, 0, 0, 0);
+  return date;
+}
+
+function isSameISOWeek(a: Date, b: Date) {
+  const sa = startOfISOWeek(a);
+  const sb = startOfISOWeek(b);
+  return sa.getTime() === sb.getTime();
+}
+
+function isPreviousISOWeek(a: Date, b: Date) {
+  const sa = startOfISOWeek(a).getTime();
+  const sb = startOfISOWeek(b).getTime();
+  return sa === (sb - 7 * 24 * 3600 * 1000);
+}
+
+function relativeDayLabel(d: Date, now: Date) {
+  const dayNames = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+  const dn = new Date(now.getFullYear(), now.getMonth(), now.getDate()); dn.setHours(0,0,0,0);
+  const dd = new Date(d.getFullYear(), d.getMonth(), d.getDate()); dd.setHours(0,0,0,0);
+  const diffDays = Math.round((dn.getTime() - dd.getTime()) / (24*3600*1000));
+  if (diffDays === 0) return 'Today';
+  if (diffDays === 1) return 'Yesterday';
+  if (isSameISOWeek(d, now)) {
+    const idx = (d.getDay() + 6) % 7; // 0=Mon
+    return `This ${dayNames[idx]}`;
+  }
+  if (isPreviousISOWeek(d, now)) {
+    const idx = (d.getDay() + 6) % 7;
+    return `Last ${dayNames[idx]}`;
+  }
+  // fallback: short date
+  return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
+function formatRelativeDateTime(d: Date, now = new Date()) {
+  return `${relativeDayLabel(d, now)} at ${formatTimeDots(d)}`;
+}
+
 export default function HomePage() {
   const { data: seasonCompare } = useSWR('app-settings:season-compare', async () => {
     const { data } = await supabase.from('app_settings').select('*').eq('key', 'season_compare').maybeSingle();
@@ -153,7 +203,7 @@ export default function HomePage() {
               <div key={j.id} className="flex items-start justify-between p-2">
                 <Link className="underline" href={`/admin/jobs/${j.id}`}>{j.id.slice(0,8)}…</Link>
                 <div className="text-gray-600">{j.status}</div>
-                <div className="text-gray-500">{j.started_at ? new Date(j.started_at).toLocaleString() : new Date(j.created_at).toLocaleString()}</div>
+                <div className="text-gray-500">{formatRelativeDateTime(new Date(j.started_at ?? j.created_at))}</div>
               </div>
             ))}
           </div>
