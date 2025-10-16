@@ -211,7 +211,7 @@ export default function StatisticsGeneralPage() {
       const buildQuery = (seasonId: string | undefined) => {
         let q = supabase
           .from('sales_stats')
-          .select('account_no, customer_name, city, qty, price, season_id, salesperson_id')
+          .select('account_no, customer_name, city, qty, price, season_id, salesperson_id, updated_at')
           .eq('season_id', seasonId ?? '');
         if (row.salespersonId) q = q.eq('salesperson_id', row.salespersonId);
         if (hasAccount) {
@@ -663,6 +663,7 @@ export default function StatisticsGeneralPage() {
                           <th className="text-left p-2 border-b">City</th>
                           <th className="text-right p-2 border-b">Qty</th>
                           <th className="text-right p-2 border-b">Price</th>
+                          <th className="text-right p-2 border-b">Scraped</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -673,6 +674,7 @@ export default function StatisticsGeneralPage() {
                             <td className="p-2 border-b">{r.city}</td>
                             <td className="p-2 border-b text-right">{Number(r.qty ?? 0)}</td>
                             <td className="p-2 border-b text-right">{Number(r.price ?? 0).toLocaleString('da-DK')}</td>
+                            <td className="p-2 border-b text-right">{r.updated_at ? new Date(r.updated_at).toLocaleString() : '—'}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -700,6 +702,7 @@ export default function StatisticsGeneralPage() {
                           <th className="text-left p-2 border-b">City</th>
                           <th className="text-right p-2 border-b">Qty</th>
                           <th className="text-right p-2 border-b">Price</th>
+                          <th className="text-right p-2 border-b">Scraped</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -710,6 +713,7 @@ export default function StatisticsGeneralPage() {
                             <td className="p-2 border-b">{r.city}</td>
                             <td className="p-2 border-b text-right">{Number(r.qty ?? 0)}</td>
                             <td className="p-2 border-b text-right">{Number(r.price ?? 0).toLocaleString('da-DK')}</td>
+                            <td className="p-2 border-b text-right">{r.updated_at ? new Date(r.updated_at).toLocaleString() : '—'}</td>
                           </tr>
                         ))}
                       </tbody>
