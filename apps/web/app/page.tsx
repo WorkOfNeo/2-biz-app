@@ -19,10 +19,11 @@ export default function HomePage() {
       .from('sales_stats')
       .select('season_id, qty, price');
     if (error) throw new Error(error.message);
-    const out: Record<string, SeasonTotals> = { [s1!]: { qty: 0, price: 0 }, [s2!]: { qty: 0, price: 0 } };
+    const k1 = s1 as string; const k2 = s2 as string;
+    const out: { [key: string]: SeasonTotals } = { [k1]: { qty: 0, price: 0 }, [k2]: { qty: 0, price: 0 } };
     for (const r of (data ?? []) as any[]) {
-      if (r.season_id === s1) { out[s1!].qty += Number(r.qty||0); out[s1!].price += Number(r.price||0); }
-      if (r.season_id === s2) { out[s2!].qty += Number(r.qty||0); out[s2!].price += Number(r.price||0); }
+      if (r.season_id === k1) { const t = out[k1]!; t.qty += Number(r.qty||0); t.price += Number(r.price||0); }
+      if (r.season_id === k2) { const t = out[k2]!; t.qty += Number(r.qty||0); t.price += Number(r.price||0); }
     }
     return out;
   });
