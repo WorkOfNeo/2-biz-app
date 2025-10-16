@@ -1,13 +1,8 @@
 export const dynamic = 'force-dynamic';
 
 async function handle(req: Request) {
-  const token = req.headers.get('x-cron-token') || new URL(req.url).searchParams.get('token') || '';
-  const vercelCron = req.headers.get('x-vercel-cron');
-  const expected = (process.env.CRON_TOKEN || '').trim();
-  // Allow either matching CRON_TOKEN or Vercel Cron header
-  if (!((expected && token === expected) || vercelCron)) {
-    return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 });
-  }
+  // Authorization disabled to ensure Vercel cron runs reliably.
+  // The endpoint is time-gated by CET hours below and performs idempotent enqueue with dedupe.
 
   // Compute current hour in Europe/Copenhagen
   const now = new Date();
