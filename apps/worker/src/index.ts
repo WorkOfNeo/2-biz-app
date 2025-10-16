@@ -630,6 +630,33 @@ async function runJob(job: JobRow) {
       await log(job.id, 'info', 'STEP:invoiced_call', { targetSeasonId, spySeasonId: spySeasonId ?? null });
       const invoicedLines: Array<{ customerName: string; qty: number; userCurrencyAmount: { amount: number; currency: string | null } | null; customerCurrencyAmount: { amount: number; currency: string | null } | null; invoiceNo?: string; invoiceDate?: string; matchedCustomerId?: string | null; matchedAccount?: string | null; salespersonName?: string | null; }> = await scrapeInvoicedLines(targetSeasonId, spySeasonId);
 
+      // Persist raw invoices for idempotency and detail views
+      try {
+        let upserts = 0;
+        for (const inv of invoicedLines) {
+          const accountNo = (inv.matchedAccount || '').trim();
+          if (!accountNo || !inv.invoiceNo) continue;
+          const pick = inv.userCurrencyAmount || inv.customerCurrencyAmount;
+          const amount = Number(pick?.amount || 0) || 0;
+          await supabase
+            .from('sales_invoices')
+            .upsert({
+              season_id: targetSeasonId,
+              account_no: accountNo,
+              customer_name: inv.customerName || null,
+              qty: Number(inv.qty || 0) || 0,
+              amount,
+              currency: pick?.currency || null,
+              invoice_no: inv.invoiceNo,
+              invoice_date: inv.invoiceDate || null
+            }, { onConflict: 'season_id,account_no,invoice_no' });
+          upserts++;
+        }
+        await log(job.id, 'info', 'STEP:invoiced_rows_upserted', { count: upserts });
+      } catch (e: any) {
+        await log(job.id, 'error', 'STEP:invoiced_rows_upsert_error', { error: e?.message || String(e) });
+      }
+
       // Apply invoiced adjustments (add/subtract to the same season/account in sales_stats)
       try {
         let adjusted = 0;
