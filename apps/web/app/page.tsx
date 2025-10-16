@@ -150,7 +150,7 @@ export default function HomePage() {
           <div className="p-2 text-xs font-medium">Recent runs</div>
           <div className="divide-y text-xs">
             {(recent ?? []).map((j: any) => (
-              <div key={j.id} className="flex items-center justify-between p-2">
+              <div key={j.id} className="flex items-start justify-between p-2">
                 <Link className="underline" href={`/admin/jobs/${j.id}`}>{j.id.slice(0,8)}…</Link>
                 <div className="text-gray-600">{j.status}</div>
                 <div className="text-gray-500">{j.started_at ? new Date(j.started_at).toLocaleString() : new Date(j.created_at).toLocaleString()}</div>

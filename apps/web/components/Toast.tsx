@@ -1,5 +1,5 @@
 'use client';
-import { useEffect } from 'react';
+import React, { useEffect } from 'react';
 import React from 'react';
 
 export function Toast({ open, pct, elapsedSec, done, onClose }: { open: boolean; pct: number; elapsedSec: number; done: boolean; onClose: () => void }) {
@@ -12,6 +12,8 @@ export function Toast({ open, pct, elapsedSec, done, onClose }: { open: boolean;
   if (!open) return null;
   const mm = Math.floor(elapsedSec / 60);
   const ss = elapsedSec % 60;
+  // Long-running animation heuristic: advance to 90% over time, then jump to 100% when done
+  const displayPct = done ? 100 : Math.max(pct, Math.min(90, elapsedSec * 2));
   return (
     <div className="fixed bottom-3 right-3 z-50 w-72 rounded-md border bg-white shadow">
       <div className="p-3 text-sm flex items-center gap-2">
@@ -21,7 +23,7 @@ export function Toast({ open, pct, elapsedSec, done, onClose }: { open: boolean;
       </div>
       <div className="px-3 pb-3">
         <div className="h-1 w-full rounded bg-gray-200 overflow-hidden">
-          <div className="h-full bg-slate-900" style={{ width: Math.max(0, Math.min(100, pct)) + '%' }} />
+          <div className="h-full bg-slate-900 transition-[width] duration-700 ease-out" style={{ width: displayPct + '%' }} />
         </div>
       </div>
     </div>
@@ -57,6 +59,9 @@ export function useRunningJobsToast() {
             setElapsedSec(0);
             if (timerRef.current) clearInterval(timerRef.current);
             timerRef.current = setInterval(() => setElapsedSec((v) => v + 1), 1000);
+          } else {
+            // advance progress slowly up to 90%
+            setPct((v) => (v < 90 ? Math.min(90, v + 2) : v));
           }
         } else if (open) {
           setPct(100);

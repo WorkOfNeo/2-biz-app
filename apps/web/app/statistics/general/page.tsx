@@ -209,26 +209,42 @@ export default function StatisticsGeneralPage() {
     try {
       const hasAccount = !!row.account_no && !row.account_no.includes(':');
       const buildQuery = (seasonId: string | undefined) => {
-        let q = supabase
+        // Fetch both aggregated stats (sales_stats) and raw invoice rows (sales_invoices)
+        const stats = supabase
           .from('sales_stats')
           .select('account_no, customer_name, city, qty, price, season_id, salesperson_id, updated_at')
           .eq('season_id', seasonId ?? '');
-        if (row.salespersonId) q = q.eq('salesperson_id', row.salespersonId);
+        const invoices = supabase
+          .from('sales_invoices')
+          .select('account_no, customer_name, qty, amount, currency, invoice_no, invoice_date, created_at')
+          .eq('season_id', seasonId ?? '');
+        if (row.salespersonId) { stats.eq('salesperson_id', row.salespersonId); }
         if (hasAccount) {
-          q = q.eq('account_no', row.account_no);
+          stats.eq('account_no', row.account_no); invoices.eq('account_no', row.account_no);
         } else {
-          q = q.eq('customer_name', row.customer).eq('city', row.city);
+          stats.eq('customer_name', row.customer).eq('city', row.city);
         }
-        return q.limit(10000);
+        return Promise.all([stats.limit(10000), invoices.limit(10000)]);
       };
       const [r1, r2] = await Promise.all([
-        s1 ? buildQuery(s1) : Promise.resolve({ data: [], error: null } as any),
-        s2 ? buildQuery(s2) : Promise.resolve({ data: [], error: null } as any)
+        s1 ? buildQuery(s1) : Promise.resolve([{ data: [], error: null }, { data: [], error: null }] as any),
+        s2 ? buildQuery(s2) : Promise.resolve([{ data: [], error: null }, { data: [], error: null }] as any)
       ]);
-      if ((r1 as any).error) throw new Error((r1 as any).error.message);
-      if ((r2 as any).error) throw new Error((r2 as any).error.message);
-      setDetailsS1(((r1 as any).data ?? []) as any[]);
-      setDetailsS2(((r2 as any).data ?? []) as any[]);
+      const [s1Stats, s1Invoices] = r1 as any[];
+      const [s2Stats, s2Invoices] = r2 as any[];
+      if (s1Stats.error) throw new Error(s1Stats.error.message);
+      if (s2Stats.error) throw new Error(s2Stats.error.message);
+      // Combine: show stats row plus each invoice as its own line (with invoice_no)
+      const s1Combined = [...(s1Stats.data ?? [])];
+      for (const inv of (s1Invoices?.data ?? [])) {
+        s1Combined.push({ account_no: inv.account_no, customer_name: inv.customer_name, city: '-', qty: Number(inv.qty||0), price: Number(inv.amount||0), season_id: s1, salesperson_id: row.salespersonId, updated_at: inv.created_at, invoice_no: inv.invoice_no });
+      }
+      const s2Combined = [...(s2Stats.data ?? [])];
+      for (const inv of (s2Invoices?.data ?? [])) {
+        s2Combined.push({ account_no: inv.account_no, customer_name: inv.customer_name, city: '-', qty: Number(inv.qty||0), price: Number(inv.amount||0), season_id: s2, salesperson_id: row.salespersonId, updated_at: inv.created_at, invoice_no: inv.invoice_no });
+      }
+      setDetailsS1(s1Combined as any[]);
+      setDetailsS2(s2Combined as any[]);
     } catch (e: any) {
       alert(e?.message || 'Failed to load details');
     } finally {
@@ -663,6 +679,7 @@ export default function StatisticsGeneralPage() {
                           <th className="text-left p-2 border-b">City</th>
                           <th className="text-right p-2 border-b">Qty</th>
                           <th className="text-right p-2 border-b">Price</th>
+                          <th className="text-left p-2 border-b">Invoice</th>
                           <th className="text-right p-2 border-b">Scraped</th>
                         </tr>
                       </thead>
@@ -674,6 +691,7 @@ export default function StatisticsGeneralPage() {
                             <td className="p-2 border-b">{r.city}</td>
                             <td className="p-2 border-b text-right">{Number(r.qty ?? 0)}</td>
                             <td className="p-2 border-b text-right">{Number(r.price ?? 0).toLocaleString('da-DK')}</td>
+                            <td className="p-2 border-b">{(r as any).invoice_no ?? '—'}</td>
                             <td className="p-2 border-b text-right">{r.updated_at ? new Date(r.updated_at).toLocaleString() : '—'}</td>
                           </tr>
                         ))}
@@ -702,6 +720,7 @@ export default function StatisticsGeneralPage() {
                           <th className="text-left p-2 border-b">City</th>
                           <th className="text-right p-2 border-b">Qty</th>
                           <th className="text-right p-2 border-b">Price</th>
+                          <th className="text-left p-2 border-b">Invoice</th>
                           <th className="text-right p-2 border-b">Scraped</th>
                         </tr>
                       </thead>
@@ -713,6 +732,7 @@ export default function StatisticsGeneralPage() {
                             <td className="p-2 border-b">{r.city}</td>
                             <td className="p-2 border-b text-right">{Number(r.qty ?? 0)}</td>
                             <td className="p-2 border-b text-right">{Number(r.price ?? 0).toLocaleString('da-DK')}</td>
+                            <td className="p-2 border-b">{(r as any).invoice_no ?? '—'}</td>
                             <td className="p-2 border-b text-right">{r.updated_at ? new Date(r.updated_at).toLocaleString() : '—'}</td>
                           </tr>
                         ))}
