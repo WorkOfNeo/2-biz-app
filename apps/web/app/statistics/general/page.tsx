@@ -5,6 +5,7 @@ import { supabase } from '../../../lib/supabaseClient';
 import Link from 'next/link';
 import { Menu, EyeOff, Trash2, Ban } from 'lucide-react';
 import { ProgressBar } from '../../../components/ProgressBar';
+import { Toast } from '../../../components/Toast';
 import { Modal } from '../../../components/Modal';
 
 export default function StatisticsGeneralPage() {
@@ -39,6 +40,9 @@ export default function StatisticsGeneralPage() {
   const [updating, setUpdating] = useState(false);
   const [updatePct, setUpdatePct] = useState(0);
   const [lastJobId, setLastJobId] = useState<string | null>(null);
+  const [elapsedSec, setElapsedSec] = useState(0);
+  const elapsedTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [doneToast, setDoneToast] = useState(false);
   const spNameById = useMemo(() => Object.fromEntries(((salespersons ?? []) as { id: string; name: string }[]).map(s => [s.id, s.name])), [salespersons]);
   const spCurrencyById = useMemo(() => Object.fromEntries(((salespersons ?? []) as { id: string; currency?: string | null }[]).map(s => [s.id, s.currency ?? 'DKK'])), [salespersons]);
   useEffect(() => {
@@ -100,6 +104,9 @@ export default function StatisticsGeneralPage() {
     try {
       setUpdating(true);
       setUpdatePct(5);
+      setElapsedSec(0);
+      if (elapsedTimerRef.current) { clearInterval(elapsedTimerRef.current); }
+      elapsedTimerRef.current = setInterval(() => setElapsedSec((v) => v + 1), 1000);
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) throw new Error('Not signed in');
       const token = session.access_token;
@@ -142,7 +149,9 @@ export default function StatisticsGeneralPage() {
               });
               if (msg === 'STEP:complete') {
                 clearInterval(timer);
-                setTimeout(() => setUpdating(false), 750);
+                if (elapsedTimerRef.current) { clearInterval(elapsedTimerRef.current); }
+                setDoneToast(true);
+                setTimeout(() => { setDoneToast(false); setUpdating(false); }, 1500);
               }
               break;
             }
@@ -150,12 +159,14 @@ export default function StatisticsGeneralPage() {
           // Safety cap
           if (Date.now() - start > 5 * 60 * 1000) {
             clearInterval(timer);
+            if (elapsedTimerRef.current) { clearInterval(elapsedTimerRef.current); }
             setUpdating(false);
           }
         } catch {}
       }, 1500);
     } catch (e: any) {
       alert(e?.message || 'Failed to enqueue');
+      if (elapsedTimerRef.current) { clearInterval(elapsedTimerRef.current); }
       setUpdating(false);
     }
   }
@@ -388,13 +399,7 @@ export default function StatisticsGeneralPage() {
 
 
       <div className="space-y-4">
-        {updating && (
-          <div className="rounded-md border p-3">
-            <div className="mb-2 text-sm text-gray-600">Updating statistics…</div>
-            <ProgressBar value={updatePct} />
-            {lastJobId && <div className="mt-1 text-[11px] text-gray-500">Job: {lastJobId}</div>}
-          </div>
-        )}
+        <Toast open={updating} pct={updatePct} elapsedSec={elapsedSec} done={doneToast} onClose={() => { setUpdating(false); setDoneToast(false); }} />
         <div className="flex flex-wrap w-full gap-2">
           {(((salespersons ?? []).map((sp) => sp.name)) as string[]).map((person) => {
             const active = person === activePerson;
