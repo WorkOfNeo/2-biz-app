@@ -1,10 +1,15 @@
-export type JobType = 'scrape_statistics';
+export type JobType = 'scrape_statistics' | 'scrape_styles';
 
 export interface ScrapeStatisticsPayload {
   // Allow optional 'deep' along with arbitrary keys; values may be undefined pre-validation
   toggles: { deep?: boolean; [k: string]: boolean | undefined };
   requestedBy?: string;
   seasonId?: string; // target season for imported sales stats
+}
+
+export interface ScrapeStylesPayload {
+  toggles?: { [k: string]: boolean | undefined };
+  requestedBy?: string;
 }
 
 export interface JobRow {
@@ -41,7 +46,7 @@ export interface JobResult {
 
 export interface EnqueueRequestBody {
   type: JobType;
-  payload: ScrapeStatisticsPayload;
+  payload: ScrapeStatisticsPayload | ScrapeStylesPayload | Record<string, any>;
 }
 
 export interface EnqueueResponseBody {

@@ -140,16 +140,8 @@ async function verifySupabaseJWT(authorization?: string): Promise<JWTPayload | n
 }
 
 const enqueueSchema = z.object({
-  type: z.literal('scrape_statistics'),
-  payload: z.object({
-    // Allow specific known key 'deep' to be optional, plus arbitrary boolean toggles
-    toggles: z
-      .object({ deep: z.boolean().optional() })
-      .catchall(z.boolean())
-      .default({}),
-    requestedBy: z.string().email().optional(),
-    seasonId: z.string().uuid().optional()
-  })
+  type: z.enum(['scrape_statistics','scrape_styles']),
+  payload: z.record(z.any())
 });
 
 const importCustomersSchema = z.object({

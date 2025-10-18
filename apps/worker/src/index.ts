@@ -159,7 +159,7 @@ async function runJob(job: JobRow) {
 
     const toggles = (job.payload?.toggles as Record<string, any>) || {};
     const deep = Boolean(toggles.deep);
-  const doSeasons = Boolean((toggles as any).seasons);
+    const doSeasons = Boolean((toggles as any).seasons);
     const dryRun = Boolean((toggles as any).dryRun);
 
     if (dryRun) {
@@ -168,6 +168,63 @@ async function runJob(job: JobRow) {
       await log(job.id, 'info', 'STEP:complete');
       return;
     }
+
+  if (job.type === 'scrape_styles') {
+    // Scrape Styles index page
+    await log(job.id, 'info', 'STEP:styles_begin');
+    const stylesUrl = new URL('?controller=Style%5CIndex&action=List&Spy%5CModel%5CStyle%5CIndex%5CListReportSearch%5BbForceSearch%5D=true', SPY_BASE_URL).toString();
+    await page.goto(stylesUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+    await page.waitForSelector('table.standardList tbody tr', { timeout: 60_000 });
+    // wait until at least 100 rows
+    await page.waitForFunction(() => {
+      const tb = document.querySelector('table.standardList tbody');
+      return !!tb && tb.querySelectorAll('tr').length >= 100;
+    }, {}, { timeout: 120_000 });
+    const rows = await page.$$eval('table.standardList tbody tr', (trs) => {
+      const out: { spy_id: string | null; style_no: string; style_name: string | null; supplier: string | null; image_url: string | null; link_href: string | null }[] = [];
+      for (const tr of Array.from(trs) as HTMLTableRowElement[]) {
+        const tds = Array.from(tr.querySelectorAll('td')) as HTMLElement[];
+        const spyId = (tr.getAttribute('data-reference') || null);
+        const img = tds[0]?.querySelector('img') as HTMLImageElement | null;
+        const a = tds[1]?.querySelector('a') as HTMLAnchorElement | null; // Style No. link
+        const styleNo = (a?.textContent || '').trim();
+        const styleName = (tds[2]?.textContent || '').replace(/\s+/g, ' ').trim() || null;
+        const supplier = (tds[7]?.textContent || '').replace(/\s+/g, ' ').trim() || null;
+        if (styleNo) {
+          out.push({
+            spy_id: spyId,
+            style_no: styleNo,
+            style_name: styleName,
+            supplier,
+            image_url: (img?.getAttribute('src') || null),
+            link_href: (a?.getAttribute('href') || null)
+          });
+        }
+      }
+      return out;
+    });
+    await log(job.id, 'info', 'STEP:styles_rows', { count: rows.length });
+    // Upsert in batches by unique style_no
+    let upserted = 0;
+    for (let i = 0; i < rows.length; i += 1000) {
+      const batch = rows.slice(i, i + 1000);
+      const { error } = await supabase.from('styles').upsert(batch.map(r => ({
+        spy_id: r.spy_id,
+        style_no: r.style_no,
+        style_name: r.style_name,
+        supplier: r.supplier,
+        image_url: r.image_url,
+        link_href: r.link_href,
+        updated_at: new Date().toISOString()
+      })), { onConflict: 'style_no' });
+      if (error) throw error;
+      upserted += batch.length;
+      await log(job.id, 'info', 'STEP:styles_batch_upsert', { upserted });
+    }
+    await saveResult(job.id, 'Styles scrape completed', { upserted });
+    await log(job.id, 'info', 'STEP:complete', { upserted });
+    return;
+  }
 
   if (doSeasons) {
     // Scrape seasons list and upsert into Supabase
