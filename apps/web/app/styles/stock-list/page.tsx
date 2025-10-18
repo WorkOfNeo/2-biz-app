@@ -52,9 +52,10 @@ export default function StockListPage() {
       for (const [color, rows] of byColor.entries()) {
         if (rows.length === 0) continue;
         // choose latest scraped_at
-        const latestAt = rows.reduce((max, r) => (new Date(r.scraped_at).getTime() > new Date(max).getTime() ? r.scraped_at : max), rows[0].scraped_at);
+        const firstScraped = rows[0]?.scraped_at ?? new Date(0).toISOString();
+        const latestAt = rows.reduce((max, r) => (new Date(r.scraped_at).getTime() > new Date(max).getTime() ? r.scraped_at : max), firstScraped);
         const snapshot = rows.filter(r => r.scraped_at === latestAt);
-        const sizes = (snapshot.find(r => r.section === 'Stock') || snapshot[0])?.sizes || [];
+        const sizes = (snapshot.find(r => r.section === 'Stock') || snapshot[0] || rows[0])?.sizes || [];
         const num = sizes.length;
         const zero = Array.from({ length: num }, () => 0);
         const stockRow = snapshot.find(r => r.section === 'Stock');
