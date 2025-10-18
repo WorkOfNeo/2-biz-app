@@ -288,6 +288,21 @@ async function runJob(job: JobRow) {
       const url = new URL(href, SPY_BASE_URL).toString().replace(/#.*$/, '') + '#tab=statandstock';
       await log(job.id, 'info', 'STEP:style_stock_nav', { style_no: s.style_no, url });
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+      // Expand all collapsed sections by clicking arrow-down icons
+      try {
+        for (let i = 0; i < 5; i++) {
+          const count = await page!.evaluate(() => {
+            const nodes = Array.from(document.querySelectorAll('.sprite.sprite168.spriteArrowDown.right.clickable')) as HTMLElement[];
+            nodes.forEach((n) => n.click());
+            return nodes.length;
+          });
+          await log(job.id, 'info', 'STEP:style_stock_expand_click', { iteration: i + 1, clicked: count });
+          if (!count) break;
+          await page!.waitForTimeout(400);
+        }
+      } catch (e: any) {
+        await log(job.id, 'error', 'STEP:style_stock_expand_error', { error: e?.message || String(e) });
+      }
       // Ensure statAndStockDetails present
       try {
         await page.waitForSelector('.statAndStockDetails', { timeout: 60_000, state: 'attached' as any });
