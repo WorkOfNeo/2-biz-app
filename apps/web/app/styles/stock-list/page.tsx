@@ -75,7 +75,7 @@ export default function StockListPage() {
           const vals = ensureNums(Array.isArray(r.values) ? (r.values as any[]) : JSON.parse(String(r.values || '[]')), num);
           return acc.map((v, i) => v + (vals[i] ?? 0));
         }, zero.slice());
-        const available = stock.map((v, i) => v - soldSum[i] + purchaseSum[i]);
+        const available = stock.map((v, i) => v - (soldSum[i] ?? 0) + (purchaseSum[i] ?? 0));
         const latestAt = latestRows.reduce((max, r) => (new Date(r.scraped_at).getTime() > new Date(max).getTime() ? r.scraped_at : max), latestRows[0]?.scraped_at || new Date(0).toISOString());
         res.push({ styleNo, color, sizes, stock, soldSum, purchaseSum, available, soldRows, purchaseRows, scrapedAt: latestAt });
       }
