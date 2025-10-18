@@ -38,6 +38,7 @@ export function SidebarNav() {
         <div className="ml-2 space-y-1">
           <NavLink href="/styles" label="Styles" />
           <NavLink href="/styles/settings" label="Settings" />
+          <NavLink href="/styles/runs" label="Runs" />
         </div>
       </div>
       <div>
