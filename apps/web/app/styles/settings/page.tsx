@@ -83,10 +83,22 @@ export default function StylesSettingsPage() {
               {(styles ?? []).map((s) => {
                 const checked = current.includes(s.style_no);
                 return (
-                  <tr key={s.style_no}>
-                    <td className="p-2 border-b"><input type="checkbox" checked={checked} onChange={() => toggleOne(s.style_no)} /></td>
-                    <td className="p-2 border-b">{s.style_no}</td>
-                    <td className="p-2 border-b">{s.style_name ?? '—'}</td>
+                  <tr
+                    key={s.style_no}
+                    onClick={() => toggleOne(s.style_no)}
+                    className={(checked ? 'bg-slate-50 ' : '') + 'hover:bg-slate-50 cursor-pointer transition-colors'}
+                  >
+                    <td className="p-2 border-b align-middle">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => toggleOne(s.style_no)}
+                        onClick={(e) => e.stopPropagation()}
+                        className="h-4 w-4 accent-slate-900 rounded"
+                      />
+                    </td>
+                    <td className={(checked ? 'border-l-4 border-l-slate-900 ' : '') + 'p-2 border-b font-medium'}>{s.style_no}</td>
+                    <td className="p-2 border-b text-gray-700">{s.style_name ?? '—'}</td>
                   </tr>
                 );
               })}
