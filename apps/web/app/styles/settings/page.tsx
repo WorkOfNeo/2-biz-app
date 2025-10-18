@@ -111,8 +111,10 @@ export default function StylesSettingsPage() {
         <div className="flex items-center justify-between">
           <div className="text-sm font-medium">Runs</div>
           <button
-            className="text-xs px-2 py-1 border rounded bg-slate-900 text-white hover:bg-slate-800"
+            className={"text-xs px-2 py-1 border rounded bg-slate-900 text-white hover:bg-slate-800 " + (Boolean((window as any)?._stylesRunLoading) ? 'opacity-60 cursor-not-allowed' : '')}
             onClick={async () => {
+              // loading state
+              ;(window as any)._stylesRunLoading = true;
               try {
                 const { data: { session } } = await supabase.auth.getSession();
                 if (!session) throw new Error('Not signed in');
@@ -124,10 +126,15 @@ export default function StylesSettingsPage() {
                 const js = await res.json().catch(() => ({}));
                 // eslint-disable-next-line no-console
                 console.log('[styles-settings] enqueue update_style_stock', res.status, js);
+                // toast
+                try {
+                  const { ToastStack } = await import('../../../components/Toast');
+                } catch {}
               } catch (e) {
                 // eslint-disable-next-line no-console
                 console.error('[styles-settings] enqueue error', e);
               }
+              (window as any)._stylesRunLoading = false;
             }}
           >
             Update Stock

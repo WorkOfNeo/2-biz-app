@@ -38,9 +38,10 @@ export default function StockListPage() {
     purchaseRows: Row[];
     scrapedAt: string;
   };
+  const ensureNums = (arr: any[], len: number) => Array.from({ length: len }, (_, i) => Number(arr?.[i] ?? 0) || 0);
   const groups: Group[] = React.useMemo(() => {
     const res: Group[] = [];
-    // Build map style->color->rows and pick latest snapshot by scraped_at
+    // Build map style->color->rows and pick latest per (section,row_label)
     const byStyle = new Map<string, Map<string, Row[]>>();
     for (const r of (data ?? [])) {
       if (!byStyle.has(r.style_no)) byStyle.set(r.style_no, new Map());
@@ -51,20 +52,31 @@ export default function StockListPage() {
     for (const [styleNo, byColor] of byStyle.entries()) {
       for (const [color, rows] of byColor.entries()) {
         if (rows.length === 0) continue;
-        // choose latest scraped_at
-        const firstScraped = rows[0]?.scraped_at ?? new Date(0).toISOString();
-        const latestAt = rows.reduce((max, r) => (new Date(r.scraped_at).getTime() > new Date(max).getTime() ? r.scraped_at : max), firstScraped);
-        const snapshot = rows.filter(r => r.scraped_at === latestAt);
-        const sizes = (snapshot.find(r => r.section === 'Stock') || snapshot[0] || rows[0])?.sizes || [];
+        // latest per (section,row_label)
+        const latestMap = new Map<string, Row>();
+        for (const r of rows) {
+          const key = `${r.section}|${r.row_label ?? ''}`;
+          const curr = latestMap.get(key);
+          if (!curr || new Date(r.scraped_at).getTime() > new Date(curr.scraped_at).getTime()) latestMap.set(key, r);
+        }
+        const latestRows = Array.from(latestMap.values());
+        const sizes = (latestRows.find(r => r.section === 'Stock') || latestRows[0] || rows[0])?.sizes || [];
         const num = sizes.length;
         const zero = Array.from({ length: num }, () => 0);
-        const stockRow = snapshot.find(r => r.section === 'Stock');
-        const stock = stockRow ? stockRow.values.slice(0, num) : zero.slice();
-        const soldRows = snapshot.filter(r => r.section === 'Sold');
-        const purchaseRows = snapshot.filter(r => r.section === 'Purchase (Running + Shipped)');
-        const soldSum = soldRows.reduce((acc, r) => acc.map((v, i) => v + (r.values[i] || 0)), zero.slice());
-        const purchaseSum = purchaseRows.reduce((acc, r) => acc.map((v, i) => v + (r.values[i] || 0)), zero.slice());
-        const available = stock.map((v, i) => v - (soldSum[i] || 0) + (purchaseSum[i] || 0));
+        const stockRow = latestRows.find(r => r.section === 'Stock');
+        const stock = stockRow ? ensureNums(Array.isArray(stockRow.values) ? (stockRow.values as any[]) : JSON.parse(String(stockRow.values || '[]')), num) : zero.slice();
+        const soldRows = latestRows.filter(r => r.section === 'Sold');
+        const purchaseRows = latestRows.filter(r => r.section === 'Purchase (Running + Shipped)');
+        const soldSum = soldRows.reduce((acc, r) => {
+          const vals = ensureNums(Array.isArray(r.values) ? (r.values as any[]) : JSON.parse(String(r.values || '[]')), num);
+          return acc.map((v, i) => v + vals[i]);
+        }, zero.slice());
+        const purchaseSum = purchaseRows.reduce((acc, r) => {
+          const vals = ensureNums(Array.isArray(r.values) ? (r.values as any[]) : JSON.parse(String(r.values || '[]')), num);
+          return acc.map((v, i) => v + vals[i]);
+        }, zero.slice());
+        const available = stock.map((v, i) => v - soldSum[i] + purchaseSum[i]);
+        const latestAt = latestRows.reduce((max, r) => (new Date(r.scraped_at).getTime() > new Date(max).getTime() ? r.scraped_at : max), latestRows[0]?.scraped_at || new Date(0).toISOString());
         res.push({ styleNo, color, sizes, stock, soldSum, purchaseSum, available, soldRows, purchaseRows, scrapedAt: latestAt });
       }
     }
