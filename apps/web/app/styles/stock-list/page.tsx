@@ -69,11 +69,11 @@ export default function StockListPage() {
         const purchaseRows = latestRows.filter(r => r.section === 'Purchase (Running + Shipped)');
         const soldSum = soldRows.reduce((acc, r) => {
           const vals = ensureNums(Array.isArray(r.values) ? (r.values as any[]) : JSON.parse(String(r.values || '[]')), num);
-          return acc.map((v, i) => v + vals[i]);
+          return acc.map((v, i) => v + (vals[i] ?? 0));
         }, zero.slice());
         const purchaseSum = purchaseRows.reduce((acc, r) => {
           const vals = ensureNums(Array.isArray(r.values) ? (r.values as any[]) : JSON.parse(String(r.values || '[]')), num);
-          return acc.map((v, i) => v + vals[i]);
+          return acc.map((v, i) => v + (vals[i] ?? 0));
         }, zero.slice());
         const available = stock.map((v, i) => v - soldSum[i] + purchaseSum[i]);
         const latestAt = latestRows.reduce((max, r) => (new Date(r.scraped_at).getTime() > new Date(max).getTime() ? r.scraped_at : max), latestRows[0]?.scraped_at || new Date(0).toISOString());
