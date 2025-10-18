@@ -34,6 +34,12 @@ export function SidebarNav() {
         </div>
       </div>
       <div>
+        <div className="mt-4 mb-1 text-xs uppercase tracking-wider text-slate-400">Styles</div>
+        <div className="ml-2 space-y-1">
+          <NavLink href="/styles" label="Styles" />
+        </div>
+      </div>
+      <div>
         <div className="mt-4 mb-1 text-xs uppercase tracking-wider text-slate-400">Settings</div>
         <div className="ml-2 space-y-1">
           <NavLink href="/settings/seasons" label="SEASONS" />
