@@ -378,18 +378,25 @@ async function runJob(job: JobRow) {
 
           let inSold = false;
           let inPurchase = false;
+          let inDedicated = false;
           for (let r = 1; r < rows.length; r++) {
             const rowEl = rows[r] as HTMLTableRowElement;
             const tds = Array.from(rowEl.querySelectorAll('td')) as HTMLElement[];
             const label = text(tds[0]);
             const cls = rowEl.className || '';
-            if (/Sold/.test(label) && /header/.test(cls)) { inSold = true; inPurchase = false; continue; }
-            if (/Available/.test(label) && /header/.test(cls)) { inSold = false; continue; }
-            if (/Purchase/.test(label) && /header/.test(cls)) { inPurchase = true; inSold = false; continue; }
-            if (/Net Need/.test(label) && /header/.test(cls)) { inPurchase = false; break; }
+            if (/Sold/.test(label) && /header/.test(cls)) { inSold = true; inPurchase = false; inDedicated = false; continue; }
+            if (/Available/.test(label) && /header/.test(cls)) { inSold = false; inDedicated = false; continue; }
+            if (/Purchase/.test(label) && /header/.test(cls)) { inPurchase = true; inSold = false; inDedicated = false; continue; }
+            if (/Net Need/.test(label) && /header/.test(cls)) { inPurchase = false; inDedicated = false; break; }
 
             if (label === 'Stock') { out.push({ color, sizes: sizeLabels, section: 'Stock', row_label: 'Stock', values: numbersFromRow(tds), po_link: null }); continue; }
-            if (rowEl.querySelector('a.edit-dedication')) { out.push({ color, sizes: sizeLabels, section: 'Stock Dedicated To Pre', row_label: 'Stock Dedicated To Pre', values: numbersFromRow(tds), po_link: null }); continue; }
+            // Dedicated main sum row contains edit-dedication link; skip sum to avoid double counting, but enter dedicated mode
+            if (rowEl.querySelector('a.edit-dedication')) { inDedicated = true; continue; }
+            if (inDedicated && cls.includes('stylecolor-expanded--sub')) {
+              const kind = /Pre/i.test(label) ? 'Pre Dedicated' : 'Stock Dedicated';
+              out.push({ color, sizes: sizeLabels, section: kind, row_label: label || kind, values: numbersFromRow(tds), po_link: null });
+              continue;
+            }
             if (inSold && cls.includes('stylecolor-expanded--sub')) { out.push({ color, sizes: sizeLabels, section: 'Sold', row_label: label || 'Row', values: numbersFromRow(tds), po_link: null }); continue; }
             if (inPurchase && cls.includes('stylecolor-expanded--sub')) {
               const poA = rowEl.querySelector('a[href*="purchase_orders.php"]') as HTMLAnchorElement | null;
@@ -400,7 +407,29 @@ async function runJob(job: JobRow) {
         }
         return out;
       });
-      // Upsert extracted rows
+      // Delete rows that disappeared and upsert changes per color
+      const byColor = new Map<string, typeof extracted>();
+      for (const row of extracted) {
+        const arr = byColor.get(row.color) || [] as any;
+        (arr as any).push(row);
+        byColor.set(row.color, arr as any);
+      }
+      for (const [colorName, rowsList] of byColor.entries()) {
+        const newKeys = new Set(rowsList.map((r: any) => `${r.section}|${r.row_label || ''}`));
+        try {
+          const { data: existingRows } = await supabase
+            .from('style_stock')
+            .select('id, section, row_label')
+            .eq('style_no', s.style_no)
+            .eq('color', colorName);
+          for (const ex of (existingRows ?? []) as any[]) {
+            const key = `${ex.section}|${ex.row_label || ''}`;
+            if (!newKeys.has(key)) {
+              await supabase.from('style_stock').delete().eq('id', ex.id as string);
+            }
+          }
+        } catch {}
+      }
       for (const row of extracted) {
         const { data: exist } = await supabase
           .from('style_stock')
@@ -411,10 +440,17 @@ async function runJob(job: JobRow) {
           .eq('row_label', row.row_label || '')
           .maybeSingle();
         if (exist?.id) {
-          await supabase
-            .from('style_stock')
-            .update({ sizes: row.sizes, values: row.values, po_link: row.po_link, updated_at: new Date().toISOString() })
-            .eq('id', exist.id as string);
+          // Only update if changed
+          const { data: curr } = await supabase.from('style_stock').select('sizes, values, po_link').eq('id', exist.id as string).maybeSingle();
+          const changed = JSON.stringify(curr?.sizes || []) !== JSON.stringify(row.sizes || [])
+            || JSON.stringify(curr?.values || []) !== JSON.stringify(row.values || [])
+            || String(curr?.po_link || '') !== String(row.po_link || '');
+          if (changed) {
+            await supabase
+              .from('style_stock')
+              .update({ sizes: row.sizes, values: row.values, po_link: row.po_link, updated_at: new Date().toISOString() })
+              .eq('id', exist.id as string);
+          }
         } else {
           await supabase.from('style_stock').insert({
             style_no: s.style_no,

@@ -99,9 +99,11 @@ export default function StockListPage() {
         const key = `${g.styleNo}:${g.color}`;
         return (
           <div key={key} className="rounded-md border bg-white">
-            <div className="px-3 py-2 text-sm font-semibold border-b">{g.styleNo}</div>
+            <div className="px-3 py-2 border-b">
+              <div className="text-xs text-gray-500">{g.styleNo}</div>
+              <div className="text-sm font-semibold text-black">{g.color}</div>
+            </div>
             <div className="px-3 py-2">
-              <div className="text-xs text-gray-600 mb-2">{g.color}</div>
               <div className="overflow-auto border rounded">
                 <table className="min-w-full text-xs">
                   <thead className="bg-gray-50">
