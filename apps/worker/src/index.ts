@@ -173,24 +173,24 @@ async function runJob(job: JobRow) {
     // Scrape Styles index page
     await log(job.id, 'info', 'STEP:styles_begin');
     const stylesUrl = new URL('?controller=Style%5CIndex&action=List&Spy%5CModel%5CStyle%5CIndex%5CListReportSearch%5BbForceSearch%5D=true', SPY_BASE_URL).toString();
-    await page.goto(stylesUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+    await page!.goto(stylesUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
     await log(job.id, 'info', 'STEP:styles_url', { url: stylesUrl });
     // Ensure table exists (attached), not necessarily visible yet
     try {
-      await page.waitForSelector('table.standardList', { timeout: 60_000, state: 'attached' as any });
+      await page!.waitForSelector('table.standardList', { timeout: 60_000, state: 'attached' as any });
       await log(job.id, 'info', 'STEP:styles_table_found');
     } catch (e: any) {
-      const html = await captureHtmlSnippet(page, page);
+      const html = await captureHtmlSnippet(page, page!);
       await log(job.id, 'error', 'STEP:styles_table_not_found', { error: e?.message || String(e), html });
       throw e;
     }
     // Try clicking "Show All" to load full list
     try {
-      const showAll = await findFirst(page, ['button[name="show_all"]', 'input[name="show_all"]', 'button:has-text("Show All")']);
+      const showAll = await findFirst(page!, ['button[name="show_all"]', 'input[name="show_all"]', 'button:has-text("Show All")']);
       if (showAll) {
         await showAll.click({ timeout: 30_000 }).catch(() => {});
         await log(job.id, 'info', 'STEP:styles_show_all_clicked');
-        await page.waitForTimeout(1200);
+        await page!.waitForTimeout(1200);
       } else {
         await log(job.id, 'info', 'STEP:styles_show_all_not_found');
       }
@@ -198,18 +198,18 @@ async function runJob(job: JobRow) {
       await log(job.id, 'error', 'STEP:styles_show_all_error', { error: e?.message || String(e) });
     }
     // Wait for at least some rows to appear (attached)
-    await page.waitForSelector('table.standardList tbody tr', { timeout: 60_000, state: 'attached' as any });
+    await page!.waitForSelector('table.standardList tbody tr', { timeout: 60_000, state: 'attached' as any });
     // Scroll to load more rows up to >=100 or until stable
     try {
       let last = 0;
       for (let i = 0; i < 20; i++) {
-        const count = await page.$$eval('table.standardList tbody tr', (trs) => trs.length);
+        const count = await page!.$$eval('table.standardList tbody tr', (trs) => trs.length);
         await log(job.id, 'info', 'STEP:styles_rows_count', { iteration: i + 1, count });
         if (count >= 100) break;
         if (count > last) {
           last = count;
-          await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-          await page.waitForTimeout(800);
+          await page!.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+          await page!.waitForTimeout(800);
         } else {
           break;
         }
@@ -217,7 +217,7 @@ async function runJob(job: JobRow) {
     } catch (e: any) {
       await log(job.id, 'error', 'STEP:styles_scroll_error', { error: e?.message || String(e) });
     }
-    const rows = await page.$$eval('table.standardList tbody tr', (trs) => {
+    const rows = await page!.$$eval('table.standardList tbody tr', (trs) => {
       const out: { spy_id: string | null; style_no: string; style_name: string | null; supplier: string | null; image_url: string | null; link_href: string | null }[] = [];
       for (const tr of Array.from(trs) as HTMLTableRowElement[]) {
         const tds = Array.from(tr.querySelectorAll('td')) as HTMLElement[];
@@ -260,6 +260,106 @@ async function runJob(job: JobRow) {
     }
     await saveResult(job.id, 'Styles scrape completed', { upserted });
     await log(job.id, 'info', 'STEP:complete', { upserted });
+    return;
+  }
+
+  if (job.type === 'update_style_stock') {
+    await log(job.id, 'info', 'STEP:style_stock_begin');
+    // Expect payload.styleNos or derive from app_settings.styles_daily_selection
+    let styleNos: string[] = Array.isArray(job.payload?.styleNos) ? (job.payload?.styleNos as string[]) : [];
+    if (styleNos.length === 0) {
+      try {
+        const { data } = await supabase.from('app_settings').select('value').eq('key', 'styles_daily_selection').maybeSingle();
+        styleNos = ((data?.value as any)?.styleNos as string[] | undefined) ?? [];
+      } catch {}
+    }
+    if (styleNos.length === 0) {
+      await log(job.id, 'info', 'STEP:style_stock_no_selection');
+      await saveResult(job.id, 'Style stock: no styles selected', { count: 0 });
+      await log(job.id, 'info', 'STEP:complete', { upserted: 0 });
+      return;
+    }
+    // Fetch style hrefs from styles table
+    const { data: styles } = await supabase.from('styles').select('style_no, link_href').in('style_no', styleNos);
+    let totalRows = 0;
+    for (const s of (styles ?? []) as any[]) {
+      const href = (s.link_href || '').toString();
+      if (!href) continue;
+      const url = new URL(href, SPY_BASE_URL).toString().replace(/#.*$/, '') + '#tab=statandstock';
+      await log(job.id, 'info', 'STEP:style_stock_nav', { style_no: s.style_no, url });
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+      // Ensure statAndStockDetails present
+      try {
+        await page.waitForSelector('.statAndStockDetails', { timeout: 60_000, state: 'attached' as any });
+      } catch (e: any) {
+        const html = await captureHtmlSnippet(page, page);
+        await log(job.id, 'error', 'STEP:style_stock_missing', { style_no: s.style_no, error: e?.message || String(e), html });
+        continue;
+      }
+      const extracted = await page!.$$eval('.statAndStockBox', (boxes) => {
+        function text(el: Element | null | undefined): string { return ((el as HTMLElement | null)?.textContent || '').replace(/\s+/g, ' ').trim(); }
+        function numbersFromRow(tds: HTMLElement[]): number[] {
+          const arr: number[] = [];
+          for (let i = 1; i < tds.length; i++) { // skip first label cell
+            const raw = (tds[i]?.textContent || '').replace(/\s+/g, ' ').trim();
+            const n = Number(raw.replace(/[^0-9\-]/g, '')) || 0;
+            arr.push(n);
+          }
+          return arr;
+        }
+        const out: Array<{ color: string; sizes: string[]; section: string; row_label: string; values: number[]; po_link: string | null }> = [];
+        for (const box of Array.from(boxes) as HTMLElement[]) {
+          const details = box.querySelector('.statAndStockDetails') as HTMLElement | null;
+          if (!details) continue;
+          const tables = Array.from(details.querySelectorAll('table')) as HTMLTableElement[];
+          for (const table of tables) {
+            const rows = Array.from(table.querySelectorAll('tr')) as HTMLTableRowElement[];
+            if (rows.length === 0) continue;
+            const firstRow = rows[0] as HTMLTableRowElement;
+            const headerTds = Array.from(firstRow.querySelectorAll('td')) as HTMLElement[];
+            const color = text(headerTds[0]);
+            // sizes are header indices after first cell, until the last cell which may be Total label
+            const sizeLabels: string[] = [];
+            for (let i = 1; i < headerTds.length; i++) sizeLabels.push(text(headerTds[i]));
+            // Walk subsequent rows grouping into sections based on CSS classes / titles
+            for (let r = 1; r < rows.length; r++) {
+              const rowEl = rows[r] as HTMLTableRowElement;
+              const tds = Array.from(rowEl.querySelectorAll('td')) as HTMLElement[];
+              const label = text(tds[0] as HTMLElement | undefined);
+              const cls = rowEl.className || '';
+              let section = '';
+              // Identify sections heuristically
+              if (/Sold/.test(label) && /header/.test(cls)) { section = 'Sold'; continue; }
+              if (/Purchase/.test(label) && /header/.test(cls)) { section = 'Purchase (Running + Shipped)'; continue; }
+              if (/Available/.test(label) && /header/.test(cls)) { section = 'Available'; continue; }
+              if (/Net Need/.test(label) && /header/.test(cls)) { section = 'Net need'; continue; }
+              if (!section) {
+                // main rows with values
+                const poA = rowEl.querySelector('a[href*="purchase_orders.php"]') as HTMLAnchorElement | null;
+                out.push({ color, sizes: sizeLabels, section: label || 'Row', row_label: label || 'Row', values: numbersFromRow(tds), po_link: poA ? (poA.getAttribute('href') || null) : null });
+              }
+            }
+          }
+        }
+        return out;
+      });
+      // Upsert extracted rows
+      for (const row of extracted) {
+        await supabase.from('style_stock').insert({
+          style_no: s.style_no,
+          color: row.color,
+          sizes: row.sizes,
+          section: row.section,
+          row_label: row.row_label,
+          values: row.values,
+          po_link: row.po_link
+        });
+        totalRows++;
+      }
+      await log(job.id, 'info', 'STEP:style_stock_rows', { style_no: s.style_no, rows: extracted.length });
+    }
+    await saveResult(job.id, 'Style stock scrape completed', { totalRows });
+    await log(job.id, 'info', 'STEP:complete', { totalRows });
     return;
   }
 
