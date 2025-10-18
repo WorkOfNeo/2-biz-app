@@ -414,6 +414,32 @@ async function runJob(job: JobRow) {
         (arr as any).push(row);
         byColor.set(row.color, arr as any);
       }
+      // Debug logs per color: sizes, stock, sold/purchase/dedicated summaries and samples
+      try {
+        const trim = (arr: number[]) => (arr || []).slice(0, 20);
+        for (const [colorName, rowsList] of byColor.entries()) {
+          const sizes = (rowsList.find((r: any) => r.section === 'Stock') || rowsList[0])?.sizes || [];
+          const stockVals = (rowsList.find((r: any) => r.section === 'Stock')?.values) || [];
+          const soldRows = rowsList.filter((r: any) => r.section === 'Sold');
+          const purchaseRows = rowsList.filter((r: any) => r.section === 'Purchase (Running + Shipped)');
+          const stockDed = rowsList.filter((r: any) => r.section === 'Stock Dedicated');
+          const preDed = rowsList.filter((r: any) => r.section === 'Pre Dedicated');
+          const sum = (rows: any[]) => {
+            const len = sizes.length;
+            const zero = Array.from({ length: len }, () => 0);
+            return rows.reduce((acc: number[], r: any) => acc.map((v: number, i: number) => v + Number((r.values?.[i] ?? 0) || 0)), zero);
+          };
+          await log(job.id, 'info', 'STEP:style_stock_parsed', {
+            style_no: s.style_no,
+            color: colorName,
+            sizes,
+            stock: trim(stockVals as any),
+            sold: { count: soldRows.length, sum: trim(sum(soldRows)), sample: soldRows.slice(0, 2).map((r: any) => ({ label: r.row_label, values: trim(r.values) })) },
+            purchase: { count: purchaseRows.length, sum: trim(sum(purchaseRows)), sample: purchaseRows.slice(0, 2).map((r: any) => ({ label: r.row_label, values: trim(r.values) })) },
+            dedicated: { stockDedicated: { count: stockDed.length, sum: trim(sum(stockDed)) }, preDedicated: { count: preDed.length, sum: trim(sum(preDed)) } }
+          });
+        }
+      } catch {}
       for (const [colorName, rowsList] of byColor.entries()) {
         const newKeys = new Set(rowsList.map((r: any) => `${r.section}|${r.row_label || ''}`));
         try {
