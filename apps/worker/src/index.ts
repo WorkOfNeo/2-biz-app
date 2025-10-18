@@ -354,7 +354,7 @@ async function runJob(job: JobRow) {
         function text(el: Element | null | undefined): string { return ((el as HTMLElement | null)?.textContent || '').replace(/\s+/g, ' ').trim(); }
         function numbersFromRow(tds: HTMLElement[]): number[] {
           const arr: number[] = [];
-          for (let i = 1; i < tds.length - 1; i++) { // skip first label cell and last Total column
+          for (let i = 1; i < tds.length - 1; i++) {
             const raw = (tds[i]?.textContent || '').replace(/\s+/g, ' ').trim();
             const n = Number(raw.replace(/[^0-9\-]/g, '')) || 0;
             arr.push(n);
@@ -365,42 +365,36 @@ async function runJob(job: JobRow) {
         for (const box of Array.from(boxes) as HTMLElement[]) {
           const details = box.querySelector('.statAndStockDetails') as HTMLElement | null;
           if (!details) continue;
-          const tables = Array.from(details.querySelectorAll('table')) as HTMLTableElement[];
-          for (const table of tables) {
-            const rows = Array.from(table.querySelectorAll('tr')) as HTMLTableRowElement[];
-            if (rows.length === 0) continue;
-            const firstRow = rows[0] as HTMLTableRowElement;
-            const headerTds = Array.from(firstRow.querySelectorAll('td')) as HTMLElement[];
-            const color = text(headerTds[0]);
-            // sizes are header indices after first cell, until the last cell which may be Total label
-            const sizeLabels: string[] = [];
-            for (let i = 1; i < headerTds.length - 1; i++) sizeLabels.push(text(headerTds[i]));
-            // Walk subsequent rows grouping into sections based on CSS classes / titles
-            let section: string = '';
-            for (let r = 1; r < rows.length; r++) {
-              const rowEl = rows[r] as HTMLTableRowElement;
-              const tds = Array.from(rowEl.querySelectorAll('td')) as HTMLElement[];
-              const label = text(tds[0] as HTMLElement | undefined);
-              const cls = rowEl.className || '';
-              // Identify sections heuristically
-              if (/Sold/.test(label) && /header/.test(cls)) { section = 'Sold'; continue; }
-              if (/Purchase/.test(label) && /header/.test(cls)) { section = 'Purchase (Running + Shipped)'; continue; }
-              if (/Available/.test(label) && /header/.test(cls)) { section = 'Available'; continue; }
-              if (/Net Need/.test(label) && /header/.test(cls)) { section = 'Net need'; break; }
-              // Only capture desired sections
-              if (label === 'Stock') {
-                out.push({ color, sizes: sizeLabels, section: 'Stock', row_label: 'Stock', values: numbersFromRow(tds), po_link: null });
-                continue;
-              }
-              if (section === 'Sold') {
-                out.push({ color, sizes: sizeLabels, section: 'Sold', row_label: label || 'Row', values: numbersFromRow(tds), po_link: null });
-                continue;
-              }
-              if (section === 'Purchase (Running + Shipped)') {
-                const poA = rowEl.querySelector('a[href*="purchase_orders.php"]') as HTMLAnchorElement | null;
-                out.push({ color, sizes: sizeLabels, section: 'Purchase (Running + Shipped)', row_label: label || 'Row', values: numbersFromRow(tds), po_link: poA ? (poA.getAttribute('href') || null) : null });
-                continue;
-              }
+          const firstTable = details.querySelector('table') as HTMLTableElement | null; // only first table
+          if (!firstTable) continue;
+          const rows = Array.from(firstTable.querySelectorAll('tr')) as HTMLTableRowElement[];
+          if (rows.length === 0) continue;
+          const first = rows[0] as HTMLTableRowElement | undefined;
+          if (!first) continue;
+          const headerTds = Array.from(first.querySelectorAll('td')) as HTMLElement[];
+          const color = text(headerTds[0]);
+          const sizeLabels: string[] = [];
+          for (let i = 1; i < headerTds.length - 1; i++) sizeLabels.push(text(headerTds[i]));
+
+          let inSold = false;
+          let inPurchase = false;
+          for (let r = 1; r < rows.length; r++) {
+            const rowEl = rows[r] as HTMLTableRowElement;
+            const tds = Array.from(rowEl.querySelectorAll('td')) as HTMLElement[];
+            const label = text(tds[0]);
+            const cls = rowEl.className || '';
+            if (/Sold/.test(label) && /header/.test(cls)) { inSold = true; inPurchase = false; continue; }
+            if (/Available/.test(label) && /header/.test(cls)) { inSold = false; continue; }
+            if (/Purchase/.test(label) && /header/.test(cls)) { inPurchase = true; inSold = false; continue; }
+            if (/Net Need/.test(label) && /header/.test(cls)) { inPurchase = false; break; }
+
+            if (label === 'Stock') { out.push({ color, sizes: sizeLabels, section: 'Stock', row_label: 'Stock', values: numbersFromRow(tds), po_link: null }); continue; }
+            if (rowEl.querySelector('a.edit-dedication')) { out.push({ color, sizes: sizeLabels, section: 'Stock Dedicated To Pre', row_label: 'Stock Dedicated To Pre', values: numbersFromRow(tds), po_link: null }); continue; }
+            if (inSold && cls.includes('stylecolor-expanded--sub')) { out.push({ color, sizes: sizeLabels, section: 'Sold', row_label: label || 'Row', values: numbersFromRow(tds), po_link: null }); continue; }
+            if (inPurchase && cls.includes('stylecolor-expanded--sub')) {
+              const poA = rowEl.querySelector('a[href*="purchase_orders.php"]') as HTMLAnchorElement | null;
+              out.push({ color, sizes: sizeLabels, section: 'Purchase (Running + Shipped)', row_label: label || 'Row', values: numbersFromRow(tds), po_link: poA ? (poA.getAttribute('href') || null) : null });
+              continue;
             }
           }
         }
@@ -408,15 +402,30 @@ async function runJob(job: JobRow) {
       });
       // Upsert extracted rows
       for (const row of extracted) {
-        await supabase.from('style_stock').insert({
-          style_no: s.style_no,
-          color: row.color,
-          sizes: row.sizes,
-          section: row.section,
-          row_label: row.row_label,
-          values: row.values,
-          po_link: row.po_link
-        });
+        const { data: exist } = await supabase
+          .from('style_stock')
+          .select('id')
+          .eq('style_no', s.style_no)
+          .eq('color', row.color)
+          .eq('section', row.section)
+          .eq('row_label', row.row_label || '')
+          .maybeSingle();
+        if (exist?.id) {
+          await supabase
+            .from('style_stock')
+            .update({ sizes: row.sizes, values: row.values, po_link: row.po_link, updated_at: new Date().toISOString() })
+            .eq('id', exist.id as string);
+        } else {
+          await supabase.from('style_stock').insert({
+            style_no: s.style_no,
+            color: row.color,
+            sizes: row.sizes,
+            section: row.section,
+            row_label: row.row_label || '',
+            values: row.values,
+            po_link: row.po_link
+          });
+        }
         totalRows++;
       }
       await log(job.id, 'info', 'STEP:style_stock_rows', { style_no: s.style_no, rows: extracted.length });
