@@ -354,7 +354,7 @@ async function runJob(job: JobRow) {
         function text(el: Element | null | undefined): string { return ((el as HTMLElement | null)?.textContent || '').replace(/\s+/g, ' ').trim(); }
         function numbersFromRow(tds: HTMLElement[]): number[] {
           const arr: number[] = [];
-          for (let i = 1; i < tds.length; i++) { // skip first label cell
+          for (let i = 1; i < tds.length - 1; i++) { // skip first label cell and last Total column
             const raw = (tds[i]?.textContent || '').replace(/\s+/g, ' ').trim();
             const n = Number(raw.replace(/[^0-9\-]/g, '')) || 0;
             arr.push(n);
@@ -374,23 +374,32 @@ async function runJob(job: JobRow) {
             const color = text(headerTds[0]);
             // sizes are header indices after first cell, until the last cell which may be Total label
             const sizeLabels: string[] = [];
-            for (let i = 1; i < headerTds.length; i++) sizeLabels.push(text(headerTds[i]));
+            for (let i = 1; i < headerTds.length - 1; i++) sizeLabels.push(text(headerTds[i]));
             // Walk subsequent rows grouping into sections based on CSS classes / titles
+            let section: string = '';
             for (let r = 1; r < rows.length; r++) {
               const rowEl = rows[r] as HTMLTableRowElement;
               const tds = Array.from(rowEl.querySelectorAll('td')) as HTMLElement[];
               const label = text(tds[0] as HTMLElement | undefined);
               const cls = rowEl.className || '';
-              let section = '';
               // Identify sections heuristically
               if (/Sold/.test(label) && /header/.test(cls)) { section = 'Sold'; continue; }
               if (/Purchase/.test(label) && /header/.test(cls)) { section = 'Purchase (Running + Shipped)'; continue; }
               if (/Available/.test(label) && /header/.test(cls)) { section = 'Available'; continue; }
-              if (/Net Need/.test(label) && /header/.test(cls)) { section = 'Net need'; continue; }
-              if (!section) {
-                // main rows with values
+              if (/Net Need/.test(label) && /header/.test(cls)) { section = 'Net need'; break; }
+              // Only capture desired sections
+              if (label === 'Stock') {
+                out.push({ color, sizes: sizeLabels, section: 'Stock', row_label: 'Stock', values: numbersFromRow(tds), po_link: null });
+                continue;
+              }
+              if (section === 'Sold') {
+                out.push({ color, sizes: sizeLabels, section: 'Sold', row_label: label || 'Row', values: numbersFromRow(tds), po_link: null });
+                continue;
+              }
+              if (section === 'Purchase (Running + Shipped)') {
                 const poA = rowEl.querySelector('a[href*="purchase_orders.php"]') as HTMLAnchorElement | null;
-                out.push({ color, sizes: sizeLabels, section: label || 'Row', row_label: label || 'Row', values: numbersFromRow(tds), po_link: poA ? (poA.getAttribute('href') || null) : null });
+                out.push({ color, sizes: sizeLabels, section: 'Purchase (Running + Shipped)', row_label: label || 'Row', values: numbersFromRow(tds), po_link: poA ? (poA.getAttribute('href') || null) : null });
+                continue;
               }
             }
           }
