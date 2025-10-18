@@ -106,6 +106,35 @@ export default function StylesSettingsPage() {
           </table>
         </div>
       </div>
+
+      <div className="rounded-md border bg-white p-3">
+        <div className="flex items-center justify-between">
+          <div className="text-sm font-medium">Runs</div>
+          <button
+            className="text-xs px-2 py-1 border rounded bg-slate-900 text-white hover:bg-slate-800"
+            onClick={async () => {
+              try {
+                const { data: { session } } = await supabase.auth.getSession();
+                if (!session) throw new Error('Not signed in');
+                const res = await fetch('/api/enqueue', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+                  body: JSON.stringify({ type: 'update_style_stock', payload: { requestedBy: session.user.email } })
+                });
+                const js = await res.json().catch(() => ({}));
+                // eslint-disable-next-line no-console
+                console.log('[styles-settings] enqueue update_style_stock', res.status, js);
+              } catch (e) {
+                // eslint-disable-next-line no-console
+                console.error('[styles-settings] enqueue error', e);
+              }
+            }}
+          >
+            Update Stock
+          </button>
+        </div>
+        <div className="mt-2 text-xs text-gray-600">Runs use the selection above.</div>
+      </div>
     </div>
   );
 }
