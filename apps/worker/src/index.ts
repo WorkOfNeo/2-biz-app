@@ -288,9 +288,29 @@ async function runJob(job: JobRow) {
       const url = new URL(href, SPY_BASE_URL).toString().replace(/#.*$/, '') + '#tab=statandstock';
       await log(job.id, 'info', 'STEP:style_stock_nav', { style_no: s.style_no, url });
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+      // Try to explicitly activate Stat & Stock tab if there is a tab link
+      try {
+        const clickedTab = await page!.evaluate(() => {
+          const a = document.querySelector('a[href$="#tab=statandstock"], a[href*="#tab=statandstock"]') as HTMLAnchorElement | null;
+          if (a) { a.click(); return true; }
+          return false;
+        });
+        if (clickedTab) { await log(job.id, 'info', 'STEP:style_stock_tab_clicked'); await page!.waitForTimeout(500); }
+      } catch {}
       // Expand all collapsed sections by clicking arrow-down icons
       try {
-        for (let i = 0; i < 5; i++) {
+        // Wait for any arrow icon to appear first
+        await page!.waitForFunction(() => !!document.querySelector('.sprite.sprite168.spriteArrowDown.right.clickable, .sprite.sprite168.spriteArrowUp.right.clickable, .statAndStockBox'), {}, { timeout: 30_000 }).catch(() => {});
+        // Log counts before expanding
+        try {
+          const counts = await page!.evaluate(() => ({
+            boxes: document.querySelectorAll('.statAndStockBox').length,
+            arrowsDown: document.querySelectorAll('.sprite.sprite168.spriteArrowDown.right.clickable').length,
+            arrowsUp: document.querySelectorAll('.sprite.sprite168.spriteArrowUp.right.clickable').length
+          }));
+          await log(job.id, 'info', 'STEP:style_stock_pre_counts', counts as any);
+        } catch {}
+        for (let i = 0; i < 15; i++) {
           const count = await page!.evaluate(() => {
             const nodes = Array.from(document.querySelectorAll('.sprite.sprite168.spriteArrowDown.right.clickable')) as HTMLElement[];
             nodes.forEach((n) => n.click());
@@ -298,16 +318,35 @@ async function runJob(job: JobRow) {
           });
           await log(job.id, 'info', 'STEP:style_stock_expand_click', { iteration: i + 1, clicked: count });
           if (!count) break;
-          await page!.waitForTimeout(400);
+          await page!.waitForTimeout(500);
         }
+        // As a fallback, try clicking the color header cells to expand
+        const headerClicks = await page!.evaluate(() => {
+          let clicked = 0;
+          document.querySelectorAll('.statAndStockBox tr.tableBackgroundBlack .sprite.sprite168.spriteArrowDown.right.clickable').forEach((el) => { (el as HTMLElement).click(); clicked++; });
+          return clicked;
+        }).catch(() => 0);
+        if (headerClicks) await log(job.id, 'info', 'STEP:style_stock_header_clicks', { clicked: headerClicks });
+        await page!.waitForTimeout(500);
       } catch (e: any) {
         await log(job.id, 'error', 'STEP:style_stock_expand_error', { error: e?.message || String(e) });
       }
-      // Ensure statAndStockDetails present
+      // Ensure statAndStockDetails present (increase timeout)
       try {
-        await page.waitForSelector('.statAndStockDetails', { timeout: 60_000, state: 'attached' as any });
+        await page!.waitForSelector('.statAndStockDetails', { timeout: 120_000, state: 'attached' as any });
       } catch (e: any) {
-        const html = await captureHtmlSnippet(page, page);
+        // Last resort: force reveal any hidden tables within boxes
+        try {
+          const forced = await page!.evaluate(() => {
+            let shown = 0;
+            document.querySelectorAll('.statAndStockBox table[style*="display: none"]').forEach((t) => { (t as HTMLElement).style.display = 'table'; shown++; });
+            return shown;
+          });
+          await log(job.id, 'info', 'STEP:style_stock_force_show', { tablesShown: forced });
+          await page!.waitForTimeout(500);
+          await page!.waitForSelector('.statAndStockDetails', { timeout: 10_000, state: 'attached' as any });
+        } catch {}
+        const html = await captureHtmlSnippet(page, page!);
         await log(job.id, 'error', 'STEP:style_stock_missing', { style_no: s.style_no, error: e?.message || String(e), html });
         continue;
       }
