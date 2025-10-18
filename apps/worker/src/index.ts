@@ -174,12 +174,49 @@ async function runJob(job: JobRow) {
     await log(job.id, 'info', 'STEP:styles_begin');
     const stylesUrl = new URL('?controller=Style%5CIndex&action=List&Spy%5CModel%5CStyle%5CIndex%5CListReportSearch%5BbForceSearch%5D=true', SPY_BASE_URL).toString();
     await page.goto(stylesUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
-    await page.waitForSelector('table.standardList tbody tr', { timeout: 60_000 });
-    // wait until at least 100 rows
-    await page.waitForFunction(() => {
-      const tb = document.querySelector('table.standardList tbody');
-      return !!tb && tb.querySelectorAll('tr').length >= 100;
-    }, {}, { timeout: 120_000 });
+    await log(job.id, 'info', 'STEP:styles_url', { url: stylesUrl });
+    // Ensure table exists (attached), not necessarily visible yet
+    try {
+      await page.waitForSelector('table.standardList', { timeout: 60_000, state: 'attached' as any });
+      await log(job.id, 'info', 'STEP:styles_table_found');
+    } catch (e: any) {
+      const html = await captureHtmlSnippet(page, page);
+      await log(job.id, 'error', 'STEP:styles_table_not_found', { error: e?.message || String(e), html });
+      throw e;
+    }
+    // Try clicking "Show All" to load full list
+    try {
+      const showAll = await findFirst(page, ['button[name="show_all"]', 'input[name="show_all"]', 'button:has-text("Show All")']);
+      if (showAll) {
+        await showAll.click({ timeout: 30_000 }).catch(() => {});
+        await log(job.id, 'info', 'STEP:styles_show_all_clicked');
+        await page.waitForTimeout(1200);
+      } else {
+        await log(job.id, 'info', 'STEP:styles_show_all_not_found');
+      }
+    } catch (e: any) {
+      await log(job.id, 'error', 'STEP:styles_show_all_error', { error: e?.message || String(e) });
+    }
+    // Wait for at least some rows to appear (attached)
+    await page.waitForSelector('table.standardList tbody tr', { timeout: 60_000, state: 'attached' as any });
+    // Scroll to load more rows up to >=100 or until stable
+    try {
+      let last = 0;
+      for (let i = 0; i < 20; i++) {
+        const count = await page.$$eval('table.standardList tbody tr', (trs) => trs.length);
+        await log(job.id, 'info', 'STEP:styles_rows_count', { iteration: i + 1, count });
+        if (count >= 100) break;
+        if (count > last) {
+          last = count;
+          await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+          await page.waitForTimeout(800);
+        } else {
+          break;
+        }
+      }
+    } catch (e: any) {
+      await log(job.id, 'error', 'STEP:styles_scroll_error', { error: e?.message || String(e) });
+    }
     const rows = await page.$$eval('table.standardList tbody tr', (trs) => {
       const out: { spy_id: string | null; style_no: string; style_name: string | null; supplier: string | null; image_url: string | null; link_href: string | null }[] = [];
       for (const tr of Array.from(trs) as HTMLTableRowElement[]) {
