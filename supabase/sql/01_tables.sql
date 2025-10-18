@@ -5,7 +5,7 @@ create extension if not exists pgcrypto;
 
 create table if not exists public.jobs (
   id uuid primary key default gen_random_uuid(),
-  type text not null check (type in ('scrape_statistics')),
+  type text not null check (type in ('scrape_statistics','scrape_styles')),
   payload jsonb not null,
   status text not null default 'queued' check (status in ('queued','running','succeeded','failed','cancelled')),
   attempts int not null default 0,
