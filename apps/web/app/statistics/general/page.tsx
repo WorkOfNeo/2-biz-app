@@ -420,7 +420,66 @@ export default function StatisticsGeneralPage() {
               <div className="py-1 text-sm">
                 <button className="block w-full px-3 py-2 text-left hover:bg-gray-50">Export Data</button>
                 <button className="block w-full px-3 py-2 text-left hover:bg-gray-50">Print Report</button>
-                <Link className="block px-3 py-2 hover:bg-gray-50" href={'/statistics/overview' as any}>Export PDF (Overview)</Link>
+                <button
+                  className="block w-full px-3 py-2 text-left hover:bg-gray-50"
+                  onClick={async () => {
+                    try {
+                      const zip = (await import('jszip')).default;
+                      const { jsPDF } = await import('jspdf');
+                      const autoTable = (await import('jspdf-autotable')).default as any;
+                      const { saveAs } = await import('file-saver');
+                      const Z = new (zip as any)();
+                      const s1Label = getSeasonLabel(s1) || 'Season 1';
+                      const s2Label = getSeasonLabel(s2) || 'Season 2';
+                      const visibleRows = (rows ?? []).filter(r => !isHidden(r.account_no));
+                      const bySp = new Map<string, any[]>();
+                      for (const r of visibleRows) {
+                        const name = r.salespersonName || 'Unknown';
+                        const arr = bySp.get(name) || [];
+                        arr.push(r);
+                        bySp.set(name, arr);
+                      }
+                      for (const [spName, list] of bySp.entries()) {
+                        const doc = new jsPDF({ unit: 'pt', format: 'a4' });
+                        doc.setFontSize(14);
+                        doc.text(`General · ${spName}`, 40, 40);
+                        const head = [[
+                          'Customer', 'City',
+                          `${s1Label} Qty`, `${s1Label} Price`,
+                          `${s2Label} Qty`, `${s2Label} Price`,
+                          'Dev Qty', 'Dev Price'
+                        ]];
+                        const body = (list as any[]).map((row) => {
+                          const currency = row.salespersonId ? (spCurrencyById[row.salespersonId] ?? 'DKK') : 'DKK';
+                          const devQty = row.s1Qty - row.s2Qty;
+                          const devPrice = row.s1Price - row.s2Price;
+                          return [
+                            row.customer,
+                            row.city,
+                            String(row.s1Qty), `${Math.round(row.s1Price).toLocaleString('da-DK')} ${currency}`,
+                            String(row.s2Qty), `${Math.round(row.s2Price).toLocaleString('da-DK')} ${currency}`,
+                            (devQty>0?'+':'') + String(devQty), `${(devPrice>0?'+':'') + Math.round(devPrice).toLocaleString('da-DK')} ${currency}`
+                          ];
+                        });
+                        (autoTable)(doc, {
+                          head,
+                          body,
+                          startY: 60,
+                          styles: { fontSize: 10, lineColor: [219,234,254], lineWidth: 0.5 },
+                          headStyles: { fillColor: [29,78,216], textColor: [255,255,255] },
+                          alternateRowStyles: { fillColor: [239,246,255] },
+                          theme: 'grid'
+                        });
+                        const pdfBlob = doc.output('blob');
+                        Z.file(`${spName.replace(/[^a-z0-9_-]+/gi,'_')}.pdf`, pdfBlob);
+                      }
+                      const blob = await Z.generateAsync({ type: 'blob' });
+                      saveAs(blob, `general_export.zip`);
+                    } catch (e) {
+                      console.error('general export failed', e);
+                    }
+                  }}
+                >Export PDF (ZIP)</button>
                 <Link className="block px-3 py-2 hover:bg-gray-50" href="/statistics/general/import">Import Statistic</Link>
                 <Link className="block px-3 py-2 hover:bg-gray-50" href={'/statistics/general/last-runs' as any}>Last Runs</Link>
                 <Link className="block px-3 py-2 hover:bg-gray-50" href="/settings/seasons">Season Settings</Link>
