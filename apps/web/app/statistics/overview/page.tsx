@@ -3,7 +3,7 @@ import { useMemo, useState } from 'react';
 import useSWR from 'swr';
 import { supabase } from '../../../lib/supabaseClient';
 
-type Person = { id: string; name: string };
+type Person = { id: string; name: string; currency?: string | null };
 type StatsRow = { account_no: string | null; qty: number; price: number; season_id: string; salesperson_id: string | null };
 type Customer = { customer_id: string; country: string | null; salesperson_id: string | null; nulled?: boolean | null; excluded?: boolean | null; permanently_closed?: boolean | null };
 
@@ -34,11 +34,31 @@ export default function OverviewPage() {
   const s1 = saved?.value?.s1 ?? '';
   const s2 = saved?.value?.s2 ?? '';
 
+  const { data: seasons } = useSWR('seasons-all', async () => {
+    const { data, error } = await supabase.from('seasons').select('id, name, year').order('created_at', { ascending: false });
+    if (error) throw new Error(error.message);
+    return (data ?? []) as { id: string; name: string; year: number | null }[];
+  });
+  function getSeasonLabel(seasonId: string | undefined) {
+    if (!seasonId) return '';
+    const s = (seasons ?? []).find((x) => x.id === seasonId);
+    if (!s) return '';
+    return `${s.name}${s.year ? ' ' + s.year : ''}`;
+  }
+
   const { data: people } = useSWR('overview:salespersons', async () => {
-    const { data, error } = await supabase.from('salespersons').select('id, name').order('sort_index', { ascending: true });
+    const { data, error } = await supabase.from('salespersons').select('id, name, currency').order('sort_index', { ascending: true });
     if (error) throw new Error(error.message);
     return (data ?? []) as Person[];
   });
+
+  const { data: currencyRatesRow } = useSWR('app-settings:currency-rates', async () => {
+    const { data, error } = await supabase.from('app_settings').select('*').eq('key', 'currency_rates').maybeSingle();
+    if (error) throw new Error(error.message);
+    return (data?.value as Record<string, number> | undefined) ?? {};
+  });
+  const rates = useMemo(() => ({ DKK: 1, ...(currencyRatesRow ?? {}) } as Record<string, number>), [currencyRatesRow]);
+  const spCurrencyById = useMemo(() => Object.fromEntries(((people ?? []) as Person[]).map(p => [p.id, p.currency ?? 'DKK'])), [people]);
 
   const { data: customers } = useSWR('overview:customers', async () => {
     const { data, error } = await supabase.from('customers').select('customer_id, country, salesperson_id, nulled, excluded, permanently_closed');
@@ -84,8 +104,11 @@ export default function OverviewPage() {
       const acc = r.account_no ?? '';
       if (!acc || !set.has(acc)) continue;
       const row = agg.get(spId)!;
-      if (r.season_id === s1) { row.s1Qty += Number(r.qty||0); row.s1Price += Number(r.price||0); row.visited.add(acc); }
-      else if (r.season_id === s2) { row.s2Qty += Number(r.qty||0); row.s2Price += Number(r.price||0); }
+      const currency = spCurrencyById[spId] ?? 'DKK';
+      const rate = rates[currency] ?? 1;
+      const priceDkk = Number(r.price || 0) * rate;
+      if (r.season_id === s1) { row.s1Qty += Number(r.qty||0); row.s1Price += priceDkk; row.visited.add(acc); }
+      else if (r.season_id === s2) { row.s2Qty += Number(r.qty||0); row.s2Price += priceDkk; }
     }
     // Build output rows
     const out = [] as any[];
@@ -100,6 +123,7 @@ export default function OverviewPage() {
       const diffPct = a.s2Price === 0 ? 0 : ((a.s1Price - a.s2Price) / a.s2Price) * 100;
       const needQty = a.s1Qty >= a.s2Qty ? 0 : (a.s2Qty - a.s1Qty);
       const needPrice = a.s1Price >= a.s2Price ? 0 : (a.s2Price - a.s1Price);
+      const needPct = a.s2Price === 0 ? 0 : Math.max(0, (needPrice / a.s2Price) * 100);
       out.push({
         id: sp.id,
         name: sp.name,
@@ -112,6 +136,7 @@ export default function OverviewPage() {
         diffPct,
         needQty,
         needPrice,
+        needPct,
         diffQty,
         diffPrice,
       });
@@ -143,24 +168,25 @@ export default function OverviewPage() {
               <th className="p-2 text-left font-semibold">Salesman</th>
               <th className="p-2 text-left font-semibold">Nulled</th>
               <th className="p-2 text-left font-semibold">Progress</th>
-              <th className="p-2 text-center font-semibold" colSpan={3}>Season 1</th>
-              <th className="p-2 text-center font-semibold" colSpan={3}>Season 2</th>
+              <th className="p-2 text-center font-semibold" colSpan={3}>{getSeasonLabel(s1) || 'Season 1'}</th>
+              <th className="p-2 text-center font-semibold" colSpan={3}>{getSeasonLabel(s2) || 'Season 2'}</th>
               <th className="p-2 text-center font-semibold">Diff %</th>
-              <th className="p-2 text-center font-semibold" colSpan={2}>Need to meet S2</th>
+              <th className="p-2 text-center font-semibold" colSpan={3}>Need to meet S2</th>
             </tr>
             <tr className="bg-gray-50">
               <th className="p-2 text-left"></th>
               <th className="p-2 text-left"></th>
               <th className="p-2 text-left"></th>
               <th className="p-2 text-center">Qty</th>
-              <th className="p-2 text-center">Price</th>
+              <th className="p-2 text-center">Price (DKK)</th>
               <th className="p-2 text-center">Avg</th>
               <th className="p-2 text-center">Qty</th>
-              <th className="p-2 text-center">Price</th>
+              <th className="p-2 text-center">Price (DKK)</th>
               <th className="p-2 text-center">Avg</th>
               <th className="p-2 text-center"></th>
               <th className="p-2 text-center">Qty</th>
-              <th className="p-2 text-center">Price</th>
+              <th className="p-2 text-center">Price (DKK)</th>
+              <th className="p-2 text-center">%</th>
             </tr>
           </thead>
           <tbody>
@@ -178,6 +204,7 @@ export default function OverviewPage() {
                 <td className="p-2 text-center"><span className={r.diffPct>0?'text-green-700':r.diffPct<0?'text-red-700':''}>{(r.diffPct>=0?'+':'')+Math.round(r.diffPct)}%</span></td>
                 <td className="p-2 text-center">{r.needQty}</td>
                 <td className="p-2 text-center">{Math.round(r.needPrice).toLocaleString('da-DK')}</td>
+                <td className="p-2 text-center">{Math.round(r.needPct)}%</td>
               </tr>
             ))}
           </tbody>
