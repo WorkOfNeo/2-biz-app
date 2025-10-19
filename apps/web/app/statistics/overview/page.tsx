@@ -202,9 +202,9 @@ export default function OverviewPage() {
                 <td className="p-2 text-center">{r.s2Qty}</td>
                 <td className="p-2 text-center">{Math.round(r.s2Price).toLocaleString('da-DK')}</td>
                 <td className="p-2 text-center">{Math.round(r.s2Avg).toLocaleString('da-DK')}</td>
-                <td className="p-2 text-center"><span className={r.diffPct>0?'text-green-700':r.diffPct<0?'text-red-700':''}>{(r.diffPct>=0?'+':'')+Math.round(r.diffPct)}%</span></td>
-                <td className="p-2 text-center">{Math.round(r.needQtyPct)}%</td>
-                <td className="p-2 text-center">{Math.round(r.needPricePct)}%</td>
+                <td className="p-2 text-center"><span className={r.diffPct>0?'text-red-700':r.diffPct<0?'text-green-700':''}>{(r.diffPct>=0?'+':'')+Math.round(r.diffPct)}%</span></td>
+                <td className="p-2 text-center"><span className={r.needQtyPct>0?'text-red-700':r.needQtyPct<0?'text-green-700':''}>{Math.round(r.needQtyPct)}%</span></td>
+                <td className="p-2 text-center"><span className={r.needPricePct>0?'text-red-700':r.needPricePct<0?'text-green-700':''}>{Math.round(r.needPricePct)}%</span></td>
               </tr>
             ))}
           </tbody>
