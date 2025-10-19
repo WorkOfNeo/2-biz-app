@@ -96,7 +96,6 @@ function RecordsInner() {
       if (r.season_id === s2) byCustomer.get(acc)!.s2.push(r);
     }
     for (const inv of (invoices ?? [])) {
-      if (inv.salesperson_id !== sp) continue;
       const acc = inv.account_no as string | null;
       if (!acc || !byCustomer.has(acc)) continue;
       const fake: StatsRow & { isInvoice?: boolean; invoice_no?: string | null } = {

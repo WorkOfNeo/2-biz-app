@@ -356,6 +356,32 @@ export default function StatisticsGeneralPage() {
     await mutateOverrides();
   }
 
+  // Global totals across all salespersons (converted to DKK)
+  const { data: globalTotals } = useSWR(
+    s1 && s2 ? ['general-stats:totals-all', s1, s2] : null,
+    async () => {
+      const { data, error } = await supabase
+        .from('sales_stats')
+        .select('qty, price, season_id, salesperson_id')
+        .in('season_id', [s1, s2])
+        .limit(200000);
+      if (error) throw new Error(error.message);
+      const rates = { DKK: 1, ...(currencyRatesRow ?? {}) } as Record<string, number>;
+      const out = { s1Qty: 0, s1PriceDkk: 0, s2Qty: 0, s2PriceDkk: 0 };
+      for (const r of (data ?? []) as any[]) {
+        const qty = Number(r.qty ?? 0) || 0;
+        const price = Number(r.price ?? 0) || 0;
+        const currency = r.salesperson_id ? (spCurrencyById[r.salesperson_id as string] ?? 'DKK') : 'DKK';
+        const rate = rates[currency] ?? 1;
+        const dkk = price * rate;
+        if (r.season_id === s1) { out.s1Qty += qty; out.s1PriceDkk += dkk; }
+        else if (r.season_id === s2) { out.s2Qty += qty; out.s2PriceDkk += dkk; }
+      }
+      return out;
+    },
+    { refreshInterval: 20000 }
+  );
+
   function isHidden(account: string): boolean {
     return Boolean(overrides?.value.hidden.includes(account)) || Boolean(closedCustomers?.setExcluded.has(account));
   }
@@ -672,6 +698,52 @@ export default function StatisticsGeneralPage() {
                   })()}
                 </div>
               )}
+              {/* Global totals section */}
+              <div className="border-t p-4">
+                <div className="text-sm font-semibold mb-2">TOTALS (All salespersons)</div>
+                {(() => {
+                  const s1Qty = Math.round(globalTotals?.s1Qty ?? 0);
+                  const s1Price = Math.round(globalTotals?.s1PriceDkk ?? 0);
+                  const s2Qty = Math.round(globalTotals?.s2Qty ?? 0);
+                  const s2Price = Math.round(globalTotals?.s2PriceDkk ?? 0);
+                  const pctQty = s2Qty === 0 ? 0 : Math.round((s1Qty / s2Qty) * 100);
+                  const pctPrice = s2Price === 0 ? 0 : Math.round((s1Price / s2Price) * 100);
+                  return (
+                    <div className="overflow-auto rounded-md border">
+                      <table className="min-w-full text-sm">
+                        <thead className="bg-gray-50">
+                          <tr>
+                            <th className="p-2 text-left"></th>
+                            <th className="p-2 text-center" colSpan={2}>{getSeasonLabel(s1) || 'Season 1'}</th>
+                            <th className="p-2 text-center" colSpan={2}>{getSeasonLabel(s2) || 'Season 2'}</th>
+                            <th className="p-2 text-center" colSpan={2}>Progress vs last year</th>
+                          </tr>
+                          <tr>
+                            <th className="p-2 text-left"></th>
+                            <th className="p-2 text-center">Qty</th>
+                            <th className="p-2 text-center">Price (DKK)</th>
+                            <th className="p-2 text-center">Qty</th>
+                            <th className="p-2 text-center">Price (DKK)</th>
+                            <th className="p-2 text-center">Qty %</th>
+                            <th className="p-2 text-center">Price %</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr>
+                            <td className="p-2 font-medium">TOTAL</td>
+                            <td className="p-2 text-center">{s1Qty}</td>
+                            <td className="p-2 text-center">{s1Price.toLocaleString('da-DK')} DKK</td>
+                            <td className="p-2 text-center">{s2Qty}</td>
+                            <td className="p-2 text-center">{s2Price.toLocaleString('da-DK')} DKK</td>
+                            <td className="p-2 text-center">{pctQty}%</td>
+                            <td className="p-2 text-center">{pctPrice}%</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  );
+                })()}
+              </div>
             </div>
             {/* Details modal */}
             <Modal
