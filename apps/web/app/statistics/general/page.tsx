@@ -27,6 +27,18 @@ export default function StatisticsGeneralPage() {
     if (error) throw new Error(error.message);
     return (data ?? []) as { id: string; name: string; currency?: string | null; sort_index?: number | null }[];
   });
+  // Customer city index to ensure city is shown even if missing on stats rows
+  const { data: customerIndex } = useSWR('customers-index', async () => {
+    const { data, error } = await supabase.from('customers').select('customer_id, company, city');
+    if (error) throw new Error(error.message);
+    const byId: Record<string, string> = {};
+    const byName: Record<string, string> = {};
+    for (const c of (data ?? []) as any[]) {
+      if (c.customer_id) byId[c.customer_id] = c.city ?? '';
+      if (c.company) byName[c.company] = c.city ?? '';
+    }
+    return { byId, byName } as { byId: Record<string, string>; byName: Record<string, string> };
+  }, { refreshInterval: 0 });
   // Currency rates (from Misc settings) – 1 unit equals how many DKK
   const { data: currencyRatesRow } = useSWR('app-settings:currency-rates', async () => {
     const { data, error } = await supabase.from('app_settings').select('*').eq('key', 'currency_rates').maybeSingle();
@@ -270,10 +282,15 @@ export default function StatisticsGeneralPage() {
       const map = new Map<string, RowOut>();
       for (const r of (data ?? []) as any[]) {
         const key: string = r.account_no ?? `${r.customer_name ?? ''}:${r.city ?? ''}`;
+        const rawCity = r.city ?? '';
+        let itemCity: string = rawCity && rawCity !== '-' ? rawCity : '';
+        if (!itemCity && r.account_no) itemCity = customerIndex?.byId?.[r.account_no] ?? '';
+        if (!itemCity && r.customer_name) itemCity = customerIndex?.byName?.[r.customer_name] ?? '';
+        if (!itemCity) itemCity = '-';
         const item = map.get(key) ?? {
           account_no: r.account_no ?? key,
           customer: r.customer_name ?? '-',
-          city: r.city ?? '-',
+          city: itemCity,
           s1Qty: 0,
           s1Price: 0,
           s2Qty: 0,
