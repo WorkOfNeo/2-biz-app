@@ -225,7 +225,6 @@ export default function OverviewPage() {
               <th className="p-2 text-left"></th>
               <th className="p-2 text-left"></th>
               <th className="p-2 text-left"></th>
-              <th className="p-2 text-left"></th>
               <th className="p-2 text-center">Qty</th>
               <th className="p-2 text-center">Price (DKK)</th>
               <th className="p-2 text-center">Avg</th>
@@ -250,8 +249,20 @@ export default function OverviewPage() {
                 <td className="p-2 text-center">{r.s2Qty}</td>
                 <td className="p-2 text-center">{Math.round(r.s2Price).toLocaleString('da-DK')}</td>
                 <td className="p-2 text-center">{Math.round(r.s2Avg).toLocaleString('da-DK')}</td>
-                <td className="p-2 text-center"><span className={r.needQtyPct>0?'text-red-700':r.needQtyPct<0?'text-green-700':''}>{Math.round(r.needQtyPct)}%</span></td>
-                <td className="p-2 text-center"><span className={r.needPricePct>0?'text-red-700':r.needPricePct<0?'text-green-700':''}>{Math.round(r.needPricePct)}%</span></td>
+                {(() => {
+                  const qtyPct = r.s2Qty === 0 ? 0 : ((r.s1Qty - r.s2Qty) / r.s2Qty) * 100;
+                  const qtyCls = qtyPct > 0 ? 'text-red-700' : qtyPct < 0 ? 'text-green-700' : '';
+                  return (
+                    <td className="p-2 text-center"><span className={qtyCls}>{(qtyPct>=0?'+':'') + qtyPct.toFixed(2)}%</span></td>
+                  );
+                })()}
+                {(() => {
+                  const pricePct = typeof r.diffPct === 'number' ? r.diffPct : (r.s2Price === 0 ? 0 : ((r.s1Price - r.s2Price) / r.s2Price) * 100);
+                  const priceCls = pricePct > 0 ? 'text-red-700' : pricePct < 0 ? 'text-green-700' : '';
+                  return (
+                    <td className="p-2 text-center"><span className={priceCls}>{(pricePct>=0?'+':'') + pricePct.toFixed(2)}%</span></td>
+                  );
+                })()}
               </tr>
             ))}
           </tbody>
@@ -271,7 +282,6 @@ export default function OverviewPage() {
                 <th className="p-2 text-center" colSpan={2}>Progress vs last year</th>
               </tr>
               <tr className="bg-gray-50">
-                <th className="p-2 text-left"></th>
                 <th className="p-2 text-center">Qty</th>
                 <th className="p-2 text-center">Price (DKK)</th>
                 <th className="p-2 text-center">Qty</th>
