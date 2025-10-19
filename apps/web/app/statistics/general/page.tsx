@@ -426,8 +426,8 @@ export default function StatisticsGeneralPage() {
                     try {
                       const { default: JSZip } = await import('jszip');
                       const { jsPDF } = await import('jspdf');
-                      const autoTable = (await import('jspdf-autotable')).default as any;
-                      const { saveAs } = await import('file-saver');
+                      const { default: autoTable } = await import('jspdf-autotable');
+                      const { default: saveAs } = await import('file-saver');
                       const zip = new JSZip();
                       const s1Label = getSeasonLabel(s1) || 'Season 1';
                       const s2Label = getSeasonLabel(s2) || 'Season 2';
