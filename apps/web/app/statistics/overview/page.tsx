@@ -286,18 +286,31 @@ export default function OverviewPage() {
                 const s1Price = Math.round(totals.s1PriceDkk);
                 const s2Qty = Math.round(totals.s2Qty);
                 const s2Price = Math.round(totals.s2PriceDkk);
-                const pctQty = s2Qty === 0 ? 0 : Math.round((s1Qty / s2Qty) * 100);
-                const pctPrice = s2Price === 0 ? 0 : Math.round((s1Price / s2Price) * 100);
+                const achievedQtyPct = s2Qty === 0 ? 0 : Math.round((s1Qty / s2Qty) * 100);
+                const achievedPricePct = s2Price === 0 ? 0 : Math.round((s1Price / s2Price) * 100);
+                const offQtyPct = Math.max(0, 100 - achievedQtyPct);
+                const offPricePct = Math.max(0, 100 - achievedPricePct);
                 return (
-                  <tr>
-                    <td className="p-2 font-medium">TOTAL</td>
-                    <td className="p-2 text-center">{s1Qty}</td>
-                    <td className="p-2 text-center">{s1Price.toLocaleString('da-DK')} DKK</td>
-                    <td className="p-2 text-center">{s2Qty}</td>
-                    <td className="p-2 text-center">{s2Price.toLocaleString('da-DK')} DKK</td>
-                    <td className="p-2 text-center">{pctQty}%</td>
-                    <td className="p-2 text-center">{pctPrice}%</td>
-                  </tr>
+                  <>
+                    <tr>
+                      <td className="p-2 font-medium">TOTAL</td>
+                      <td className="p-2 text-center">{s1Qty.toLocaleString('da-DK')}</td>
+                      <td className="p-2 text-center">{s1Price.toLocaleString('da-DK')} DKK</td>
+                      <td className="p-2 text-center">{s2Qty.toLocaleString('da-DK')}</td>
+                      <td className="p-2 text-center">{s2Price.toLocaleString('da-DK')} DKK</td>
+                      <td className="p-2 text-center">{offQtyPct}%</td>
+                      <td className="p-2 text-center">{offPricePct}%</td>
+                    </tr>
+                    <tr className="bg-gray-50">
+                      <td className="p-2 font-medium">Andel ift. sidste år</td>
+                      <td className="p-2 text-center">—</td>
+                      <td className="p-2 text-center">—</td>
+                      <td className="p-2 text-center">—</td>
+                      <td className="p-2 text-center">—</td>
+                      <td className="p-2 text-center">{achievedQtyPct}%</td>
+                      <td className="p-2 text-center">{achievedPricePct}%</td>
+                    </tr>
+                  </>
                 );
               })()}
             </tbody>
