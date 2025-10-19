@@ -3,6 +3,10 @@ import { useMemo, useState } from 'react';
 import useSWR from 'swr';
 import { supabase } from '../../../lib/supabaseClient';
 import Link from 'next/link';
+import JSZip from 'jszip';
+import { saveAs } from 'file-saver';
+import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
 type Person = { id: string; name: string; currency?: string | null };
 type StatsRow = { account_no: string | null; qty: number; price: number; season_id: string; salesperson_id: string | null };
@@ -203,6 +207,50 @@ export default function OverviewPage() {
               }
             >{c}</button>
           ))}
+          <button
+            className="rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50"
+            onClick={async () => {
+              try {
+                const zip = new JSZip();
+                for (const r of rows) {
+                  const doc = new jsPDF({ unit: 'pt', format: 'a4' });
+                  doc.setFontSize(14);
+                  doc.text(`Overview · ${country}`, 40, 40);
+                  doc.setFontSize(12);
+                  doc.text(`Salesman: ${r.name}`, 40, 62);
+                  const s1Label = `${getSeasonLabel(s1) || 'Season 1'}`;
+                  const s2Label = `${getSeasonLabel(s2) || 'Season 2'}`;
+                  const qtyPct = r.s2Qty === 0 ? 0 : ((r.s1Qty - r.s2Qty) / r.s2Qty) * 100;
+                  const pricePct = r.s2Price === 0 ? 0 : ((r.s1Price - r.s2Price) / r.s2Price) * 100;
+                  const head = [[
+                    'Nulled', 'Visited/Total', 'Progress %',
+                    `${s1Label} Qty`, `${s1Label} Price (DKK)`, `${s1Label} Avg`,
+                    `${s2Label} Qty`, `${s2Label} Price (DKK)`, `${s2Label} Avg`,
+                    'Qty % vs S2', 'Price % vs S2'
+                  ]];
+                  const body = [[
+                    String(r.nulledCount), `${r.visited}/${r.effectiveTotal}`, r.visitedPct.toFixed(2),
+                    String(r.s1Qty), Math.round(r.s1Price).toLocaleString('da-DK'), Math.round(r.s1Avg).toLocaleString('da-DK'),
+                    String(r.s2Qty), Math.round(r.s2Price).toLocaleString('da-DK'), Math.round(r.s2Avg).toLocaleString('da-DK'),
+                    (qtyPct>=0?'+':'') + qtyPct.toFixed(2) + '%', (pricePct>=0?'+':'') + pricePct.toFixed(2) + '%'
+                  ]];
+                  (autoTable as any)(doc, {
+                    head,
+                    body,
+                    startY: 80,
+                    styles: { fontSize: 10 },
+                    headStyles: { fillColor: [248,250,252] }
+                  });
+                  const pdfBlob = doc.output('blob');
+                  zip.file(`${r.name.replace(/[^a-z0-9_-]+/gi,'_')}.pdf`, pdfBlob);
+                }
+                const blob = await zip.generateAsync({ type: 'blob' });
+                saveAs(blob, `overview_${country.toLowerCase()}.zip`);
+              } catch (e) {
+                console.error('export failed', e);
+              }
+            }}
+          >Export PDF (ZIP)</button>
         </div>
       </div>
 
