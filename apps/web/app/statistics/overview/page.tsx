@@ -87,16 +87,24 @@ export default function OverviewPage() {
       arr.push(c);
       bySpCustomers.set(c.salesperson_id, arr);
     }
-    // Build quick lookup set of target accounts per salesperson
+    // Build quick lookup sets of target accounts (all) and valid accounts (excluding nulled/excluded/closed)
     const targetsBySp = new Map<string, Set<string>>();
+    const validTargetsBySp = new Map<string, Set<string>>();
     for (const [spId, arr] of bySpCustomers.entries()) {
-      const set = new Set<string>();
-      for (const c of arr) if (c.customer_id) set.add(c.customer_id);
-      targetsBySp.set(spId, set);
+      const allSet = new Set<string>();
+      const validSet = new Set<string>();
+      for (const c of arr) {
+        if (c.customer_id) {
+          allSet.add(c.customer_id);
+          if (!(c.nulled || c.permanently_closed || c.excluded)) validSet.add(c.customer_id);
+        }
+      }
+      targetsBySp.set(spId, allSet);
+      validTargetsBySp.set(spId, validSet);
     }
     // Aggregate stats per salesperson, filtered to target accounts
-    const agg = new Map<string, { s1Qty: number; s1Price: number; s2Qty: number; s2Price: number; visited: Set<string> }>();
-    for (const sp of people) agg.set(sp.id, { s1Qty: 0, s1Price: 0, s2Qty: 0, s2Price: 0, visited: new Set<string>() });
+    const agg = new Map<string, { s1Qty: number; s1Price: number; s2Qty: number; s2Price: number; visited: Set<string>; visitedValid: Set<string> }>();
+    for (const sp of people) agg.set(sp.id, { s1Qty: 0, s1Price: 0, s2Qty: 0, s2Price: 0, visited: new Set<string>(), visitedValid: new Set<string>() });
     for (const r of stats) {
       const spId = r.salesperson_id ?? '';
       const set = targetsBySp.get(spId);
@@ -107,7 +115,7 @@ export default function OverviewPage() {
       const currency = spCurrencyById[spId] ?? 'DKK';
       const rate = rates[currency] ?? 1;
       const priceDkk = Number(r.price || 0) * rate;
-      if (r.season_id === s1) { row.s1Qty += Number(r.qty||0); row.s1Price += priceDkk; row.visited.add(acc); }
+      if (r.season_id === s1) { row.s1Qty += Number(r.qty||0); row.s1Price += priceDkk; row.visited.add(acc); if (validTargetsBySp.get(spId)?.has(acc)) row.visitedValid.add(acc); }
       else if (r.season_id === s2) { row.s2Qty += Number(r.qty||0); row.s2Price += priceDkk; }
     }
     // Build output rows
@@ -116,6 +124,7 @@ export default function OverviewPage() {
       const totalCustomers = (bySpCustomers.get(sp.id) ?? []).length;
       const nulledCount = (bySpCustomers.get(sp.id) ?? []).filter(c => !!(c.nulled || c.permanently_closed || c.excluded)).length;
       const a = agg.get(sp.id)!;
+      const effectiveTotal = Math.max(0, totalCustomers - nulledCount);
       const s1Avg = a.s1Qty > 0 ? a.s1Price / a.s1Qty : 0;
       const s2Avg = a.s2Qty > 0 ? a.s2Price / a.s2Qty : 0;
       const diffQty = a.s1Qty - a.s2Qty;
@@ -130,8 +139,9 @@ export default function OverviewPage() {
         name: sp.name,
         totalCustomers,
         nulledCount,
-        visited: a.visited.size,
-        visitedPct: totalCustomers > 0 ? (a.visited.size / totalCustomers) * 100 : 0,
+        visited: a.visitedValid.size,
+        effectiveTotal,
+        visitedPct: effectiveTotal > 0 ? (a.visitedValid.size / effectiveTotal) * 100 : 0,
         s1Qty: a.s1Qty, s1Price: a.s1Price, s1Avg,
         s2Qty: a.s2Qty, s2Price: a.s2Price, s2Avg,
         diffPct,
@@ -169,12 +179,14 @@ export default function OverviewPage() {
             <tr className="bg-gray-50">
               <th className="p-2 text-left font-semibold">Salesman</th>
               <th className="p-2 text-left font-semibold">Nulled</th>
+              <th className="p-2 text-left font-semibold">Visited / Total</th>
               <th className="p-2 text-left font-semibold">Progress</th>
               <th className="p-2 text-center font-semibold" colSpan={3}>{getSeasonLabel(s1) || 'Season 1'}</th>
               <th className="p-2 text-center font-semibold" colSpan={3}>{getSeasonLabel(s2) || 'Season 2'}</th>
               <th className="p-2 text-center font-semibold" colSpan={2}>Need to meet S2</th>
             </tr>
             <tr className="bg-gray-50">
+              <th className="p-2 text-left"></th>
               <th className="p-2 text-left"></th>
               <th className="p-2 text-left"></th>
               <th className="p-2 text-left"></th>
@@ -192,7 +204,8 @@ export default function OverviewPage() {
             {rows.map((r) => (
               <tr key={r.id} className="border-t">
                 <td className="p-2 font-medium">{r.name}</td>
-                <td className="p-2">{r.nulledCount}/{r.totalCustomers}</td>
+                <td className="p-2">{r.nulledCount}</td>
+                <td className="p-2">{r.visited}/{r.effectiveTotal}</td>
                 <td className="p-2"><Donut pct={r.visitedPct} /></td>
                 <td className="p-2 text-center">{r.s1Qty}</td>
                 <td className="p-2 text-center">{Math.round(r.s1Price).toLocaleString('da-DK')}</td>
