@@ -424,11 +424,11 @@ export default function StatisticsGeneralPage() {
                   className="block w-full px-3 py-2 text-left hover:bg-gray-50"
                   onClick={async () => {
                     try {
-                      const zip = (await import('jszip')).default;
+                      const { default: JSZip } = await import('jszip');
                       const { jsPDF } = await import('jspdf');
                       const autoTable = (await import('jspdf-autotable')).default as any;
                       const { saveAs } = await import('file-saver');
-                      const Z = new (zip as any)();
+                      const zip = new JSZip();
                       const s1Label = getSeasonLabel(s1) || 'Season 1';
                       const s2Label = getSeasonLabel(s2) || 'Season 2';
                       const visibleRows = (rows ?? []).filter(r => !isHidden(r.account_no));
@@ -461,7 +461,7 @@ export default function StatisticsGeneralPage() {
                             (devQty>0?'+':'') + String(devQty), `${(devPrice>0?'+':'') + Math.round(devPrice).toLocaleString('da-DK')} ${currency}`
                           ];
                         });
-                        (autoTable)(doc, {
+                        autoTable(doc, {
                           head,
                           body,
                           startY: 60,
@@ -471,9 +471,9 @@ export default function StatisticsGeneralPage() {
                           theme: 'grid'
                         });
                         const pdfBlob = doc.output('blob');
-                        Z.file(`${spName.replace(/[^a-z0-9_-]+/gi,'_')}.pdf`, pdfBlob);
+                        zip.file(`${spName.replace(/[^a-z0-9_-]+/gi,'_')}.pdf`, pdfBlob);
                       }
-                      const blob = await Z.generateAsync({ type: 'blob' });
+                      const blob = await zip.generateAsync({ type: 'blob' });
                       saveAs(blob, `general_export.zip`);
                     } catch (e) {
                       console.error('general export failed', e);
