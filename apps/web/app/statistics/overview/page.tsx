@@ -158,6 +158,29 @@ export default function OverviewPage() {
     return out;
   }, [people, customers, stats, country, s1, s2]);
 
+  // Totals across all salespersons for selected country, converted to DKK
+  const totals = useMemo(() => {
+    if (!customers || !stats) return { s1Qty: 0, s1PriceDkk: 0, s2Qty: 0, s2PriceDkk: 0 };
+    const targetCountry = country === 'All' ? null : country.toUpperCase();
+    const targetAccounts = new Set<string>();
+    for (const c of (customers ?? []) as Customer[]) {
+      if (targetCountry && String(c.country ?? '').toUpperCase() !== targetCountry) continue;
+      if (c.customer_id) targetAccounts.add(c.customer_id);
+    }
+    const out = { s1Qty: 0, s1PriceDkk: 0, s2Qty: 0, s2PriceDkk: 0 };
+    for (const r of (stats ?? []) as StatsRow[]) {
+      const acc = r.account_no ?? '';
+      if (!acc || !targetAccounts.has(acc)) continue;
+      const currency = r.salesperson_id ? (spCurrencyById[r.salesperson_id] ?? 'DKK') : 'DKK';
+      const rate = rates[currency] ?? 1;
+      const qty = Number(r.qty || 0);
+      const priceDkk = Number(r.price || 0) * rate;
+      if (r.season_id === s1) { out.s1Qty += qty; out.s1PriceDkk += priceDkk; }
+      else if (r.season_id === s2) { out.s2Qty += qty; out.s2PriceDkk += priceDkk; }
+    }
+    return out;
+  }, [customers, stats, country, s1, s2, rates, spCurrencyById]);
+
   // navigation helper
   function buildDetailsHref(spId: string, mode: 'nulled' | 'not_visited' | 'visited') {
     return {
@@ -233,6 +256,53 @@ export default function OverviewPage() {
             ))}
           </tbody>
         </table>
+      </div>
+
+      {/* Separate TOTALS section */}
+      <div className="rounded-lg border bg-white">
+        <div className="p-3 text-sm font-semibold">TOTALS (All salespersons)</div>
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-sm">
+            <thead>
+              <tr className="bg-gray-50">
+                <th className="p-2 text-left"></th>
+                <th className="p-2 text-center" colSpan={2}>{getSeasonLabel(s1) || 'Season 1'}</th>
+                <th className="p-2 text-center" colSpan={2}>{getSeasonLabel(s2) || 'Season 2'}</th>
+                <th className="p-2 text-center" colSpan={2}>Progress vs last year</th>
+              </tr>
+              <tr className="bg-gray-50">
+                <th className="p-2 text-left"></th>
+                <th className="p-2 text-center">Qty</th>
+                <th className="p-2 text-center">Price (DKK)</th>
+                <th className="p-2 text-center">Qty</th>
+                <th className="p-2 text-center">Price (DKK)</th>
+                <th className="p-2 text-center">Qty %</th>
+                <th className="p-2 text-center">Price %</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(() => {
+                const s1Qty = Math.round(totals.s1Qty);
+                const s1Price = Math.round(totals.s1PriceDkk);
+                const s2Qty = Math.round(totals.s2Qty);
+                const s2Price = Math.round(totals.s2PriceDkk);
+                const pctQty = s2Qty === 0 ? 0 : Math.round((s1Qty / s2Qty) * 100);
+                const pctPrice = s2Price === 0 ? 0 : Math.round((s1Price / s2Price) * 100);
+                return (
+                  <tr>
+                    <td className="p-2 font-medium">TOTAL</td>
+                    <td className="p-2 text-center">{s1Qty}</td>
+                    <td className="p-2 text-center">{s1Price.toLocaleString('da-DK')} DKK</td>
+                    <td className="p-2 text-center">{s2Qty}</td>
+                    <td className="p-2 text-center">{s2Price.toLocaleString('da-DK')} DKK</td>
+                    <td className="p-2 text-center">{pctQty}%</td>
+                    <td className="p-2 text-center">{pctPrice}%</td>
+                  </tr>
+                );
+              })()}
+            </tbody>
+          </table>
+        </div>
       </div>
 
     </div>
