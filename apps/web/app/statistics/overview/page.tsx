@@ -282,6 +282,7 @@ export default function OverviewPage() {
                 <th className="p-2 text-center" colSpan={2}>Progress vs last year</th>
               </tr>
               <tr className="bg-gray-50">
+                <th className="p-2 text-center"></th>
                 <th className="p-2 text-center">Qty</th>
                 <th className="p-2 text-center">Price (DKK)</th>
                 <th className="p-2 text-center">Qty</th>
@@ -296,10 +297,12 @@ export default function OverviewPage() {
                 const s1Price = Math.round(totals.s1PriceDkk);
                 const s2Qty = Math.round(totals.s2Qty);
                 const s2Price = Math.round(totals.s2PriceDkk);
-                const achievedQtyPct = s2Qty === 0 ? 0 : Math.round((s1Qty / s2Qty) * 100);
-                const achievedPricePct = s2Price === 0 ? 0 : Math.round((s1Price / s2Price) * 100);
-                const offQtyPct = Math.max(0, 100 - achievedQtyPct);
-                const offPricePct = Math.max(0, 100 - achievedPricePct);
+                const achievedQtyPct = s2Qty === 0 ? 0 : (s1Qty / s2Qty) * 100;
+                const achievedPricePct = s2Price === 0 ? 0 : (s1Price / s2Price) * 100;
+                const diffQtyPct = s2Qty === 0 ? 0 : ((s1Qty - s2Qty) / s2Qty) * 100;
+                const diffPricePct = s2Price === 0 ? 0 : ((s1Price - s2Price) / s2Price) * 100;
+                const qtyCls = diffQtyPct > 0 ? 'text-red-700' : diffQtyPct < 0 ? 'text-green-700' : '';
+                const priceCls = diffPricePct > 0 ? 'text-red-700' : diffPricePct < 0 ? 'text-green-700' : '';
                 return (
                   <>
                     <tr>
@@ -308,8 +311,8 @@ export default function OverviewPage() {
                       <td className="p-2 text-center">{s1Price.toLocaleString('da-DK')} DKK</td>
                       <td className="p-2 text-center">{s2Qty.toLocaleString('da-DK')}</td>
                       <td className="p-2 text-center">{s2Price.toLocaleString('da-DK')} DKK</td>
-                      <td className="p-2 text-center">{offQtyPct}%</td>
-                      <td className="p-2 text-center">{offPricePct}%</td>
+                      <td className="p-2 text-center"><span className={qtyCls}>{(diffQtyPct>=0?'+':'') + diffQtyPct.toFixed(2)}%</span></td>
+                      <td className="p-2 text-center"><span className={priceCls}>{(diffPricePct>=0?'+':'') + diffPricePct.toFixed(2)}%</span></td>
                     </tr>
                     <tr className="bg-gray-50">
                       <td className="p-2 font-medium">Andel ift. sidste år</td>
@@ -317,8 +320,8 @@ export default function OverviewPage() {
                       <td className="p-2 text-center">—</td>
                       <td className="p-2 text-center">—</td>
                       <td className="p-2 text-center">—</td>
-                      <td className="p-2 text-center">{achievedQtyPct}%</td>
-                      <td className="p-2 text-center">{achievedPricePct}%</td>
+                      <td className="p-2 text-center">{achievedQtyPct.toFixed(2)}%</td>
+                      <td className="p-2 text-center">{achievedPricePct.toFixed(2)}%</td>
                     </tr>
                   </>
                 );
