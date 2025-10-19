@@ -1,5 +1,5 @@
 'use client';
-import { useMemo } from 'react';
+import { useMemo, Suspense } from 'react';
 import useSWR from 'swr';
 import { supabase } from '../../../../lib/supabaseClient';
 import { useSearchParams } from 'next/navigation';
@@ -8,6 +8,18 @@ type StatsRow = { account_no: string | null; qty: number; price: number; season_
 type InvoiceRow = { account_no: string | null; qty: number; amount: number; currency: string | null; invoice_no: string | null; season_id: string; salesperson_id: string | null; created_at?: string };
 
 export default function OverviewRecordsPage() {
+  return (
+    <Suspense fallback={(
+      <div className="flex items-center justify-center p-6">
+        <div className="h-5 w-5 animate-spin rounded-full border-2 border-slate-300 border-t-slate-900" />
+      </div>
+    )}>
+      <RecordsInner />
+    </Suspense>
+  );
+}
+
+function RecordsInner() {
   const search = useSearchParams();
   const sp = search.get('sp') || '';
   const mode = (search.get('mode') as 'nulled' | 'not_visited' | 'visited') || 'visited';
