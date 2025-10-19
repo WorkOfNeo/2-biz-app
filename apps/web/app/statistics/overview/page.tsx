@@ -2,10 +2,11 @@
 import { useMemo, useState } from 'react';
 import useSWR from 'swr';
 import { supabase } from '../../../lib/supabaseClient';
+import { Modal } from '../../../components/Modal';
 
 type Person = { id: string; name: string; currency?: string | null };
 type StatsRow = { account_no: string | null; qty: number; price: number; season_id: string; salesperson_id: string | null };
-type Customer = { customer_id: string; country: string | null; salesperson_id: string | null; nulled?: boolean | null; excluded?: boolean | null; permanently_closed?: boolean | null };
+type Customer = { customer_id: string; company?: string | null; city?: string | null; country: string | null; salesperson_id: string | null; nulled?: boolean | null; excluded?: boolean | null; permanently_closed?: boolean | null };
 
 const COUNTRIES = ['All', 'Denmark', 'Norway', 'Sweden', 'Finland'] as const;
 
@@ -61,7 +62,7 @@ export default function OverviewPage() {
   const spCurrencyById = useMemo(() => Object.fromEntries(((people ?? []) as Person[]).map(p => [p.id, p.currency ?? 'DKK'])), [people]);
 
   const { data: customers } = useSWR('overview:customers', async () => {
-    const { data, error } = await supabase.from('customers').select('customer_id, country, salesperson_id, nulled, excluded, permanently_closed');
+    const { data, error } = await supabase.from('customers').select('customer_id, company, city, country, salesperson_id, nulled, excluded, permanently_closed');
     if (error) throw new Error(error.message);
     return (data ?? []) as Customer[];
   });
@@ -142,6 +143,7 @@ export default function OverviewPage() {
         visited: a.visitedValid.size,
         effectiveTotal,
         visitedPct: effectiveTotal > 0 ? (a.visitedValid.size / effectiveTotal) * 100 : 0,
+        notVisited: Math.max(0, effectiveTotal - a.visitedValid.size),
         s1Qty: a.s1Qty, s1Price: a.s1Price, s1Avg,
         s2Qty: a.s2Qty, s2Price: a.s2Price, s2Avg,
         diffPct,
@@ -155,6 +157,48 @@ export default function OverviewPage() {
     }
     return out;
   }, [people, customers, stats, country, s1, s2]);
+
+  // Details modal state and helpers
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [detailsMode, setDetailsMode] = useState<'nulled' | 'not_visited' | 'visited'>('visited');
+  const [detailsSpId, setDetailsSpId] = useState<string>('');
+
+  function openDetails(spId: string, mode: 'nulled' | 'not_visited' | 'visited') {
+    setDetailsSpId(spId);
+    setDetailsMode(mode);
+    setDetailsOpen(true);
+  }
+
+  const detailsData = useMemo(() => {
+    if (!detailsOpen || !customers || !stats) return { items: [] as any[], s1, s2 };
+    const arr = (customers ?? []).filter(c => c.salesperson_id === detailsSpId && (country === 'All' ? true : String(c.country ?? '').toUpperCase() === country.toUpperCase()));
+    const nulledSet = new Set(arr.filter(c => !!(c.nulled || c.excluded || c.permanently_closed)).map(c => c.customer_id));
+    const allSet = new Set(arr.map(c => c.customer_id));
+    // visited set: customers in stats for season 1
+    const visitedSet = new Set((stats ?? []).filter(r => r.salesperson_id === detailsSpId && r.season_id === s1 && r.account_no && allSet.has(r.account_no)).map(r => r.account_no as string));
+    const validSet = new Set(arr.filter(c => !nulledSet.has(c.customer_id)).map(c => c.customer_id));
+    const notVisitedSet = new Set(Array.from(validSet).filter(id => !visitedSet.has(id)));
+    let targetIds: Set<string>;
+    if (detailsMode === 'nulled') targetIds = nulledSet;
+    else if (detailsMode === 'not_visited') targetIds = notVisitedSet;
+    else targetIds = visitedSet;
+
+    // group records by customer
+    const byCustomer = new Map<string, { id: string; name: string; city: string; s1: StatsRow[]; s2: StatsRow[] }>();
+    for (const id of targetIds) {
+      const c = arr.find(x => x.customer_id === id);
+      byCustomer.set(id, { id, name: c?.company || id, city: c?.city || '-', s1: [], s2: [] });
+    }
+    for (const r of (stats ?? [])) {
+      if (r.salesperson_id !== detailsSpId) continue;
+      const acc = r.account_no as string | null;
+      if (!acc || !byCustomer.has(acc)) continue;
+      if (r.season_id === s1) byCustomer.get(acc)!.s1.push(r);
+      if (r.season_id === s2) byCustomer.get(acc)!.s2.push(r);
+    }
+    const items = Array.from(byCustomer.values()).sort((a, b) => a.name.localeCompare(b.name));
+    return { items, s1, s2 };
+  }, [detailsOpen, customers, stats, detailsMode, detailsSpId, country, s1, s2]);
 
   return (
     <div className="space-y-6">
@@ -180,12 +224,15 @@ export default function OverviewPage() {
               <th className="p-2 text-left font-semibold">Salesman</th>
               <th className="p-2 text-left font-semibold">Nulled</th>
               <th className="p-2 text-left font-semibold">Visited / Total</th>
+              <th className="p-2 text-left font-semibold">Not visited</th>
               <th className="p-2 text-left font-semibold">Progress</th>
               <th className="p-2 text-center font-semibold" colSpan={3}>{getSeasonLabel(s1) || 'Season 1'}</th>
               <th className="p-2 text-center font-semibold" colSpan={3}>{getSeasonLabel(s2) || 'Season 2'}</th>
               <th className="p-2 text-center font-semibold" colSpan={2}>Need to meet S2</th>
             </tr>
             <tr className="bg-gray-50">
+              <th className="p-2 text-left"></th>
+              <th className="p-2 text-left"></th>
               <th className="p-2 text-left"></th>
               <th className="p-2 text-left"></th>
               <th className="p-2 text-left"></th>
@@ -204,8 +251,9 @@ export default function OverviewPage() {
             {rows.map((r) => (
               <tr key={r.id} className="border-t">
                 <td className="p-2 font-medium">{r.name}</td>
-                <td className="p-2">{r.nulledCount}</td>
-                <td className="p-2">{r.visited}/{r.effectiveTotal}</td>
+                <td className="p-2"><button className="underline underline-offset-2" onClick={() => openDetails(r.id, 'nulled')}>{r.nulledCount}</button></td>
+                <td className="p-2"><button className="underline underline-offset-2" onClick={() => openDetails(r.id, 'visited')}>{r.visited}/{r.effectiveTotal}</button></td>
+                <td className="p-2"><button className="underline underline-offset-2" onClick={() => openDetails(r.id, 'not_visited')}>{r.notVisited}</button></td>
                 <td className="p-2"><Donut pct={r.visitedPct} /></td>
                 <td className="p-2 text-center">{r.s1Qty}</td>
                 <td className="p-2 text-center">{Math.round(r.s1Price).toLocaleString('da-DK')}</td>
@@ -220,6 +268,70 @@ export default function OverviewPage() {
           </tbody>
         </table>
       </div>
+
+      <Modal
+        open={detailsOpen}
+        onClose={() => setDetailsOpen(false)}
+        title={detailsMode === 'nulled' ? 'Nulled customers' : detailsMode === 'not_visited' ? 'Not visited customers' : 'Visited customers'}
+        footer={<button className="rounded border px-3 py-1.5 text-sm" onClick={() => setDetailsOpen(false)}>Close</button>}
+      >
+        <div className="space-y-4 max-h-[70vh] overflow-auto">
+          {detailsData.items.length === 0 && (
+            <div className="text-sm text-gray-600">No records.</div>
+          )}
+          {detailsData.items.map((c) => (
+            <div key={c.id} className="border rounded-md p-3">
+              <div className="font-medium">{c.name} <span className="text-xs text-gray-500">({c.id})</span> <span className="text-xs text-gray-500">· {c.city}</span></div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2">
+                <div>
+                  <div className="text-xs text-gray-500 mb-1">{getSeasonLabel(s1) || 'Season 1'}</div>
+                  <table className="min-w-full text-xs">
+                    <thead>
+                      <tr className="bg-gray-50">
+                        <th className="text-left p-1 border-b">Qty</th>
+                        <th className="text-left p-1 border-b">Price (DKK)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {c.s1.length === 0 && (
+                        <tr><td className="p-1 text-gray-500" colSpan={2}>—</td></tr>
+                      )}
+                      {c.s1.map((r: StatsRow, idx: number) => (
+                        <tr key={idx}>
+                          <td className="p-1 border-b">{Number(r.qty||0)}</td>
+                          <td className="p-1 border-b">{Number(r.price||0).toLocaleString('da-DK')}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div>
+                  <div className="text-xs text-gray-500 mb-1">{getSeasonLabel(s2) || 'Season 2'}</div>
+                  <table className="min-w-full text-xs">
+                    <thead>
+                      <tr className="bg-gray-50">
+                        <th className="text-left p-1 border-b">Qty</th>
+                        <th className="text-left p-1 border-b">Price (DKK)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {c.s2.length === 0 && (
+                        <tr><td className="p-1 text-gray-500" colSpan={2}>—</td></tr>
+                      )}
+                      {c.s2.map((r: StatsRow, idx: number) => (
+                        <tr key={idx}>
+                          <td className="p-1 border-b">{Number(r.qty||0)}</td>
+                          <td className="p-1 border-b">{Number(r.price||0).toLocaleString('da-DK')}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </Modal>
     </div>
   );
 }
