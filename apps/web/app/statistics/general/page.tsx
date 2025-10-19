@@ -572,88 +572,10 @@ export default function StatisticsGeneralPage() {
                       );
                     })}
                   </tbody>
-                  <tfoot className="sticky bottom-0 z-10">
-                    {(() => {
-                      const sum = items.reduce((acc, r) => {
-                        acc.s1Qty += r.s1Qty; acc.s1Price += r.s1Price; acc.s2Qty += r.s2Qty; acc.s2Price += r.s2Price; return acc;
-                      }, { s1Qty: 0, s1Price: 0, s2Qty: 0, s2Price: 0 });
-                      return (
-                        <tr className="border-t bg-gray-50 font-semibold">
-                          <td className="p-2">TOTAL</td>
-                          <td className="p-2"></td>
-                          <td className="p-2 text-center">{sum.s1Qty}</td>
-                          <td className="p-2 text-center">{sum.s1Price.toLocaleString('da-DK')} {tableCurrency}</td>
-                          <td className="p-2 text-center">{sum.s2Qty}</td>
-                          <td className="p-2 text-center">{sum.s2Price.toLocaleString('da-DK')} {tableCurrency}</td>
-                          <td className="p-2 text-center">{(sum.s1Qty - sum.s2Qty) >= 0 ? `+${sum.s1Qty - sum.s2Qty}` : (sum.s1Qty - sum.s2Qty)}</td>
-                          <td className="p-2 text-center">{(sum.s1Price - sum.s2Price).toLocaleString('da-DK')} {tableCurrency}</td>
-                          <td className="p-2"></td>
-                        </tr>
-                      );
-                    })()}
-                    {(() => {
-                      const rates = { DKK: 1, ...(currencyRatesRow ?? {}) } as Record<string, number>;
-                      const sumDkk = items.reduce((acc, r) => {
-                        const currency = r.salespersonId ? (spCurrencyById[r.salespersonId] ?? 'DKK') : 'DKK';
-                        const rate = rates[currency] ?? 1;
-                        acc.s1Price += r.s1Price * rate;
-                        acc.s2Price += r.s2Price * rate;
-                        return acc;
-                      }, { s1Price: 0, s2Price: 0 });
-                      return (
-                        <tr className="bg-gray-100">
-                          <td className="p-2">TOTAL (DKK)</td>
-                          <td className="p-2"></td>
-                          <td className="p-2 text-center">—</td>
-                          <td className="p-2 text-center">{Math.round(sumDkk.s1Price).toLocaleString('da-DK')} DKK</td>
-                          <td className="p-2 text-center">—</td>
-                          <td className="p-2 text-center">{Math.round(sumDkk.s2Price).toLocaleString('da-DK')} DKK</td>
-                          <td className="p-2 text-center">—</td>
-                          <td className="p-2 text-center">{Math.round(sumDkk.s1Price - sumDkk.s2Price).toLocaleString('da-DK')} DKK</td>
-                          <td className="p-2"></td>
-                        </tr>
-                      );
-                    })()}
-                  </tfoot>
+                  <tfoot></tfoot>
                 </table>
               </div>
-              {/* Sticky overlay totals (ensures visible even if table overflows viewport) */}
-              {(() => {
-                const sum = items.reduce((acc, r) => {
-                  acc.s1Qty += r.s1Qty; acc.s1Price += r.s1Price; acc.s2Qty += r.s2Qty; acc.s2Price += r.s2Price; return acc;
-                }, { s1Qty: 0, s1Price: 0, s2Qty: 0, s2Price: 0 });
-                const rates = { DKK: 1, ...(currencyRatesRow ?? {}) } as Record<string, number>;
-                const sumDkk = items.reduce((acc, r) => {
-                  const c = r.salespersonId ? (spCurrencyById[r.salespersonId] ?? 'DKK') : 'DKK';
-                  const rate = rates[c] ?? 1; acc.s1Price += r.s1Price * rate; acc.s2Price += r.s2Price * rate; return acc;
-                }, { s1Price: 0, s2Price: 0 });
-                return (
-                  <div className="sticky bottom-0 z-10 bg-white/95 backdrop-blur border-t">
-                    <div className="grid grid-cols-9 text-xs sm:text-sm">
-                      <div className="col-span-1 p-2 font-semibold">TOTAL</div>
-                      <div className="col-span-1 p-2"></div>
-                      <div className="col-span-1 p-2 text-center">{sum.s1Qty}</div>
-                      <div className="col-span-1 p-2 text-center">{sum.s1Price.toLocaleString('da-DK')} {tableCurrency}</div>
-                      <div className="col-span-1 p-2 text-center">{sum.s2Qty}</div>
-                      <div className="col-span-1 p-2 text-center">{sum.s2Price.toLocaleString('da-DK')} {tableCurrency}</div>
-                      <div className="col-span-1 p-2 text-center">{(sum.s1Qty - sum.s2Qty) >= 0 ? `+${sum.s1Qty - sum.s2Qty}` : (sum.s1Qty - sum.s2Qty)}</div>
-                      <div className="col-span-1 p-2 text-center">{(sum.s1Price - sum.s2Price).toLocaleString('da-DK')} {tableCurrency}</div>
-                      <div className="col-span-1 p-2"></div>
-                    </div>
-                    <div className="grid grid-cols-9 text-xs sm:text-sm bg-gray-50">
-                      <div className="col-span-1 p-2">TOTAL (DKK)</div>
-                      <div className="col-span-1 p-2"></div>
-                      <div className="col-span-1 p-2 text-center">—</div>
-                      <div className="col-span-1 p-2 text-center">{Math.round(sumDkk.s1Price).toLocaleString('da-DK')} DKK</div>
-                      <div className="col-span-1 p-2 text-center">—</div>
-                      <div className="col-span-1 p-2 text-center">{Math.round(sumDkk.s2Price).toLocaleString('da-DK')} DKK</div>
-                      <div className="col-span-1 p-2 text-center">—</div>
-                      <div className="col-span-1 p-2 text-center">{Math.round(sumDkk.s1Price - sumDkk.s2Price).toLocaleString('da-DK')} DKK</div>
-                      <div className="col-span-1 p-2"></div>
-                    </div>
-                  </div>
-                );
-              })()}
+              {/* Removed sticky overlay totals; separate TOTALS section below */}
               {/* KPI cards when a salesperson is selected */}
               {activePerson && (
                 <div className="border-t p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
