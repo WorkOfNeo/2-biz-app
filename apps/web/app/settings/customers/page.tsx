@@ -78,8 +78,9 @@ export default function CustomersSettingsPage() {
       let ok = 0, fail = 0;
       for (let i = 0; i < rows.length; i++) {
         const r = rows[i];
-        const matchVal = r[matchFileCol];
-        const newValRaw = r[valueFileCol];
+        if (!r) { setProgress(i + 1); continue; }
+        const matchVal = r[matchFileCol as keyof typeof r];
+        const newValRaw = r[valueFileCol as keyof typeof r];
         if (matchVal === undefined || matchVal === null || String(matchVal).trim() === '') { setProgress(i + 1); continue; }
         let newVal: any = newValRaw;
         if (['excluded','nulled','permanently_closed'].includes(updateDbCol)) {
