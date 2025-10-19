@@ -207,45 +207,23 @@ export default function OverviewPage() {
               }
             >{c}</button>
           ))}
+          <Link className="rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50" href={{ pathname: '/statistics/overview/print', query: { country, s1, s2 } }}>Print preview</Link>
           <button
             className="rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50"
             onClick={async () => {
               try {
-                const doc = new jsPDF({ unit: 'pt', format: 'a4' });
-                doc.setFontSize(14);
-                doc.text(`Overview · ${country}`, 40, 40);
-                const s1Label = `${getSeasonLabel(s1) || 'Season 1'}`;
-                const s2Label = `${getSeasonLabel(s2) || 'Season 2'}`;
-                const head = [[
-                  'Salesman', 'Nulled', 'Visited/Total', 'Progress %',
-                  `${s1Label} Qty`, `${s1Label} Price (DKK)`, `${s1Label} Avg`,
-                  `${s2Label} Qty`, `${s2Label} Price (DKK)`, `${s2Label} Avg`,
-                  'Qty % vs S2', 'Price % vs S2'
-                ]];
-                const body = rows.map((r) => {
-                  const qtyPct = r.s2Qty === 0 ? 0 : ((r.s1Qty - r.s2Qty) / r.s2Qty) * 100;
-                  const pricePct = r.s2Price === 0 ? 0 : ((r.s1Price - r.s2Price) / r.s2Price) * 100;
-                  return [
-                    r.name,
-                    String(r.nulledCount), `${r.visited}/${r.effectiveTotal}`, r.visitedPct.toFixed(2),
-                    String(r.s1Qty), Math.round(r.s1Price).toLocaleString('da-DK'), Math.round(r.s1Avg).toLocaleString('da-DK'),
-                    String(r.s2Qty), Math.round(r.s2Price).toLocaleString('da-DK'), Math.round(r.s2Avg).toLocaleString('da-DK'),
-                    (qtyPct>=0?'+':'') + qtyPct.toFixed(2) + '%', (pricePct>=0?'+':'') + pricePct.toFixed(2) + '%'
-                  ];
-                });
-                (autoTable as any)(doc, {
-                  head,
-                  body,
-                  startY: 60,
-                  styles: { fontSize: 10, lineColor: [219,234,254], lineWidth: 0.5 },
-                  headStyles: { fillColor: [29,78,216], textColor: [255,255,255] },
-                  alternateRowStyles: { fillColor: [239,246,255] },
-                  theme: 'grid'
-                });
-                const pdfBlob = doc.output('blob');
-                saveAs(pdfBlob, `overview_${country.toLowerCase()}.pdf`);
+                // enqueue export_overview job with country and current season ids
+                const { data: { session } } = await supabase.auth.getSession();
+                if (!session) throw new Error('Not signed in');
+                const token = session.access_token;
+                const body = { type: 'export_overview', payload: { country, s1, s2 } };
+                const res = await fetch('/api/enqueue', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(body) });
+                if (!res.ok) throw new Error(await res.text());
+                // show toast via existing global ToastStack by inserting a job log watcher could be added later
+                alert('Export enqueued. Check Downloads for the ZIP when done.');
               } catch (e) {
                 console.error('export failed', e);
+                alert('Failed to enqueue export');
               }
             }}
           >Export PDF</button>

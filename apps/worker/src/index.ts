@@ -496,6 +496,42 @@ async function runJob(job: JobRow) {
     await log(job.id, 'info', 'STEP:complete', { totalRows });
     return;
   }
+  if (job.type === 'export_overview') {
+    try {
+      await log(job.id, 'info', 'STEP:export_overview_begin', job.payload || {});
+      const countries = ['All','Denmark','Norway','Sweden','Finland'];
+      const s1 = (job.payload as any)?.s1 as string | undefined;
+      const s2 = (job.payload as any)?.s2 as string | undefined;
+      const list: Array<{ country: string; path: string; publicUrl?: string | null }> = [];
+      // Use existing browser connection
+      const ctx = await browser!.newContext({ viewport: { width: 1200, height: 1600 } });
+      const page = await ctx.newPage();
+      const webBase = (process.env.WEB_ORIGIN || '').replace(/\/$/, '');
+      for (const country of countries) {
+        const url = `${webBase}/statistics/overview/print?country=${encodeURIComponent(country)}${s1?`&s1=${encodeURIComponent(s1)}`:''}${s2?`&s2=${encodeURIComponent(s2)}`:''}`;
+        await page.goto(url, { waitUntil: 'networkidle', timeout: 120_000 });
+        await log(job.id, 'info', 'STEP:export_overview_nav', { country, url });
+        const pdf = await page.pdf({ format: 'A4', printBackground: true });
+        const path = `overview/${job.id}/${country}.pdf`;
+        try {
+          const up = await supabase.storage.from('exports').upload(path, pdf as any, { contentType: 'application/pdf', upsert: true });
+          let publicUrl: string | null = null;
+          const { data: pub } = supabase.storage.from('exports').getPublicUrl(path);
+          publicUrl = pub?.publicUrl ?? null;
+          list.push({ country, path, publicUrl });
+        } catch (e) {
+          list.push({ country, path });
+        }
+      }
+      await ctx.close();
+      await saveResult(job.id, 'export_overview', { files: list });
+      await setJobSucceeded(job.id);
+      return;
+    } catch (e: any) {
+      await setJobFailedOrRequeue(job, e?.message || String(e));
+      return;
+    }
+  }
 
   if (doSeasons) {
     // Scrape seasons list and upsert into Supabase
