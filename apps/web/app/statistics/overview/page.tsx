@@ -172,7 +172,6 @@ export default function OverviewPage() {
               <th className="p-2 text-left font-semibold">Progress</th>
               <th className="p-2 text-center font-semibold" colSpan={3}>{getSeasonLabel(s1) || 'Season 1'}</th>
               <th className="p-2 text-center font-semibold" colSpan={3}>{getSeasonLabel(s2) || 'Season 2'}</th>
-              <th className="p-2 text-center font-semibold">Diff %</th>
               <th className="p-2 text-center font-semibold" colSpan={2}>Need to meet S2</th>
             </tr>
             <tr className="bg-gray-50">
@@ -185,7 +184,6 @@ export default function OverviewPage() {
               <th className="p-2 text-center">Qty</th>
               <th className="p-2 text-center">Price (DKK)</th>
               <th className="p-2 text-center">Avg</th>
-              <th className="p-2 text-center"></th>
               <th className="p-2 text-center">Qty %</th>
               <th className="p-2 text-center">Price %</th>
             </tr>
@@ -202,7 +200,6 @@ export default function OverviewPage() {
                 <td className="p-2 text-center">{r.s2Qty}</td>
                 <td className="p-2 text-center">{Math.round(r.s2Price).toLocaleString('da-DK')}</td>
                 <td className="p-2 text-center">{Math.round(r.s2Avg).toLocaleString('da-DK')}</td>
-                <td className="p-2 text-center"><span className={r.diffPct>0?'text-red-700':r.diffPct<0?'text-green-700':''}>{(r.diffPct>=0?'+':'')+Math.round(r.diffPct)}%</span></td>
                 <td className="p-2 text-center"><span className={r.needQtyPct>0?'text-red-700':r.needQtyPct<0?'text-green-700':''}>{Math.round(r.needQtyPct)}%</span></td>
                 <td className="p-2 text-center"><span className={r.needPricePct>0?'text-red-700':r.needPricePct<0?'text-green-700':''}>{Math.round(r.needPricePct)}%</span></td>
               </tr>
