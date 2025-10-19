@@ -137,47 +137,69 @@ function RecordsInner() {
               <th className="p-2 text-left"></th>
               <th className="p-2 text-left"></th>
               <th className="p-2 text-center">Qty</th>
-              <th className="p-2 text-center">Price (DKK)</th>
+              <th className="p-2 text-center">Price</th>
               <th className="p-2 text-center">Qty</th>
-              <th className="p-2 text-center">Price (DKK)</th>
+              <th className="p-2 text-center">Price</th>
             </tr>
           </thead>
           <tbody>
             {data.map((c: any) => (
               <tr key={c.id} className="border-t align-top">
-                <td className="p-2 whitespace-nowrap">{c.name}</td>
-                <td className="p-2 whitespace-nowrap">{c.city}</td>
-                <td className="p-0">
-                  <table className="min-w-full text-xs">
-                    <tbody>
-                      {c.s1.length === 0 && (<tr><td className="p-1 text-gray-500">—</td><td className="p-1"></td></tr>)}
+                <td className="p-2 whitespace-nowrap align-top">{c.name}</td>
+                <td className="p-2 whitespace-nowrap align-top">{c.city}</td>
+                {/* S1 Qty */}
+                <td className="p-1 align-top">
+                  {c.s1.length === 0 ? (
+                    <div className="p-1 text-xs text-gray-500">—</div>
+                  ) : (
+                    <div className="text-xs space-y-1">
                       {c.s1.map((r: any, idx: number) => (
-                        <tr key={idx}>
-                          <td className="p-1">{Number(r.qty||0)}</td>
-                          <td className="p-1 text-right">
-                            {Math.round(Number(r.price||0)).toLocaleString('da-DK')}
-                            {r.isInvoice && <span className="ml-1 inline-flex items-center rounded bg-slate-800 px-1.5 py-0.5 text-[10px] font-medium text-white">INV</span>}
-                          </td>
-                        </tr>
+                        <div key={idx}>{Number(r.qty||0)}</div>
                       ))}
-                    </tbody>
-                  </table>
+                    </div>
+                  )}
                 </td>
-                <td className="p-0">
-                  <table className="min-w-full text-xs">
-                    <tbody>
-                      {c.s2.length === 0 && (<tr><td className="p-1 text-gray-500">—</td><td className="p-1"></td></tr>)}
-                      {c.s2.map((r: any, idx: number) => (
-                        <tr key={idx}>
-                          <td className="p-1">{Number(r.qty||0)}</td>
-                          <td className="p-1 text-right">
-                            {Math.round(Number(r.price||0)).toLocaleString('da-DK')}
-                            {r.isInvoice && <span className="ml-1 inline-flex items-center rounded bg-slate-800 px-1.5 py-0.5 text-[10px] font-medium text-white">INV</span>}
-                          </td>
-                        </tr>
+                {/* S1 Price */}
+                <td className="p-1 align-top text-right">
+                  {c.s1.length === 0 ? (
+                    <div className="p-1 text-xs text-gray-500">—</div>
+                  ) : (
+                    <div className="text-xs space-y-1">
+                      {c.s1.map((r: any, idx: number) => (
+                        <div key={idx}>
+                          {Math.round(Number(r.price||0)).toLocaleString('da-DK')}
+                          {r.isInvoice && <span className="ml-1 inline-flex items-center rounded bg-slate-800 px-1.5 py-0.5 text-[10px] font-medium text-white">INV</span>}
+                        </div>
                       ))}
-                    </tbody>
-                  </table>
+                    </div>
+                  )}
+                </td>
+                {/* S2 Qty */}
+                <td className="p-1 align-top">
+                  {c.s2.length === 0 ? (
+                    <div className="p-1 text-xs text-gray-500">—</div>
+                  ) : (
+                    <div className="text-xs space-y-1">
+                      {c.s2.map((r: any, idx: number) => (
+                        <div key={idx}>{Number(r.qty||0)}</div>
+                      ))}
+                    </div>
+                  )}
+                </td>
+                {/* S2 Price */}
+                <td className="p-1 align-top text-right">
+                  {c.s2.length === 0 ? (
+                    <div className="p-1 text-xs text-gray-500">—</div>
+                  ) : (
+                    <div className="text-xs space-y-1">
+                      {c.s2.map((r: any, idx: number) => (
+                        <div key={idx}>
+                          {Math.round(Number(r.price||0)).toLocaleString('da-DK')}
+                          {r.isInvoice && <span className="ml-1 inline-flex items-center rounded bg-slate-800 px-1.5 py-0.5 text-[10px] font-medium text-white">INV</span>}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </td>
               </tr>
             ))}
