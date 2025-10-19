@@ -420,7 +420,7 @@ export default function StatisticsGeneralPage() {
               <div className="py-1 text-sm">
                 <button className="block w-full px-3 py-2 text-left hover:bg-gray-50">Export Data</button>
                 <button className="block w-full px-3 py-2 text-left hover:bg-gray-50">Print Report</button>
-                <button className="block w-full px-3 py-2 text-left hover:bg-gray-50">Download PDF</button>
+                <Link className="block px-3 py-2 hover:bg-gray-50" href={'/statistics/overview' as any}>Export PDF (Overview)</Link>
                 <Link className="block px-3 py-2 hover:bg-gray-50" href="/statistics/general/import">Import Statistic</Link>
                 <Link className="block px-3 py-2 hover:bg-gray-50" href={'/statistics/general/last-runs' as any}>Last Runs</Link>
                 <Link className="block px-3 py-2 hover:bg-gray-50" href="/settings/seasons">Season Settings</Link>
