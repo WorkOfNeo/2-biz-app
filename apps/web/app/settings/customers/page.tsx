@@ -1,13 +1,28 @@
 'use client';
-import { useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
+import * as XLSX from 'xlsx';
 import { supabase } from '../../../lib/supabaseClient';
 import useSWR from 'swr';
 import type { CustomerRow, SalespersonRow } from '@shared/types';
 import { Modal } from '../../../components/Modal';
+import { ProgressBar } from '../../../components/ProgressBar';
 
 // Import moved to /settings/customers/import
 
 export default function CustomersSettingsPage() {
+  // Bulk update modal state
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+  const [rows, setRows] = useState<Record<string, any>[]>([]);
+  const [headers, setHeaders] = useState<string[]>([]);
+  const [matchFileCol, setMatchFileCol] = useState('');
+  const [valueFileCol, setValueFileCol] = useState('');
+  const [matchDbCol, setMatchDbCol] = useState('customer_id');
+  const [updateDbCol, setUpdateDbCol] = useState('city');
+  const [running, setRunning] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [resultMsg, setResultMsg] = useState<string | null>(null);
+
   const { data: customers, mutate } = useSWR('customers', async () => {
     const { data, error } = await supabase
       .from('customers')
@@ -22,9 +37,84 @@ export default function CustomersSettingsPage() {
     if (error) throw new Error(error.message);
     return data as SalespersonRow[];
   });
+
+  const MATCHABLE_DB_COLS = useMemo(() => [
+    'customer_id', 'company', 'email'
+  ], []);
+  const UPDATEABLE_DB_COLS = useMemo(() => [
+    'company', 'stats_display_name', 'group_name', 'email', 'city', 'postal', 'country', 'currency', 'excluded', 'nulled', 'permanently_closed'
+  ], []);
+
+  const preview = useMemo(() => rows.slice(0, 5), [rows]);
+
+  const parseFile = useCallback((file: File) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const data = new Uint8Array(e.target?.result as ArrayBuffer);
+      const wb = XLSX.read(data, { type: 'array' });
+      const wsname = wb.SheetNames && wb.SheetNames.length > 0 ? wb.SheetNames[0] : undefined;
+      if (!wsname) { setRows([]); setHeaders([]); return; }
+      const ws = wb.Sheets[wsname as string];
+      if (!ws) { setRows([]); setHeaders([]); return; }
+      const json: Record<string, any>[] = XLSX.utils.sheet_to_json(ws, { defval: '' });
+      setRows(json);
+      const headerRows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' }) as any[];
+      const hdr = Array.isArray(headerRows) && Array.isArray(headerRows[0]) ? (headerRows[0] as string[]) : [];
+      setHeaders(hdr);
+      // auto-guess first two columns
+      setMatchFileCol(hdr[0] || '');
+      setValueFileCol(hdr[1] || '');
+    };
+    reader.readAsArrayBuffer(file);
+  }, []);
+
+  async function runBulkUpdate() {
+    try {
+      setRunning(true);
+      setResultMsg(null);
+      setProgress(0);
+      if (!matchFileCol || !valueFileCol || !matchDbCol || !updateDbCol) throw new Error('Please select mapping.');
+      const total = rows.length;
+      let ok = 0, fail = 0;
+      for (let i = 0; i < rows.length; i++) {
+        const r = rows[i];
+        const matchVal = r[matchFileCol];
+        const newValRaw = r[valueFileCol];
+        if (matchVal === undefined || matchVal === null || String(matchVal).trim() === '') { setProgress(i + 1); continue; }
+        let newVal: any = newValRaw;
+        if (['excluded','nulled','permanently_closed'].includes(updateDbCol)) {
+          const s = String(newValRaw).toLowerCase().trim();
+          newVal = s === 'true' || s === '1' || s === 'yes' || s === 'y';
+        }
+        const { error } = await supabase
+          .from('customers')
+          .update({ [updateDbCol]: newVal })
+          .eq(matchDbCol, matchVal as any);
+        if (error) { fail++; } else { ok++; }
+        setProgress(i + 1);
+      }
+      setResultMsg(`Updated ${ok}/${total} rows${fail ? `, ${fail} failed` : ''}.`);
+      mutate();
+    } catch (e: any) {
+      setResultMsg(`Error: ${e?.message ?? String(e)}`);
+    } finally {
+      setRunning(false);
+    }
+  }
   return (
     <div className="space-y-6">
-      <h2 className="text-xl font-semibold">Customers</h2>
+      <div className="flex items-center justify-between">
+        <h2 className="text-xl font-semibold">Customers</h2>
+        <div className="relative">
+          <button
+            className="inline-flex items-center rounded-md border px-2 py-1 text-sm hover:bg-gray-50"
+            onClick={() => setBulkOpen(true)}
+            title="Bulk update (XLSX)"
+          >
+            ☰
+          </button>
+        </div>
+      </div>
       <div className="space-y-2">
         <h3 className="text-lg font-semibold mt-6">Customers</h3>
         <div className="overflow-auto border rounded-md">
@@ -48,6 +138,107 @@ export default function CustomersSettingsPage() {
           </table>
         </div>
       </div>
+
+      <Modal
+        open={bulkOpen}
+        onClose={() => setBulkOpen(false)}
+        title="Bulk update customers (XLSX)"
+        footer={(
+          <div className="flex items-center gap-3 w-full justify-between">
+            <div className="flex-1 mr-4">
+              {running && <ProgressBar value={progress} max={Math.max(1, rows.length)} />}
+              {!running && rows.length > 0 && <div className="text-xs text-gray-500 mt-1">{progress}/{rows.length}</div>}
+            </div>
+            <div className="flex items-center gap-2">
+              <button className="px-3 py-1.5 text-sm" onClick={() => setBulkOpen(false)} disabled={running}>Close</button>
+              <button
+                disabled={running || rows.length === 0 || !matchFileCol || !valueFileCol}
+                className="inline-flex items-center rounded-md bg-slate-900 text-white px-3 py-1.5 text-sm hover:bg-slate-800 disabled:opacity-50"
+                onClick={runBulkUpdate}
+              >
+                {running ? 'Updating…' : 'Start update'}
+              </button>
+            </div>
+          </div>
+        )}
+      >
+        <div className="space-y-4">
+          <div
+            className={
+              'border-2 border-dashed rounded-lg p-6 text-center transition ' +
+              (dragOver ? 'bg-slate-50 border-slate-400' : 'border-slate-300')
+            }
+            onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={(ev) => { ev.preventDefault(); setDragOver(false); const f = (ev.dataTransfer.files?.[0]); if (f) parseFile(f); }}
+          >
+            <div className="text-sm text-gray-600">Drag & drop Excel here, or click to browse.</div>
+            <div className="mt-3">
+              <input
+                className="w-full text-sm"
+                type="file"
+                accept=".xlsx,.xls,.csv"
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) parseFile(f); }}
+              />
+            </div>
+          </div>
+
+          {headers.length > 0 && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              <label className="text-sm">
+                <div className="font-medium">Match column (file)</div>
+                <select className="mt-1 w-full border rounded-md p-2 text-sm" value={matchFileCol} onChange={(e) => setMatchFileCol(e.target.value)}>
+                  <option value="">—</option>
+                  {headers.map((h) => (<option key={h} value={h}>{h}</option>))}
+                </select>
+              </label>
+              <label className="text-sm">
+                <div className="font-medium">Match against (DB)</div>
+                <select className="mt-1 w-full border rounded-md p-2 text-sm" value={matchDbCol} onChange={(e) => setMatchDbCol(e.target.value)}>
+                  {MATCHABLE_DB_COLS.map((c) => (<option key={c} value={c}>{c}</option>))}
+                </select>
+              </label>
+              <label className="text-sm">
+                <div className="font-medium">Value column (file)</div>
+                <select className="mt-1 w-full border rounded-md p-2 text-sm" value={valueFileCol} onChange={(e) => setValueFileCol(e.target.value)}>
+                  <option value="">—</option>
+                  {headers.map((h) => (<option key={h} value={h}>{h}</option>))}
+                </select>
+              </label>
+              <label className="text-sm">
+                <div className="font-medium">Set column (DB)</div>
+                <select className="mt-1 w-full border rounded-md p-2 text-sm" value={updateDbCol} onChange={(e) => setUpdateDbCol(e.target.value)}>
+                  {UPDATEABLE_DB_COLS.map((c) => (<option key={c} value={c}>{c}</option>))}
+                </select>
+              </label>
+            </div>
+          )}
+
+          {preview.length > 0 && (
+            <div className="space-y-2">
+              <div className="text-sm text-gray-600">Preview (first 5 rows)</div>
+              <div className="overflow-auto border rounded-md">
+                <table className="min-w-full text-xs">
+                  <thead>
+                    <tr>
+                      {headers.map((h) => (<th key={h} className="text-left p-2 border-b bg-gray-50">{h}</th>))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {preview.map((r, idx) => (
+                      <tr key={idx}>
+                        {headers.map((h) => (<td key={h} className="p-2 border-b">{String(r[h] ?? '')}</td>))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {resultMsg && <div className="text-sm">{resultMsg}</div>}
+        </div>
+      </Modal>
     </div>
   );
 }
