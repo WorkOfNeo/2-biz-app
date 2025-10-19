@@ -123,7 +123,8 @@ export default function OverviewPage() {
       const diffPct = a.s2Price === 0 ? 0 : ((a.s1Price - a.s2Price) / a.s2Price) * 100;
       const needQty = a.s1Qty >= a.s2Qty ? 0 : (a.s2Qty - a.s1Qty);
       const needPrice = a.s1Price >= a.s2Price ? 0 : (a.s2Price - a.s1Price);
-      const needPct = a.s2Price === 0 ? 0 : Math.max(0, (needPrice / a.s2Price) * 100);
+      const needQtyPct = a.s2Qty === 0 ? 0 : Math.max(0, (needQty / a.s2Qty) * 100);
+      const needPricePct = a.s2Price === 0 ? 0 : Math.max(0, (needPrice / a.s2Price) * 100);
       out.push({
         id: sp.id,
         name: sp.name,
@@ -136,7 +137,8 @@ export default function OverviewPage() {
         diffPct,
         needQty,
         needPrice,
-        needPct,
+        needQtyPct,
+        needPricePct,
         diffQty,
         diffPrice,
       });
@@ -171,7 +173,7 @@ export default function OverviewPage() {
               <th className="p-2 text-center font-semibold" colSpan={3}>{getSeasonLabel(s1) || 'Season 1'}</th>
               <th className="p-2 text-center font-semibold" colSpan={3}>{getSeasonLabel(s2) || 'Season 2'}</th>
               <th className="p-2 text-center font-semibold">Diff %</th>
-              <th className="p-2 text-center font-semibold" colSpan={3}>Need to meet S2</th>
+              <th className="p-2 text-center font-semibold" colSpan={2}>Need to meet S2</th>
             </tr>
             <tr className="bg-gray-50">
               <th className="p-2 text-left"></th>
@@ -184,9 +186,8 @@ export default function OverviewPage() {
               <th className="p-2 text-center">Price (DKK)</th>
               <th className="p-2 text-center">Avg</th>
               <th className="p-2 text-center"></th>
-              <th className="p-2 text-center">Qty</th>
-              <th className="p-2 text-center">Price (DKK)</th>
-              <th className="p-2 text-center">%</th>
+              <th className="p-2 text-center">Qty %</th>
+              <th className="p-2 text-center">Price %</th>
             </tr>
           </thead>
           <tbody>
@@ -202,9 +203,8 @@ export default function OverviewPage() {
                 <td className="p-2 text-center">{Math.round(r.s2Price).toLocaleString('da-DK')}</td>
                 <td className="p-2 text-center">{Math.round(r.s2Avg).toLocaleString('da-DK')}</td>
                 <td className="p-2 text-center"><span className={r.diffPct>0?'text-green-700':r.diffPct<0?'text-red-700':''}>{(r.diffPct>=0?'+':'')+Math.round(r.diffPct)}%</span></td>
-                <td className="p-2 text-center">{r.needQty}</td>
-                <td className="p-2 text-center">{Math.round(r.needPrice).toLocaleString('da-DK')}</td>
-                <td className="p-2 text-center">{Math.round(r.needPct)}%</td>
+                <td className="p-2 text-center">{Math.round(r.needQtyPct)}%</td>
+                <td className="p-2 text-center">{Math.round(r.needPricePct)}%</td>
               </tr>
             ))}
           </tbody>
