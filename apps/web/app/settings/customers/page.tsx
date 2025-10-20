@@ -26,7 +26,7 @@ export default function CustomersSettingsPage() {
   const { data: customers, mutate } = useSWR('customers', async () => {
     const { data, error } = await supabase
       .from('customers')
-      .select('*, salespersons(name)')
+      .select('id, company, city, country, phone, priority, customer_id, salespersons(name)')
       .order('company', { ascending: true })
       .limit(5000);
     if (error) throw new Error(error.message);
@@ -106,13 +106,35 @@ export default function CustomersSettingsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-semibold">Customers</h2>
-        <div className="relative">
+        <div className="relative flex items-center gap-2">
           <button
             className="inline-flex items-center rounded-md border px-2 py-1 text-sm hover:bg-gray-50"
             onClick={() => setBulkOpen(true)}
             title="Bulk update (XLSX)"
           >
             ☰
+          </button>
+          <button
+            className="inline-flex items-center rounded-md border px-2 py-1 text-sm hover:bg-gray-50"
+            onClick={async () => {
+              try {
+                const { data: { session } } = await supabase.auth.getSession();
+                if (!session) throw new Error('Not signed in');
+                const token = session.access_token;
+                const res = await fetch('/api/enqueue', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                  body: JSON.stringify({ type: 'scrape_customers', payload: { requestedBy: session.user.email } })
+                });
+                if (!res.ok) throw new Error(await res.text());
+                alert('Scrape enqueued');
+              } catch (e: any) {
+                alert(e?.message || 'Failed to enqueue');
+              }
+            }}
+            title="Scrape Customers"
+          >
+            Scrape Customers
           </button>
         </div>
       </div>
@@ -122,18 +144,24 @@ export default function CustomersSettingsPage() {
           <table className="min-w-full text-sm">
             <thead className="bg-gray-50">
               <tr>
-                <th className="text-left p-2 border-b">Company</th>
-                <th className="text-left p-2 border-b">Customer ID</th>
-                <th className="text-left p-2 border-b">Salesperson</th>
+                <th className="text-left p-2 border-b">Customer</th>
                 <th className="text-left p-2 border-b">City</th>
                 <th className="text-left p-2 border-b">Country</th>
-                <th className="text-left p-2 border-b">Excluded</th>
+                <th className="text-left p-2 border-b">Phone</th>
+                <th className="text-left p-2 border-b">Priority</th>
                 <th className="text-left p-2 border-b">Actions</th>
               </tr>
             </thead>
             <tbody>
               {(customers ?? []).map((c) => (
-                <CustomerRowItem key={c.id} row={c} salespersons={salespersons ?? []} onSaved={mutate} />
+                <tr key={c.id}>
+                  <td className="p-2 border-b"><a href={`/settings/customers/${c.id}`} className="text-blue-700 hover:underline">{c.company || '-'}</a></td>
+                  <td className="p-2 border-b">{c.city || '-'}</td>
+                  <td className="p-2 border-b">{c.country || '-'}</td>
+                  <td className="p-2 border-b">{c.phone || '-'}</td>
+                  <td className="p-2 border-b">{c.priority || '-'}</td>
+                  <td className="p-2 border-b text-sm text-gray-500">{c.salespersons?.name || '—'}</td>
+                </tr>
               ))}
             </tbody>
           </table>

@@ -262,6 +262,54 @@ async function runJob(job: JobRow) {
     await log(job.id, 'info', 'STEP:complete', { upserted });
     return;
   }
+  if (job.type === 'scrape_customers') {
+    try {
+      await log(job.id, 'info', 'STEP:customers_begin');
+      const listUrl = new URL('?controller=Admin%5CCustomer%5CIndex&action=ActiveList', SPY_BASE_URL).toString();
+      await page!.goto(listUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+      await log(job.id, 'info', 'STEP:customers_url', { url: listUrl });
+      // click Show All if present
+      try {
+        const btn = await findFirst(page!, ['button[name="show_all"]']);
+        if (btn) { await btn.click({ timeout: 10_000 }).catch(() => {}); await page!.waitForTimeout(1000); }
+      } catch {}
+      // wait for table and some rows
+      await page!.waitForSelector('table.standardList tbody tr', { timeout: 60_000 });
+      const rows = await page!.$$eval('table.standardList tbody tr', (trs) => {
+        function tx(el?: Element | null): string { return ((el as HTMLElement | null)?.textContent || '').replace(/\s+/g, ' ').trim(); }
+        return Array.from(trs).map(tr => {
+          const tds = Array.from((tr as HTMLTableRowElement).querySelectorAll('td')) as HTMLElement[];
+          const account = tx(tds[9]);
+          const company = tx(tds[1]);
+          const city = tx(tds[6]);
+          const country = tx(tds[7]);
+          const phone = tx(tds[12]);
+          const priority = tx(tds[14]);
+          const ordersA = (tr as HTMLTableRowElement).querySelector('a[href*="show_sales_order"], a[href*="orders"]') as HTMLAnchorElement | null;
+          const orders_link = ordersA ? (ordersA.getAttribute('href') || '') : '';
+          const spy_id = (tr as HTMLElement).getAttribute('data-reference') || '';
+          return { account, company, city, country, phone, priority, orders_link, spy_id };
+        });
+      });
+      await log(job.id, 'info', 'STEP:customers_rows', { count: rows.length });
+      for (const r of rows) {
+        if (!r.account) continue;
+        const { data: existing } = await supabase.from('customers').select('id').eq('customer_id', r.account).maybeSingle();
+        const base = { company: r.company, city: r.city, country: r.country, phone: r.phone, priority: r.priority, orders_link: r.orders_link, spy_id: r.spy_id } as any;
+        if (existing?.id) {
+          await supabase.from('customers').update(base).eq('id', existing.id as string);
+        } else {
+          await supabase.from('customers').insert({ customer_id: r.account, ...base });
+        }
+      }
+      await saveResult(job.id, 'scrape_customers', { imported: rows.length });
+      await setJobSucceeded(job.id);
+      return;
+    } catch (e: any) {
+      await setJobFailedOrRequeue(job, e?.message || String(e));
+      return;
+    }
+  }
 
   if (job.type === 'update_style_stock') {
     await log(job.id, 'info', 'STEP:style_stock_begin');
