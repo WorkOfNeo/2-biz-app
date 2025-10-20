@@ -106,36 +106,37 @@ export default function CustomersSettingsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-semibold">Customers</h2>
-        <div className="relative flex items-center gap-2">
-          <button
-            className="inline-flex items-center rounded-md border px-2 py-1 text-sm hover:bg-gray-50"
-            onClick={() => setBulkOpen(true)}
-            title="Bulk update (XLSX)"
-          >
-            ☰
-          </button>
-          <button
-            className="inline-flex items-center rounded-md border px-2 py-1 text-sm hover:bg-gray-50"
-            onClick={async () => {
-              try {
-                const { data: { session } } = await supabase.auth.getSession();
-                if (!session) throw new Error('Not signed in');
-                const token = session.access_token;
-                const res = await fetch('/api/enqueue', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-                  body: JSON.stringify({ type: 'scrape_customers', payload: { requestedBy: session.user.email } })
-                });
-                if (!res.ok) throw new Error(await res.text());
-                alert('Scrape enqueued');
-              } catch (e: any) {
-                alert(e?.message || 'Failed to enqueue');
-              }
-            }}
-            title="Scrape Customers"
-          >
-            Scrape Customers
-          </button>
+        <div className="relative">
+          <details>
+            <summary className="list-none inline-flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-sm hover:bg-slate-50">☰</summary>
+            <div className="absolute right-0 z-10 mt-2 w-56 rounded-md border bg-white shadow">
+              <div className="py-1 text-sm">
+                <button
+                  className="block w-full px-3 py-2 text-left hover:bg-gray-50"
+                  onClick={() => setBulkOpen(true)}
+                >Bulk update (XLSX)</button>
+                <button
+                  className="block w-full px-3 py-2 text-left hover:bg-gray-50"
+                  onClick={async () => {
+                    try {
+                      const { data: { session } } = await supabase.auth.getSession();
+                      if (!session) throw new Error('Not signed in');
+                      const token = session.access_token;
+                      const res = await fetch('/api/enqueue', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                        body: JSON.stringify({ type: 'scrape_customers', payload: { requestedBy: session.user.email } })
+                      });
+                      if (!res.ok) throw new Error(await res.text());
+                      alert('Scrape enqueued');
+                    } catch (e: any) {
+                      alert(e?.message || 'Failed to enqueue');
+                    }
+                  }}
+                >Scrape Customers</button>
+              </div>
+            </div>
+          </details>
         </div>
       </div>
       <div className="space-y-2">
