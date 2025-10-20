@@ -107,18 +107,18 @@ function OverviewPrintInner() {
   }, [people, customers, stats, country, s1, s2, rates, spCurrencyById]);
 
   return (
-    <div className="p-6">
+    <div className="p-6 print:p-6">
       <div className="mb-3 text-sm">Overview · {country}</div>
       <div className="rounded-lg border border-blue-100">
-        <table className="min-w-full text-sm">
+        <table className="min-w-full text-sm print:text-[11px]">
           <thead>
-            <tr className="bg-blue-700 text-white">
+            <tr className="bg-blue-700 text-white print:bg-black print:text-white">
               <th className="p-2 text-left">Salesman</th>
               <th className="p-2 text-center" colSpan={3}>{getSeasonLabel(s1) || 'Season 1'}</th>
               <th className="p-2 text-center" colSpan={3}>{getSeasonLabel(s2) || 'Season 2'}</th>
               <th className="p-2 text-center" colSpan={2}>Diff vs S2</th>
             </tr>
-            <tr className="bg-blue-50">
+            <tr className="bg-blue-50 print:bg-gray-100">
               <th className="p-2 text-left"></th>
               <th className="p-2 text-center">Qty</th>
               <th className="p-2 text-center">Price (DKK)</th>
@@ -132,7 +132,7 @@ function OverviewPrintInner() {
           </thead>
           <tbody>
             {rows.map((r, idx) => (
-              <tr key={r.id} className={(idx % 2 === 0 ? 'bg-white' : 'bg-blue-50') + ' border-t border-blue-100'}>
+              <tr key={r.id} className={(idx % 2 === 0 ? 'bg-white' : 'bg-blue-50 print:bg-gray-100') + ' border-t border-blue-100'}>
                 <td className="p-2">{r.name}</td>
                 <td className="p-2 text-center">{r.s1Qty.toLocaleString('da-DK')}</td>
                 <td className="p-2 text-center">{Math.round(r.s1Price).toLocaleString('da-DK')}</td>
@@ -147,6 +147,13 @@ function OverviewPrintInner() {
           </tbody>
         </table>
       </div>
+      <style jsx global>{`
+        @page { size: A4 portrait; margin: 12mm; }
+        @media print {
+          html, body { background: white; }
+          * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+        }
+      `}</style>
     </div>
   );
 }

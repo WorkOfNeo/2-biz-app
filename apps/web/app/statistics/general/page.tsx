@@ -183,6 +183,15 @@ export default function StatisticsGeneralPage() {
     }
   }
 
+  function handleOpenPrint() {
+    if (!s1 || !s2) {
+      alert('Select Season 1 and Season 2 first');
+      return;
+    }
+    const url = `/statistics/overview/print?s1=${encodeURIComponent(s1)}&s2=${encodeURIComponent(s2)}&country=All`;
+    window.open(url, '_blank', 'noopener');
+  }
+
   function calculateDevelopment(s1Qty: number, s2Qty: number) {
     const diff = s1Qty - s2Qty;
     const percentage = s2Qty === 0 ? 0 : (diff / s2Qty) * 100;
@@ -418,68 +427,27 @@ export default function StatisticsGeneralPage() {
             <summary className="list-none inline-flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-sm hover:bg-slate-50"><Menu className="h-4 w-4" /></summary>
             <div className="absolute right-0 z-10 mt-2 w-56 rounded-md border bg-white shadow">
               <div className="py-1 text-sm">
-                <button className="block w-full px-3 py-2 text-left hover:bg-gray-50">Export Data</button>
-                <button className="block w-full px-3 py-2 text-left hover:bg-gray-50">Print Report</button>
-                <button
-                  className="block w-full px-3 py-2 text-left hover:bg-gray-50"
-                  onClick={async () => {
-                    try {
-                      const { default: JSZip } = await import('jszip');
-                      const { jsPDF } = await import('jspdf');
-                      const { default: autoTable } = await import('jspdf-autotable');
-                      const { default: saveAs } = await import('file-saver');
-                      const zip = new JSZip();
-                      const s1Label = getSeasonLabel(s1) || 'Season 1';
-                      const s2Label = getSeasonLabel(s2) || 'Season 2';
-                      const visibleRows = (rows ?? []).filter(r => !isHidden(r.account_no));
-                      const bySp = new Map<string, any[]>();
-                      for (const r of visibleRows) {
-                        const name = r.salespersonName || 'Unknown';
-                        const arr = bySp.get(name) || [];
-                        arr.push(r);
-                        bySp.set(name, arr);
-                      }
-                      for (const [spName, list] of bySp.entries()) {
-                        const doc = new jsPDF({ unit: 'pt', format: 'a4' });
-                        doc.setFontSize(14);
-                        doc.text(`General · ${spName}`, 40, 40);
-                        const head = [[
-                          'Customer', 'City',
-                          `${s1Label} Qty`, `${s1Label} Price`,
-                          `${s2Label} Qty`, `${s2Label} Price`,
-                          'Dev Qty', 'Dev Price'
-                        ]];
-                        const body = (list as any[]).map((row) => {
-                          const currency = row.salespersonId ? (spCurrencyById[row.salespersonId] ?? 'DKK') : 'DKK';
-                          const devQty = row.s1Qty - row.s2Qty;
-                          const devPrice = row.s1Price - row.s2Price;
-                          return [
-                            row.customer,
-                            row.city,
-                            String(row.s1Qty), `${Math.round(row.s1Price).toLocaleString('da-DK')} ${currency}`,
-                            String(row.s2Qty), `${Math.round(row.s2Price).toLocaleString('da-DK')} ${currency}`,
-                            (devQty>0?'+':'') + String(devQty), `${(devPrice>0?'+':'') + Math.round(devPrice).toLocaleString('da-DK')} ${currency}`
-                          ];
-                        });
-                        autoTable(doc, {
-                          head,
-                          body,
-                          startY: 60,
-                          styles: { fontSize: 10, lineColor: [219,234,254], lineWidth: 0.5 },
-                          headStyles: { fillColor: [29,78,216], textColor: [255,255,255] },
-                          alternateRowStyles: { fillColor: [239,246,255] },
-                          theme: 'grid'
-                        });
-                        const pdfBlob = doc.output('blob');
-                        zip.file(`${spName.replace(/[^a-z0-9_-]+/gi,'_')}.pdf`, pdfBlob);
-                      }
-                      const blob = await zip.generateAsync({ type: 'blob' });
-                      saveAs(blob, `general_export.zip`);
-                    } catch (e) {
-                      console.error('general export failed', e);
-                    }
-                  }}
-                >Export PDF (ZIP)</button>
+                <button className="block w-full px-3 py-2 text-left hover:bg-gray-50" onClick={async () => {
+                  if (!s1 || !s2) { alert('Select Season 1 and Season 2 first'); return; }
+                  try {
+                    const { data: { session } } = await supabase.auth.getSession();
+                    if (!session) throw new Error('Not signed in');
+                    const token = session.access_token;
+                    const res = await fetch('/api/enqueue', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                      body: JSON.stringify({ type: 'export_overview', payload: { s1, s2, requestedBy: session.user.email } })
+                    });
+                    if (!res.ok) throw new Error(await res.text());
+                    const json = await res.json();
+                    setLastJobId(json.jobId);
+                    alert('Export enqueued. See Admin → Jobs for progress and links.');
+                  } catch (e: any) {
+                    alert(e?.message || 'Failed to enqueue export');
+                  }
+                }}>Export Data</button>
+                <button className="block w-full px-3 py-2 text-left hover:bg-gray-50" onClick={handleOpenPrint}>Print Report</button>
+                {/* Client ZIP export removed; using server job */}
                 <Link className="block px-3 py-2 hover:bg-gray-50" href="/statistics/general/import">Import Statistic</Link>
                 <Link className="block px-3 py-2 hover:bg-gray-50" href={'/statistics/general/last-runs' as any}>Last Runs</Link>
                 <Link className="block px-3 py-2 hover:bg-gray-50" href="/settings/seasons">Season Settings</Link>
