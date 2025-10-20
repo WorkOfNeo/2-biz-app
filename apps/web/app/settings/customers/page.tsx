@@ -30,6 +30,7 @@ export default function CustomersSettingsPage() {
       .order('company', { ascending: true })
       .limit(5000);
     if (error) throw new Error(error.message);
+    console.log('[customers] fetched', (data ?? []).length);
     return data as any[];
   }, { refreshInterval: 10000 });
   const { data: salespersons } = useSWR('salespersons', async () => {

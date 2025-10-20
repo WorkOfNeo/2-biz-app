@@ -293,25 +293,22 @@ async function runJob(job: JobRow) {
         });
       });
       await log(job.id, 'info', 'STEP:customers_rows', { count: rows.length });
-      const salespersonCache = new Map<string, string>();
+      // Prefetch all salespersons and create a normalized lookup by name
+      const { data: spAll } = await supabase.from('salespersons').select('id, name');
+      const salespersonByName = new Map<string, string>();
+      for (const sp of (spAll ?? []) as any[]) {
+        const key = String(sp.name || '').trim().toLowerCase();
+        if (key) salespersonByName.set(key, sp.id as string);
+      }
       for (const r of rows) {
         if (!r.account) continue;
         // resolve salesperson_id by name
         let salesperson_id: string | null = null;
-        const spName = (r.sales_person || '').trim();
+        const spName = String(r.sales_person || '').trim();
         if (spName) {
-          if (salespersonCache.has(spName)) {
-            salesperson_id = salespersonCache.get(spName)!;
-          } else {
-            const { data: spFind } = await supabase.from('salespersons').select('id').ilike('name', spName).maybeSingle();
-            if (spFind?.id) {
-              salesperson_id = spFind.id as string;
-            } else {
-              const { data: spIns, error: spErr } = await supabase.from('salespersons').insert({ name: spName }).select('id').single();
-              if (!spErr) salesperson_id = spIns!.id as string;
-            }
-            salespersonCache.set(spName, salesperson_id || '');
-          }
+          const key = spName.toLowerCase();
+          salesperson_id = salespersonByName.get(key) || null;
+          if (!salesperson_id) await log(job.id, 'info', 'STEP:customers_salesperson_unmatched', { name: spName });
         }
         const { data: existing } = await supabase.from('customers').select('id').eq('customer_id', r.account).maybeSingle();
         const base = { company: r.company, city: r.city, country: r.country, phone: r.phone, priority: r.priority, orders_link: r.orders_link, spy_id: r.spy_id, salesperson_id } as any;
