@@ -283,19 +283,38 @@ async function runJob(job: JobRow) {
           const company = tx(tds[1]);
           const city = tx(tds[6]);
           const country = tx(tds[7]);
+          const sales_person = tx(tds[5]);
           const phone = tx(tds[12]);
           const priority = tx(tds[14]);
           const ordersA = (tr as HTMLTableRowElement).querySelector('a[href*="show_sales_order"], a[href*="orders"]') as HTMLAnchorElement | null;
           const orders_link = ordersA ? (ordersA.getAttribute('href') || '') : '';
           const spy_id = (tr as HTMLElement).getAttribute('data-reference') || '';
-          return { account, company, city, country, phone, priority, orders_link, spy_id };
+          return { account, company, city, country, sales_person, phone, priority, orders_link, spy_id };
         });
       });
       await log(job.id, 'info', 'STEP:customers_rows', { count: rows.length });
+      const salespersonCache = new Map<string, string>();
       for (const r of rows) {
         if (!r.account) continue;
+        // resolve salesperson_id by name
+        let salesperson_id: string | null = null;
+        const spName = (r.sales_person || '').trim();
+        if (spName) {
+          if (salespersonCache.has(spName)) {
+            salesperson_id = salespersonCache.get(spName)!;
+          } else {
+            const { data: spFind } = await supabase.from('salespersons').select('id').ilike('name', spName).maybeSingle();
+            if (spFind?.id) {
+              salesperson_id = spFind.id as string;
+            } else {
+              const { data: spIns, error: spErr } = await supabase.from('salespersons').insert({ name: spName }).select('id').single();
+              if (!spErr) salesperson_id = spIns!.id as string;
+            }
+            salespersonCache.set(spName, salesperson_id || '');
+          }
+        }
         const { data: existing } = await supabase.from('customers').select('id').eq('customer_id', r.account).maybeSingle();
-        const base = { company: r.company, city: r.city, country: r.country, phone: r.phone, priority: r.priority, orders_link: r.orders_link, spy_id: r.spy_id } as any;
+        const base = { company: r.company, city: r.city, country: r.country, phone: r.phone, priority: r.priority, orders_link: r.orders_link, spy_id: r.spy_id, salesperson_id } as any;
         if (existing?.id) {
           await supabase.from('customers').update(base).eq('id', existing.id as string);
         } else {

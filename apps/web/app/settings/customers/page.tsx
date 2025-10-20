@@ -150,7 +150,7 @@ export default function CustomersSettingsPage() {
                 <th className="text-left p-2 border-b">Country</th>
                 <th className="text-left p-2 border-b">Phone</th>
                 <th className="text-left p-2 border-b">Priority</th>
-                <th className="text-left p-2 border-b">Actions</th>
+                <th className="text-left p-2 border-b">Sales Person</th>
               </tr>
             </thead>
             <tbody>
@@ -161,7 +161,7 @@ export default function CustomersSettingsPage() {
                   <td className="p-2 border-b">{c.country || '-'}</td>
                   <td className="p-2 border-b">{c.phone || '-'}</td>
                   <td className="p-2 border-b">{c.priority || '-'}</td>
-                  <td className="p-2 border-b text-sm text-gray-500">{c.salespersons?.name || '—'}</td>
+                  <td className="p-2 border-b text-sm">{c.salespersons?.name || '—'}</td>
                 </tr>
               ))}
             </tbody>
