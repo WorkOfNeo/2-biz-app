@@ -1,5 +1,5 @@
 'use client';
-import { useMemo } from 'react';
+import { Suspense, useMemo } from 'react';
 import useSWR from 'swr';
 import { useSearchParams } from 'next/navigation';
 import { supabase } from '../../../../lib/supabaseClient';
@@ -9,6 +9,14 @@ type StatsRow = { account_no: string | null; qty: number; price: number; season_
 type Customer = { customer_id: string; country: string | null; salesperson_id: string | null; nulled?: boolean | null; excluded?: boolean | null; permanently_closed?: boolean | null };
 
 export default function OverviewPrintPage() {
+  return (
+    <Suspense fallback={<div className="p-6 text-sm text-gray-600">Loading…</div>}>
+      <OverviewPrintInner />
+    </Suspense>
+  );
+}
+
+function OverviewPrintInner() {
   const search = useSearchParams();
   const country = (search.get('country') || 'All') as string;
   const s1 = search.get('s1') || '';
