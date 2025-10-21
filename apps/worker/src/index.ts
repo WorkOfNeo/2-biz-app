@@ -462,8 +462,8 @@ async function runJob(job: JobRow) {
               out.push({ color, sizes: sizeLabels, section: kind, row_label: label || kind, values: numbersFromRow(tds), po_link: null });
               continue;
             }
-            // Sold block rows (both main and sub)
-            if (inSold && (cls.includes('stylecolor-expanded--main') || cls.includes('stylecolor-expanded--sub'))) {
+            // Sold block rows: ONLY parse detailed sub-rows; skip main (summed) rows
+            if (inSold && cls.includes('stylecolor-expanded--sub')) {
               out.push({ color, sizes: sizeLabels, section: 'Sold', row_label: label || 'Row', values: numbersFromRow(tds), po_link: null });
               continue;
             }
