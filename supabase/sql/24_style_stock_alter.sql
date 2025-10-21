@@ -10,4 +10,14 @@ alter table public.style_stock add column if not exists updated_at timestamptz n
 drop index if exists uq_style_stock_key;
 create unique index uq_style_stock_key on public.style_stock(style_no, color, section, row_label);
 
+-- Store deep-scraped seasons per style color (from materials tab)
+create table if not exists public.style_color_materials (
+  id uuid primary key default gen_random_uuid(),
+  style_no text not null,
+  color text not null,
+  season_ids jsonb not null default '[]'::jsonb,
+  scraped_at timestamptz not null default now(),
+  unique(style_no, color)
+);
+
 

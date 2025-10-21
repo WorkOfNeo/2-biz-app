@@ -574,6 +574,63 @@ async function runJob(job: JobRow) {
     await log(job.id, 'info', 'STEP:complete', { totalRows });
     return;
   }
+  if (job.type === 'deep_scrape_styles') {
+    await log(job.id, 'info', 'STEP:deep_styles_begin');
+    // Fetch all styles with links
+    const { data: styles } = await supabase.from('styles').select('style_no, link_href');
+    if (!styles || styles.length === 0) {
+      await saveResult(job.id, 'Deep styles: no styles', { count: 0 });
+      await log(job.id, 'info', 'STEP:complete', { upserted: 0 });
+      return;
+    }
+    let updated = 0;
+    for (const s of styles as any[]) {
+      const href = (s.link_href || '').toString();
+      if (!href) continue;
+      const base = new URL(href, SPY_BASE_URL).toString().replace(/#.*$/, '');
+      const url = base + '#tab=materials';
+      await log(job.id, 'info', 'STEP:deep_styles_nav', { style_no: s.style_no, url });
+      await page!.goto(url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+      try {
+        // Wait for any colorDeliveryBox
+        await page!.waitForSelector('.colorDeliveryBox', { timeout: 30_000 });
+      } catch (e: any) {
+        await log(job.id, 'error', 'STEP:deep_styles_no_color_box', { style_no: s.style_no, error: e?.message || String(e) });
+        continue;
+      }
+      const rows = await page!.$$eval('.colorDeliveryBox', (boxes) => {
+        function text(el: Element | null | undefined): string { return ((el as HTMLElement | null)?.textContent || '').replace(/\s+/g, ' ').trim(); }
+        const out: Array<{ color: string; seasons: string[] }> = [];
+        for (const box of Array.from(boxes) as HTMLElement[]) {
+          const bar = box.querySelector('.materials-bar') as HTMLElement | null;
+          const colorLabel = text(box.querySelector('.materialsTitle, .stylecolorname, .style-name')) || text(bar);
+          const sel = box.querySelector('select.season_id') as HTMLSelectElement | null;
+          const selected = sel ? (sel.value ? [sel.value] : (sel.selectedOptions?.[0]?.value ? [sel.selectedOptions[0].value] : [])) : [];
+          out.push({ color: colorLabel || 'Unknown', seasons: selected });
+        }
+        return out;
+      });
+      // Upsert per color
+      for (const r of rows) {
+        const { data: exist } = await supabase
+          .from('style_color_materials')
+          .select('id, season_ids')
+          .eq('style_no', s.style_no)
+          .eq('color', r.color)
+          .maybeSingle();
+        const newSeasons = Array.from(new Set([...(exist?.season_ids as any[] || []), ...r.seasons]));
+        if (exist?.id) {
+          await supabase.from('style_color_materials').update({ season_ids: newSeasons, scraped_at: new Date().toISOString() }).eq('id', exist.id as string);
+        } else {
+          await supabase.from('style_color_materials').insert({ style_no: s.style_no, color: r.color, season_ids: newSeasons, scraped_at: new Date().toISOString() });
+        }
+        updated++;
+      }
+    }
+    await saveResult(job.id, 'Deep styles completed', { updated });
+    await log(job.id, 'info', 'STEP:complete', { updated });
+    return;
+  }
   if (job.type === 'export_overview') {
     try {
       await log(job.id, 'info', 'STEP:export_overview_begin', job.payload || {});

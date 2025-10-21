@@ -1,4 +1,4 @@
-export type JobType = 'scrape_statistics' | 'scrape_styles' | 'update_style_stock' | 'export_overview' | 'scrape_customers';
+export type JobType = 'scrape_statistics' | 'scrape_styles' | 'update_style_stock' | 'export_overview' | 'scrape_customers' | 'deep_scrape_styles';
 
 export interface ScrapeStatisticsPayload {
   // Allow optional 'deep' along with arbitrary keys; values may be undefined pre-validation
