@@ -13,7 +13,8 @@ async function handle(req: Request) {
   const now = new Date();
   const fmt = new Intl.DateTimeFormat('en-GB', { hour: '2-digit', hour12: false, timeZone: 'Europe/Copenhagen' });
   const hour = Number(fmt.format(now));
-  const allowed = new Set([7, 9, 10, 12, 13, 14, 15]);
+  // Allow at 30 past every 2nd hour around the clock (Vercel crons drive exact scheduling)
+  const allowed = new Set([1,3,5,7,9,11,13,15,17,19,21,23]);
   if (!allowed.has(hour) && !force) {
     const res = { skipped: true, reason: 'outside allowed CET hours', hour };
     return new Response(JSON.stringify(debug ? { ...res, debug: true } : res), { status: 200 });
@@ -91,5 +92,8 @@ export async function GET(req: Request) {
 }
 
 export async function OPTIONS() { return new Response(null, { status: 204 }); }
+
+// Daily styles stock scrape at 06:00 runs via vercel.json as /api/cron/styles-update
+export async function stylesUpdate() {}
 
 
