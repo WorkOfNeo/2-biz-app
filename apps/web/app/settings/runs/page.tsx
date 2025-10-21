@@ -100,7 +100,7 @@ export default function RunsSettingsPage() {
       {Array.from(new Set((data?.jobs ?? []).map((j: any) => j.type))).sort().map((type) => (
         <div key={type} className="overflow-auto border rounded-md">
           <div className="px-3 py-2 border-b flex items-center justify-between bg-gray-50">
-            <div className="text-sm font-semibold">{type.replace(/_/g,' ').replace(/\b\w/g, (m) => m.toUpperCase())}</div>
+            <div className="text-sm font-semibold">{type.replace(/_/g,' ').replace(/\b\w/g, (m: string) => m.toUpperCase())}</div>
             <div className="text-xs text-gray-600">Last run: {data?.lastByType?.[type] ? new Date(data.lastByType[type] as string).toLocaleString() : '—'}</div>
           </div>
           <table className="min-w-full text-sm">
