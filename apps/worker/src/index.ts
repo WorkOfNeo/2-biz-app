@@ -228,12 +228,15 @@ async function runJob(job: JobRow) {
         const styleName = (tds[2]?.textContent || '').replace(/\s+/g, ' ').trim() || null;
         const supplier = (tds[7]?.textContent || '').replace(/\s+/g, ' ').trim() || null;
         if (styleNo) {
+          // Normalize image size to large variant (replace tr:n-s24 with tr:n-s1024 if present)
+          const rawImg = (img?.getAttribute('src') || '') as string;
+          const bigImg = rawImg ? rawImg.replace(/tr:n-s\d+/i, 'tr:n-s1024') : null;
           out.push({
             spy_id: spyId,
             style_no: styleNo,
             style_name: styleName,
             supplier,
-            image_url: (img?.getAttribute('src') || null),
+            image_url: (bigImg || null),
             link_href: (a?.getAttribute('href') || null)
           });
         }

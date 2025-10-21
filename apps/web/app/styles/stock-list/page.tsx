@@ -171,60 +171,60 @@ export default function StockListPage() {
                             </tr>
                           </thead>
                           <tbody>
-                            <tr>
-                              <td className="p-2 border-b">Stock</td>
-                              {g.stock.map((v, i) => (
-                                <td key={i} className="p-2 border-b text-right">{v}</td>
-                              ))}
-                              <td className="p-2 border-b text-right font-medium">{stockTotal}</td>
-                            </tr>
+                        <tr>
+                          <td className="p-2 border-b">Stock</td>
+                          {g.stock.map((v, i) => (
+                            <td key={i} className="p-2 border-b text-right text-black">{v}</td>
+                          ))}
+                          <td className="p-2 border-b text-right font-medium text-black">{stockTotal}</td>
+                        </tr>
                             <tr className="cursor-pointer hover:bg-gray-50" onClick={() => setOpenSold((m) => ({ ...m, [key]: !m[key] }))}>
                               <td className="p-2 border-b">Sold (sum)</td>
                               {g.soldSum.map((v, i) => (
-                                <td key={i} className="p-2 border-b text-right">{v}</td>
+                                <td key={i} className="p-2 border-b text-right text-red-600">{v > 0 ? `-${v}` : v}</td>
                               ))}
-                              <td className="p-2 border-b text-right font-medium">{soldTotal}</td>
+                              <td className="p-2 border-b text-right font-medium text-red-700">{soldTotal > 0 ? `-${soldTotal}` : soldTotal}</td>
                             </tr>
                             {openSold[key] && g.soldRows.map((r, idx) => (
                               <tr key={`sold-${idx}`} className="bg-gray-50">
                                 <td className="p-2 border-b pl-6">{r.row_label ?? 'Row'}</td>
-                                {g.soldSum.map((_, i) => (
-                                  <td key={i} className="p-2 border-b text-right">{r.values[i] ?? 0}</td>
+                              {g.soldSum.map((_, i) => (
+                              <td key={i} className="p-2 border-b text-right text-red-600">{(r.values[i] ?? 0) > 0 ? `-${r.values[i] ?? 0}` : (r.values[i] ?? 0)}</td>
                                 ))}
-                                <td className="p-2 border-b text-right">{sum((r.values as any[]) || [])}</td>
+                              <td className="p-2 border-b text-right text-red-700">{(() => { const val = sum((r.values as any[]) || []); return val > 0 ? `-${val}` : val; })()}</td>
                               </tr>
                             ))}
                             <tr className="cursor-pointer hover:bg-gray-50" onClick={() => setOpenPurchase((m) => ({ ...m, [key]: !m[key] }))}>
                               <td className="p-2 border-b">Purchase (sum)</td>
                               {g.purchaseSum.map((v, i) => (
-                                <td key={i} className="p-2 border-b text-right">{v}</td>
+                                <td key={i} className="p-2 border-b text-right text-green-700">{v}</td>
                               ))}
-                              <td className="p-2 border-b text-right font-medium">{purchaseTotal}</td>
+                              <td className="p-2 border-b text-right font-medium text-green-800">{purchaseTotal}</td>
                             </tr>
                             {openPurchase[key] && g.purchaseRows.map((r, idx) => (
                               <tr key={`purchase-${idx}`} className="bg-gray-50">
                                 <td className="p-2 border-b pl-6">{r.row_label ?? 'Row'}</td>
-                                {g.purchaseSum.map((_, i) => (
-                                  <td key={i} className="p-2 border-b text-right">{r.values[i] ?? 0}</td>
+                              {g.purchaseSum.map((_, i) => (
+                              <td key={i} className="p-2 border-b text-right text-green-700">{r.values[i] ?? 0}</td>
                                 ))}
-                                <td className="p-2 border-b text-right">{sum((r.values as any[]) || [])}</td>
+                              <td className="p-2 border-b text-right text-green-800">{sum((r.values as any[]) || [])}</td>
                               </tr>
                             ))}
                             <tr>
                               <td className="p-2">Available</td>
                               {g.available.map((v, i) => (
-                                <td key={i} className="p-2 text-right font-semibold">{v}</td>
+                                <td key={i} className={"p-2 text-right font-semibold " + (v < 0 ? 'text-red-700' : (v > 0 ? 'text-green-800' : ''))}>{v}</td>
                               ))}
-                              <td className="p-2 text-right font-semibold">{availableTotal}</td>
+                              <td className={"p-2 text-right font-semibold " + (availableTotal < 0 ? 'text-red-700' : (availableTotal > 0 ? 'text-green-800' : ''))}>{availableTotal}</td>
                             </tr>
                           </tbody>
                           <tfoot>
                             <tr className="bg-gray-50">
                               <td className="p-2 font-medium">Σ by size</td>
                               {g.available.map((v, i) => (
-                                <td key={i} className="p-2 text-right font-medium">{v}</td>
+                                <td key={i} className={"p-2 text-right font-medium " + (v < 0 ? 'text-red-700' : (v > 0 ? 'text-green-800' : ''))}>{v}</td>
                               ))}
-                              <td className="p-2 text-right font-semibold">{availableTotal}</td>
+                              <td className={"p-2 text-right font-semibold " + (availableTotal < 0 ? 'text-red-700' : (availableTotal > 0 ? 'text-green-800' : ''))}>{availableTotal}</td>
                             </tr>
                           </tfoot>
                         </table>

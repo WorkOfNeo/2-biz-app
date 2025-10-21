@@ -93,7 +93,4 @@ export async function GET(req: Request) {
 
 export async function OPTIONS() { return new Response(null, { status: 204 }); }
 
-// Daily styles stock scrape at 06:00 runs via vercel.json as /api/cron/styles-update
-export async function stylesUpdate() {}
-
 
