@@ -26,6 +26,19 @@ export default function StockListPage() {
     return (data ?? []) as Row[];
   }, { refreshInterval: 15000 });
 
+  // Collect distinct style numbers from current data
+  const styleNos = React.useMemo(() => Array.from(new Set((data ?? []).map((r) => r.style_no))), [data]);
+  // Lookup style names/images for those style numbers
+  const { data: styleRows } = useSWR(styleNos.length ? ['styles:byNo', styleNos.join(',')] : null, async () => {
+    const { data: rows, error } = await supabase
+      .from('styles')
+      .select('style_no, style_name, supplier, image_url')
+      .in('style_no', styleNos);
+    if (error) throw new Error(error.message);
+    return rows as Array<{ style_no: string; style_name: string | null; supplier: string | null; image_url: string | null }>;
+  }, { refreshInterval: 0 });
+  const styleNameByNo = React.useMemo(() => Object.fromEntries(((styleRows ?? []) as any[]).map((r) => [r.style_no, r.style_name || null])), [styleRows]);
+
   type Group = {
     styleNo: string;
     color: string;
@@ -85,6 +98,19 @@ export default function StockListPage() {
     return res;
   }, [data]);
 
+  // Group merged rows by style, then list colors within
+  const groupedByStyle = React.useMemo(() => {
+    const map = new Map<string, Group[]>();
+    for (const g of groups) {
+      if (!map.has(g.styleNo)) map.set(g.styleNo, []);
+      map.get(g.styleNo)!.push(g);
+    }
+    const out = Array.from(map.entries()).map(([styleNo, list]) => ({ styleNo, colors: list.sort((a, b) => a.color.localeCompare(b.color)) }));
+    // Sort styles numerically-then-lexicographically
+    out.sort((a, b) => a.styleNo.localeCompare(b.styleNo));
+    return out as Array<{ styleNo: string; colors: Group[] }>;
+  }, [groups]);
+
   const [openSold, setOpenSold] = React.useState<Record<string, boolean>>({});
   const [openPurchase, setOpenPurchase] = React.useState<Record<string, boolean>>({});
 
@@ -95,71 +121,79 @@ export default function StockListPage() {
         <h1 className="text-xl font-semibold">Stock List</h1>
       </div>
 
-      {groups.map((g) => {
-        const key = `${g.styleNo}:${g.color}`;
+      {groupedByStyle.map(({ styleNo, colors }) => {
+        const styleName = styleNameByNo[styleNo] || null;
         return (
-          <div key={key} className="rounded-md border bg-white">
-            <div className="px-3 py-2 border-b">
-              <div className="text-xs text-gray-500">{g.styleNo}</div>
-              <div className="text-sm font-semibold text-black">{g.color}</div>
-            </div>
-            <div className="px-3 py-2">
-              <div className="overflow-auto border rounded">
-                <table className="min-w-full text-xs">
-                  <thead className="bg-gray-50">
-                    <tr>
-                      <th className="p-2 text-left border-b">Section</th>
-                      {g.sizes.map((s, i) => (
-                        <th key={i} className="p-2 text-right border-b">{s}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr>
-                      <td className="p-2 border-b">Stock</td>
-                      {g.stock.map((v, i) => (
-                        <td key={i} className="p-2 border-b text-right">{v}</td>
-                      ))}
-                    </tr>
-                    <tr className="cursor-pointer hover:bg-gray-50" onClick={() => setOpenSold((m) => ({ ...m, [key]: !m[key] }))}>
-                      <td className="p-2 border-b">Sold (sum)</td>
-                      {g.soldSum.map((v, i) => (
-                        <td key={i} className="p-2 border-b text-right">{v}</td>
-                      ))}
-                    </tr>
-                    {openSold[key] && g.soldRows.map((r, idx) => (
-                      <tr key={`sold-${idx}`} className="bg-gray-50">
-                        <td className="p-2 border-b pl-6">{r.row_label ?? 'Row'}</td>
-                        {g.soldSum.map((_, i) => (
-                          <td key={i} className="p-2 border-b text-right">{r.values[i] ?? 0}</td>
-                        ))}
-                      </tr>
-                    ))}
-                    <tr className="cursor-pointer hover:bg-gray-50" onClick={() => setOpenPurchase((m) => ({ ...m, [key]: !m[key] }))}>
-                      <td className="p-2 border-b">Purchase (sum)</td>
-                      {g.purchaseSum.map((v, i) => (
-                        <td key={i} className="p-2 border-b text-right">{v}</td>
-                      ))}
-                    </tr>
-                    {openPurchase[key] && g.purchaseRows.map((r, idx) => (
-                      <tr key={`purchase-${idx}`} className="bg-gray-50">
-                        <td className="p-2 border-b pl-6">{r.row_label ?? 'Row'}</td>
-                        {g.purchaseSum.map((_, i) => (
-                          <td key={i} className="p-2 border-b text-right">{r.values[i] ?? 0}</td>
-                        ))}
-                      </tr>
-                    ))}
-                    <tr>
-                      <td className="p-2">Available</td>
-                      {g.available.map((v, i) => (
-                        <td key={i} className="p-2 text-right font-semibold">{v}</td>
-                      ))}
-                    </tr>
-                  </tbody>
-                </table>
+          <div key={styleNo} className="rounded-md border bg-white">
+            <div className="px-3 py-2 border-b flex items-baseline justify-between">
+              <div>
+                <div className="text-xs text-gray-500">{styleNo}</div>
+                <div className="text-sm font-semibold text-black">{styleName ?? '—'}</div>
               </div>
-              <div className="text-[10px] text-gray-500 mt-1">Scraped: {new Date(g.scrapedAt).toLocaleString()}</div>
             </div>
+            {colors.map((g) => {
+              const key = `${g.styleNo}:${g.color}`;
+              return (
+                <div key={key} className="px-3 py-2 border-b last:border-b-0">
+                  <div className="text-sm font-semibold mb-2">{g.color}</div>
+                  <div className="overflow-auto border rounded">
+                    <table className="min-w-full text-xs">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="p-2 text-left border-b">Section</th>
+                          {g.sizes.map((s, i) => (
+                            <th key={i} className="p-2 text-right border-b">{s}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td className="p-2 border-b">Stock</td>
+                          {g.stock.map((v, i) => (
+                            <td key={i} className="p-2 border-b text-right">{v}</td>
+                          ))}
+                        </tr>
+                        <tr className="cursor-pointer hover:bg-gray-50" onClick={() => setOpenSold((m) => ({ ...m, [key]: !m[key] }))}>
+                          <td className="p-2 border-b">Sold (sum)</td>
+                          {g.soldSum.map((v, i) => (
+                            <td key={i} className="p-2 border-b text-right">{v}</td>
+                          ))}
+                        </tr>
+                        {openSold[key] && g.soldRows.map((r, idx) => (
+                          <tr key={`sold-${idx}`} className="bg-gray-50">
+                            <td className="p-2 border-b pl-6">{r.row_label ?? 'Row'}</td>
+                            {g.soldSum.map((_, i) => (
+                              <td key={i} className="p-2 border-b text-right">{r.values[i] ?? 0}</td>
+                            ))}
+                          </tr>
+                        ))}
+                        <tr className="cursor-pointer hover:bg-gray-50" onClick={() => setOpenPurchase((m) => ({ ...m, [key]: !m[key] }))}>
+                          <td className="p-2 border-b">Purchase (sum)</td>
+                          {g.purchaseSum.map((v, i) => (
+                            <td key={i} className="p-2 border-b text-right">{v}</td>
+                          ))}
+                        </tr>
+                        {openPurchase[key] && g.purchaseRows.map((r, idx) => (
+                          <tr key={`purchase-${idx}`} className="bg-gray-50">
+                            <td className="p-2 border-b pl-6">{r.row_label ?? 'Row'}</td>
+                            {g.purchaseSum.map((_, i) => (
+                              <td key={i} className="p-2 border-b text-right">{r.values[i] ?? 0}</td>
+                            ))}
+                          </tr>
+                        ))}
+                        <tr>
+                          <td className="p-2">Available</td>
+                          {g.available.map((v, i) => (
+                            <td key={i} className="p-2 text-right font-semibold">{v}</td>
+                          ))}
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="text-[10px] text-gray-500 mt-1">Scraped: {new Date(g.scrapedAt).toLocaleString()}</div>
+                </div>
+              );
+            })}
           </div>
         );
       })}
