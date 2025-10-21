@@ -125,6 +125,7 @@ export default function AdminPage() {
         <thead>
           <tr>
             <th align="left">ID</th>
+            <th align="left">Type</th>
             <th align="left">Status</th>
             <th align="left">Attempts</th>
             <th align="left">Duration</th>
@@ -133,9 +134,21 @@ export default function AdminPage() {
         <tbody>
           {(jobs ?? []).map((j) => {
             const duration = j.started_at && j.finished_at ? (new Date(j.finished_at).getTime() - new Date(j.started_at).getTime()) / 1000 : null;
+            const label = (() => {
+              const t = (j.type || '').toString();
+              if (!t) return '—';
+              return t
+                .replace(/_/g, ' ')
+                .replace(/^scrape statistics$/i, 'Scrape statistics')
+                .replace(/^scrape styles$/i, 'Scrape styles')
+                .replace(/^update style stock$/i, 'Scrape stock')
+                .replace(/^export overview$/i, 'Export overview')
+                .replace(/\b\w/g, (m) => m.toUpperCase());
+            })();
             return (
               <tr key={j.id} style={{ borderTop: '1px solid #eee' }}>
                 <td><Link href={`/admin/jobs/${j.id}`}>{j.id.slice(0, 8)}…</Link></td>
+                <td>{label}</td>
                 <td><Status status={j.status} /></td>
                 <td>{j.attempts}/{j.max_attempts}</td>
                 <td>{duration ? `${duration.toFixed(1)}s` : '-'}</td>
