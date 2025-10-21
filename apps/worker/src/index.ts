@@ -453,16 +453,28 @@ async function runJob(job: JobRow) {
             if (/Purchase/.test(label) && /header/.test(cls)) { inPurchase = true; inSold = false; inDedicated = false; continue; }
             if (/Net Need/.test(label) && /header/.test(cls)) { inPurchase = false; inDedicated = false; break; }
 
-            if (label === 'Stock') { out.push({ color, sizes: sizeLabels, section: 'Stock', row_label: 'Stock', values: numbersFromRow(tds), po_link: null }); continue; }
+            // Base physical stock row appears before Sold header as a MAIN row labeled "Stock"
+            if (!inSold && !inPurchase && label === 'Stock') { out.push({ color, sizes: sizeLabels, section: 'Stock', row_label: 'Stock', values: numbersFromRow(tds), po_link: null }); continue; }
             // Dedicated main sum row contains edit-dedication link; skip sum to avoid double counting, but enter dedicated mode
             if (rowEl.querySelector('a.edit-dedication')) { inDedicated = true; continue; }
-            if (inDedicated && cls.includes('stylecolor-expanded--sub')) {
+            if (inDedicated && cls.includes('stylecolor-expanded--main') || inDedicated && cls.includes('stylecolor-expanded--sub')) {
               const kind = /Pre/i.test(label) ? 'Pre Dedicated' : 'Stock Dedicated';
               out.push({ color, sizes: sizeLabels, section: kind, row_label: label || kind, values: numbersFromRow(tds), po_link: null });
               continue;
             }
-            if (inSold && cls.includes('stylecolor-expanded--sub')) { out.push({ color, sizes: sizeLabels, section: 'Sold', row_label: label || 'Row', values: numbersFromRow(tds), po_link: null }); continue; }
-            if (inPurchase && cls.includes('stylecolor-expanded--sub')) {
+            // Sold block rows (both main and sub)
+            if (inSold && (cls.includes('stylecolor-expanded--main') || cls.includes('stylecolor-expanded--sub'))) {
+              out.push({ color, sizes: sizeLabels, section: 'Sold', row_label: label || 'Row', values: numbersFromRow(tds), po_link: null });
+              continue;
+            }
+            // Available block rows: capture Available and PO Available as their own sections
+            if (!inSold && !inPurchase && cls.includes('stylecolor-expanded--main')) {
+              if (/^Available$/i.test(label)) { out.push({ color, sizes: sizeLabels, section: 'Available', row_label: 'Available', values: numbersFromRow(tds), po_link: null }); continue; }
+              if (/PO Available/i.test(label)) { out.push({ color, sizes: sizeLabels, section: 'PO Available', row_label: 'PO Available', values: numbersFromRow(tds), po_link: null }); continue; }
+              if (/^Corrected$/i.test(label)) { out.push({ color, sizes: sizeLabels, section: 'Corrected', row_label: 'Corrected', values: numbersFromRow(tds), po_link: null }); continue; }
+            }
+            // Purchase block rows (both main and sub)
+            if (inPurchase && (cls.includes('stylecolor-expanded--main') || cls.includes('stylecolor-expanded--sub'))) {
               const poA = rowEl.querySelector('a[href*="purchase_orders.php"]') as HTMLAnchorElement | null;
               out.push({ color, sizes: sizeLabels, section: 'Purchase (Running + Shipped)', row_label: label || 'Row', values: numbersFromRow(tds), po_link: poA ? (poA.getAttribute('href') || null) : null });
               continue;
@@ -520,6 +532,7 @@ async function runJob(job: JobRow) {
           }
         } catch {}
       }
+      const scrapeTs = new Date().toISOString();
       for (const row of extracted) {
         const { data: exist } = await supabase
           .from('style_stock')
@@ -536,10 +549,10 @@ async function runJob(job: JobRow) {
             || JSON.stringify(curr?.values || []) !== JSON.stringify(row.values || [])
             || String(curr?.po_link || '') !== String(row.po_link || '');
           if (changed) {
-            await supabase
-              .from('style_stock')
-              .update({ sizes: row.sizes, values: row.values, po_link: row.po_link, updated_at: new Date().toISOString() })
-              .eq('id', exist.id as string);
+            await supabase.from('style_stock').update({ sizes: row.sizes, values: row.values, po_link: row.po_link, scraped_at: scrapeTs }).eq('id', exist.id as string);
+          } else {
+            // Even if unchanged, bump scraped_at so UI reflects last scrape time
+            await supabase.from('style_stock').update({ scraped_at: scrapeTs }).eq('id', exist.id as string);
           }
         } else {
           await supabase.from('style_stock').insert({
@@ -549,7 +562,8 @@ async function runJob(job: JobRow) {
             section: row.section,
             row_label: row.row_label || '',
             values: row.values,
-            po_link: row.po_link
+            po_link: row.po_link,
+            scraped_at: scrapeTs
           });
         }
         totalRows++;
