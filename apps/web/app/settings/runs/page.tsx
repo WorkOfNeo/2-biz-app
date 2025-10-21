@@ -12,7 +12,7 @@ async function fetchLatest() {
     .from('jobs')
     .select('*')
     .order('created_at', { ascending: false })
-    .limit(10);
+    .limit(100);
   const jobIds = (jobs ?? []).map((j: any) => j.id);
   let logsByJob: Record<string, string[]> = {};
   if (jobIds.length > 0) {
@@ -32,7 +32,14 @@ async function fetchLatest() {
     .ilike('msg', '%cleanup%')
     .order('ts', { ascending: false })
     .limit(1);
-  return { jobs: jobs ?? [], lastCleanup: cleanupLogs?.[0]?.ts ?? null, logsByJob };
+  // Group by type and get last finished per type
+  const types = Array.from(new Set((jobs ?? []).map((j: any) => j.type))).sort();
+  const lastByType: Record<string, string | null> = {};
+  for (const t of types) {
+    const row = (jobs ?? []).find((j: any) => j.type === t && j.finished_at);
+    lastByType[t] = row?.finished_at ?? null;
+  }
+  return { jobs: jobs ?? [], lastCleanup: cleanupLogs?.[0]?.ts ?? null, logsByJob, lastByType };
 }
 
 async function enqueueTestRun(dryRun: boolean) {
@@ -89,21 +96,27 @@ export default function RunsSettingsPage() {
         {enqueuing && <div className="mt-2"><ProgressBar value={progress} /></div>}
       </div>
 
-      <div className="overflow-auto border rounded-md">
-        <table className="min-w-full text-sm">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="text-left p-2 border-b">ID</th>
-              <th className="text-left p-2 border-b">Status</th>
-              <th className="text-left p-2 border-b">Attempts</th>
-              <th className="text-left p-2 border-b">Started</th>
-              <th className="text-left p-2 border-b">Finished</th>
-              <th className="text-left p-2 border-b">Progress</th>
-              <th className="text-left p-2 border-b">Result</th>
-            </tr>
-          </thead>
-          <tbody>
-            {(data?.jobs ?? []).map((j: any) => {
+      {/* Sections per job type */}
+      {Array.from(new Set((data?.jobs ?? []).map((j: any) => j.type))).sort().map((type) => (
+        <div key={type} className="overflow-auto border rounded-md">
+          <div className="px-3 py-2 border-b flex items-center justify-between bg-gray-50">
+            <div className="text-sm font-semibold">{type.replace(/_/g,' ').replace(/\b\w/g, (m) => m.toUpperCase())}</div>
+            <div className="text-xs text-gray-600">Last run: {data?.lastByType?.[type] ? new Date(data.lastByType[type] as string).toLocaleString() : '—'}</div>
+          </div>
+          <table className="min-w-full text-sm">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="text-left p-2 border-b">ID</th>
+                <th className="text-left p-2 border-b">Status</th>
+                <th className="text-left p-2 border-b">Attempts</th>
+                <th className="text-left p-2 border-b">Started</th>
+                <th className="text-left p-2 border-b">Finished</th>
+                <th className="text-left p-2 border-b">Progress</th>
+                <th className="text-left p-2 border-b">Result</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(data?.jobs ?? []).filter((j: any) => j.type === type).slice(0, 20).map((j: any) => {
               const msgs = data?.logsByJob?.[j.id] ?? [];
               const stepMap: Record<string, number> = {
                 'STEP:begin_deep': 20,
@@ -129,10 +142,11 @@ export default function RunsSettingsPage() {
                   <td className="p-2 border-b">{j.status === 'succeeded' ? <span className="text-green-700">OK</span> : (j.error ? <span className="text-red-700">{j.error}</span> : '—')}</td>
                 </tr>
               );
-            })}
-          </tbody>
-        </table>
-      </div>
+              })}
+            </tbody>
+          </table>
+        </div>
+      ))}
       {jobId && <div className="text-xs text-gray-500">Last enqueued job: {jobId}</div>}
     </div>
   );
