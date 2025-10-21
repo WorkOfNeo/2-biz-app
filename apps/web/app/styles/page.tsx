@@ -71,9 +71,9 @@ export default function StylesPage() {
             </thead>
             <tbody>
               {(rows ?? []).map((r) => (
-                <tr key={r.style_no}>
+                <tr key={r.style_no} className="hover:bg-gray-50 cursor-pointer" onClick={() => { window.location.href = `/styles/${encodeURIComponent(r.style_no)}`; }}>
                   <td className="p-2 border-b">{r.image_url ? <img src={r.image_url} alt="thumb" className="h-8 w-8 object-cover rounded" /> : null}</td>
-                  <td className="p-2 border-b">{r.style_no}</td>
+                  <td className="p-2 border-b underline text-slate-700">{r.style_no}</td>
                   <td className="p-2 border-b">{r.style_name ?? '—'}</td>
                   <td className="p-2 border-b">{r.supplier ?? '—'}</td>
                   <td className="p-2 border-b">{r.link_href ? <a className="underline" href={r.link_href} target="_blank" rel="noreferrer">Open</a> : '—'}</td>
