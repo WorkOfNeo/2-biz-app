@@ -1,7 +1,7 @@
 'use client';
 import React, { useEffect } from 'react';
 
-export function Toast({ open, pct, elapsedSec, done, onClose }: { open: boolean; pct: number; elapsedSec: number; done: boolean; onClose: () => void }) {
+export function Toast({ open, pct, elapsedSec, done, onClose, label }: { open: boolean; pct: number; elapsedSec: number; done: boolean; onClose: () => void; label?: string }) {
   useEffect(() => {
     if (done) {
       const t = setTimeout(onClose, 1500);
@@ -17,7 +17,7 @@ export function Toast({ open, pct, elapsedSec, done, onClose }: { open: boolean;
     <div className="fixed bottom-3 right-3 z-50 w-72 rounded-md border bg-white shadow">
       <div className="p-3 text-sm flex items-center gap-2">
         <div className={"h-3 w-3 rounded-full " + (done ? 'bg-green-600' : 'bg-slate-400 animate-pulse')}></div>
-        <div className="flex-1">Updating statistics… <span className="text-xs text-gray-500">{mm}:{ss.toString().padStart(2,'0')}</span></div>
+        <div className="flex-1">{label || 'Working…'} <span className="text-xs text-gray-500">{mm}:{ss.toString().padStart(2,'0')}</span></div>
         {done && <button className="text-xs text-gray-500" onClick={onClose}>Close</button>}
       </div>
       <div className="px-3 pb-3">
@@ -34,7 +34,9 @@ export function useRunningJobsToast() {
   const [pct, setPct] = React.useState(0);
   const [elapsedSec, setElapsedSec] = React.useState(0);
   const [done, setDone] = React.useState(false);
+  const [label, setLabel] = React.useState<string>('Working…');
   const timerRef = React.useRef<ReturnType<typeof setInterval> | null>(null);
+  const baseMsRef = React.useRef<number | null>(null);
 
   React.useEffect(() => {
     let mounted = true;
@@ -44,7 +46,7 @@ export function useRunningJobsToast() {
         const supabase = createClientComponentClient();
         const { data: jobs } = await supabase
           .from('jobs')
-          .select('id,status,created_at')
+          .select('id,status,created_at,started_at,type')
           .in('status', ['queued','running'])
           .order('created_at', { ascending: false })
           .limit(1);
@@ -55,12 +57,50 @@ export function useRunningJobsToast() {
             setOpen(true);
             setDone(false);
             setPct(15);
-            setElapsedSec(0);
+            const j = (jobs as any[])[0];
+            const startMs = new Date(j.started_at || j.created_at).getTime();
+            baseMsRef.current = startMs;
+            setElapsedSec(Math.max(0, Math.floor((Date.now() - startMs) / 1000)));
+            const t = (j.type || '').toString();
+            const map = (x: string) => x
+              .replace(/_/g, ' ')
+              .replace(/^scrape statistics$/i, 'Scrape statistics')
+              .replace(/^scrape styles$/i, 'Scrape styles')
+              .replace(/^update style stock$/i, 'Scrape stock')
+              .replace(/^export overview$/i, 'Export overview')
+              .replace(/^deep scrape styles$/i, 'Deep scrape styles')
+              .replace(/^scrape customers$/i, 'Scrape customers')
+              .replace(/\b\w/g, (m) => m.toUpperCase());
+            setLabel(map(t) || 'Working…');
             if (timerRef.current) clearInterval(timerRef.current);
-            timerRef.current = setInterval(() => setElapsedSec((v) => v + 1), 1000);
+            timerRef.current = setInterval(() => {
+              if (baseMsRef.current) {
+                setElapsedSec(Math.max(0, Math.floor((Date.now() - baseMsRef.current) / 1000)));
+              } else {
+                setElapsedSec((v) => v + 1);
+              }
+            }, 1000);
           } else {
             // advance progress slowly up to 90%
             setPct((v) => (v < 90 ? Math.min(90, v + 2) : v));
+            const j = (jobs as any[])[0];
+            if (baseMsRef.current) {
+              // keep elapsed in sync in case of tab throttling
+              setElapsedSec(Math.max(0, Math.floor((Date.now() - baseMsRef.current) / 1000)));
+            }
+            if (j?.type) {
+              const t = (j.type || '').toString();
+              const map = (x: string) => x
+                .replace(/_/g, ' ')
+                .replace(/^scrape statistics$/i, 'Scrape statistics')
+                .replace(/^scrape styles$/i, 'Scrape styles')
+                .replace(/^update style stock$/i, 'Scrape stock')
+                .replace(/^export overview$/i, 'Export overview')
+                .replace(/^deep scrape styles$/i, 'Deep scrape styles')
+                .replace(/^scrape customers$/i, 'Scrape customers')
+                .replace(/\b\w/g, (m) => m.toUpperCase());
+              setLabel(map(t) || 'Working…');
+            }
           }
         } else if (open) {
           setPct(100);
@@ -75,12 +115,12 @@ export function useRunningJobsToast() {
     return () => { mounted = false; clearInterval(iv); if (timerRef.current) clearInterval(timerRef.current); };
   }, [open]);
 
-  return { open, pct, elapsedSec, done, close: () => setOpen(false) } as const;
+  return { open, pct, elapsedSec, done, label, close: () => setOpen(false) } as const;
 }
 
 export function ToastStack() {
-  const { open, pct, elapsedSec, done, close } = useRunningJobsToast();
-  return <Toast open={open} pct={pct} elapsedSec={elapsedSec} done={done} onClose={close} />;
+  const { open, pct, elapsedSec, done, label, close } = useRunningJobsToast();
+  return <Toast open={open} pct={pct} elapsedSec={elapsedSec} done={done} onClose={close} label={label} />;
 }
 
 

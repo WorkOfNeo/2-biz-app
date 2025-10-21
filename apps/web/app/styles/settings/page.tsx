@@ -139,6 +139,38 @@ export default function StylesSettingsPage() {
         </div>
         <div className="mt-2 text-xs text-gray-600">Runs use the selection above.</div>
       </div>
+
+      <div className="rounded-md border bg-white p-3">
+        <div className="flex items-center justify-between">
+          <div className="text-sm font-medium">Deep Scrape</div>
+          <button
+            className={"text-xs px-2 py-1 border rounded bg-slate-900 text-white hover:bg-slate-800 " + (runLoading ? 'opacity-60 cursor-not-allowed' : '')}
+            disabled={runLoading}
+            onClick={async () => {
+              setRunLoading(true);
+              try {
+                const { data: { session } } = await supabase.auth.getSession();
+                if (!session) throw new Error('Not signed in');
+                const res = await fetch('/api/enqueue', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+                  body: JSON.stringify({ type: 'deep_scrape_styles', payload: { requestedBy: session.user.email } })
+                });
+                const js = await res.json().catch(() => ({}));
+                // eslint-disable-next-line no-console
+                console.log('[styles-settings] enqueue deep_scrape_styles', res.status, js);
+              } catch (e) {
+                // eslint-disable-next-line no-console
+                console.error('[styles-settings] enqueue error', e);
+              }
+              setRunLoading(false);
+            }}
+          >
+            Deep Scrape All
+          </button>
+        </div>
+        <div className="mt-2 text-xs text-gray-600">Opens each style and reads materials season per color.</div>
+      </div>
     </div>
   );
 }
