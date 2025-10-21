@@ -598,34 +598,23 @@ async function runJob(job: JobRow) {
         await log(job.id, 'error', 'STEP:deep_styles_no_color_box', { style_no: s.style_no, error: e?.message || String(e) });
         continue;
       }
-      const rows = await page!.$$eval('.colorDeliveryBox', (boxes) => {
-        function text(el: Element | null | undefined): string { return ((el as HTMLElement | null)?.textContent || '').replace(/\s+/g, ' ').trim(); }
-        const out: Array<{ color: string; seasons: string[] }> = [];
-        for (const box of Array.from(boxes) as HTMLElement[]) {
-          const bar = box.querySelector('.materials-bar') as HTMLElement | null;
-          const colorLabel = text(box.querySelector('.materialsTitle, .stylecolorname, .style-name')) || text(bar);
-          const sel = box.querySelector('select.season_id') as HTMLSelectElement | null;
-          const selected = sel ? (sel.value ? [sel.value] : (sel.selectedOptions?.[0]?.value ? [sel.selectedOptions[0].value] : [])) : [];
-          out.push({ color: colorLabel || 'Unknown', seasons: selected });
+      const seasons = await page!.$$eval('.colorDeliveryBox select.season_id', (sels) => {
+        const out: string[] = [];
+        for (const sel of Array.from(sels) as HTMLSelectElement[]) {
+          const val = sel.value || (sel.selectedOptions?.[0]?.value || '').trim();
+          if (val && !out.includes(val)) out.push(val);
         }
         return out;
       });
-      // Upsert per color
-      for (const r of rows) {
-        const { data: exist } = await supabase
-          .from('style_color_materials')
-          .select('id, season_ids')
-          .eq('style_no', s.style_no)
-          .eq('color', r.color)
-          .maybeSingle();
-        const newSeasons = Array.from(new Set([...(exist?.season_ids as any[] || []), ...r.seasons]));
-        if (exist?.id) {
-          await supabase.from('style_color_materials').update({ season_ids: newSeasons, scraped_at: new Date().toISOString() }).eq('id', exist.id as string);
-        } else {
-          await supabase.from('style_color_materials').insert({ style_no: s.style_no, color: r.color, season_ids: newSeasons, scraped_at: new Date().toISOString() });
-        }
-        updated++;
+      const uniq = Array.from(new Set(seasons));
+      const { data: exist } = await supabase.from('style_seasons').select('id, seasons').eq('style_no', s.style_no).maybeSingle();
+      const merged = Array.from(new Set([...(exist?.seasons as any[] || []), ...uniq]));
+      if (exist?.id) {
+        await supabase.from('style_seasons').update({ seasons: merged, scraped_at: new Date().toISOString() }).eq('id', exist.id as string);
+      } else {
+        await supabase.from('style_seasons').insert({ style_no: s.style_no, seasons: merged, scraped_at: new Date().toISOString() });
       }
+      updated++;
     }
     await saveResult(job.id, 'Deep styles completed', { updated });
     await log(job.id, 'info', 'STEP:complete', { updated });
