@@ -155,6 +155,21 @@ async function runJob(job: JobRow) {
     browser = await chromium.connectOverCDP(BROWSERLESS_WS);
     context = await browser.newContext({ timezoneId: TIMEZONE, viewport: { width: 1280, height: 800 } });
     page = await context.newPage();
+    // Block heavy resources except on explicit pages where needed
+    try {
+      await context.route('**/*', (route) => {
+        const req = route.request();
+        const type = req.resourceType();
+        const url = req.url();
+        // Allow images only for styles index and when explicitly needed; block fonts/css/media/analytics
+        const blockTypes = new Set(['font','media']);
+        const isStylesIndex = /Style%5CIndex/.test(url) || /controller=Style%5CIndex/.test(url);
+        if (blockTypes.has(type)) return route.abort();
+        if (type === 'image' && !isStylesIndex) return route.abort();
+        if (/googletagmanager|google-analytics|hotjar|facebook|doubleclick/i.test(url)) return route.abort();
+        return route.continue();
+      });
+    } catch {}
 
     await page.goto(SPY_BASE_URL, { waitUntil: 'domcontentloaded', timeout: 60_000 });
     await log(job.id, 'info', 'Loaded login page');
@@ -706,57 +721,24 @@ async function runJob(job: JobRow) {
           }
         }
       } catch {}
-      for (const [colorName, rowsList] of byColor.entries()) {
-        const newKeys = new Set(rowsList.map((r: any) => `${r.section}|${r.row_label || ''}`));
-        try {
-          const { data: existingRows } = await supabase
-            .from('style_stock')
-            .select('id, section, row_label')
-            .eq('style_no', s.style_no)
-            .eq('color', colorName);
-          for (const ex of (existingRows ?? []) as any[]) {
-            const key = `${ex.section}|${ex.row_label || ''}`;
-            if (!newKeys.has(key)) {
-              await supabase.from('style_stock').delete().eq('id', ex.id as string);
-            }
-          }
-        } catch {}
-      }
+      // Bulk upsert extracted rows to reduce roundtrips
       const scrapeTs = new Date().toISOString();
-      for (const row of extracted) {
-        const { data: exist } = await supabase
+      const payload = extracted.map((row: any) => ({
+        style_no: s.style_no,
+        color: row.color,
+        sizes: row.sizes,
+        section: row.section,
+        row_label: row.row_label || '',
+        values: row.values,
+        po_link: row.po_link,
+        scraped_at: scrapeTs
+      }));
+      if (payload.length) {
+        const { error: upErr } = await supabase
           .from('style_stock')
-          .select('id')
-          .eq('style_no', s.style_no)
-          .eq('color', row.color)
-          .eq('section', row.section)
-          .eq('row_label', row.row_label || '')
-          .maybeSingle();
-        if (exist?.id) {
-          // Only update if changed
-          const { data: curr } = await supabase.from('style_stock').select('sizes, values, po_link').eq('id', exist.id as string).maybeSingle();
-          const changed = JSON.stringify(curr?.sizes || []) !== JSON.stringify(row.sizes || [])
-            || JSON.stringify(curr?.values || []) !== JSON.stringify(row.values || [])
-            || String(curr?.po_link || '') !== String(row.po_link || '');
-          if (changed) {
-            await supabase.from('style_stock').update({ sizes: row.sizes, values: row.values, po_link: row.po_link, scraped_at: scrapeTs }).eq('id', exist.id as string);
-          } else {
-            // Even if unchanged, bump scraped_at so UI reflects last scrape time
-            await supabase.from('style_stock').update({ scraped_at: scrapeTs }).eq('id', exist.id as string);
-          }
-        } else {
-          await supabase.from('style_stock').insert({
-            style_no: s.style_no,
-            color: row.color,
-            sizes: row.sizes,
-            section: row.section,
-            row_label: row.row_label || '',
-            values: row.values,
-            po_link: row.po_link,
-            scraped_at: scrapeTs
-          });
-        }
-        totalRows++;
+          .upsert(payload, { onConflict: 'style_no,color,section,row_label' as any });
+        if (upErr) throw upErr;
+        totalRows += payload.length;
       }
       await log(job.id, 'info', 'STEP:style_stock_rows', { style_no: s.style_no, rows: extracted.length });
     }

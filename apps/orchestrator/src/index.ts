@@ -238,6 +238,47 @@ app.post('/enqueue', async (c) => {
   }
 });
 
+// Fan-out: split update_style_stock into sub-jobs for concurrency
+app.post('/enqueue/update_style_stock_fanout', async (c) => {
+  try {
+    logRequest('/enqueue fanout start', c);
+    const payload = await verifySupabaseJWT(c.req.header('authorization'));
+    const email = (payload?.email as string | undefined) ?? (payload?.user_metadata as any)?.email;
+    if (!email) return c.json({ error: 'Unauthorized' }, 401);
+
+    const body = await c.req.json<{ styleNos?: string[]; batchSize?: number }>;
+    const batchSize = Math.max(1, Math.min(50, Number(body?.batchSize || 10)));
+
+    // Determine target styleNos: prefer provided, else app_settings.styles_daily_selection
+    let styleNos: string[] = Array.isArray(body?.styleNos) ? body!.styleNos! : [];
+    if (styleNos.length === 0) {
+      const { data } = await supabase.from('app_settings').select('value').eq('key', 'styles_daily_selection').maybeSingle();
+      styleNos = ((data?.value as any)?.styleNos as string[] | undefined) ?? [];
+    }
+    if (styleNos.length === 0) return c.json({ error: 'No styles selected' }, 400);
+
+    const batches: string[][] = [];
+    for (let i = 0; i < styleNos.length; i += batchSize) {
+      batches.push(styleNos.slice(i, i + batchSize));
+    }
+
+    const jobIds: string[] = [];
+    for (const b of batches) {
+      const { data, error } = await supabase
+        .from('jobs')
+        .insert({ type: 'update_style_stock', payload: { styleNos: b, requestedBy: email }, status: 'queued', max_attempts: 3 })
+        .select('id')
+        .single();
+      if (error) return c.json({ error: error.message }, 500);
+      jobIds.push((data as any)?.id);
+    }
+    logRequest('/enqueue fanout done', c, { batches: batches.length, totalStyles: styleNos.length });
+    return c.json({ jobIds, batches: batches.length, totalStyles: styleNos.length });
+  } catch (err: any) {
+    return c.json({ error: err?.message ?? 'Invalid request' }, 400);
+  }
+});
+
 app.post('/cron/enqueue', async (c) => {
   if (!CRON_ENABLED) return c.json({ error: 'Cron disabled' }, 403);
   const token = c.req.header('x-cron-token');

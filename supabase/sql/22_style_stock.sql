@@ -16,4 +16,9 @@ create table if not exists public.style_stock (
 create index if not exists idx_style_stock_style_no on public.style_stock(style_no);
 create index if not exists idx_style_stock_scraped_at on public.style_stock(scraped_at desc);
 
+-- Ensure one row per (style_no, color, section, row_label) logical key
+-- We normalize null row_label to '' via expression to match worker behavior
+create unique index if not exists uq_style_stock_key on public.style_stock
+using btree (style_no, color, section, (coalesce(row_label, '')));
+
 
