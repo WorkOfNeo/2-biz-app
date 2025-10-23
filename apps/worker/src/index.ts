@@ -1166,8 +1166,8 @@ async function runJob(job: JobRow) {
         await log(job.id, 'info', 'STEP:invoiced_begin');
         // Always force the iSeasonID if we have it
         const base = spySeasonIdParam && spySeasonIdParam.trim().length > 0
-          ? `?controller=Sale%5CInvoiced&action=List&Spy%5CModel%5CSale%5CInvoiced%5CInvoicedReportSearch%5BbForceSearch%5D=true&Spy%5CModel%5CSale%5CInvoiced%5CInvoicedReportSearch%5BiSeasonID%5D=${encodeURIComponent(spySeasonIdParam)}`
-          : `?controller=Sale%5CInvoiced&action=List`;
+          ? `?controller=Sale%5CInvoiced&action=List&Spy%5CModel%5CSale%5CInvoiced%5CInvoicedReportSearch%5BbForceSearch%5D=true&Spy%5CModel%5CSale%5CInvoiced%5CInvoicedReportSearch%5BiSeasonID%5D=${encodeURIComponent(spySeasonIdParam)}&Spy%5CModel%5CSale%5CInvoiced%5CInvoicedReportSearch%5BstrOrderType%5D=pre`
+          : `?controller=Sale%5CInvoiced&action=List&Spy%5CModel%5CSale%5CInvoiced%5CInvoicedReportSearch%5BstrOrderType%5D=pre`;
         const url = new URL(base, SPY_BASE_URL).toString();
         await page!.goto(url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
         await log(job.id, 'info', 'STEP:invoiced_url', { url, spySeasonId: spySeasonIdParam ?? null });
