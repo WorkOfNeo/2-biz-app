@@ -7,16 +7,18 @@ type Row = { season_id: string; qty: number; price: number; customer_id?: string
 
 function Donut({ pct, label }: { pct: number; label: string }) {
   const p = Math.max(0, Math.min(100, Math.round(pct)));
-  const bg = `conic-gradient(#0f172a ${p}%, #e5e7eb 0)`;
+  const size = 336; // 600% larger than 56px
+  const progressColor = '#93c5fd'; // light blue
+  const restColor = '#e5e7eb'; // light gray
+  const bg = `conic-gradient(${progressColor} ${p}%, ${restColor} 0)`;
+  const hue = Math.round((p / 100) * 120); // 0 (red) -> 120 (green)
+  const reachColor = `hsl(${hue}, 70%, 40%)`;
   return (
-    <div className="inline-flex items-center gap-2">
-      <div className="relative" style={{ width: 56, height: 56 }}>
-        <div className="rounded-full" style={{ width: 56, height: 56, background: bg }} />
-        <div className="absolute inset-2 rounded-full bg-white" />
-      </div>
+    <div className="flex flex-col items-center gap-2 text-center">
+      <div className="rounded-full" style={{ width: size, height: size, background: bg }} />
       <div className="text-sm">
         <div className="font-medium">{label}</div>
-        <div className="text-gray-600">{p}% reach</div>
+        <div style={{ color: reachColor }}>{p}% nået</div>
       </div>
     </div>
   );
@@ -71,19 +73,19 @@ export default function CountriesPage() {
         const pricePct = row.s2Price === 0 ? 0 : (row.s1Price / row.s2Price) * 100;
         return (
           <div key={c} className="rounded-lg border bg-white">
-            <div className="px-4 py-2 border-b font-semibold">{c}</div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4">
-              <div className="space-y-2">
-                <div className="font-medium">Antal Stk (qty)</div>
+            <div className="border-b text-center bg-[#0f172a] text-white rounded-t-lg text-[2rem] leading-tight py-2">{c}</div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-6 text-center">
+              <div className="space-y-3">
+                <div className="font-medium">Antal stk</div>
                 <div className="text-sm text-gray-600">{getSeasonLabel(s1) || 'Season 1'} vs {getSeasonLabel(s2) || 'Season 2'}</div>
-                <div className="text-lg">{row.s1Qty.toLocaleString('da-DK')} vs {row.s2Qty.toLocaleString('da-DK')}</div>
-                <Donut pct={qtyPct} label="Qty" />
+                <div className="text-lg font-semibold">{row.s1Qty.toLocaleString('da-DK')} vs {row.s2Qty.toLocaleString('da-DK')}</div>
+                <Donut pct={qtyPct} label={`Stk`} />
               </div>
-              <div className="space-y-2">
-                <div className="font-medium">Price</div>
+              <div className="space-y-3">
+                <div className="font-medium">Omsætning</div>
                 <div className="text-sm text-gray-600">{getSeasonLabel(s1) || 'Season 1'} vs {getSeasonLabel(s2) || 'Season 2'}</div>
-                <div className="text-lg">{Math.round(row.s1Price).toLocaleString('da-DK')} vs {Math.round(row.s2Price).toLocaleString('da-DK')}</div>
-                <Donut pct={pricePct} label="Price" />
+                <div className="text-lg font-semibold">{Math.round(row.s1Price).toLocaleString('da-DK')} vs {Math.round(row.s2Price).toLocaleString('da-DK')}</div>
+                <Donut pct={pricePct} label={`Omsætning`} />
               </div>
             </div>
           </div>
