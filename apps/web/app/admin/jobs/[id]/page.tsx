@@ -40,6 +40,18 @@ export default function JobDetailPage() {
               <div className="text-sm">Finished: {data.job.finished_at ? new Date(data.job.finished_at).toLocaleString() : '—'}</div>
               {data.job.error && <div className="text-sm text-red-700">Error: {data.job.error}</div>}
               <div className="text-xs text-gray-500 break-all">Payload: {JSON.stringify(data.job.payload)}</div>
+              {/* Numeric progress for scrape_styles */}
+              {data.job.type === 'scrape_styles' && (
+                (() => {
+                  const entry = (data.logs as any[]).find((l) => l.msg === 'STEP:styles_batch_upsert' && l.data && (l.data as any).upserted);
+                  const up = entry?.data?.upserted ?? null;
+                  const total = entry?.data?.total ?? null;
+                  if (up && total) {
+                    return <div className="text-sm mt-1">Progress: <b>{up}</b> / {total}</div>;
+                  }
+                  return null;
+                })()
+              )}
             </div>
             <div>
               {(data.job.status === 'running' || data.job.status === 'queued') && (

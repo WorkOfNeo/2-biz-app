@@ -201,6 +201,7 @@ async function runJob(job: JobRow) {
     await log(job.id, 'info', 'STEP:styles_begin');
     const stylesUrl = new URL('?controller=Style%5CIndex&action=List&Spy%5CModel%5CStyle%5CIndex%5CListReportSearch%5BbForceSearch%5D=true', SPY_BASE_URL).toString();
     await page!.goto(stylesUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+    await ensureNotCancelled(job.id);
     await log(job.id, 'info', 'STEP:styles_url', { url: stylesUrl });
     // Ensure table exists (attached), not necessarily visible yet
     try {
@@ -230,6 +231,7 @@ async function runJob(job: JobRow) {
     try {
       let last = 0;
       for (let i = 0; i < 20; i++) {
+        await ensureNotCancelled(job.id);
         const count = await page!.$$eval('table.standardList tbody tr', (trs) => trs.length);
         await log(job.id, 'info', 'STEP:styles_rows_count', { iteration: i + 1, count });
         if (count >= 100) break;
@@ -244,6 +246,7 @@ async function runJob(job: JobRow) {
     } catch (e: any) {
       await log(job.id, 'error', 'STEP:styles_scroll_error', { error: e?.message || String(e) });
     }
+    await ensureNotCancelled(job.id);
     const rows = await page!.$$eval('table.standardList tbody tr', (trs) => {
       const out: { spy_id: string | null; style_no: string; style_name: string | null; supplier: string | null; image_url: string | null; link_href: string | null }[] = [];
       for (const tr of Array.from(trs) as HTMLTableRowElement[]) {
@@ -274,6 +277,7 @@ async function runJob(job: JobRow) {
     // Upsert in batches by unique style_no
     let upserted = 0;
     for (let i = 0; i < rows.length; i += 1000) {
+      await ensureNotCancelled(job.id);
       const batch = rows.slice(i, i + 1000);
       const { error } = await supabase.from('styles').upsert(batch.map(r => ({
         spy_id: r.spy_id,
@@ -286,7 +290,7 @@ async function runJob(job: JobRow) {
       })), { onConflict: 'style_no' });
       if (error) throw error;
       upserted += batch.length;
-      await log(job.id, 'info', 'STEP:styles_batch_upsert', { upserted });
+      await log(job.id, 'info', 'STEP:styles_batch_upsert', { upserted, total: rows.length });
     }
     await saveResult(job.id, 'Styles scrape completed', { upserted });
     await log(job.id, 'info', 'STEP:complete', { upserted });
