@@ -246,7 +246,7 @@ app.post('/enqueue/update_style_stock_fanout', async (c) => {
     const email = (payload?.email as string | undefined) ?? (payload?.user_metadata as any)?.email;
     if (!email) return c.json({ error: 'Unauthorized' }, 401);
 
-    const body = await c.req.json<{ styleNos?: string[]; batchSize?: number }>;
+    const body = await c.req.json<{ styleNos?: string[]; batchSize?: number }>();
     const batchSize = Math.max(1, Math.min(50, Number(body?.batchSize || 10)));
 
     // Determine target styleNos: prefer provided, else app_settings.styles_daily_selection
