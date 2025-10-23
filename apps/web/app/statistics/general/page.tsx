@@ -222,15 +222,15 @@ export default function StatisticsGeneralPage() {
     setDetailsLoading(true);
     try {
       const hasAccount = !!row.account_no && !row.account_no.includes(':');
-      const buildQuery = (seasonId: string | undefined) => {
+          const buildQuery = (seasonId: string | undefined) => {
         // Fetch both aggregated stats (sales_stats) and raw invoice rows (sales_invoices)
         const stats = supabase
           .from('sales_stats')
           .select('account_no, customer_name, city, qty, price, season_id, salesperson_id, updated_at')
           .eq('season_id', seasonId ?? '');
         const invoices = supabase
-          .from('sales_invoices')
-          .select('account_no, customer_name, qty, amount, currency, invoice_no, invoice_date, created_at')
+              .from('sales_invoices')
+              .select('id, account_no, customer_name, qty, amount, currency, invoice_no, invoice_date, created_at, manual_edited')
           .eq('season_id', seasonId ?? '');
         if (row.salespersonId) { stats.eq('salesperson_id', row.salespersonId); }
         if (hasAccount) {
@@ -251,11 +251,11 @@ export default function StatisticsGeneralPage() {
       // Combine: show stats row plus each invoice as its own line (with invoice_no)
       const s1Combined = [...(s1Stats.data ?? [])];
       for (const inv of (s1Invoices?.data ?? [])) {
-        s1Combined.push({ account_no: inv.account_no, customer_name: inv.customer_name, city: '-', qty: Number(inv.qty||0), price: Number(inv.amount||0), season_id: s1, salesperson_id: row.salespersonId, updated_at: inv.created_at, invoice_no: inv.invoice_no });
+        s1Combined.push({ id: inv.id, account_no: inv.account_no, customer_name: inv.customer_name, city: '-', qty: Number(inv.qty||0), price: Number(inv.amount||0), season_id: s1, salesperson_id: row.salespersonId, updated_at: inv.created_at, invoice_no: inv.invoice_no, manual_edited: inv.manual_edited });
       }
       const s2Combined = [...(s2Stats.data ?? [])];
       for (const inv of (s2Invoices?.data ?? [])) {
-        s2Combined.push({ account_no: inv.account_no, customer_name: inv.customer_name, city: '-', qty: Number(inv.qty||0), price: Number(inv.amount||0), season_id: s2, salesperson_id: row.salespersonId, updated_at: inv.created_at, invoice_no: inv.invoice_no });
+        s2Combined.push({ id: inv.id, account_no: inv.account_no, customer_name: inv.customer_name, city: '-', qty: Number(inv.qty||0), price: Number(inv.amount||0), season_id: s2, salesperson_id: row.salespersonId, updated_at: inv.created_at, invoice_no: inv.invoice_no, manual_edited: inv.manual_edited });
       }
       setDetailsS1(s1Combined as any[]);
       setDetailsS2(s2Combined as any[]);
@@ -692,8 +692,38 @@ export default function StatisticsGeneralPage() {
                             <td className="p-2 border-b">{r.account_no}</td>
                             <td className="p-2 border-b">{r.customer_name}</td>
                             <td className="p-2 border-b">{r.city}</td>
-                            <td className="p-2 border-b text-right">{Number(r.qty ?? 0)}</td>
-                            <td className="p-2 border-b text-right">{Number(r.price ?? 0).toLocaleString('da-DK')}</td>
+                            <td className="p-2 border-b text-right">
+                              {r.invoice_no ? (
+                                <input
+                                  className="w-20 border rounded px-1 text-right"
+                                  defaultValue={Number(r.qty ?? 0)}
+                                  onBlur={async (e) => {
+                                    try {
+                                      const v = Number(e.target.value || 0) || 0;
+                                      await supabase.from('sales_invoices').update({ qty: v, manual_edited: true }).eq('id', (r as any).id);
+                                    } catch {}
+                                  }}
+                                />
+                              ) : (
+                                Number(r.qty ?? 0)
+                              )}
+                            </td>
+                            <td className="p-2 border-b text-right">
+                              {r.invoice_no ? (
+                                <input
+                                  className="w-28 border rounded px-1 text-right"
+                                  defaultValue={Number(r.price ?? 0)}
+                                  onBlur={async (e) => {
+                                    try {
+                                      const v = Number(e.target.value || 0) || 0;
+                                      await supabase.from('sales_invoices').update({ amount: v, manual_edited: true }).eq('id', (r as any).id);
+                                    } catch {}
+                                  }}
+                                />
+                              ) : (
+                                Number(r.price ?? 0).toLocaleString('da-DK')
+                              )}
+                            </td>
                             <td className="p-2 border-b">{(r as any).invoice_no ?? '—'}</td>
                             <td className="p-2 border-b text-right">{r.updated_at ? new Date(r.updated_at).toLocaleString() : '—'}</td>
                           </tr>

@@ -1309,18 +1309,34 @@ async function runJob(job: JobRow) {
           if (!accountNo || !inv.invoiceNo) continue;
           const pick = inv.userCurrencyAmount || inv.customerCurrencyAmount;
           const amount = Number(pick?.amount || 0) || 0;
-          await supabase
+          // If this invoice row has been manually edited, skip overwriting qty/amount
+          const { data: existingInv } = await supabase
             .from('sales_invoices')
-            .upsert({
-              season_id: targetSeasonId,
-              account_no: accountNo,
-              customer_name: inv.customerName || null,
-              qty: Number(inv.qty || 0) || 0,
-              amount,
-              currency: pick?.currency || null,
-              invoice_no: inv.invoiceNo,
-              invoice_date: inv.invoiceDate || null
-            }, { onConflict: 'season_id,account_no,invoice_no' });
+            .select('id, manual_edited')
+            .eq('season_id', targetSeasonId)
+            .eq('account_no', accountNo)
+            .eq('invoice_no', inv.invoiceNo)
+            .maybeSingle();
+          if (existingInv?.id && existingInv.manual_edited) {
+            // keep manual values, update non-destructive fields only
+            await supabase
+              .from('sales_invoices')
+              .update({ customer_name: inv.customerName || null, currency: pick?.currency || null, invoice_date: inv.invoiceDate || null, updated_at: new Date().toISOString() })
+              .eq('id', existingInv.id as string);
+          } else {
+            await supabase
+              .from('sales_invoices')
+              .upsert({
+                season_id: targetSeasonId,
+                account_no: accountNo,
+                customer_name: inv.customerName || null,
+                qty: Number(inv.qty || 0) || 0,
+                amount,
+                currency: pick?.currency || null,
+                invoice_no: inv.invoiceNo,
+                invoice_date: inv.invoiceDate || null
+              }, { onConflict: 'season_id,account_no,invoice_no' });
+          }
           upserts++;
         }
         await log(job.id, 'info', 'STEP:invoiced_rows_upserted', { count: upserts });
