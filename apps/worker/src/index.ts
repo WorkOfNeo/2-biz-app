@@ -804,29 +804,7 @@ async function runJob(job: JobRow) {
   if (job.type === 'export_overview') {
     try {
       await log(job.id, 'info', 'STEP:export_overview_begin', job.payload || {});
-      // Alternate mode: export Countries page to HTML
-      const mode = (job.payload as any)?.mode as string | undefined;
-      if (mode === 'countries_html') {
-        const ctx = await browser!.newContext({ viewport: { width: 1400, height: 2000 } });
-        const page = await ctx.newPage();
-        const webBase = (process.env.WEB_ORIGIN || '').replace(/\/$/, '');
-        const url = `${webBase}/statistics/countries`;
-        await page.goto(url, { waitUntil: 'networkidle', timeout: 120_000 });
-        await log(job.id, 'info', 'STEP:export_countries_nav', { url });
-        // Wait for heading to ensure UI mounted
-        await page.waitForSelector('text=Countries', { timeout: 60_000 }).catch(() => {});
-        const html = await page.content();
-        const path = `countries/${job.id}/countries.html`;
-        try {
-          await supabase.storage.from('exports').upload(path, Buffer.from(html, 'utf8') as any, { contentType: 'text/html', upsert: true });
-        } catch {}
-        let publicUrl: string | null = null;
-        try { const { data: pub } = supabase.storage.from('exports').getPublicUrl(path); publicUrl = pub?.publicUrl ?? null; } catch {}
-        await ctx.close();
-        await saveResult(job.id, 'export_countries_html', { file: { path, publicUrl } });
-        await setJobSucceeded(job.id);
-        return;
-      }
+      // Note: Countries HTML export removed per request (client-side PDF export remains)
       // Default: export Overview PDFs
       const countries = ['All','Denmark','Norway','Sweden','Finland'];
       const s1 = (job.payload as any)?.s1 as string | undefined;

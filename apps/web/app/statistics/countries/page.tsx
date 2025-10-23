@@ -79,64 +79,37 @@ export default function CountriesPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-lg font-semibold tracking-tight text-slate-700">Countries</h1>
-        <details className="relative">
-          <summary className="list-none rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50 cursor-pointer">Export</summary>
-          <div className="absolute right-0 z-10 mt-2 w-56 rounded-md border bg-white shadow">
-            <div className="py-1 text-sm">
-              <button
-                className="block w-full px-3 py-2 text-left hover:bg-gray-50"
-                onClick={async () => {
-                  try {
-                    const { jsPDF } = await import('jspdf');
-                    const html2canvas = (await import('html2canvas')).default;
-                    const target = containerRef.current;
-                    if (!target) return;
-                    const canvas = await html2canvas(target, { scale: 2, backgroundColor: '#ffffff' });
-                    const imgData = canvas.toDataURL('image/png');
-                    const pdf = new jsPDF({ unit: 'pt', format: 'a4' });
-                    const pageWidth = pdf.internal.pageSize.getWidth();
-                    const pageHeight = pdf.internal.pageSize.getHeight();
-                    const imgWidth = pageWidth;
-                    const imgHeight = (canvas.height * imgWidth) / canvas.width;
-                    let heightLeft = imgHeight;
-                    let position = 0;
-                    pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
-                    heightLeft -= pageHeight;
-                    while (heightLeft > 0) {
-                      position = position - pageHeight;
-                      pdf.addPage();
-                      pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
-                      heightLeft -= pageHeight;
-                    }
-                    pdf.save('countries.pdf');
-                  } catch (e) {
-                    console.error('countries export failed', e);
-                  }
-                }}
-              >Export PDF (this view)</button>
-              <button
-                className="block w-full px-3 py-2 text-left hover:bg-gray-50"
-                onClick={async () => {
-                  try {
-                    const { data: { session } } = await supabase.auth.getSession();
-                    if (!session) throw new Error('Not signed in');
-                    const token = session.access_token;
-                    const res = await fetch('/api/enqueue', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-                      body: JSON.stringify({ type: 'export_overview', payload: { mode: 'countries_html', requestedBy: session.user.email } })
-                    });
-                    if (!res.ok) throw new Error(await res.text());
-                    const js = await res.json();
-                    alert(`Countries HTML export enqueued. Job: ${js.jobId}`);
-                  } catch (e) {
-                    alert((e as any)?.message || 'Failed to enqueue HTML export');
-                  }
-                }}
-              >Export HTML (Worker)</button>
-            </div>
-          </div>
-        </details>
+        <button
+          className="rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50"
+          onClick={async () => {
+            try {
+              const { jsPDF } = await import('jspdf');
+              const html2canvas = (await import('html2canvas')).default;
+              const target = containerRef.current;
+              if (!target) return;
+              const canvas = await html2canvas(target, { scale: 2, backgroundColor: '#ffffff' });
+              const imgData = canvas.toDataURL('image/png');
+              const pdf = new jsPDF({ unit: 'pt', format: 'a4' });
+              const pageWidth = pdf.internal.pageSize.getWidth();
+              const pageHeight = pdf.internal.pageSize.getHeight();
+              const imgWidth = pageWidth;
+              const imgHeight = (canvas.height * imgWidth) / canvas.width;
+              let heightLeft = imgHeight;
+              let position = 0;
+              pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
+              heightLeft -= pageHeight;
+              while (heightLeft > 0) {
+                position = position - pageHeight;
+                pdf.addPage();
+                pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
+                heightLeft -= pageHeight;
+              }
+              pdf.save('countries.pdf');
+            } catch (e) {
+              console.error('countries export failed', e);
+            }
+          }}
+        >Export PDF</button>
       </div>
       <div ref={containerRef} className="space-y-6">
       {(countries).map((c) => {
