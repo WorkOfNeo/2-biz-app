@@ -549,7 +549,7 @@ export default function StatisticsGeneralPage() {
                       const nulled = isNulled(row.account_no);
                       const currency = row.salespersonId ? (spCurrencyById[row.salespersonId] ?? 'DKK') : 'DKK';
                       return (
-                        <tr key={row.account_no} className={"border-t " + (nulled ? 'opacity-80' : '')}>
+                        <tr key={row.account_no} className={"border-t hover:bg-slate-50 " + (nulled ? 'opacity-80' : '')}>
                           <td className={"relative p-2 font-medium " + (nulled ? '' : '')}>
                             {row.customer}
                             {nulled && <div className="pointer-events-none absolute inset-x-0 top-1/2 -translate-y-1/2 h-px bg-gray-500/70" />}
