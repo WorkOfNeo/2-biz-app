@@ -32,18 +32,51 @@ export default function StockListPage() {
   const { data: styleRows } = useSWR(styleNos.length ? ['styles:byNo', styleNos.join(',')] : null, async () => {
     const { data: rows, error } = await supabase
       .from('styles')
-      .select('style_no, style_name, supplier, image_url')
+      .select('id, style_no, style_name, supplier, image_url')
       .in('style_no', styleNos);
     if (error) throw new Error(error.message);
-    return rows as Array<{ style_no: string; style_name: string | null; supplier: string | null; image_url: string | null }>;
+    return rows as Array<{ id: string; style_no: string; style_name: string | null; supplier: string | null; image_url: string | null }>;
   }, { refreshInterval: 0 });
   const styleMetaByNo = React.useMemo(() => {
-    const m: Record<string, { name: string | null; supplier: string | null; image: string | null }> = {};
+    const m: Record<string, { id: string | null; name: string | null; supplier: string | null; image: string | null }> = {};
     for (const r of (styleRows ?? []) as any[]) {
-      m[r.style_no] = { name: r.style_name || null, supplier: r.supplier || null, image: r.image_url || null };
+      m[r.style_no] = { id: r.id || null, name: r.style_name || null, supplier: r.supplier || null, image: r.image_url || null };
     }
     return m;
   }, [styleRows]);
+
+  // Load style_colors for the visible styles
+  const styleIds = React.useMemo(() => (styleRows ?? []).map((r: any) => r.id as string).filter(Boolean), [styleRows]);
+  const { data: colorRows, mutate: mutateColors } = useSWR(styleIds.length ? ['style_colors:byStyleIds', styleIds.join(',')] : null, async () => {
+    const { data, error } = await supabase
+      .from('style_colors')
+      .select('id, style_id, color, scrape_enabled')
+      .in('style_id', styleIds);
+    if (error) throw new Error(error.message);
+    // Build map: style_id -> colorLower -> row
+    const map = new Map<string, Map<string, { id: string; scrape_enabled: boolean | null }>>();
+    for (const r of (data ?? []) as any[]) {
+      const sid = String(r.style_id || '');
+      const ckey = String(r.color || '').trim().toLowerCase();
+      if (!map.has(sid)) map.set(sid, new Map());
+      map.get(sid)!.set(ckey, { id: r.id as string, scrape_enabled: (r.scrape_enabled as boolean | null) ?? null });
+    }
+    return map;
+  }, { refreshInterval: 0 });
+
+  async function toggleColorScrape(styleNo: string, color: string, next: boolean) {
+    const styleId = styleMetaByNo[styleNo]?.id || null;
+    if (!styleId) return;
+    const styleMap = colorRows?.get(styleId) || new Map();
+    const key = (color || '').trim().toLowerCase();
+    const existing = styleMap.get(key) as { id: string } | undefined;
+    if (existing?.id) {
+      await supabase.from('style_colors').update({ scrape_enabled: next }).eq('id', existing.id);
+    } else {
+      await supabase.from('style_colors').insert({ style_id: styleId, color, scrape_enabled: next });
+    }
+    await mutateColors();
+  }
 
   type Group = {
     styleNo: string;
@@ -154,10 +187,25 @@ export default function StockListPage() {
                   const soldTotal = sum(g.soldSum);
                   const purchaseTotal = sum(g.purchaseSum);
                   const availableTotal = sum(g.available);
+                  const styleId = styleMetaByNo[g.styleNo]?.id || null;
+                  const cMap = styleId ? (colorRows?.get(styleId) || new Map()) : new Map();
+                  const cKey = (g.color || '').trim().toLowerCase();
+                  const enabled = styleId ? ((cMap.get(cKey)?.scrape_enabled ?? true) !== false) : true;
                   return (
                     <div key={key} className="grid grid-cols-[0.5fr_1fr] items-start gap-3">
-                      {/* Color label */}
-                      <div className="text-sm font-semibold">{g.color}</div>
+                      {/* Color label + toggle */}
+                      <div className="text-sm font-semibold flex items-center gap-2">
+                        <span>{g.color}</span>
+                        <label className="inline-flex items-center gap-1 text-[11px] font-normal">
+                          <input
+                            type="checkbox"
+                            checked={enabled}
+                            onChange={(e) => toggleColorScrape(g.styleNo, g.color, e.target.checked)}
+                            className="h-3 w-3 accent-slate-900 rounded"
+                          />
+                          <span>Scrape</span>
+                        </label>
+                      </div>
                       {/* Sizes table */}
                       <div className="overflow-auto border rounded">
                         <table className="min-w-full text-xs">

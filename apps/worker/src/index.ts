@@ -407,6 +407,12 @@ async function runJob(job: JobRow) {
           }
         } catch {}
       }
+      // Optimization: skip whole style if we know colors and all are disabled
+      const knownColorKeys = Object.keys(allowedColors);
+      if (knownColorKeys.length > 0 && knownColorKeys.every((k) => allowedColors[k] === false)) {
+        await log(job.id, 'info', 'STEP:style_stock_skip_all_colors_disabled', { style_no: s.style_no });
+        continue;
+      }
       const url = new URL(href, SPY_BASE_URL).toString().replace(/#.*$/, '') + '#tab=statandstock';
       await log(job.id, 'info', 'STEP:style_stock_nav', { style_no: s.style_no, url });
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
