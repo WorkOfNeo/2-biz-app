@@ -733,12 +733,19 @@ async function runJob(job: JobRow) {
         po_link: row.po_link,
         scraped_at: scrapeTs
       }));
-      if (payload.length) {
+      // Deduplicate by conflict key to avoid ON CONFLICT affecting the same row twice
+      const dedupMap = new Map<string, any>();
+      for (const r of payload) {
+        const key = `${r.style_no}|${r.color}|${r.section}|${r.row_label || ''}`;
+        dedupMap.set(key, r); // last one wins
+      }
+      const deduped = Array.from(dedupMap.values());
+      if (deduped.length) {
         const { error: upErr } = await supabase
           .from('style_stock')
-          .upsert(payload, { onConflict: 'style_no,color,section,row_label' as any });
+          .upsert(deduped, { onConflict: 'style_no,color,section,row_label' as any });
         if (upErr) throw upErr;
-        totalRows += payload.length;
+        totalRows += deduped.length;
       }
       await log(job.id, 'info', 'STEP:style_stock_rows', { style_no: s.style_no, rows: extracted.length });
     }
