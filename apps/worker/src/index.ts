@@ -503,6 +503,38 @@ async function runJob(job: JobRow) {
         await log(job.id, 'error', 'STEP:style_stock_missing', { style_no: s.style_no, error: e?.message || String(e), html });
         continue;
       }
+      // Discover ALL color headers (unfiltered) and ensure style_colors is updated before parsing
+      try {
+        const allColors: string[] = await page!.$$eval('.statAndStockBox', (boxes) => {
+          function text(el: Element | null | undefined): string { return ((el as HTMLElement | null)?.textContent || '').replace(/\s+/g, ' ').trim(); }
+          const found: string[] = [];
+          for (const box of Array.from(boxes) as HTMLElement[]) {
+            const details = box.querySelector('.statAndStockDetails') as HTMLElement | null;
+            if (!details) continue;
+            const firstTable = details.querySelector('table') as HTMLTableElement | null;
+            if (!firstTable) continue;
+            const firstRow = firstTable.querySelector('tr') as HTMLTableRowElement | null;
+            if (!firstRow) continue;
+            const firstTd = firstRow.querySelector('td') as HTMLElement | null;
+            const color = text(firstTd);
+            if (color && !found.includes(color)) found.push(color);
+          }
+          return found;
+        });
+        if (styleId && allColors && allColors.length) {
+          const { data: existingColors } = await supabase
+            .from('style_colors')
+            .select('id, color')
+            .eq('style_id', styleId);
+          const existing = new Set((existingColors ?? []).map((r: any) => String(r.color || '').trim().toLowerCase()));
+          const toInsert = allColors
+            .filter((c) => !existing.has(String(c || '').trim().toLowerCase()))
+            .map((c) => ({ style_id: styleId, color: c, sort_index: 0 }));
+          if (toInsert.length) {
+            await supabase.from('style_colors').insert(toInsert);
+          }
+        }
+      } catch {}
       const extracted = await page!.$$eval('.statAndStockBox', (boxes, allowed: Record<string, boolean>) => {
         function text(el: Element | null | undefined): string { return ((el as HTMLElement | null)?.textContent || '').replace(/\s+/g, ' ').trim(); }
         function numbersFromRow(tds: HTMLElement[]): number[] {
