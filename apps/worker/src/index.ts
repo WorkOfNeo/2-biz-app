@@ -821,6 +821,7 @@ async function runJob(job: JobRow) {
         try { const { data: pub } = supabase.storage.from('exports').getPublicUrl(path); publicUrl = pub?.publicUrl ?? null; } catch {}
         await ctx.close();
         await saveResult(job.id, 'export_countries_pdf', { file: { path, publicUrl } });
+        try { await supabase.from('exports').insert({ kind: 'countries_pdf', title: 'Countries', path, public_url: publicUrl, meta: {}, job_id: job.id }); } catch {}
         await setJobSucceeded(job.id);
         return;
       }
