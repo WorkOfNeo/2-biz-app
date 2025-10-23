@@ -88,6 +88,31 @@ async function saveResult(jobId: string, summary: string, data: Record<string, a
   return inserted as JobResult;
 }
 
+class CancelledError extends Error {
+  constructor(message = 'JOB_CANCELLED') { super(message); this.name = 'CancelledError'; }
+}
+
+async function isJobCancelled(jobId: string): Promise<boolean> {
+  try {
+    const { data } = await supabase.from('jobs').select('status').eq('id', jobId).maybeSingle();
+    return (data?.status as string | undefined) === 'cancelled';
+  } catch {
+    return false;
+  }
+}
+
+async function ensureNotCancelled(jobId: string) {
+  if (await isJobCancelled(jobId)) throw new CancelledError();
+}
+
+async function setJobCancelled(jobId: string, reason: string) {
+  await supabase
+    .from('jobs')
+    .update({ status: 'cancelled', error: reason, finished_at: new Date().toISOString(), lease_until: null })
+    .eq('id', jobId);
+  try { await supabase.from('job_logs').insert({ job_id: jobId, level: 'info', msg: 'Job cancelled', data: { reason } }); } catch {}
+}
+
 async function captureHtmlSnippet(target: any, fallbackPage: Page): Promise<string> {
   try {
     const html: string | undefined = await (target?.content?.() ?? fallbackPage.content?.());
@@ -157,6 +182,7 @@ async function runJob(job: JobRow) {
     await log(job.id, 'info', 'Logged in');
     // Drop verbose HTML logging to reduce noise
 
+    await ensureNotCancelled(job.id);
     const toggles = (job.payload?.toggles as Record<string, any>) || {};
     const deep = Boolean(toggles.deep);
     const doSeasons = Boolean((toggles as any).seasons);
@@ -170,6 +196,7 @@ async function runJob(job: JobRow) {
     }
 
   if (job.type === 'scrape_styles') {
+    await ensureNotCancelled(job.id);
     // Scrape Styles index page
     await log(job.id, 'info', 'STEP:styles_begin');
     const stylesUrl = new URL('?controller=Style%5CIndex&action=List&Spy%5CModel%5CStyle%5CIndex%5CListReportSearch%5BbForceSearch%5D=true', SPY_BASE_URL).toString();
@@ -266,6 +293,7 @@ async function runJob(job: JobRow) {
     return;
   }
   if (job.type === 'scrape_customers') {
+    await ensureNotCancelled(job.id);
     try {
       await log(job.id, 'info', 'STEP:customers_begin');
       const listUrl = new URL('?controller=Admin%5CCustomer%5CIndex&action=ActiveList', SPY_BASE_URL).toString();
@@ -331,6 +359,7 @@ async function runJob(job: JobRow) {
   }
 
   if (job.type === 'update_style_stock') {
+    await ensureNotCancelled(job.id);
     await log(job.id, 'info', 'STEP:style_stock_begin');
     // Expect payload.styleNos or derive from app_settings.styles_daily_selection
     let styleNos: string[] = Array.isArray(job.payload?.styleNos) ? (job.payload?.styleNos as string[]) : [];
@@ -350,6 +379,7 @@ async function runJob(job: JobRow) {
     const { data: styles } = await supabase.from('styles').select('id, style_no, link_href, scrape_enabled').in('style_no', styleNos);
     let totalRows = 0;
     for (const s of (styles ?? []) as any[]) {
+      await ensureNotCancelled(job.id);
       const href = (s.link_href || '').toString();
       if (!href) continue;
       // Respect style-level scrape toggle when present
@@ -376,6 +406,7 @@ async function runJob(job: JobRow) {
       const url = new URL(href, SPY_BASE_URL).toString().replace(/#.*$/, '') + '#tab=statandstock';
       await log(job.id, 'info', 'STEP:style_stock_nav', { style_no: s.style_no, url });
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+      await ensureNotCancelled(job.id);
       // Try to explicitly activate Stat & Stock tab if there is a tab link
       try {
         const clickedTab = await page!.evaluate(() => {
@@ -692,6 +723,7 @@ async function runJob(job: JobRow) {
     return;
   }
   if (job.type === 'deep_scrape_styles') {
+    await ensureNotCancelled(job.id);
     await log(job.id, 'info', 'STEP:deep_styles_begin');
     // Fetch all styles with links
     const { data: styles } = await supabase.from('styles').select('style_no, link_href');
@@ -702,6 +734,7 @@ async function runJob(job: JobRow) {
     }
     let updated = 0;
     for (const s of styles as any[]) {
+      await ensureNotCancelled(job.id);
       const href = (s.link_href || '').toString();
       if (!href) continue;
       const base = new URL(href, SPY_BASE_URL).toString().replace(/#.*$/, '');
@@ -973,10 +1006,12 @@ async function runJob(job: JobRow) {
       const resultSamples: Array<{ salesperson: string; rows: Array<{ customer: string; account: string; country: string; qty: string; amount: string; salesperson: string }> }> = [];
       const topsellerDump: Array<{ salesperson: string; rows: Array<{ customer: string; account: string; country: string; qty: number; amount: number; currency: string | null }> }> = [];
       for (const sp of salespeople) {
+        await ensureNotCancelled(job.id);
         processed++;
         await log(job.id, 'info', 'STEP:salesperson_start', { index: processed, total: salespeople.length, name: sp.name });
         const url = toAbs(sp.href);
         await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+        await ensureNotCancelled(job.id);
 
         // Wait for the single table and at least 1 row
         const tableSel = 'table';
@@ -1319,6 +1354,7 @@ async function runJob(job: JobRow) {
       await log(job.id, 'info', 'STEP:complete', { rows: totalRowsUpserted });
     } else {
       // Shallow scrape: navigate to Topseller table and extract rows
+    await ensureNotCancelled(job.id);
       await log(job.id, 'info', 'Starting shallow scrape');
       const topsellerUrl = new URL('confident.php?mode=Topseller', SPY_BASE_URL).toString();
       await page.goto(topsellerUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
@@ -1421,13 +1457,23 @@ async function mainLoop() {
     const heartbeat = setInterval(() => updateJobHeartbeat(job.id).catch(() => {}), 45_000);
     try {
       await log(job.id, 'info', 'Job leased');
-      await runJob(job);
+    await runJob(job);
+    // Check if job was cancelled during run; if so, avoid marking as succeeded
+    if (await isJobCancelled(job.id)) {
+      await log(job.id, 'info', 'Job cancelled (post-run check)');
+    } else {
       await setJobSucceeded(job.id);
       await log(job.id, 'info', 'Job succeeded');
+    }
     } catch (err: any) {
       const message = err?.message ?? String(err);
+    if (err?.name === 'CancelledError' || message === 'JOB_CANCELLED') {
+      await log(job.id, 'info', 'Job cancelled by request');
+      await setJobCancelled(job.id, 'Stopped by staff');
+    } else {
       await log(job.id, 'error', 'Job failed', { error: message });
       await setJobFailedOrRequeue(job, message);
+    }
     } finally {
       clearInterval(heartbeat);
     }

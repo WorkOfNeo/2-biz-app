@@ -32,12 +32,30 @@ export default function JobDetailPage() {
       {error && <div className="text-red-600 text-sm">{String(error)}</div>}
       {data?.job && (
         <div className="border rounded p-3">
-          <div className="text-sm">Status: <b>{data.job.status}</b></div>
-          <div className="text-sm">Attempts: {data.job.attempts}/{data.job.max_attempts}</div>
-          <div className="text-sm">Started: {data.job.started_at ? new Date(data.job.started_at).toLocaleString() : '—'}</div>
-          <div className="text-sm">Finished: {data.job.finished_at ? new Date(data.job.finished_at).toLocaleString() : '—'}</div>
-          {data.job.error && <div className="text-sm text-red-700">Error: {data.job.error}</div>}
-          <div className="text-xs text-gray-500 break-all">Payload: {JSON.stringify(data.job.payload)}</div>
+          <div className="flex items-start justify-between">
+            <div>
+              <div className="text-sm">Status: <b>{data.job.status}</b></div>
+              <div className="text-sm">Attempts: {data.job.attempts}/{data.job.max_attempts}</div>
+              <div className="text-sm">Started: {data.job.started_at ? new Date(data.job.started_at).toLocaleString() : '—'}</div>
+              <div className="text-sm">Finished: {data.job.finished_at ? new Date(data.job.finished_at).toLocaleString() : '—'}</div>
+              {data.job.error && <div className="text-sm text-red-700">Error: {data.job.error}</div>}
+              <div className="text-xs text-gray-500 break-all">Payload: {JSON.stringify(data.job.payload)}</div>
+            </div>
+            <div>
+              {(data.job.status === 'running' || data.job.status === 'queued') && (
+                <button
+                  className="rounded-md border border-red-700 text-red-700 hover:bg-red-50 px-3 py-1.5 text-sm"
+                  onClick={async () => {
+                    try {
+                      const { data: { session } } = await supabase.auth.getSession();
+                      const token = session?.access_token;
+                      await fetch(`/api/jobs/${id}/stop`, { method: 'POST', headers: token ? { Authorization: `Bearer ${token}` } : {} });
+                    } catch {}
+                  }}
+                >Stop job</button>
+              )}
+            </div>
+          </div>
         </div>
       )}
 
