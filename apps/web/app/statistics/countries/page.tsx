@@ -49,10 +49,11 @@ export default function CountriesPage() {
     const out: Record<string, { s1Qty: number; s2Qty: number; s1Price: number; s2Price: number }> = {};
     for (const c of countries) out[c] = { s1Qty: 0, s2Qty: 0, s1Price: 0, s2Price: 0 };
     for (const r of (stats ?? []) as any[]) {
-      const country = String(r.customers?.country || '').trim();
-      if (!countries.includes(country)) continue;
-      if (r.season_id === s1) { out[country].s1Qty += Number(r.qty||0); out[country].s1Price += Number(r.price||0); }
-      else if (r.season_id === s2) { out[country].s2Qty += Number(r.qty||0); out[country].s2Price += Number(r.price||0); }
+      const ctry = String(r.customers?.country || '').trim();
+      if (!countries.includes(ctry)) continue;
+      const bucket = out[ctry] || (out[ctry] = { s1Qty: 0, s2Qty: 0, s1Price: 0, s2Price: 0 });
+      if (r.season_id === s1) { bucket.s1Qty += Number(r.qty||0); bucket.s1Price += Number(r.price||0); }
+      else if (r.season_id === s2) { bucket.s2Qty += Number(r.qty||0); bucket.s2Price += Number(r.price||0); }
     }
     return out;
   }, [stats, s1, s2]);
