@@ -1,7 +1,7 @@
 'use client';
 import useSWR from 'swr';
 import { supabase } from '../../../lib/supabaseClient';
-import { useMemo } from 'react';
+import { useMemo, useRef } from 'react';
 
 type Row = { season_id: string; qty: number; price: number; customer_id?: string | null; account_no?: string | null };
 
@@ -25,6 +25,7 @@ function Donut({ pct, label }: { pct: number; label: string }) {
 }
 
 export default function CountriesPage() {
+  const containerRef = useRef<HTMLDivElement | null>(null);
   const { data: seasons } = useSWR('seasons', async () => {
     const { data, error } = await supabase.from('seasons').select('id, name, year').order('created_at', { ascending: false });
     if (error) throw new Error(error.message);
@@ -67,6 +68,41 @@ export default function CountriesPage() {
   }
   return (
     <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <h1 className="text-lg font-semibold tracking-tight text-slate-700">Countries</h1>
+        <button
+          className="rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50"
+          onClick={async () => {
+            try {
+              const { jsPDF } = await import('jspdf');
+              const html2canvas = (await import('html2canvas')).default;
+              const target = containerRef.current;
+              if (!target) return;
+              const canvas = await html2canvas(target, { scale: 2, backgroundColor: '#ffffff' });
+              const imgData = canvas.toDataURL('image/png');
+              const pdf = new jsPDF({ unit: 'pt', format: 'a4' });
+              const pageWidth = pdf.internal.pageSize.getWidth();
+              const pageHeight = pdf.internal.pageSize.getHeight();
+              const imgWidth = pageWidth;
+              const imgHeight = (canvas.height * imgWidth) / canvas.width;
+              let heightLeft = imgHeight;
+              let position = 0;
+              pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
+              heightLeft -= pageHeight;
+              while (heightLeft > 0) {
+                position = position - pageHeight;
+                pdf.addPage();
+                pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
+                heightLeft -= pageHeight;
+              }
+              pdf.save('countries.pdf');
+            } catch (e) {
+              console.error('countries export failed', e);
+            }
+          }}
+        >Export PDF</button>
+      </div>
+      <div ref={containerRef} className="space-y-6">
       {(countries).map((c) => {
         const row = byCountry[c] || { s1Qty: 0, s2Qty: 0, s1Price: 0, s2Price: 0 };
         const qtyPct = row.s2Qty === 0 ? 0 : (row.s1Qty / row.s2Qty) * 100;
@@ -91,6 +127,7 @@ export default function CountriesPage() {
           </div>
         );
       })}
+      </div>
     </div>
   );
 }
