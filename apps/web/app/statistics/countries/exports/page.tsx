@@ -1,6 +1,5 @@
 'use client';
 import useSWR from 'swr';
-import Link from 'next/link';
 import { supabase } from '../../../../lib/supabaseClient';
 
 type ExportRow = { id: string; kind: string; title: string | null; path: string; public_url: string | null; created_at: string };
@@ -41,7 +40,7 @@ export default function CountriesExportsPage() {
                 <td className="p-2 border-b">{r.kind}</td>
                 <td className="p-2 border-b">{r.title ?? '—'}</td>
                 <td className="p-2 border-b font-mono text-[12px]">{r.path}</td>
-                <td className="p-2 border-b">{r.public_url ? <Link href={r.public_url} target="_blank" className="text-blue-700 underline">Open</Link> : '—'}</td>
+                <td className="p-2 border-b">{r.public_url ? <a href={r.public_url} target="_blank" rel="noreferrer" className="text-blue-700 underline">Open</a> : '—'}</td>
               </tr>
             ))}
           </tbody>
