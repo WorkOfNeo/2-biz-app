@@ -1504,7 +1504,7 @@ async function mainLoop() {
     const heartbeat = setInterval(() => updateJobHeartbeat(job.id).catch(() => {}), 45_000);
     try {
       await log(job.id, 'info', 'Job leased');
-    await runJob(job);
+      await runJob(job);
     // Check if job was cancelled during run; if so, avoid marking as succeeded
     if (await isJobCancelled(job.id)) {
       await log(job.id, 'info', 'Job cancelled (post-run check)');

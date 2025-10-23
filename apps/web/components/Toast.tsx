@@ -1,7 +1,7 @@
 'use client';
 import React, { useEffect } from 'react';
 
-export function Toast({ open, pct, elapsedSec, done, onClose, label, messages }: { open: boolean; pct: number; elapsedSec: number; done: boolean; onClose: () => void; label?: string; messages?: string[] }) {
+export function Toast({ open, pct, elapsedSec, done, onClose, label, messages, jobId }: { open: boolean; pct: number; elapsedSec: number; done: boolean; onClose: () => void; label?: string; messages?: string[]; jobId?: string | null }) {
   useEffect(() => {
     if (done) {
       const t = setTimeout(onClose, 1500);
@@ -44,7 +44,12 @@ export function Toast({ open, pct, elapsedSec, done, onClose, label, messages }:
           {done && <div className="absolute inset-0 grid place-items-center text-[10px] text-green-600">100%</div>}
         </div>
         <div className="flex-1 min-w-0">
-          <div className="text-sm font-medium text-slate-900 truncate">{label || 'Working…'}</div>
+          <div className="text-sm font-medium text-slate-900 truncate flex items-center gap-2">
+            <span>{label || 'Working…'}</span>
+            {jobId && (
+              <a className="text-xs text-blue-700 hover:underline" href={`/admin/jobs/${jobId}`} target="_blank" rel="noreferrer">Open job</a>
+            )}
+          </div>
           <div className="text-xs text-gray-500">Elapsed {mm}:{ss.toString().padStart(2,'0')}</div>
           {messages && messages.length > 0 && (
             <div className="mt-1 text-xs text-gray-600 max-h-24 overflow-auto">
@@ -75,6 +80,21 @@ export function useRunningJobsToast() {
 
   React.useEffect(() => {
     let mounted = true;
+    function onKickoff(e: any) {
+      try {
+        const d = (e?.detail || {}) as { jobId?: string; label?: string };
+        if (!d) return;
+        setOpen(true);
+        setDone(false);
+        setPct(10);
+        setLabel(d.label || 'Job started');
+        setJobId(d.jobId || null);
+        setElapsedSec(0);
+        setMessages([]);
+        setTimeout(() => { if (mounted) setOpen(false); }, 5000);
+      } catch {}
+    }
+    if (typeof window !== 'undefined') window.addEventListener('job-started', onKickoff as any);
     async function poll() {
       try {
         const { createClientComponentClient } = await import('@supabase/auth-helpers-nextjs');
@@ -149,7 +169,7 @@ export function useRunningJobsToast() {
     }
     const iv = setInterval(poll, 2000);
     poll();
-    return () => { mounted = false; clearInterval(iv); if (timerRef.current) clearInterval(timerRef.current); };
+    return () => { mounted = false; clearInterval(iv); if (timerRef.current) clearInterval(timerRef.current); if (typeof window !== 'undefined') window.removeEventListener('job-started', onKickoff as any); };
   }, [open]);
 
   // Fetch recent job logs for the active job to show human messages
@@ -195,12 +215,12 @@ export function useRunningJobsToast() {
     return () => { mounted = false; clearInterval(iv); };
   }, [jobId]);
 
-  return { open, pct, elapsedSec, done, label, messages, close: () => setOpen(false) } as const;
+  return { open, pct, elapsedSec, done, label, messages, jobId, close: () => setOpen(false) } as const;
 }
 
 export function ToastStack() {
-  const { open, pct, elapsedSec, done, label, messages, close } = useRunningJobsToast();
-  return <Toast open={open} pct={pct} elapsedSec={elapsedSec} done={done} onClose={close} label={label} messages={messages} />;
+  const { open, pct, elapsedSec, done, label, messages, jobId, close } = useRunningJobsToast();
+  return <Toast open={open} pct={pct} elapsedSec={elapsedSec} done={done} onClose={close} label={label} messages={messages} jobId={jobId} />;
 }
 
 

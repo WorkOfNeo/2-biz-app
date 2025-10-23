@@ -135,6 +135,7 @@ export default function StatisticsGeneralPage() {
       if (!res.ok) throw new Error(await res.text());
       const json = await res.json();
       setLastJobId(json.jobId);
+      try { if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('job-started', { detail: { jobId: json.jobId, label: 'Update statistics — job started' } })); } catch {}
       setUpdatePct(35);
       // Poll logs to reflect steps
       const start = Date.now();
