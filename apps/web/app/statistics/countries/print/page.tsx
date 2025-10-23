@@ -1,31 +1,9 @@
 'use client';
 import useSWR from 'swr';
-import { supabase } from '../../../lib/supabaseClient';
-import { useMemo, useRef } from 'react';
+import { supabase } from '../../../../lib/supabaseClient';
+import { useMemo } from 'react';
 
-type Row = { season_id: string; qty: number; price: number; customer_id?: string | null; account_no?: string | null };
-
-function Donut({ pct, label }: { pct: number; label: string }) {
-  const p = Math.max(0, Math.min(100, Math.round(pct)));
-  const size = 336; // 600% larger than 56px
-  const progressColor = '#93c5fd'; // light blue
-  const restColor = '#e5e7eb'; // light gray
-  const bg = `conic-gradient(${progressColor} ${p}%, ${restColor} 0)`;
-  const hue = Math.round((p / 100) * 120); // 0 (red) -> 120 (green)
-  const reachColor = `hsl(${hue}, 70%, 40%)`;
-  return (
-    <div className="flex flex-col items-center gap-2 text-center">
-      <div className="rounded-full" style={{ width: size, height: size, background: bg }} />
-      <div className="text-sm">
-        <div className="font-medium">{label}</div>
-        <div style={{ color: reachColor }}>{p}% nået</div>
-      </div>
-    </div>
-  );
-}
-
-export default function CountriesPage() {
-  const containerRef = useRef<HTMLDivElement | null>(null);
+export default function CountriesPrintPage() {
   const { data: seasons } = useSWR('seasons', async () => {
     const { data, error } = await supabase.from('seasons').select('id, name, year').order('created_at', { ascending: false });
     if (error) throw new Error(error.message);
@@ -38,7 +16,7 @@ export default function CountriesPage() {
   });
   const s1 = saved?.value?.s1 ?? '';
   const s2 = saved?.value?.s2 ?? '';
-  const { data: stats } = useSWR(s1 && s2 ? ['countries:stats', s1, s2] : null, async () => {
+  const { data: stats } = useSWR(s1 && s2 ? ['countries:stats:print', s1, s2] : null, async () => {
     const { data, error } = await supabase
       .from('sales_stats')
       .select('season_id, qty, price, currency, account_no, customer_id, customers(country)')
@@ -47,17 +25,22 @@ export default function CountriesPage() {
     if (error) throw new Error(error.message);
     return data as any[];
   });
-  // Currency rates (1 unit equals how many DKK), e.g. { EUR: 7.45, NOK: 0.67, SEK: 0.64 }
   const { data: currencyRatesRow } = useSWR('app-settings:currency-rates', async () => {
     const { data, error } = await supabase.from('app_settings').select('*').eq('key', 'currency_rates').maybeSingle();
     if (error) throw new Error(error.message);
     return (data?.value as Record<string, number> | undefined) ?? {};
   });
   const countries = useMemo(() => ['Denmark', 'Norway', 'Sweden', 'Finland'], []);
+  const rates = useMemo(() => ({ DKK: 1, ...(currencyRatesRow ?? {}) } as Record<string, number>), [currencyRatesRow]);
+  function getSeasonLabel(seasonId: string | undefined) {
+    if (!seasonId) return '';
+    const s = (seasons ?? []).find((x) => x.id === seasonId);
+    if (!s) return '';
+    return `${s.name}${s.year ? ' ' + s.year : ''}`;
+  }
   const byCountry = useMemo(() => {
     const out: Record<string, { s1Qty: number; s2Qty: number; s1Price: number; s2Price: number }> = {};
     for (const c of countries) out[c] = { s1Qty: 0, s2Qty: 0, s1Price: 0, s2Price: 0 };
-    const rates = { DKK: 1, ...(currencyRatesRow ?? {}) } as Record<string, number>;
     for (const r of (stats ?? []) as any[]) {
       const ctry = String(r.customers?.country || '').trim();
       if (!countries.includes(ctry)) continue;
@@ -68,43 +51,12 @@ export default function CountriesPage() {
       else if (r.season_id === s2) { bucket.s2Qty += Number(r.qty||0); bucket.s2Price += priceDkk; }
     }
     return out;
-  }, [stats, s1, s2, currencyRatesRow]);
-  function getSeasonLabel(seasonId: string | undefined) {
-    if (!seasonId) return '';
-    const s = (seasons ?? []).find((x) => x.id === seasonId);
-    if (!s) return '';
-    return `${s.name}${s.year ? ' ' + s.year : ''}`;
-  }
+  }, [stats, s1, s2, rates, countries]);
+
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-lg font-semibold tracking-tight text-slate-700">Countries</h1>
-        <button
-          className="rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50"
-          onClick={async () => {
-            try {
-              const { data: { session } } = await supabase.auth.getSession();
-              if (!session) throw new Error('Not signed in');
-              const token = session.access_token;
-              const res = await fetch('/api/enqueue', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-                body: JSON.stringify({ type: 'export_overview', payload: { mode: 'countries_pdf', requestedBy: session.user.email } })
-              });
-              if (!res.ok) throw new Error(await res.text());
-              const js = await res.json();
-              alert(`Countries PDF export enqueued. Job: ${js.jobId}`);
-            } catch (e) {
-              alert((e as any)?.message || 'Failed to enqueue PDF export');
-            }
-          }}
-        >Export PDF</button>
-      </div>
-      <div ref={containerRef} className="space-y-6">
-      {(countries).map((c) => {
+    <div className="p-6 space-y-6">
+      {countries.map((c) => {
         const row = byCountry[c] || { s1Qty: 0, s2Qty: 0, s1Price: 0, s2Price: 0 };
-        const qtyPct = row.s2Qty === 0 ? 0 : (row.s1Qty / row.s2Qty) * 100;
-        const pricePct = row.s2Price === 0 ? 0 : (row.s1Price / row.s2Price) * 100;
         return (
           <div key={c} className="rounded-lg border bg-white">
             <div className="border-b text-center bg-[#0f172a] text-white rounded-t-lg text-[2rem] leading-tight py-2">{c}</div>
@@ -113,20 +65,18 @@ export default function CountriesPage() {
                 <div className="font-medium">Antal stk</div>
                 <div className="text-sm text-gray-600">{getSeasonLabel(s1) || 'Season 1'} vs {getSeasonLabel(s2) || 'Season 2'}</div>
                 <div className="text-lg font-semibold">{row.s1Qty.toLocaleString('da-DK')} vs {row.s2Qty.toLocaleString('da-DK')}</div>
-                <Donut pct={qtyPct} label={`Stk`} />
               </div>
               <div className="space-y-3">
-                <div className="font-medium">Omsætning</div>
+                <div className="font-medium">Omsætning (DKK)</div>
                 <div className="text-sm text-gray-600">{getSeasonLabel(s1) || 'Season 1'} vs {getSeasonLabel(s2) || 'Season 2'}</div>
                 <div className="text-lg font-semibold">{Math.round(row.s1Price).toLocaleString('da-DK')} vs {Math.round(row.s2Price).toLocaleString('da-DK')}</div>
-                <Donut pct={pricePct} label={`Omsætning`} />
               </div>
             </div>
           </div>
         );
       })}
-      </div>
     </div>
   );
 }
+
 
