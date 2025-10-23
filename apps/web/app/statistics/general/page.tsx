@@ -54,6 +54,9 @@ export default function StatisticsGeneralPage() {
   const [elapsedSec, setElapsedSec] = useState(0);
   const elapsedTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [doneToast, setDoneToast] = useState(false);
+  const [nullByInputOpen, setNullByInputOpen] = useState(false);
+  const [nullByInputText, setNullByInputText] = useState('');
+  const [nullByInputResult, setNullByInputResult] = useState<string | null>(null);
   const spNameById = useMemo(() => Object.fromEntries(((salespersons ?? []) as { id: string; name: string }[]).map(s => [s.id, s.name])), [salespersons]);
   const spCurrencyById = useMemo(() => Object.fromEntries(((salespersons ?? []) as { id: string; currency?: string | null }[]).map(s => [s.id, s.currency ?? 'DKK'])), [salespersons]);
   useEffect(() => {
@@ -482,6 +485,7 @@ export default function StatisticsGeneralPage() {
                 <Link className="block px-3 py-2 hover:bg-gray-50" href="/statistics/general/import">Import Statistic</Link>
                 <Link className="block px-3 py-2 hover:bg-gray-50" href={'/statistics/general/last-runs' as any}>Last Runs</Link>
                 <Link className="block px-3 py-2 hover:bg-gray-50" href="/settings/seasons">Season Settings</Link>
+                <button className="block w-full px-3 py-2 text-left hover:bg-gray-50" onClick={() => { setNullByInputText(''); setNullByInputResult(null); setNullByInputOpen(true); }}>Null Customers by Input</button>
                 <button className="block w-full px-3 py-2 text-left hover:bg-gray-50" onClick={handleUpdateStatistic}>Update Statistic</button>
               </div>
             </div>
@@ -752,6 +756,59 @@ export default function StatisticsGeneralPage() {
                   </div>
                 </div>
               )}
+            </Modal>
+
+            {/* Null By Input modal */}
+            <Modal
+              open={nullByInputOpen}
+              onClose={() => setNullByInputOpen(false)}
+              title="Null Customers by Input"
+              footer={(
+                <div className="flex items-center gap-2">
+                  <button className="rounded border px-3 py-1.5 text-sm" onClick={() => setNullByInputOpen(false)}>Close</button>
+                  <button
+                    className="inline-flex items-center rounded-md bg-slate-900 text-white px-3 py-1.5 text-sm hover:bg-slate-800 disabled:opacity-50"
+                    onClick={async () => {
+                      try {
+                        if (!s1) { alert('Select Season 1 first'); return; }
+                        const names = nullByInputText.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+                        const byName = new Map<string, string[]>();
+                        for (const r of (rows ?? []) as any[]) {
+                          const name = String(r.customer || '').trim().toLowerCase();
+                          if (!name) continue;
+                          const arr = byName.get(name) || [];
+                          arr.push(r.account_no);
+                          byName.set(name, arr);
+                        }
+                        const toNull = new Set<string>(overrides?.value.nulled ?? []);
+                        const matched: string[] = [];
+                        const unmatched: string[] = [];
+                        for (const raw of names) {
+                          const key = raw.toLowerCase();
+                          const accounts = byName.get(key);
+                          if (accounts && accounts.length > 0) {
+                            for (const acc of accounts) toNull.add(acc);
+                            matched.push(`${raw} (${accounts.join(',')})`);
+                          } else {
+                            unmatched.push(raw);
+                          }
+                        }
+                        await saveOverrides({ nulled: Array.from(toNull), hidden: overrides?.value.hidden ?? [] });
+                        setNullByInputResult(`Matched: ${matched.length}. Unmatched: ${unmatched.length}${unmatched.length? ' → ' + unmatched.join(', ') : ''}`);
+                        console.log('[null-by-input] matched', matched, 'unmatched', unmatched);
+                      } catch (e: any) {
+                        setNullByInputResult(e?.message || String(e));
+                      }
+                    }}
+                  >Apply</button>
+                </div>
+              )}
+            >
+              <div className="space-y-2">
+                <div className="text-sm text-gray-600">Enter one customer name per line. Matching is case-insensitive against the Customer column shown in the table. Matches will be nulled for the selected Season 1.</div>
+                <textarea className="w-full h-48 border rounded-md p-2 text-sm" value={nullByInputText} onChange={(e) => setNullByInputText(e.target.value)} placeholder={"Customer A\nCustomer B"} />
+                {nullByInputResult && <div className="text-sm">{nullByInputResult}</div>}
+              </div>
             </Modal>
             </>
           );
