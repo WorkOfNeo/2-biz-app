@@ -9,6 +9,7 @@ create table if not exists public.style_colors (
   style_id uuid not null references public.styles(id) on delete cascade,
   color text not null,
   sort_index int not null default 0,
+  scrape_enabled boolean not null default true,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   unique(style_id, color)

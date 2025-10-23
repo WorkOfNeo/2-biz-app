@@ -5,7 +5,6 @@ import { supabase } from '../../../lib/supabaseClient';
 import Link from 'next/link';
 import { Menu, EyeOff, Trash2, Ban } from 'lucide-react';
 import { ProgressBar } from '../../../components/ProgressBar';
-import { Toast } from '../../../components/Toast';
 import { Modal } from '../../../components/Modal';
 
 export default function StatisticsGeneralPage() {
@@ -492,7 +491,7 @@ export default function StatisticsGeneralPage() {
 
 
       <div className="space-y-4">
-        <Toast open={updating} pct={updatePct} elapsedSec={elapsedSec} done={doneToast} onClose={() => { setUpdating(false); setDoneToast(false); }} />
+        {/* Toast removed per request */}
         <div className="flex flex-wrap w-full gap-2">
           {(((salespersons ?? []).map((sp) => sp.name)) as string[]).map((person) => {
             const active = person === activePerson;

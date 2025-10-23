@@ -15,3 +15,7 @@ create table if not exists public.styles (
 
 create unique index if not exists uq_styles_style_no on public.styles(style_no);
 create index if not exists idx_styles_name on public.styles using gin (to_tsvector('simple', coalesce(style_name,'')));
+
+-- Enable toggling scrape at style level
+alter table if exists public.styles
+  add column if not exists scrape_enabled boolean not null default true;

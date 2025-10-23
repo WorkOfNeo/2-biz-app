@@ -14,7 +14,7 @@ export default function JobDetailPage() {
       .select('*')
       .eq('job_id', id)
       .order('ts', { ascending: false })
-      .limit(200);
+      .limit(500);
     if (logsErr) throw new Error(logsErr.message);
     const { data: results } = await supabase
       .from('job_results')
@@ -137,11 +137,42 @@ export default function JobDetailPage() {
               )}
             </div>
           )}
-          {/* samples and raw JSON removed for cleaner UI */}
+          {/* Expandable raw JSON */}
+          <details className="mt-3">
+            <summary className="cursor-pointer select-none text-sm text-gray-600">Raw JSON</summary>
+            <pre className="mt-2 max-h-96 overflow-auto text-[11px] bg-gray-50 p-2 rounded border">
+{JSON.stringify(data.result.data, null, 2)}
+            </pre>
+          </details>
         </div>
       )}
 
-      {/* Logs removed for a streamlined data view */}
+      {/* Logs */}
+      {data?.logs && data.logs.length > 0 && (
+        <div className="border rounded">
+          <div className="px-3 py-2 border-b font-semibold bg-gray-50">Logs</div>
+          <div className="max-h-96 overflow-auto text-[12px]">
+            <table className="min-w-full">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="text-left p-2 border-b">Time</th>
+                  <th className="text-left p-2 border-b">Level</th>
+                  <th className="text-left p-2 border-b">Message</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.logs.map((l: any, idx: number) => (
+                  <tr key={idx}>
+                    <td className="p-2 border-b whitespace-nowrap">{new Date(l.ts).toLocaleString()}</td>
+                    <td className="p-2 border-b uppercase text-[11px]">{l.level}</td>
+                    <td className="p-2 border-b font-mono break-all">{l.msg}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -347,11 +347,32 @@ async function runJob(job: JobRow) {
       return;
     }
     // Fetch style hrefs from styles table
-    const { data: styles } = await supabase.from('styles').select('style_no, link_href').in('style_no', styleNos);
+    const { data: styles } = await supabase.from('styles').select('id, style_no, link_href, scrape_enabled').in('style_no', styleNos);
     let totalRows = 0;
     for (const s of (styles ?? []) as any[]) {
       const href = (s.link_href || '').toString();
       if (!href) continue;
+      // Respect style-level scrape toggle when present
+      const styleId: string | null = (s.id as string | undefined) || null;
+      const styleScrapeEnabled: boolean = (s as any)?.scrape_enabled !== false;
+      if (!styleScrapeEnabled) {
+        await log(job.id, 'info', 'STEP:style_stock_skip_style_disabled', { style_no: s.style_no });
+        continue;
+      }
+      // Load per-color scrape flags for this style
+      let allowedColors: Record<string, boolean> = {};
+      if (styleId) {
+        try {
+          const { data: colorRows } = await supabase
+            .from('style_colors')
+            .select('color, scrape_enabled')
+            .eq('style_id', styleId);
+          for (const c of (colorRows ?? []) as any[]) {
+            const key = String(c.color || '').trim().toLowerCase();
+            if (key) allowedColors[key] = c.scrape_enabled !== false;
+          }
+        } catch {}
+      }
       const url = new URL(href, SPY_BASE_URL).toString().replace(/#.*$/, '') + '#tab=statandstock';
       await log(job.id, 'info', 'STEP:style_stock_nav', { style_no: s.style_no, url });
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
@@ -364,10 +385,10 @@ async function runJob(job: JobRow) {
         });
         if (clickedTab) { await log(job.id, 'info', 'STEP:style_stock_tab_clicked'); await page!.waitForTimeout(500); }
       } catch {}
-      // Expand all collapsed sections by clicking arrow-down icons
+      // Expand allowed color sections by clicking arrow-down icons (skip inactive or disabled colors)
       try {
-        // Wait for any arrow icon to appear first
-        await page!.waitForFunction(() => !!document.querySelector('.sprite.sprite168.spriteArrowDown.right.clickable, .sprite.sprite168.spriteArrowUp.right.clickable, .statAndStockBox'), {}, { timeout: 30_000 }).catch(() => {});
+        // Wait for markers to appear first
+        await page!.waitForFunction(() => !!document.querySelector('.statAndStockBox, .sprite.sprite168.spriteArrowDown.right.clickable, .sprite.sprite168.spriteArrowUp.right.clickable'), {}, { timeout: 30_000 }).catch(() => {});
         // Log counts before expanding
         try {
           const counts = await page!.evaluate(() => ({
@@ -377,22 +398,52 @@ async function runJob(job: JobRow) {
           }));
           await log(job.id, 'info', 'STEP:style_stock_pre_counts', counts as any);
         } catch {}
-        for (let i = 0; i < 15; i++) {
-          const count = await page!.evaluate(() => {
-            const nodes = Array.from(document.querySelectorAll('.sprite.sprite168.spriteArrowDown.right.clickable')) as HTMLElement[];
-            nodes.forEach((n) => n.click());
-            return nodes.length;
-          });
-          await log(job.id, 'info', 'STEP:style_stock_expand_click', { iteration: i + 1, clicked: count });
-          if (!count) break;
+        // Targeted clicking: only click headers for colors that are not marked inactive and not styled with #900 and allowed by DB flags
+        for (let i = 0; i < 10; i++) {
+          const clicked = await page!.evaluate((allowed: Record<string, boolean>) => {
+            let clicks = 0;
+            const headers = Array.from(document.querySelectorAll('.statAndStockBox tr.tableBackgroundBlack')) as HTMLTableRowElement[];
+            function getColorName(tr: HTMLTableRowElement): string {
+              // Prefer the first cell text in this row
+              const td = tr.querySelector('td');
+              const raw = (td?.textContent || '').replace(/\s+/g, ' ').trim();
+              return raw;
+            }
+            for (const tr of headers) {
+              const colorName = getColorName(tr);
+              const lower = colorName.toLowerCase();
+              const hasInactive = /\(inactive\)/i.test(colorName);
+              const styleAttr = (tr.getAttribute('style') || '').toLowerCase();
+              const hasRedBg = /#900/.test(styleAttr) || /background[-\s]*color\s*:\s*#900/.test(styleAttr);
+              const allowedByDb = Object.keys(allowed || {}).length ? (allowed[lower] !== false) : true;
+              if (hasInactive || hasRedBg || !allowedByDb) continue;
+              const arrow = tr.querySelector('.sprite.sprite168.spriteArrowDown.right.clickable') as HTMLElement | null;
+              if (arrow) { arrow.click(); clicks++; }
+            }
+            return clicks;
+          }, allowedColors);
+          await log(job.id, 'info', 'STEP:style_stock_expand_click', { iteration: i + 1, clicked });
+          if (!clicked) break;
           await page!.waitForTimeout(500);
         }
-        // As a fallback, try clicking the color header cells to expand
-        const headerClicks = await page!.evaluate(() => {
+        // As a fallback, click any remaining headers that are allowed
+        const headerClicks = await page!.evaluate((allowed: Record<string, boolean>) => {
           let clicked = 0;
-          document.querySelectorAll('.statAndStockBox tr.tableBackgroundBlack .sprite.sprite168.spriteArrowDown.right.clickable').forEach((el) => { (el as HTMLElement).click(); clicked++; });
+          const headers = Array.from(document.querySelectorAll('.statAndStockBox tr.tableBackgroundBlack')) as HTMLTableRowElement[];
+          for (const tr of headers) {
+            const td = tr.querySelector('td');
+            const colorName = (td?.textContent || '').replace(/\s+/g, ' ').trim();
+            const lower = colorName.toLowerCase();
+            const hasInactive = /\(inactive\)/i.test(colorName);
+            const styleAttr = (tr.getAttribute('style') || '').toLowerCase();
+            const hasRedBg = /#900/.test(styleAttr) || /background[-\s]*color\s*:\s*#900/.test(styleAttr);
+            const allowedByDb = Object.keys(allowed || {}).length ? (allowed[lower] !== false) : true;
+            if (hasInactive || hasRedBg || !allowedByDb) continue;
+            const arrow = tr.querySelector('.sprite.sprite168.spriteArrowDown.right.clickable') as HTMLElement | null;
+            if (arrow) { arrow.click(); clicked++; }
+          }
           return clicked;
-        }).catch(() => 0);
+        }, allowedColors).catch(() => 0);
         if (headerClicks) await log(job.id, 'info', 'STEP:style_stock_header_clicks', { clicked: headerClicks });
         await page!.waitForTimeout(500);
       } catch (e: any) {
@@ -417,7 +468,7 @@ async function runJob(job: JobRow) {
         await log(job.id, 'error', 'STEP:style_stock_missing', { style_no: s.style_no, error: e?.message || String(e), html });
         continue;
       }
-      const extracted = await page!.$$eval('.statAndStockBox', (boxes) => {
+      const extracted = await page!.$$eval('.statAndStockBox', (boxes, allowed: Record<string, boolean>) => {
         function text(el: Element | null | undefined): string { return ((el as HTMLElement | null)?.textContent || '').replace(/\s+/g, ' ').trim(); }
         function numbersFromRow(tds: HTMLElement[]): number[] {
           const arr: number[] = [];
@@ -440,6 +491,14 @@ async function runJob(job: JobRow) {
           if (!first) continue;
           const headerTds = Array.from(first.querySelectorAll('td')) as HTMLElement[];
           const color = text(headerTds[0]);
+          const colorLower = color.toLowerCase();
+          // Failsafe: detect inline red background from the header row outside the details table
+          const headerRowOutside = box.querySelector('tr.tableBackgroundBlack') as HTMLTableRowElement | null;
+          const styleAttr = (headerRowOutside?.getAttribute('style') || '').toLowerCase();
+          const hasRedBg = /#900/.test(styleAttr) || /background[-\s]*color\s*:\s*#900/.test(styleAttr);
+          const hasInactive = /\(inactive\)/i.test(color);
+          const allowedByDb = Object.keys(allowed || {}).length ? (allowed[colorLower] !== false) : true;
+          if (hasInactive || hasRedBg || !allowedByDb) continue;
           const sizeLabels: string[] = [];
           for (let i = 1; i < headerTds.length - 1; i++) sizeLabels.push(text(headerTds[i]));
 
@@ -485,7 +544,7 @@ async function runJob(job: JobRow) {
           }
         }
         return out;
-      });
+      }, allowedColors);
       // Delete rows that disappeared and upsert changes per color
       const byColor = new Map<string, typeof extracted>();
       for (const row of extracted) {
@@ -517,6 +576,23 @@ async function runJob(job: JobRow) {
             purchase: { count: purchaseRows.length, sum: trim(sum(purchaseRows)), sample: purchaseRows.slice(0, 2).map((r: any) => ({ label: r.row_label, values: trim(r.values) })) },
             dedicated: { stockDedicated: { count: stockDed.length, sum: trim(sum(stockDed)) }, preDedicated: { count: preDed.length, sum: trim(sum(preDed)) } }
           });
+        }
+      } catch {}
+      // Upsert discovered colors for this style for management
+      try {
+        if (styleId) {
+          const presentColors = Array.from(byColor.keys());
+          const { data: existingColors } = await supabase
+            .from('style_colors')
+            .select('id, color')
+            .eq('style_id', styleId);
+          const existing = new Set((existingColors ?? []).map((r: any) => String(r.color || '').trim().toLowerCase()));
+          const toInsert = presentColors
+            .filter((c) => !existing.has(String(c || '').trim().toLowerCase()))
+            .map((c) => ({ style_id: styleId, color: c, sort_index: 0 }));
+          if (toInsert.length) {
+            await supabase.from('style_colors').insert(toInsert);
+          }
         }
       } catch {}
       for (const [colorName, rowsList] of byColor.entries()) {

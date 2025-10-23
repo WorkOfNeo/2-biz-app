@@ -67,3 +67,4 @@ export default function StyleDetailPage({ params }: { params: { styleNo: string 
 }
 
 
+

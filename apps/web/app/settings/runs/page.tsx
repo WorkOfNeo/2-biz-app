@@ -96,6 +96,46 @@ export default function RunsSettingsPage() {
         {enqueuing && <div className="mt-2"><ProgressBar value={progress} /></div>}
       </div>
 
+      {/* Active job section */}
+      {(() => {
+        const active = (data?.jobs ?? []).filter((j: any) => j.status === 'running' || (!j.finished_at && j.started_at)).sort((a: any,b: any) => (new Date(b.started_at||b.created_at).getTime()) - (new Date(a.started_at||a.created_at).getTime()));
+        if (!active.length) return null;
+        const j = active[0];
+        const msgs = data?.logsByJob?.[j.id] ?? [];
+        const stepMap: Record<string, number> = {
+          'STEP:styles_begin': 10,
+          'STEP:style_stock_begin': 15,
+          'STEP:style_stock_rows': 70,
+          'STEP:begin_deep': 20,
+          'STEP:topseller_ready': 40,
+          'STEP:salespersons_total': 50,
+          'STEP:salesperson_start': 55,
+          'STEP:salesperson_done': 85,
+          'STEP:complete': 100
+        };
+        let pct = 0;
+        for (const m of msgs) { if (stepMap[m] !== undefined) pct = Math.max(pct, stepMap[m]); }
+        return (
+          <div className="rounded-md border">
+            <div className="px-3 py-2 border-b flex items-center justify-between bg-gray-50">
+              <div className="text-sm font-semibold">Active Job</div>
+              <div className="text-xs text-gray-600">Started: {j.started_at ? new Date(j.started_at).toLocaleString() : new Date(j.created_at).toLocaleString()}</div>
+            </div>
+            <div className="p-3 space-y-2">
+              <div className="text-sm"><b>Type:</b> {j.type}</div>
+              <div className="text-sm"><b>Status:</b> {j.status} ({j.attempts}/{j.max_attempts})</div>
+              <div className="max-w-sm"><ProgressBar value={pct} /></div>
+              <div className="text-xs text-gray-600">
+                <div className="font-medium mb-1">Recent steps</div>
+                <ul className="list-disc pl-5 space-y-0.5">
+                  {msgs.slice(-8).map((m, i) => (<li key={i}>{m}</li>))}
+                </ul>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Sections per job type */}
       {Array.from(new Set((data?.jobs ?? []).map((j: any) => j.type))).sort().map((type) => (
         <div key={type} className="overflow-auto border rounded-md">
