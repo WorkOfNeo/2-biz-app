@@ -31,6 +31,7 @@ export function SidebarNav() {
           <NavLink href="/statistics/general" label="General" />
           <NavLink href="/statistics/overview" label="Overview" />
           <NavLink href="/statistics/countries" label="Countries" />
+          <NavLink href="/statistics/countries/exports" label="Exports" />
         </div>
       </div>
       <div>
