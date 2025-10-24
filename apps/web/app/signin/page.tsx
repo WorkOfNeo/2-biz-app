@@ -1,10 +1,20 @@
 'use client';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import type { Route } from 'next';
 import { useRouter, useSearchParams } from 'next/navigation';
 
+export const dynamic = 'force-dynamic';
+
 export default function SignInPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen grid place-items-center">Loading…</div>}>
+      <InnerSignIn />
+    </Suspense>
+  );
+}
+
+function InnerSignIn() {
   const supabase = createClientComponentClient();
   const router = useRouter();
   const search = useSearchParams();
