@@ -157,7 +157,10 @@ function RolePageMatrix({ pages, value, onSave }: { pages: string[]; value: Reco
   }, [JSON.stringify(value)]);
   async function handleSave() {
     const out: Record<string, string[]> = {};
-    for (const r of roles) out[r] = Array.from(map[r]);
+    for (const r of roles) {
+      const set = map[r] ?? new Set<string>();
+      out[r] = Array.from(set);
+    }
     await onSave(out);
   }
   return (
