@@ -2,6 +2,7 @@
 import Link from 'next/link';
 import type { Route } from 'next';
 import { usePathname } from 'next/navigation';
+import { useRoles } from '../lib/supabaseClient';
 
 function NavLink({ href, label }: { href: Route; label: string }) {
   const pathname = usePathname();
@@ -22,6 +23,7 @@ function NavLink({ href, label }: { href: Route; label: string }) {
 }
 
 export function SidebarNav() {
+  const { has } = useRoles();
   return (
     <nav className="space-y-2">
       <NavLink href="/" label="Home" />
@@ -31,25 +33,25 @@ export function SidebarNav() {
           <NavLink href="/statistics/general" label="General" />
           <NavLink href="/statistics/overview" label="Overview" />
           <NavLink href="/statistics/countries" label="Countries" />
-          <NavLink href="/statistics/countries/exports" label="Exports" />
+          {has('admin') && <NavLink href="/statistics/countries/exports" label="Exports" />}
         </div>
       </div>
       <div>
         <div className="mt-4 mb-1 text-xs uppercase tracking-wider text-slate-400">Styles</div>
         <div className="ml-2 space-y-1">
           <NavLink href="/styles" label="Styles" />
-          <NavLink href="/styles/settings" label="Settings" />
+          {(has('admin') || has('manager')) && <NavLink href="/styles/settings" label="Settings" />}
           <NavLink href="/styles/stock-list" label="Stock List" />
         </div>
       </div>
       <div>
         <div className="mt-4 mb-1 text-xs uppercase tracking-wider text-slate-400">Settings</div>
         <div className="ml-2 space-y-1">
-          <NavLink href="/settings/seasons" label="SEASONS" />
-          <NavLink href="/settings/salespersons" label="SALESPERSONS" />
-          <NavLink href="/settings/customers" label="CUSTOMERS" />
-          <NavLink href="/settings/misc" label="MISC" />
-          <NavLink href="/settings/runs" label="RUNS" />
+          {has('admin') && <NavLink href="/settings/seasons" label="SEASONS" />}
+          {has('admin') && <NavLink href="/settings/salespersons" label="SALESPERSONS" />}
+          {(has('admin') || has('manager')) && <NavLink href="/settings/customers" label="CUSTOMERS" />}
+          {has('admin') && <NavLink href="/settings/misc" label="MISC" />}
+          {has('admin') && <NavLink href="/settings/runs" label="RUNS" />}
         </div>
       </div>
     </nav>

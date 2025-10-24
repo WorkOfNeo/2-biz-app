@@ -1,6 +1,7 @@
 'use client';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { useEffect, useState } from 'react';
+import type { Route } from 'next';
 import { useRouter, useSearchParams } from 'next/navigation';
 
 export default function SignInPage() {
@@ -30,7 +31,7 @@ export default function SignInPage() {
               const { data, error } = await supabase.auth.signInWithPassword({ email, password });
               if (error) throw error;
               // Redirect back to intended page
-              const r = search.get('redirect') || '/';
+              const r = (search.get('redirect') || '/') as Route;
               router.replace(r);
             } catch (e: any) {
               setError(e?.message || 'Sign in failed');

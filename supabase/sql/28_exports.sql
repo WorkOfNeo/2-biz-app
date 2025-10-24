@@ -21,3 +21,22 @@ create policy exports_select_all on public.exports
   for select using (true);
 
 
+-- User roles to gate features and pages
+create table if not exists public.user_roles (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null,
+  role text not null check (char_length(role) > 0),
+  created_at timestamptz not null default now(),
+  unique (user_id, role)
+);
+
+-- Enable RLS and allow each user to read their own roles; service role can manage
+alter table public.user_roles enable row level security;
+drop policy if exists user_roles_select_own on public.user_roles;
+create policy user_roles_select_own on public.user_roles
+  for select using (auth.uid() = user_id);
+
+-- Optional: allow the current user to see all roles (for admin UIs), can be tightened later
+-- create policy user_roles_all on public.user_roles for select using (true);
+
+
