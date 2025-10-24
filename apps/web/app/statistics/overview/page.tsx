@@ -219,8 +219,7 @@ export default function OverviewPage() {
                 const body = { type: 'export_overview', payload: { country, s1, s2 } };
                 const res = await fetch('/api/enqueue', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(body) });
                 if (!res.ok) throw new Error(await res.text());
-                // show toast via existing global ToastStack by inserting a job log watcher could be added later
-                alert('Export enqueued. Check Downloads for the ZIP when done.');
+                try { if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('job-started', { detail: { label: 'Export overview — job started' } })); } catch {}
               } catch (e) {
                 console.error('export failed', e);
                 alert('Failed to enqueue export');

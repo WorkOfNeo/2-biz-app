@@ -51,6 +51,7 @@ export default function SeasonsSettingsPage() {
       if (!res.ok) throw new Error(await res.text());
       const json = await res.json();
       setLastJobId(json.jobId as string);
+      try { if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('job-started', { detail: { label: 'Update seasons — job started' } })); } catch {}
       setProgress(35);
       // Give SWR time, then refresh the list after some delay
       setTimeout(() => { setProgress(80); }, 1200);

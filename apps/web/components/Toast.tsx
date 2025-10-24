@@ -75,145 +75,25 @@ export function useRunningJobsToast() {
   const [label, setLabel] = React.useState<string>('Working…');
   const [jobId, setJobId] = React.useState<string | null>(null);
   const [messages, setMessages] = React.useState<string[]>([]);
-  const timerRef = React.useRef<ReturnType<typeof setInterval> | null>(null);
-  const baseMsRef = React.useRef<number | null>(null);
 
   React.useEffect(() => {
     let mounted = true;
     function onKickoff(e: any) {
       try {
         const d = (e?.detail || {}) as { jobId?: string; label?: string };
-        if (!d) return;
         setOpen(true);
         setDone(false);
-        setPct(10);
+        setPct(20);
         setLabel(d.label || 'Job started');
         setJobId(d.jobId || null);
         setElapsedSec(0);
         setMessages([]);
-        setTimeout(() => { if (mounted) setOpen(false); }, 5000);
+        setTimeout(() => { if (mounted) setOpen(false); }, 2500);
       } catch {}
     }
     if (typeof window !== 'undefined') window.addEventListener('job-started', onKickoff as any);
-    async function poll() {
-      try {
-        const { createClientComponentClient } = await import('@supabase/auth-helpers-nextjs');
-        const supabase = createClientComponentClient();
-        const { data: jobs } = await supabase
-          .from('jobs')
-          .select('id,status,created_at,started_at,type')
-          .in('status', ['queued','running'])
-          .order('created_at', { ascending: false })
-          .limit(1);
-        const running = (jobs ?? []).length > 0;
-        if (!mounted) return;
-        if (running) {
-          if (!open) {
-            setOpen(true);
-            setDone(false);
-            setPct(15);
-            const j = (jobs as any[])[0];
-            const startMs = new Date(j.started_at || j.created_at).getTime();
-            baseMsRef.current = startMs;
-            setElapsedSec(Math.max(0, Math.floor((Date.now() - startMs) / 1000)));
-            const t = (j.type || '').toString();
-            const map = (x: string) => x
-              .replace(/_/g, ' ')
-              .replace(/^scrape statistics$/i, 'Scrape statistics')
-              .replace(/^scrape styles$/i, 'Scrape styles')
-              .replace(/^update style stock$/i, 'Scrape stock')
-              .replace(/^export overview$/i, 'Export overview')
-              .replace(/^deep scrape styles$/i, 'Deep scrape styles')
-              .replace(/^scrape customers$/i, 'Scrape customers')
-              .replace(/\b\w/g, (m) => m.toUpperCase());
-            setLabel(map(t) || 'Working…');
-            setJobId(j.id as string);
-            if (timerRef.current) clearInterval(timerRef.current);
-            timerRef.current = setInterval(() => {
-              if (baseMsRef.current) {
-                setElapsedSec(Math.max(0, Math.floor((Date.now() - baseMsRef.current) / 1000)));
-              } else {
-                setElapsedSec((v) => v + 1);
-              }
-            }, 1000);
-          } else {
-            // advance progress slowly up to 90%
-            setPct((v) => (v < 90 ? Math.min(90, v + 2) : v));
-            const j = (jobs as any[])[0];
-            if (baseMsRef.current) {
-              // keep elapsed in sync in case of tab throttling
-              setElapsedSec(Math.max(0, Math.floor((Date.now() - baseMsRef.current) / 1000)));
-            }
-            if (j?.type) {
-              const t = (j.type || '').toString();
-              const map = (x: string) => x
-                .replace(/_/g, ' ')
-                .replace(/^scrape statistics$/i, 'Scrape statistics')
-                .replace(/^scrape styles$/i, 'Scrape styles')
-                .replace(/^update style stock$/i, 'Scrape stock')
-                .replace(/^export overview$/i, 'Export overview')
-                .replace(/^deep scrape styles$/i, 'Deep scrape styles')
-                .replace(/^scrape customers$/i, 'Scrape customers')
-                .replace(/\b\w/g, (m) => m.toUpperCase());
-              setLabel(map(t) || 'Working…');
-              setJobId(j.id as string);
-            }
-          }
-        } else if (open) {
-          setPct(100);
-          setDone(true);
-          if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
-          setTimeout(() => setOpen(false), 1500);
-        }
-      } catch {}
-    }
-    const iv = setInterval(poll, 2000);
-    poll();
-    return () => { mounted = false; clearInterval(iv); if (timerRef.current) clearInterval(timerRef.current); if (typeof window !== 'undefined') window.removeEventListener('job-started', onKickoff as any); };
-  }, [open]);
-
-  // Fetch recent job logs for the active job to show human messages
-  React.useEffect(() => {
-    if (!jobId) return;
-    let mounted = true;
-    async function fetchLogs() {
-      try {
-        const { createClientComponentClient } = await import('@supabase/auth-helpers-nextjs');
-        const supabase = createClientComponentClient();
-        const { data: logs } = await supabase
-          .from('job_logs')
-          .select('msg, ts')
-          .eq('job_id', jobId)
-          .order('ts', { ascending: false })
-          .limit(10);
-        if (!mounted) return;
-        const mapMsg = (m: string) => {
-          const dict: Record<string, string> = {
-            'STEP:begin_deep': 'Starting deep scrape…',
-            'STEP:topseller_ready': 'Topseller page ready',
-            'STEP:salespersons_total': 'Reading salespersons…',
-            'STEP:salesperson_start': 'Scraping salesperson…',
-            'STEP:salesperson_done': 'Salesperson done',
-            'STEP:invoiced_begin': 'Loading invoiced lines…',
-            'STEP:invoiced_ready': 'Invoiced lines ready',
-            'STEP:styles_begin': 'Scraping styles…',
-            'STEP:styles_rows': 'Parsed styles index',
-            'STEP:style_stock_begin': 'Updating style stock…',
-            'STEP:style_stock_rows': 'Parsed style stock rows',
-            'STEP:deep_styles_begin': 'Deep scraping materials…',
-            'STEP:deep_styles_no_color_box': 'No materials found for a style',
-            'STEP:complete': 'Completed'
-          };
-          return dict[m] || m;
-        };
-        const msgs = (logs ?? []).map((l: any) => mapMsg((l.msg || '').toString()));
-        setMessages(msgs);
-      } catch {}
-    }
-    const iv = setInterval(fetchLogs, 2000);
-    fetchLogs();
-    return () => { mounted = false; clearInterval(iv); };
-  }, [jobId]);
+    return () => { mounted = false; if (typeof window !== 'undefined') window.removeEventListener('job-started', onKickoff as any); };
+  }, []);
 
   return { open, pct, elapsedSec, done, label, messages, jobId, close: () => setOpen(false) } as const;
 }

@@ -129,7 +129,7 @@ export default function CustomersSettingsPage() {
                         body: JSON.stringify({ type: 'scrape_customers', payload: { requestedBy: session.user.email } })
                       });
                       if (!res.ok) throw new Error(await res.text());
-                      alert('Scrape enqueued');
+                      try { if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('job-started', { detail: { label: 'Scrape customers — job started' } })); } catch {}
                     } catch (e: any) {
                       alert(e?.message || 'Failed to enqueue');
                     }

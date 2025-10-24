@@ -29,6 +29,7 @@ export default function StylesPage() {
       const js = await res.json().catch(() => ({}));
       // eslint-disable-next-line no-console
       console.log('[styles] enqueue', res.status, js);
+      try { if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('job-started', { detail: { label: 'Update styles — job started' } })); } catch {}
       setMenuOpen(false);
     } catch (e) {
       // eslint-disable-next-line no-console

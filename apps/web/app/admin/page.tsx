@@ -52,7 +52,9 @@ export default function AdminPage() {
     <div>
       <div className="flex items-center justify-between">
         <h1>Admin Dashboard</h1>
-        <div className="relative">
+        <div className="relative flex items-center gap-2">
+          <Link className="rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50" href="/admin/users">Users</Link>
+          <Link className="rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50" href="/admin/roles">Roles</Link>
           <details className="cursor-pointer">
             <summary className="list-none inline-flex items-center gap-2 px-3 py-1.5 rounded-md border text-sm">☰ Menu</summary>
             <div className="absolute right-0 mt-2 w-56 bg-white border rounded-md shadow">

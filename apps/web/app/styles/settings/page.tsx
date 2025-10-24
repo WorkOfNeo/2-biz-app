@@ -213,6 +213,7 @@ export default function StylesSettingsPage() {
                 const js = await res.json().catch(() => ({}));
                 // eslint-disable-next-line no-console
                 console.log('[styles-settings] enqueue update_style_stock', res.status, js);
+                try { if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('job-started', { detail: { label: 'Update style stock — job started' } })); } catch {}
               } catch (e) {
                 // eslint-disable-next-line no-console
                 console.error('[styles-settings] enqueue error', e);
@@ -245,6 +246,7 @@ export default function StylesSettingsPage() {
                 const js = await res.json().catch(() => ({}));
                 // eslint-disable-next-line no-console
                 console.log('[styles-settings] enqueue deep_scrape_styles', res.status, js);
+                try { if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('job-started', { detail: { label: 'Deep scrape styles — job started' } })); } catch {}
               } catch (e) {
                 // eslint-disable-next-line no-console
                 console.error('[styles-settings] enqueue error', e);
