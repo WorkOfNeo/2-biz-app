@@ -38,6 +38,14 @@ export default function RolesAdminPage() {
     const { data } = await supabase.from('app_settings').select('id, value').eq('key', 'role_page_access').maybeSingle();
     return { id: data?.id ?? null, value: ((data?.value as any) || {}) as Record<string, string[]> };
   });
+  // User profiles (uid -> name) stored in app_settings.user_profiles
+  const { data: profiles, mutate: mutateProfiles } = useSWR('user_profiles', async () => {
+    const { data } = await supabase.from('app_settings').select('id, value').eq('key', 'user_profiles').maybeSingle();
+    const id = data?.id ?? null;
+    const value = ((data?.value as any) || {}) as Record<string, string>;
+    const list = Object.entries(value).map(([user_id, name]) => ({ user_id, name }));
+    return { id, value, list } as { id: string | null; value: Record<string, string>; list: Array<{ user_id: string; name: string }> };
+  });
   return (
     <div className="space-y-4">
       <div>
@@ -78,17 +86,32 @@ export default function RolesAdminPage() {
       </div>
       <div className="rounded-md border bg-white p-3">
         <div className="text-sm font-medium mb-2">Add role assignment</div>
-        <RoleForm onSaved={() => { mutateUsers(); }} />
+        <RoleForm
+          users={(profiles?.list && profiles.list.length > 0) ? profiles.list : (userRows ?? []).map((u: any) => ({ user_id: u.user_id, name: u.name }))}
+          onSaved={async () => { await mutateUsers(); await mutateProfiles(); }}
+          onAddUser={async (uid, name) => {
+            const currentId = profiles?.id || null;
+            const current = profiles?.value || {};
+            const next = { ...current, [uid]: name || 'John Doe' } as Record<string, string>;
+            if (currentId) await supabase.from('app_settings').update({ value: next }).eq('id', currentId as any);
+            else await supabase.from('app_settings').insert({ key: 'user_profiles', value: next } as any);
+            await mutateProfiles();
+          }}
+        />
       </div>
     </div>
   );
 }
 
-function RoleForm({ onSaved }: { onSaved: () => void }) {
+function RoleForm({ users, onSaved, onAddUser }: { users: Array<{ user_id: string; name: string }>; onSaved: () => void; onAddUser: (uid: string, name: string) => Promise<void> }) {
   const supabase = createClientComponentClient();
-  const [userId, setUserId] = (require('react') as typeof import('react')).useState('');
-  const [role, setRole] = (require('react') as typeof import('react')).useState('viewer');
-  const [saving, setSaving] = (require('react') as typeof import('react')).useState(false);
+  const React = require('react') as typeof import('react');
+  const [mode, setMode] = React.useState<'existing' | 'new'>('existing');
+  const [userId, setUserId] = React.useState(users[0]?.user_id || '');
+  const [newUid, setNewUid] = React.useState('');
+  const [newName, setNewName] = React.useState('');
+  const [role, setRole] = React.useState('viewer');
+  const [saving, setSaving] = React.useState(false);
   return (
     <form
       className="flex items-end gap-2"
@@ -96,27 +119,45 @@ function RoleForm({ onSaved }: { onSaved: () => void }) {
         e.preventDefault();
         try {
           setSaving(true);
-          if (!userId.trim()) return;
-          const { error } = await supabase.from('user_roles').insert({ user_id: userId.trim(), role });
+          let targetUid = userId.trim();
+          if (mode === 'new') {
+            if (!newUid.trim()) return;
+            await onAddUser(newUid.trim(), newName.trim() || 'John Doe');
+            targetUid = newUid.trim();
+          }
+          if (!targetUid) return;
+          const { error } = await supabase.from('user_roles').insert({ user_id: targetUid, role });
           if (error) throw error;
-          setUserId('');
+          setNewUid(''); setNewName('');
           onSaved();
         } catch (e) {
           // no-op
         } finally { setSaving(false); }
       }}
     >
-      <label className="text-sm">
-        <div className="font-medium">User ID (auth.uid)</div>
-        <input className="mt-1 border rounded px-2 py-1 text-sm w-80" value={userId} onChange={(e)=>setUserId(e.target.value)} placeholder="Paste auth UID (uuid)" />
-      </label>
+      <div className="text-sm">
+        <div className="font-medium mb-1">User</div>
+        <div className="flex items-center gap-2">
+          <select className="border rounded px-2 py-1 text-sm w-64" value={mode === 'existing' ? userId : ''} onChange={(e)=>{ setMode('existing'); setUserId(e.target.value); }}>
+            {users.map((u)=> (<option key={u.user_id} value={u.user_id}>{u.name}</option>))}
+          </select>
+          <span className="text-xs text-gray-500">or</span>
+          <button type="button" className="rounded border px-2 py-1 text-sm" onClick={()=> setMode('new')}>Add new</button>
+        </div>
+        {mode === 'new' && (
+          <div className="mt-2 flex items-center gap-2">
+            <input className="border rounded px-2 py-1 text-sm w-56" placeholder="New user name" value={newName} onChange={(e)=>setNewName(e.target.value)} />
+            <input className="border rounded px-2 py-1 text-sm w-64" placeholder="Auth UID (uuid)" value={newUid} onChange={(e)=>setNewUid(e.target.value)} />
+          </div>
+        )}
+      </div>
       <label className="text-sm">
         <div className="font-medium">Role</div>
         <select className="mt-1 border rounded px-2 py-1 text-sm" value={role} onChange={(e)=>setRole(e.target.value)}>
           {['admin','manager','sales','viewer'].map((r)=> (<option key={r} value={r}>{r}</option>))}
         </select>
       </label>
-      <button disabled={saving || !userId.trim()} className="rounded border px-3 py-1.5 text-sm bg-slate-900 text-white">Add</button>
+      <button disabled={saving || (mode==='new' ? !newUid.trim() : !userId.trim())} className="rounded border px-3 py-1.5 text-sm bg-slate-900 text-white">Add</button>
     </form>
   );
 }
@@ -147,19 +188,26 @@ function RolePageMatrix({ pages, value, onSave }: { pages: string[]; value: Reco
   const roles: string[] = ['admin','manager','sales','viewer'];
   const [map, setMap] = React.useState<Record<string, Set<string>>>(() => {
     const out: Record<string, Set<string>> = {};
-    for (const r of roles) out[r] = new Set<string>((value?.[r] as string[] | undefined) ?? []);
+    for (const r of roles) {
+      const list = (value?.[r] as string[] | undefined) ?? [];
+      out[r] = list.length > 0 ? new Set<string>(list) : new Set<string>(pages);
+    }
     return out;
   });
   React.useEffect(() => {
     const out: Record<string, Set<string>> = {};
-    for (const r of roles) out[r] = new Set<string>((value?.[r] as string[] | undefined) ?? []);
+    for (const r of roles) {
+      const list = (value?.[r] as string[] | undefined) ?? [];
+      out[r] = list.length > 0 ? new Set<string>(list) : new Set<string>(pages);
+    }
     setMap(out);
-  }, [JSON.stringify(value)]);
+  }, [JSON.stringify(value), JSON.stringify(pages)]);
   async function handleSave() {
     const out: Record<string, string[]> = {};
     for (const r of roles) {
       const set = map[r] ?? new Set<string>();
-      out[r] = Array.from(set);
+      // Empty array means allow-all (default); compress full coverage to []
+      out[r] = set.size === pages.length ? [] : Array.from(set);
     }
     await onSave(out);
   }
