@@ -1,7 +1,21 @@
 'use client';
 import useSWR from 'swr';
 import { supabase } from '../../../../lib/supabaseClient';
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
+
+function Donut({ pct, label }: { pct: number; label: string }) {
+  const p = Math.max(0, Math.min(100, Math.round(pct)));
+  const size = 160; // print-friendly size
+  const progressColor = '#0f172a';
+  const restColor = '#e5e7eb';
+  const bg = `conic-gradient(${progressColor} ${p}%, ${restColor} 0)`;
+  return (
+    <div className="flex flex-col items-center gap-1 text-center">
+      <div className="rounded-full" style={{ width: size, height: size, background: bg }} />
+      <div className="text-xs text-slate-700">{label}: {p}%</div>
+    </div>
+  );
+}
 
 export default function CountriesPrintPage() {
   const { data: seasons } = useSWR('seasons', async () => {
@@ -53,28 +67,55 @@ export default function CountriesPrintPage() {
     return out;
   }, [stats, s1, s2, rates, countries]);
 
+  // Auto-trigger print when data is ready
+  useEffect(() => {
+    if (!stats) return;
+    const id = setTimeout(() => {
+      try { window.print(); } catch {}
+    }, 300);
+    return () => clearTimeout(id);
+  }, [stats]);
+
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-6 space-y-6 print:p-4">
+      <div className="text-center mb-2">
+        <div className="text-[20px] font-semibold">Countries</div>
+        <div className="text-sm text-gray-600">{getSeasonLabel(s1) || 'Season 1'} vs {getSeasonLabel(s2) || 'Season 2'}</div>
+      </div>
       {countries.map((c) => {
         const row = byCountry[c] || { s1Qty: 0, s2Qty: 0, s1Price: 0, s2Price: 0 };
+        const qtyPct = row.s2Qty === 0 ? 0 : (row.s1Qty / row.s2Qty) * 100;
+        const pricePct = row.s2Price === 0 ? 0 : (row.s1Price / row.s2Price) * 100;
         return (
-          <div key={c} className="rounded-lg border bg-white">
-            <div className="border-b text-center bg-[#0f172a] text-white rounded-t-lg text-[2rem] leading-tight py-2">{c}</div>
+          <div key={c} className="rounded-lg border bg-white break-inside-avoid print:break-inside-avoid">
+            <div className="border-b text-center bg-[#0f172a] text-white rounded-t-lg text-[1.5rem] leading-tight py-2">{c}</div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-6 text-center">
               <div className="space-y-3">
                 <div className="font-medium">Antal stk</div>
                 <div className="text-sm text-gray-600">{getSeasonLabel(s1) || 'Season 1'} vs {getSeasonLabel(s2) || 'Season 2'}</div>
                 <div className="text-lg font-semibold">{row.s1Qty.toLocaleString('da-DK')} vs {row.s2Qty.toLocaleString('da-DK')}</div>
+                <Donut pct={qtyPct} label="Stk" />
               </div>
               <div className="space-y-3">
                 <div className="font-medium">Omsætning (DKK)</div>
                 <div className="text-sm text-gray-600">{getSeasonLabel(s1) || 'Season 1'} vs {getSeasonLabel(s2) || 'Season 2'}</div>
                 <div className="text-lg font-semibold">{Math.round(row.s1Price).toLocaleString('da-DK')} vs {Math.round(row.s2Price).toLocaleString('da-DK')}</div>
+                <Donut pct={pricePct} label="Omsætning" />
               </div>
             </div>
           </div>
         );
       })}
+      <style>{`
+        @media print {
+          html, body { background: #ffffff !important; }
+          * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+          a { color: inherit; text-decoration: none; }
+          .break-inside-avoid { break-inside: avoid; page-break-inside: avoid; }
+          .print\\:p-4 { padding: 1rem; }
+          .print\\:break-inside-avoid { break-inside: avoid; page-break-inside: avoid; }
+        }
+      `}</style>
     </div>
   );
 }

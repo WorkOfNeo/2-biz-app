@@ -79,26 +79,12 @@ export default function CountriesPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-lg font-semibold tracking-tight text-slate-700">Countries</h1>
-        <button
+        <a
           className="rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50"
-          onClick={async () => {
-            try {
-              const { data: { session } } = await supabase.auth.getSession();
-              if (!session) throw new Error('Not signed in');
-              const token = session.access_token;
-              const res = await fetch('/api/enqueue', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-                body: JSON.stringify({ type: 'export_overview', payload: { mode: 'countries_pdf', requestedBy: session.user.email } })
-              });
-              if (!res.ok) throw new Error(await res.text());
-              const js = await res.json();
-              alert(`Countries PDF export enqueued. Job: ${js.jobId}`);
-            } catch (e) {
-              alert((e as any)?.message || 'Failed to enqueue PDF export');
-            }
-          }}
-        >Export PDF</button>
+          href="/statistics/countries/print"
+          target="_blank"
+          rel="noreferrer"
+        >Export PDF</a>
       </div>
       <div ref={containerRef} className="space-y-6">
       {(countries).map((c) => {

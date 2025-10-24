@@ -2,20 +2,30 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { createMiddlewareClient } from '@supabase/auth-helpers-nextjs';
 
-const SUPERADMIN_EMAIL = process.env.NEXT_PUBLIC_SUPERADMIN_EMAIL!;
-
 export async function middleware(req: NextRequest) {
   const res = NextResponse.next();
-  if (!req.nextUrl.pathname.startsWith('/admin')) return res;
+
+  // Allow unauthenticated access to the signin page and public assets
+  const { pathname } = req.nextUrl;
+  if (
+    pathname === '/signin' ||
+    pathname.startsWith('/_next') ||
+    pathname.startsWith('/public') ||
+    pathname === '/favicon.ico' ||
+    pathname.match(/\.(?:png|jpg|jpeg|svg|gif|webp|ico|txt|xml)$/i) ||
+    pathname.startsWith('/api')
+  ) {
+    return res;
+  }
 
   const supabase = createMiddlewareClient({ req, res });
   const {
     data: { session }
   } = await supabase.auth.getSession();
 
-  const email = session?.user?.email;
-  if (!session || !email || email !== SUPERADMIN_EMAIL) {
+  if (!session) {
     const signinUrl = new URL('/signin', req.url);
+    signinUrl.searchParams.set('redirect', req.nextUrl.pathname + (req.nextUrl.search || ''));
     return NextResponse.redirect(signinUrl);
   }
 
@@ -23,6 +33,9 @@ export async function middleware(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/admin/:path*']
+  // Protect everything except Next internals, API routes, assets, and the signin page
+  matcher: [
+    '/((?!_next|api|signin|favicon.ico|.*\\.(?:png|jpg|jpeg|svg|gif|webp|ico|txt|xml)$).*)'
+  ]
 };
 

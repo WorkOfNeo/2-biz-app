@@ -1,6 +1,7 @@
 import './globals.css';
 export const metadata = { title: 'Admin' };
 import { SidebarNav } from '../components/SidebarNav';
+import { ToastStack } from '../components/Toast';
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -15,6 +16,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           </aside>
           <main className="flex-1 p-6">{children}</main>
         </div>
+        <ToastStack />
       </body>
     </html>
   );
