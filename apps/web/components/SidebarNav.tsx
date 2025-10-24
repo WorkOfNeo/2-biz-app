@@ -54,6 +54,16 @@ export function SidebarNav() {
           {has('admin') && <NavLink href="/settings/runs" label="RUNS" />}
         </div>
       </div>
+      {has('admin') && (
+        <div>
+          <div className="mt-4 mb-1 text-xs uppercase tracking-wider text-slate-400">Admin</div>
+          <div className="ml-2 space-y-1">
+            <NavLink href="/admin" label="Dashboard" />
+            <NavLink href="/admin/users" label="Users" />
+            <NavLink href="/admin/roles" label="Roles" />
+          </div>
+        </div>
+      )}
     </nav>
   );
 }
