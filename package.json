@@ -1,7 +1,7 @@
 {
   "name": "statistics-scraper",
   "private": true,
-  "packageManager": "pnpm@9.0.0",
+  "packageManager": "pnpm@10.0.0",
   "devDependencies": {
     "@types/node": "^20.11.30",
     "tsx": "^4.16.3",
