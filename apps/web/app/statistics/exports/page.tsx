@@ -59,7 +59,7 @@ export default function StatisticsExportsPage() {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) throw new Error('Not signed in');
     const token = session.access_token;
-    const body = { type: 'export_overview', payload: { mode: 'general_react_pdf', requestedBy: session.user.email, s1: saved?.s1, s2: saved?.s2 } };
+    const body = { type: 'export_overview', payload: { mode: 'general_salesmen_react_pdf', requestedBy: session.user.email, s1: saved?.s1, s2: saved?.s2 } };
     const res = await fetch('/api/enqueue', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(body) });
     if (!res.ok) throw new Error(await res.text());
     const js = await res.json();
@@ -74,7 +74,7 @@ export default function StatisticsExportsPage() {
           <h1 className="text-xl font-semibold">Exports</h1>
         </div>
         <div className="flex items-center gap-2">
-          <button className="rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50" onClick={enqueueGeneralReactPdf}>Export General (React PDF)</button>
+          <button className="rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50" onClick={enqueueGeneralReactPdf}>Export General (React PDF · per salesperson)</button>
         </div>
       </div>
       {running && (
