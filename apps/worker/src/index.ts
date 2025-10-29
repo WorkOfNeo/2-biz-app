@@ -2,6 +2,7 @@ import { createClient } from '@supabase/supabase-js';
 import { chromium } from 'playwright-core';
 import type { Browser, BrowserContext, Page } from 'playwright-core';
 import type { JobRow, JobResult } from '@shared/types';
+import React from 'react';
 import { pdf, Document, Page as PdfPage, Text, StyleSheet } from '@react-pdf/renderer';
 import JSZip from 'jszip';
 
@@ -837,17 +838,19 @@ async function runJob(job: JobRow) {
           h1: { fontSize: 18, marginBottom: 8 },
           p: { fontSize: 12, marginBottom: 4 }
         });
-        const doc = (
-          <Document>
-            <PdfPage size="A4" style={styles.page}>
-              <Text style={styles.h1}>General Export</Text>
-              <Text style={styles.p}>Season 1 Qty: {String(s1Qty)}</Text>
-              <Text style={styles.p}>Season 1 Price: {String(Math.round(s1Price))}</Text>
-              <Text style={styles.p}>Season 2 Qty: {String(s2Qty)}</Text>
-              <Text style={styles.p}>Season 2 Price: {String(Math.round(s2Price))}</Text>
-              <Text style={styles.p}>Generated: {new Date().toLocaleString()}</Text>
-            </PdfPage>
-          </Document>
+        const doc = React.createElement(
+          Document,
+          null,
+          React.createElement(
+            PdfPage,
+            { size: 'A4', style: styles.page },
+            React.createElement(Text, { style: styles.h1 }, 'General Export'),
+            React.createElement(Text, { style: styles.p }, `Season 1 Qty: ${String(s1Qty)}`),
+            React.createElement(Text, { style: styles.p }, `Season 1 Price: ${String(Math.round(s1Price))}`),
+            React.createElement(Text, { style: styles.p }, `Season 2 Qty: ${String(s2Qty)}`),
+            React.createElement(Text, { style: styles.p }, `Season 2 Price: ${String(Math.round(s2Price))}`),
+            React.createElement(Text, { style: styles.p }, `Generated: ${new Date().toLocaleString()}`)
+          )
         );
         const pdfBuf = await pdf(doc).toBuffer();
         // Zip it
