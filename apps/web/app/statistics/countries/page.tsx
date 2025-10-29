@@ -6,19 +6,20 @@ import { useMemo, useRef } from 'react';
 type Row = { season_id: string; qty: number; price: number; customer_id?: string | null; account_no?: string | null };
 
 function Donut({ pct, label }: { pct: number; label: string }) {
-  const p = Math.max(0, Math.min(100, Math.round(pct)));
+  const visualPct = Math.max(0, Math.min(100, Math.round(pct))); // fill caps at 100
+  const displayPct = Math.round(pct); // number can exceed 100
   const size = 336; // 600% larger than 56px
   const progressColor = '#93c5fd'; // light blue
   const restColor = '#e5e7eb'; // light gray
-  const bg = `conic-gradient(${progressColor} ${p}%, ${restColor} 0)`;
-  const hue = Math.round((p / 100) * 120); // 0 (red) -> 120 (green)
+  const bg = `conic-gradient(${progressColor} ${visualPct}%, ${restColor} 0)`;
+  const hue = Math.round((visualPct / 100) * 120); // 0 (red) -> 120 (green)
   const reachColor = `hsl(${hue}, 70%, 40%)`;
   return (
     <div className="flex flex-col items-center gap-2 text-center">
       <div className="rounded-full" style={{ width: size, height: size, background: bg }} />
       <div className="text-sm">
         <div className="font-medium">{label}</div>
-        <div style={{ color: reachColor }}>{p}% nået</div>
+        <div style={{ color: reachColor }}>{displayPct}% nået</div>
       </div>
     </div>
   );

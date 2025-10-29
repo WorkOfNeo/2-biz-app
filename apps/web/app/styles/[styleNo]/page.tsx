@@ -46,13 +46,18 @@ export default function StyleDetailPage({ params }: { params: { styleNo: string 
           {meta?.supplier && <div className="text-xs text-gray-500">Supplier: {meta.supplier}</div>}
           {meta?.link_href && (() => {
             const base = (process?.env?.NEXT_PUBLIC_SPY_BASE_URL || '').replace(/\/$/, '');
-            let abs = meta.link_href as string;
-            try { abs = base ? new URL(meta.link_href, base).toString() : meta.link_href; } catch {}
-            const statUrl = (abs || '').replace(/#.*$/, '') + '#tab=statandstock';
+            let abs = '' as string;
+            try {
+              // Only build absolute SPY URL; do not fall back to current site origin
+              const candidate = base ? new URL(meta.link_href as string, base).toString() : meta.link_href as string;
+              if (/^https?:\/\//i.test(candidate)) abs = candidate;
+            } catch {}
+            if (!abs) return null; // hide links if we cannot ensure SPY absolute URL
+            const statUrl = abs.replace(/#.*$/, '') + '#tab=statandstock';
             return (
               <div className="flex items-center gap-3 mt-1">
-                <a className="text-xs underline text-slate-700" href={abs} target="_blank" rel="noreferrer">Open in 2-Biz</a>
-                <a className="text-xs underline text-slate-700" href={statUrl} target="_blank" rel="noreferrer">Stat & Stock</a>
+                <a className="text-xs underline text-slate-700" href={abs} target="_blank" rel="noopener noreferrer">Open in 2-Biz</a>
+                <a className="text-xs underline text-slate-700" href={statUrl} target="_blank" rel="noopener noreferrer">Stat & Stock</a>
               </div>
             );
           })()}
