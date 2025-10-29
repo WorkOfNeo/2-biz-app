@@ -891,18 +891,20 @@ async function runJob(job: JobRow) {
           const accountNos = items.map((c) => c.customer_id).filter(Boolean);
           let rows: Array<{ account: string; company: string; city: string; nulled: boolean; s1Qty: number; s1Price: number; s2Qty: number; s2Price: number }>= [];
           if (accountNos.length) {
-            const { data: statRows } = await supabase
+            const statResp = await supabase
               .from('sales_stats')
               .select('account_no, qty, price, season_id')
               .in('season_id', [s1, s2])
               .in('account_no', accountNos)
               .limit(200000);
+            const statRows: Array<{ account_no: string | null; qty: number | null; price: number | null; season_id: string }>
+              = ((statResp as any)?.data ?? []) as any[];
             const map = new Map<string, { s1Qty: number; s1Price: number; s2Qty: number; s2Price: number }>();
-            for (const row of (statRows ?? []) as any[]) {
-              const key = String(row.account_no || ''); if (!key) continue;
+            for (const rowItem of statRows) {
+              const key = String(rowItem.account_no || ''); if (!key) continue;
               const agg = map.get(key) || { s1Qty: 0, s1Price: 0, s2Qty: 0, s2Price: 0 };
-              if (row.season_id === s1) { agg.s1Qty += Number(row.qty||0); agg.s1Price += Number(row.price||0); }
-              else if (row.season_id === s2) { agg.s2Qty += Number(row.qty||0); agg.s2Price += Number(row.price||0); }
+              if (rowItem.season_id === s1) { agg.s1Qty += Number(rowItem.qty||0); agg.s1Price += Number(rowItem.price||0); }
+              else if (rowItem.season_id === s2) { agg.s2Qty += Number(rowItem.qty||0); agg.s2Price += Number(rowItem.price||0); }
               map.set(key, agg);
             }
             for (const c of items) {
