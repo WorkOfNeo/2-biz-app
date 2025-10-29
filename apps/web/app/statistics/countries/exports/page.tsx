@@ -40,7 +40,7 @@ export default function CountriesExportsPage() {
                 <td className="p-2 border-b">{r.kind}</td>
                 <td className="p-2 border-b">{r.title ?? '—'}</td>
                 <td className="p-2 border-b font-mono text-[12px]">{r.path}</td>
-                <td className="p-2 border-b">{r.public_url ? <a href={r.public_url} target="_blank" rel="noreferrer" className="text-blue-700 underline">Open</a> : '—'}</td>
+                <td className="p-2 border-b">{r.public_url ? <a href={r.public_url} target="_blank" rel="noreferrer" download className="text-blue-700 underline">Download</a> : '—'}</td>
               </tr>
             ))}
           </tbody>
