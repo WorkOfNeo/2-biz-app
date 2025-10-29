@@ -875,9 +875,15 @@ async function runJob(job: JobRow) {
         };
         const { s1, s2 } = await getSeasonCompare();
         if (!s1 || !s2) throw new Error('Missing season compare (s1/s2)');
-        // Fetch salespersons
-        const { data: people } = await supabase.from('salespersons').select('id, name').order('sort_index', { ascending: true });
-        const list = (people ?? []) as Array<{ id: string; name: string }>;
+        // Fetch salespersons (with currency)
+        const { data: people } = await supabase.from('salespersons').select('id, name, currency').order('sort_index', { ascending: true });
+        const list = (people ?? []) as Array<{ id: string; name: string; currency?: string | null }>;
+        // Currency rates and season names
+        let rates: Record<string, number> = { DKK: 1 };
+        try { const { data: rateRow } = await supabase.from('app_settings').select('value').eq('key', 'currency_rates').maybeSingle(); rates = { DKK: 1, ...((rateRow?.value as any) ?? {}) } as Record<string, number>; } catch {}
+        const seasonNames = async (id: string | null): Promise<string | null> => { if (!id) return null; try { const { data } = await supabase.from('seasons').select('name').eq('id', id).maybeSingle(); return data?.name ?? null; } catch { return null; } };
+        const s1Name = await seasonNames(s1);
+        const s2Name = await seasonNames(s2);
         const total = list.length;
         const zip = new JSZip();
         let idx = 0;
@@ -886,8 +892,17 @@ async function runJob(job: JobRow) {
           // Log progress
           await log(job.id, 'info', 'STEP:export_general_progress', { index: idx, total, name: sp.name });
           // Fetch customers for salesperson
-          const { data: customers } = await supabase.from('customers').select('customer_id, company, city, nulled').eq('salesperson_id', sp.id);
-          const items = (customers ?? []) as Array<{ customer_id: string; company: string | null; city: string | null; nulled?: boolean | null }>;
+          const { data: customers } = await supabase.from('customers').select('customer_id, company, city, nulled, excluded, permanently_closed').eq('salesperson_id', sp.id);
+          const items = (customers ?? []) as Array<{ customer_id: string; company: string | null; city: string | null; nulled?: boolean | null; excluded?: boolean | null; permanently_closed?: boolean | null }>;
+          // Seasonal overrides (hidden/nulled)
+          let hiddenSet = new Set<string>(); let nulledSet = new Set<string>();
+          try {
+            const key = `season_overrides:${s1}`;
+            const { data: ov } = await supabase.from('app_settings').select('value').eq('key', key).maybeSingle();
+            const val = (ov?.value as any) || {};
+            (Array.isArray(val.hidden) ? val.hidden : []).forEach((a: string) => hiddenSet.add(a));
+            (Array.isArray(val.nulled) ? val.nulled : []).forEach((a: string) => nulledSet.add(a));
+          } catch {}
           const accountNos = items.map((c) => c.customer_id).filter(Boolean);
           let rows: Array<{ account: string; company: string; city: string; nulled: boolean; s1Qty: number; s1Price: number; s2Qty: number; s2Price: number }>= [];
           if (accountNos.length) {
@@ -908,8 +923,11 @@ async function runJob(job: JobRow) {
               map.set(key, agg);
             }
             for (const c of items) {
-              const agg = map.get(c.customer_id) || { s1Qty: 0, s1Price: 0, s2Qty: 0, s2Price: 0 };
-              rows.push({ account: c.customer_id, company: c.company || '-', city: c.city || '-', nulled: Boolean(c.nulled), ...agg });
+              const agg = map.get(c.customer_id);
+              const isHidden = hiddenSet.has(c.customer_id) || Boolean(c.excluded);
+              if (!agg || isHidden) continue;
+              const isNulled = nulledSet.has(c.customer_id) || Boolean(c.nulled) || Boolean(c.permanently_closed);
+              rows.push({ account: c.customer_id, company: c.company || '-', city: c.city || '-', nulled: isNulled, ...agg });
             }
             // Sort by company name for readability
             rows.sort((a,b)=> a.company.localeCompare(b.company));
@@ -918,7 +936,7 @@ async function runJob(job: JobRow) {
           const styles = StyleSheet.create({
             page: { padding: 24, fontSize: 10, color: '#0f172a' },
             h1: { fontSize: 18, marginBottom: 4, color: '#0f172a' },
-            small: { fontSize: 9, color: '#64748b', marginBottom: 8 },
+            small: { fontSize: 9, color: '#64748b', marginBottom: 8, fontWeight: 700 },
             tableHeader: { flexDirection: 'row', backgroundColor: '#1d4ed8', color: '#ffffff', borderBottom: 1, borderColor: '#bfdbfe' },
             headerCell: { padding: 6, fontSize: 10, fontWeight: 700 },
             row: { flexDirection: 'row', borderBottom: 1, borderColor: '#e2e8f0' },
@@ -959,12 +977,40 @@ async function runJob(job: JobRow) {
               Cell((devPrice>0?'+':'')+fmt(devPrice), '8%', 'right', devPriceStyle)
             );
           });
+          // Totals (local currency and DKK)
+          const totals = rows.reduce((a, r) => ({ s1Qty: a.s1Qty + r.s1Qty, s2Qty: a.s2Qty + r.s2Qty, s1Price: a.s1Price + r.s1Price, s2Price: a.s2Price + r.s2Price }), { s1Qty: 0, s2Qty: 0, s1Price: 0, s2Price: 0 });
+          const currency = (sp.currency || 'DKK').toUpperCase();
+          const rate = rates[currency] ?? 1;
+          const totalsDkk = { s1: totals.s1Price * rate, s2: totals.s2Price * rate };
+          const totalsLocal = { s1: totals.s1Price, s2: totals.s2Price };
+          const totalsView = React.createElement(View, { style: { marginTop: 8 } },
+            React.createElement(Text, { style: { fontSize: 11, fontWeight: 700, marginBottom: 4 } }, 'TOTALS'),
+            React.createElement(View, { style: styles.tableHeader },
+              Cell('', '45%', 'left', styles.headerCell),
+              Cell(`${s1Name ?? 'S1'} (${currency})`, '22%', 'right', styles.headerCell),
+              Cell(`${s2Name ?? 'S2'} (${currency})`, '22%', 'right', styles.headerCell),
+              Cell('Diff', '11%', 'right', styles.headerCell)
+            ),
+            React.createElement(View, { style: styles.row },
+              Cell('Local', '45%', 'left'),
+              Cell(fmt(totalsLocal.s1), '22%', 'right'),
+              Cell(fmt(totalsLocal.s2), '22%', 'right'),
+              Cell(((totalsLocal.s1 - totalsLocal.s2) > 0 ? '+' : '') + fmt(totalsLocal.s1 - totalsLocal.s2), '11%', 'right')
+            ),
+            React.createElement(View, { style: [styles.row, styles.rowAlt] },
+              Cell('DKK', '45%', 'left'),
+              Cell(fmt(totalsDkk.s1), '22%', 'right'),
+              Cell(fmt(totalsDkk.s2), '22%', 'right'),
+              Cell(((totalsDkk.s1 - totalsDkk.s2) > 0 ? '+' : '') + fmt(totalsDkk.s1 - totalsDkk.s2), '11%', 'right')
+            )
+          );
           const doc = React.createElement(Document, null,
             React.createElement(PdfPage, { size: 'A4', style: styles.page },
-              React.createElement(Text, { style: styles.h1 }, `General · ${sp.name}`),
-              React.createElement(Text, { style: styles.small }, `Seasons: ${s1} vs ${s2}`),
+              React.createElement(Text, { style: styles.h1 }, `${sp.name}`),
+              React.createElement(Text, { style: styles.small }, `${s1Name ?? 'S1'} vs ${s2Name ?? 'S2'}`),
               header,
-              ...body
+              ...body,
+              totalsView
             )
           );
           const buf = await pdf(doc).toBuffer();
