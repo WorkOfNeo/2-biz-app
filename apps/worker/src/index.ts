@@ -2,6 +2,8 @@ import { createClient } from '@supabase/supabase-js';
 import { chromium } from 'playwright-core';
 import type { Browser, BrowserContext, Page } from 'playwright-core';
 import type { JobRow, JobResult } from '@shared/types';
+import { pdf, Document, Page as PdfPage, Text, StyleSheet } from '@react-pdf/renderer';
+import JSZip from 'jszip';
 
 const SUPABASE_URL = process.env.SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -804,6 +806,63 @@ async function runJob(job: JobRow) {
   if (job.type === 'export_overview') {
     try {
       await log(job.id, 'info', 'STEP:export_overview_begin', job.payload || {});
+      // React-PDF export for General (zipped)
+      if ((job.payload as any)?.mode === 'general_react_pdf') {
+        const s1 = (job.payload as any)?.s1 as string | undefined;
+        const s2 = (job.payload as any)?.s2 as string | undefined;
+        // Fallback to season_compare
+        let season1 = s1 || '';
+        let season2 = s2 || '';
+        try {
+          if (!season1 || !season2) {
+            const { data } = await supabase.from('app_settings').select('value').eq('key', 'season_compare').maybeSingle();
+            season1 = season1 || ((data?.value as any)?.s1 as string || '');
+            season2 = season2 || ((data?.value as any)?.s2 as string || '');
+          }
+        } catch {}
+        // Aggregate a simple snapshot similar to General
+        let s1Qty = 0, s1Price = 0, s2Qty = 0, s2Price = 0;
+        try {
+          const { data: rows } = await supabase
+            .from('sales_stats')
+            .select('season_id, qty, price')
+            .in('season_id', [season1, season2]);
+          for (const r of (rows ?? []) as any[]) {
+            if (r.season_id === season1) { s1Qty += Number(r.qty || 0); s1Price += Number(r.price || 0); }
+            else if (r.season_id === season2) { s2Qty += Number(r.qty || 0); s2Price += Number(r.price || 0); }
+          }
+        } catch {}
+        const styles = StyleSheet.create({
+          page: { padding: 24 },
+          h1: { fontSize: 18, marginBottom: 8 },
+          p: { fontSize: 12, marginBottom: 4 }
+        });
+        const doc = (
+          <Document>
+            <PdfPage size="A4" style={styles.page}>
+              <Text style={styles.h1}>General Export</Text>
+              <Text style={styles.p}>Season 1 Qty: {String(s1Qty)}</Text>
+              <Text style={styles.p}>Season 1 Price: {String(Math.round(s1Price))}</Text>
+              <Text style={styles.p}>Season 2 Qty: {String(s2Qty)}</Text>
+              <Text style={styles.p}>Season 2 Price: {String(Math.round(s2Price))}</Text>
+              <Text style={styles.p}>Generated: {new Date().toLocaleString()}</Text>
+            </PdfPage>
+          </Document>
+        );
+        const pdfBuf = await pdf(doc).toBuffer();
+        // Zip it
+        const zip = new JSZip();
+        zip.file('general.pdf', pdfBuf);
+        const zipBuf = await zip.generateAsync({ type: 'nodebuffer' });
+        const path = `general/${job.id}/general.zip`;
+        try { await supabase.storage.from('exports').upload(path, zipBuf as any, { contentType: 'application/zip', upsert: true }); } catch {}
+        let publicUrl: string | null = null;
+        try { const { data: pub } = supabase.storage.from('exports').getPublicUrl(path); publicUrl = pub?.publicUrl ?? null; } catch {}
+        try { await supabase.from('exports').insert({ kind: 'general_pdf_zip', title: 'General', path, public_url: publicUrl, meta: { s1: season1, s2: season2 }, job_id: job.id }); } catch {}
+        await saveResult(job.id, 'export_general_pdf_zip', { file: { path, publicUrl } });
+        await setJobSucceeded(job.id);
+        return;
+      }
       // Export Countries PDF via print route (no sidebar) when requested
       if ((job.payload as any)?.mode === 'countries_pdf') {
         const ctx = await browser!.newContext({ viewport: { width: 1200, height: 1600 } });
