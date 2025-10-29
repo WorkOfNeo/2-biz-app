@@ -3,7 +3,7 @@ import { chromium } from 'playwright-core';
 import type { Browser, BrowserContext, Page } from 'playwright-core';
 import type { JobRow, JobResult } from '@shared/types';
 import React from 'react';
-import { pdf, Document, Page as PdfPage, Text, StyleSheet } from '@react-pdf/renderer';
+import { pdf, Document, Page as PdfPage, Text, StyleSheet, View } from '@react-pdf/renderer';
 import JSZip from 'jszip';
 
 const SUPABASE_URL = process.env.SUPABASE_URL!;
@@ -863,6 +863,119 @@ async function runJob(job: JobRow) {
         try { const { data: pub } = supabase.storage.from('exports').getPublicUrl(path); publicUrl = pub?.publicUrl ?? null; } catch {}
         try { await supabase.from('exports').insert({ kind: 'general_pdf_zip', title: 'General', path, public_url: publicUrl, meta: { s1: season1, s2: season2 }, job_id: job.id }); } catch {}
         await saveResult(job.id, 'export_general_pdf_zip', { file: { path, publicUrl } });
+        await setJobSucceeded(job.id);
+        return;
+      }
+      // React-PDF export for General per-salesperson (zipped, matches page semantics)
+      if ((job.payload as any)?.mode === 'general_salesmen_react_pdf') {
+        const getSeasonCompare = async (): Promise<{ s1: string | null; s2: string | null }> => {
+          const body = { s1: (job.payload as any)?.s1 as string | undefined, s2: (job.payload as any)?.s2 as string | undefined };
+          if (body.s1 && body.s2) return { s1: body.s1, s2: body.s2 };
+          try { const { data } = await supabase.from('app_settings').select('value').eq('key', 'season_compare').maybeSingle(); return { s1: (data?.value as any)?.s1 ?? null, s2: (data?.value as any)?.s2 ?? null }; } catch { return { s1: null, s2: null }; }
+        };
+        const { s1, s2 } = await getSeasonCompare();
+        if (!s1 || !s2) throw new Error('Missing season compare (s1/s2)');
+        // Fetch salespersons
+        const { data: people } = await supabase.from('salespersons').select('id, name').order('sort_index', { ascending: true });
+        const list = (people ?? []) as Array<{ id: string; name: string }>;
+        const total = list.length;
+        const zip = new JSZip();
+        let idx = 0;
+        for (const sp of list) {
+          idx++;
+          // Log progress
+          await log(job.id, 'info', 'STEP:export_general_progress', { index: idx, total, name: sp.name });
+          // Fetch customers for salesperson
+          const { data: customers } = await supabase.from('customers').select('customer_id, company, city, nulled').eq('salesperson_id', sp.id);
+          const items = (customers ?? []) as Array<{ customer_id: string; company: string | null; city: string | null; nulled?: boolean | null }>;
+          const accountNos = items.map((c) => c.customer_id).filter(Boolean);
+          let rows: Array<{ account: string; company: string; city: string; nulled: boolean; s1Qty: number; s1Price: number; s2Qty: number; s2Price: number }>= [];
+          if (accountNos.length) {
+            const { data: stats } = await supabase
+              .from('sales_stats')
+              .select('account_no, qty, price, season_id')
+              .in('season_id', [s1, s2])
+              .in('account_no', accountNos)
+              .limit(200000);
+            const map = new Map<string, { s1Qty: number; s1Price: number; s2Qty: number; s2Price: number }>();
+            for (const r of (stats ?? []) as any[]) {
+              const key = String(r.account_no || ''); if (!key) continue;
+              const agg = map.get(key) || { s1Qty: 0, s1Price: 0, s2Qty: 0, s2Price: 0 };
+              if (r.season_id === s1) { agg.s1Qty += Number(r.qty||0); agg.s1Price += Number(r.price||0); }
+              else if (r.season_id === s2) { agg.s2Qty += Number(r.qty||0); agg.s2Price += Number(r.price||0); }
+              map.set(key, agg);
+            }
+            for (const c of items) {
+              const agg = map.get(c.customer_id) || { s1Qty: 0, s1Price: 0, s2Qty: 0, s2Price: 0 };
+              rows.push({ account: c.customer_id, company: c.company || '-', city: c.city || '-', nulled: Boolean(c.nulled), ...agg });
+            }
+            // Sort by company name for readability
+            rows.sort((a,b)=> a.company.localeCompare(b.company));
+          }
+          // Build PDF for this salesperson
+          const styles = StyleSheet.create({
+            page: { padding: 24, fontSize: 10, color: '#0f172a' },
+            h1: { fontSize: 18, marginBottom: 4, color: '#0f172a' },
+            small: { fontSize: 9, color: '#64748b', marginBottom: 8 },
+            tableHeader: { flexDirection: 'row', backgroundColor: '#1d4ed8', color: '#ffffff', borderBottom: 1, borderColor: '#bfdbfe' },
+            headerCell: { padding: 6, fontSize: 10, fontWeight: 700 },
+            row: { flexDirection: 'row', borderBottom: 1, borderColor: '#e2e8f0' },
+            rowAlt: { backgroundColor: '#f1f5f9' },
+            cell: { padding: 6 },
+            left: { textAlign: 'left' },
+            right: { textAlign: 'right' },
+            strike: { textDecoration: 'line-through', color: '#64748b' },
+            green: { color: '#16a34a' },
+            red: { color: '#dc2626' }
+          });
+          const Cell = (txt: string, w: string | number, align: 'left' | 'right' = 'left', extra?: any) => React.createElement(Text, { style: [{ width: w }, styles.cell, align === 'left' ? styles.left : styles.right, extra || {}] }, txt);
+          const fmt = (n: number) => new Intl.NumberFormat('da-DK').format(Math.round(n));
+          const header = React.createElement(View, { style: styles.tableHeader },
+            Cell('Customer', '30%', 'left', styles.headerCell),
+            Cell('City', '15%', 'left', styles.headerCell),
+            Cell('S1 Qty', '8%', 'right', styles.headerCell),
+            Cell('S1 Price', '12%', 'right', styles.headerCell),
+            Cell('S2 Qty', '8%', 'right', styles.headerCell),
+            Cell('S2 Price', '12%', 'right', styles.headerCell),
+            Cell('Dev Qty', '7%', 'right', styles.headerCell),
+            Cell('Dev Price', '8%', 'right', styles.headerCell)
+          );
+          const body = rows.map((r, i) => {
+            const devQty = r.s1Qty - r.s2Qty; const devPrice = r.s1Price - r.s2Price;
+            const devQtyStyle = devQty >= 0 ? styles.green : styles.red;
+            const devPriceStyle = devPrice >= 0 ? styles.green : styles.red;
+            const rowStyle = i % 2 === 1 ? [styles.row, styles.rowAlt] : styles.row;
+            const nameStyle = r.nulled ? styles.strike : undefined;
+            return React.createElement(View, { style: rowStyle },
+              Cell(r.company, '30%', 'left', nameStyle),
+              Cell(r.city, '15%', 'left', nameStyle),
+              Cell(String(r.s1Qty), '8%', 'right'),
+              Cell(fmt(r.s1Price), '12%', 'right'),
+              Cell(String(r.s2Qty), '8%', 'right'),
+              Cell(fmt(r.s2Price), '12%', 'right'),
+              Cell((devQty>0?'+':'')+String(devQty), '7%', 'right', devQtyStyle),
+              Cell((devPrice>0?'+':'')+fmt(devPrice), '8%', 'right', devPriceStyle)
+            );
+          });
+          const doc = React.createElement(Document, null,
+            React.createElement(PdfPage, { size: 'A4', style: styles.page },
+              React.createElement(Text, { style: styles.h1 }, `General · ${sp.name}`),
+              React.createElement(Text, { style: styles.small }, `Seasons: ${s1} vs ${s2}`),
+              header,
+              ...body
+            )
+          );
+          const buf = await pdf(doc).toBuffer();
+          const safeName = (sp.name || 'salesperson').replace(/[^a-z0-9_-]+/gi, '_');
+          zip.file(`${safeName}.pdf`, buf);
+        }
+        const zipBuf = await zip.generateAsync({ type: 'nodebuffer' });
+        const path = `general/${job.id}/salesmen.zip`;
+        try { await supabase.storage.from('exports').upload(path, zipBuf as any, { contentType: 'application/zip', upsert: true }); } catch {}
+        let publicUrl: string | null = null;
+        try { const { data: pub } = supabase.storage.from('exports').getPublicUrl(path); publicUrl = pub?.publicUrl ?? null; } catch {}
+        try { await supabase.from('exports').insert({ kind: 'general_salesmen_zip', title: 'General · Salesmen', path, public_url: publicUrl, meta: {}, job_id: job.id }); } catch {}
+        await saveResult(job.id, 'export_general_salesmen_zip', { file: { path, publicUrl } });
         await setJobSucceeded(job.id);
         return;
       }

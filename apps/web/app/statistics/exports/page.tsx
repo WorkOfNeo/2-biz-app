@@ -1,6 +1,7 @@
 'use client';
 import useSWR from 'swr';
 import { supabase } from '../../../lib/supabaseClient';
+import { ProgressBar } from '../../../components/ProgressBar';
 
 type ExportRow = { id: string; kind: string; title: string | null; path: string; public_url: string | null; created_at: string };
 
@@ -21,6 +22,38 @@ export default function StatisticsExportsPage() {
     return (data?.value as { s1?: string; s2?: string }) ?? {};
   });
 
+  const [jobId, setJobId] = React.useState<string | null>(null as any);
+  const [progress, setProgress] = React.useState<{ index: number; total: number } | null>(null as any);
+  const [running, setRunning] = React.useState(false as any);
+
+  React.useEffect(() => {
+    let timer: any;
+    if (jobId) {
+      setRunning(true);
+      timer = setInterval(async () => {
+        try {
+          const { data: logs } = await supabase
+            .from('job_logs')
+            .select('msg, data')
+            .eq('job_id', jobId)
+            .order('ts', { ascending: false })
+            .limit(50);
+          for (const l of (logs ?? []) as any[]) {
+            if (l.msg === 'STEP:export_general_progress' && l.data) {
+              setProgress({ index: Number(l.data.index || 0), total: Number(l.data.total || 0) });
+              break;
+            }
+            if (l.msg === 'STEP:complete') {
+              setRunning(false);
+              break;
+            }
+          }
+        } catch {}
+      }, 1500);
+    }
+    return () => { if (timer) clearInterval(timer); };
+  }, [jobId]);
+
   async function enqueueGeneralReactPdf() {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) throw new Error('Not signed in');
@@ -29,7 +62,7 @@ export default function StatisticsExportsPage() {
     const res = await fetch('/api/enqueue', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(body) });
     if (!res.ok) throw new Error(await res.text());
     const js = await res.json();
-    alert(`General PDF (React) enqueued: ${js.jobId}`);
+    setJobId(js.jobId);
   }
 
   return (
@@ -43,6 +76,15 @@ export default function StatisticsExportsPage() {
           <button className="rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50" onClick={enqueueGeneralReactPdf}>Export General (React PDF)</button>
         </div>
       </div>
+      {running && (
+        <div className="rounded-md border p-3">
+          <div className="text-sm font-medium mb-1">Generating…</div>
+          <div className="max-w-sm">
+            <ProgressBar value={progress?.total ? Math.round((Math.min(progress.index, progress.total) / progress.total) * 100) : 5} />
+          </div>
+          <div className="text-xs text-gray-600 mt-1">{progress ? `${progress.index}/${progress.total}` : 'Starting…'}</div>
+        </div>
+      )}
 
       <div className="rounded-md border overflow-auto">
         <table className="min-w-full text-sm">
