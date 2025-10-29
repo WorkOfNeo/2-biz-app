@@ -12,7 +12,7 @@
     { "path": "/api/cron/enqueue", "schedule": "30 19 * * *" },
     { "path": "/api/cron/enqueue", "schedule": "30 21 * * *" },
     { "path": "/api/cron/enqueue", "schedule": "30 23 * * *" },
-    { "path": "/api/cron/styles-update", "schedule": "0 6 * * *" }
+    
   ]
 }
 
