@@ -881,7 +881,16 @@ async function runJob(job: JobRow) {
         // Currency rates and season names
         let rates: Record<string, number> = { DKK: 1 };
         try { const { data: rateRow } = await supabase.from('app_settings').select('value').eq('key', 'currency_rates').maybeSingle(); rates = { DKK: 1, ...((rateRow?.value as any) ?? {}) } as Record<string, number>; } catch {}
-        const seasonNames = async (id: string | null): Promise<string | null> => { if (!id) return null; try { const { data } = await supabase.from('seasons').select('name').eq('id', id).maybeSingle(); return data?.name ?? null; } catch { return null; } };
+        const seasonNames = async (id: string | null): Promise<string | null> => {
+          if (!id) return null;
+          try {
+            const { data } = await supabase.from('seasons').select('name, year').eq('id', id).maybeSingle();
+            if (!data) return null;
+            const n = (data as any).name as string | null;
+            const y = (data as any).year as number | null;
+            return n ? (y ? `${n} ${y}` : n) : null;
+          } catch { return null; }
+        };
         const s1Name = await seasonNames(s1);
         const s2Name = await seasonNames(s2);
         const total = list.length;
@@ -934,14 +943,15 @@ async function runJob(job: JobRow) {
           }
           // Build PDF for this salesperson
           const styles = StyleSheet.create({
-            page: { padding: 24, fontSize: 10, color: '#0f172a' },
-            h1: { fontSize: 18, marginBottom: 4, color: '#0f172a' },
-            small: { fontSize: 9, color: '#64748b', marginBottom: 8, fontWeight: 700 },
-            tableHeader: { flexDirection: 'row', backgroundColor: '#1d4ed8', color: '#ffffff', borderBottom: 1, borderColor: '#bfdbfe' },
-            headerCell: { padding: 6, fontSize: 10, fontWeight: 700 },
-            row: { flexDirection: 'row', borderBottom: 1, borderColor: '#e2e8f0' },
+            page: { padding: 16, fontSize: 8, color: '#0f172a' },
+            h1: { fontSize: 14, marginBottom: 2, color: '#0f172a' },
+            small: { fontSize: 8, color: '#64748b', marginBottom: 6, fontWeight: 700 },
+            tableHeader: { flexDirection: 'row', backgroundColor: '#1d4ed8', color: '#ffffff', borderBottom: 0.5, borderColor: '#bfdbfe' },
+            headerCell: { padding: 4, fontSize: 9, fontWeight: 700 },
+            row: { flexDirection: 'row', borderBottom: 0.5, borderColor: '#e2e8f0' },
             rowAlt: { backgroundColor: '#f1f5f9' },
-            cell: { padding: 6 },
+            mutedRow: { opacity: 0.5 },
+            cell: { padding: 4, fontSize: 8 },
             left: { textAlign: 'left' },
             right: { textAlign: 'right' },
             strike: { textDecoration: 'line-through', color: '#64748b' },
@@ -964,7 +974,8 @@ async function runJob(job: JobRow) {
             const devQty = r.s1Qty - r.s2Qty; const devPrice = r.s1Price - r.s2Price;
             const devQtyStyle = devQty >= 0 ? styles.green : styles.red;
             const devPriceStyle = devPrice >= 0 ? styles.green : styles.red;
-            const rowStyle = i % 2 === 1 ? [styles.row, styles.rowAlt] : styles.row;
+            const baseRow = i % 2 === 1 ? [styles.row, styles.rowAlt] : [styles.row];
+            const rowStyle = r.nulled ? [...baseRow, styles.mutedRow] : baseRow;
             const nameStyle = r.nulled ? styles.strike : undefined;
             return React.createElement(View, { style: rowStyle },
               Cell(r.company, '30%', 'left', nameStyle),
@@ -983,8 +994,8 @@ async function runJob(job: JobRow) {
           const rate = rates[currency] ?? 1;
           const totalsDkk = { s1: totals.s1Price * rate, s2: totals.s2Price * rate };
           const totalsLocal = { s1: totals.s1Price, s2: totals.s2Price };
-          const totalsView = React.createElement(View, { style: { marginTop: 8 } },
-            React.createElement(Text, { style: { fontSize: 11, fontWeight: 700, marginBottom: 4 } }, 'TOTALS'),
+          const totalsView = React.createElement(View, { style: { marginTop: 6 } },
+            React.createElement(Text, { style: { fontSize: 10, fontWeight: 700, marginBottom: 3 } }, 'TOTALS'),
             React.createElement(View, { style: styles.tableHeader },
               Cell('', '45%', 'left', styles.headerCell),
               Cell(`${s1Name ?? 'S1'} (${currency})`, '22%', 'right', styles.headerCell),
@@ -1005,7 +1016,7 @@ async function runJob(job: JobRow) {
             )
           );
           const doc = React.createElement(Document, null,
-            React.createElement(PdfPage, { size: 'A4', style: styles.page },
+            React.createElement(PdfPage, { size: 'A4', orientation: 'landscape', style: styles.page },
               React.createElement(Text, { style: styles.h1 }, `${sp.name}`),
               React.createElement(Text, { style: styles.small }, `${s1Name ?? 'S1'} vs ${s2Name ?? 'S2'}`),
               header,
