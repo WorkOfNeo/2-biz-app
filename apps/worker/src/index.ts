@@ -895,6 +895,8 @@ async function runJob(job: JobRow) {
         const s2Name = await seasonNames(s2);
         const total = list.length;
         const zip = new JSZip();
+        const filesList: Array<{ name: string; path: string; publicUrl: string | null }> = [];
+        const pagesAll: any[] = [];
         let idx = 0;
         for (const sp of list) {
           idx++;
@@ -946,6 +948,7 @@ async function runJob(job: JobRow) {
             page: { padding: 16, fontSize: 8, color: '#0f172a' },
             h1: { fontSize: 14, marginBottom: 2, color: '#0f172a' },
             small: { fontSize: 8, color: '#64748b', marginBottom: 6, fontWeight: 700 },
+            tableHeaderGlobal: { flexDirection: 'row', backgroundColor: '#eaeaea', color: '#000000', borderBottom: 0.5, borderColor: '#bfdbfe' },
             tableHeader: { flexDirection: 'row', backgroundColor: '#1d4ed8', color: '#ffffff', borderBottom: 0.5, borderColor: '#bfdbfe' },
             headerCell: { padding: 4, fontSize: 9, fontWeight: 700 },
             row: { flexDirection: 'row', borderBottom: 0.5, borderColor: '#e2e8f0' },
@@ -961,21 +964,22 @@ async function runJob(job: JobRow) {
           const Cell = (txt: string, w: string | number, align: 'left' | 'right' = 'left', extra?: any) => React.createElement(Text, { style: [{ width: w }, styles.cell, align === 'left' ? styles.left : styles.right, extra || {}] }, txt);
           const fmt = (n: number) => new Intl.NumberFormat('da-DK').format(Math.round(n));
           // Group header row
-          const groupHeader = React.createElement(View, { style: styles.tableHeader },
+          const groupHeader = React.createElement(View, { style: styles.tableHeaderGlobal },
             Cell('KUNDE', '45%', 'left', styles.headerCell),
             Cell(s1Name ?? 'S1', '20%', 'right', styles.headerCell),
             Cell(s2Name ?? 'S2', '20%', 'right', styles.headerCell),
             Cell('Forskel', '15%', 'right', styles.headerCell)
           );
+          // Headers below global
           const header = React.createElement(View, { style: styles.tableHeader },
-            Cell('Customer', '30%', 'left', styles.headerCell),
-            Cell('City', '15%', 'left', styles.headerCell),
-            Cell('S1 Qty', '8%', 'right', styles.headerCell),
-            Cell('S1 Price', '12%', 'right', styles.headerCell),
-            Cell('S2 Qty', '8%', 'right', styles.headerCell),
-            Cell('S2 Price', '12%', 'right', styles.headerCell),
-            Cell('Dev Qty', '7%', 'right', styles.headerCell),
-            Cell('Dev Price', '8%', 'right', styles.headerCell)
+            Cell('Kunde', '30%', 'left', styles.headerCell),
+            Cell('By', '15%', 'left', styles.headerCell),
+            Cell('Stk', '8%', 'right', styles.headerCell),
+            Cell('Oms', '12%', 'right', styles.headerCell),
+            Cell('Stk', '8%', 'right', styles.headerCell),
+            Cell('Oms', '12%', 'right', styles.headerCell),
+            Cell('Stk', '7%', 'right', styles.headerCell),
+            Cell('Oms', '8%', 'right', styles.headerCell)
           );
           const body = rows.map((r, i) => {
             const devQty = r.s1Qty - r.s2Qty; const devPrice = r.s1Price - r.s2Price;
@@ -1024,26 +1028,44 @@ async function runJob(job: JobRow) {
               Cell(((totalsDkk.s1 - totalsDkk.s2) > 0 ? '+' : '') + fmt(totalsDkk.s1 - totalsDkk.s2), '11%', 'right')
             )
           );
-          const doc = React.createElement(Document, null,
-            React.createElement(PdfPage, { size: 'A4', orientation: 'landscape', style: styles.page },
-              React.createElement(Text, { style: styles.h1 }, `${sp.name}`),
-              React.createElement(Text, { style: styles.small }, `${s1Name ?? 'S1'} vs ${s2Name ?? 'S2'}`),
-              groupHeader,
-              header,
-              ...body,
-              totalsView
-            )
+          const pageEl = React.createElement(PdfPage, { size: 'A4', orientation: 'landscape', style: styles.page },
+            React.createElement(Text, { style: styles.h1 }, `${sp.name}`),
+            React.createElement(Text, { style: styles.small }, `${s1Name ?? 'S1'} vs ${s2Name ?? 'S2'}`),
+            groupHeader,
+            header,
+            ...body,
+            totalsView
           );
+          const doc = React.createElement(Document, null, pageEl);
           const buf = await pdf(doc).toBuffer();
           const safeName = (sp.name || 'salesperson').replace(/[^a-z0-9_-]+/gi, '_');
           zip.file(`${safeName}.pdf`, buf);
+          // Upload individual PDF
+          try {
+            const indivPath = `general/${job.id}/salesmen/${safeName}.pdf`;
+            await supabase.storage.from('exports').upload(indivPath, buf as any, { contentType: 'application/pdf', upsert: true });
+            let indivUrl: string | null = null;
+            try { const { data: pub } = supabase.storage.from('exports').getPublicUrl(indivPath); indivUrl = pub?.publicUrl ?? null; } catch {}
+            filesList.push({ name: sp.name, path: indivPath, publicUrl: indivUrl });
+          } catch {}
+          // Accumulate for combined document
+          pagesAll.push(pageEl);
         }
         const zipBuf = await zip.generateAsync({ type: 'nodebuffer' });
         const path = `general/${job.id}/salesmen.zip`;
         try { await supabase.storage.from('exports').upload(path, zipBuf as any, { contentType: 'application/zip', upsert: true }); } catch {}
         let publicUrl: string | null = null;
         try { const { data: pub } = supabase.storage.from('exports').getPublicUrl(path); publicUrl = pub?.publicUrl ?? null; } catch {}
-        try { await supabase.from('exports').insert({ kind: 'general_salesmen_zip', title: 'General · Salesmen', path, public_url: publicUrl, meta: {}, job_id: job.id }); } catch {}
+        // Combined all.pdf
+        let allPath: string | null = null; let allUrl: string | null = null;
+        try {
+          const allDoc = React.createElement(Document, null, ...pagesAll);
+          const allBuf = await pdf(allDoc).toBuffer();
+          allPath = `general/${job.id}/salesmen/all.pdf`;
+          await supabase.storage.from('exports').upload(allPath, allBuf as any, { contentType: 'application/pdf', upsert: true });
+          try { const { data: pub2 } = supabase.storage.from('exports').getPublicUrl(allPath); allUrl = pub2?.publicUrl ?? null; } catch {}
+        } catch {}
+        try { await supabase.from('exports').insert({ kind: 'general_salesmen_zip', title: 'General · Salesmen', path, public_url: publicUrl, meta: { files: filesList, all: { path: allPath, publicUrl: allUrl } }, job_id: job.id }); } catch {}
         await saveResult(job.id, 'export_general_salesmen_zip', { file: { path, publicUrl } });
         await setJobSucceeded(job.id);
         return;

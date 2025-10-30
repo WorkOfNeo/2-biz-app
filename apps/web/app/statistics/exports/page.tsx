@@ -10,11 +10,11 @@ export default function StatisticsExportsPage() {
   const { data } = useSWR('exports:all', async () => {
     const { data, error } = await supabase
       .from('exports')
-      .select('id, kind, title, path, public_url, created_at')
+      .select('id, kind, title, path, public_url, meta, created_at')
       .order('created_at', { ascending: false })
       .limit(200);
     if (error) throw new Error(error.message);
-    return (data ?? []) as ExportRow[];
+    return (data ?? []) as any[];
   }, { refreshInterval: 10000 });
 
   const { data: saved } = useSWR('app-settings:season-compare', async () => {
@@ -105,15 +105,46 @@ export default function StatisticsExportsPage() {
             </tr>
           </thead>
           <tbody>
-            {(data ?? []).map((r) => (
-              <tr key={r.id}>
-                <td className="p-2 border-b whitespace-nowrap">{new Date(r.created_at).toLocaleString()}</td>
-                <td className="p-2 border-b">{r.kind}</td>
-                <td className="p-2 border-b">{r.title ?? '—'}</td>
-                <td className="p-2 border-b font-mono text-[12px]">{r.path}</td>
-                <td className="p-2 border-b">{r.public_url ? <a href={r.public_url} target="_blank" rel="noreferrer" download className="text-blue-700 underline">Download</a> : '—'}</td>
-              </tr>
-            ))}
+            {(data ?? []).map((r: any) => {
+              const files = (r.meta?.files as Array<{ name: string; path: string; publicUrl?: string | null }> | undefined) ?? [];
+              const all = r.meta?.all as { path?: string | null; publicUrl?: string | null } | undefined;
+              const hasChildren = Array.isArray(files) && files.length > 0;
+              return (
+                <React.Fragment key={r.id}>
+                  <tr>
+                    <td className="p-2 border-b whitespace-nowrap">{new Date(r.created_at).toLocaleString()}</td>
+                    <td className="p-2 border-b">{r.kind}</td>
+                    <td className="p-2 border-b">{r.title ?? '—'}</td>
+                    <td className="p-2 border-b font-mono text-[12px]">{r.path}</td>
+                    <td className="p-2 border-b">{r.public_url ? <a href={r.public_url} target="_blank" rel="noreferrer" download className="text-blue-700 underline">Download ZIP</a> : '—'}</td>
+                  </tr>
+                  {hasChildren && (
+                    <tr>
+                      <td className="p-2 border-b bg-gray-50" colSpan={5}>
+                        <details>
+                          <summary className="cursor-pointer select-none text-sm font-medium">Files</summary>
+                          <div className="mt-2 space-y-1">
+                            {all?.publicUrl && (
+                              <div>
+                                <a href={all.publicUrl} target="_blank" rel="noreferrer" download className="text-blue-700 underline">All (combined)</a>
+                              </div>
+                            )}
+                            {files.map((f, i) => (
+                              <div key={i} className="flex items-center justify-between">
+                                <div className="text-sm">{f.name}</div>
+                                <div>
+                                  {f.publicUrl ? <a href={f.publicUrl} target="_blank" rel="noreferrer" download className="text-blue-700 underline">Download</a> : <span className="text-xs text-gray-500">(pending)</span>}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </details>
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
+              );
+            })}
           </tbody>
         </table>
       </div>
