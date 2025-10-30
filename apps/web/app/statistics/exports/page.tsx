@@ -2,7 +2,7 @@
 import React from 'react';
 import useSWR from 'swr';
 import { supabase } from '../../../lib/supabaseClient';
-// Progress text with shimmer instead of bar
+import { ChevronRight, ChevronDown } from 'lucide-react';
 
 type ExportRow = { id: string; kind: string; title: string | null; path: string; public_url: string | null; created_at: string };
 
@@ -26,7 +26,7 @@ export default function StatisticsExportsPage() {
   const [jobId, setJobId] = React.useState<string | null>(null as any);
   const [progress, setProgress] = React.useState<{ index: number; total: number } | null>(null as any);
   const [running, setRunning] = React.useState(false as any);
-  const [done, setDone] = React.useState(false as any);
+  const [tempRows, setTempRows] = React.useState<any[]>([]);
   const [openId, setOpenId] = React.useState<string | null>(null);
 
   function timeAgo(iso: string): string {
@@ -75,7 +75,8 @@ export default function StatisticsExportsPage() {
               setProgress({ index: Number(l.data.index || 0), total: Number(l.data.total || 0) });
               break;
             }
-            if (l.msg === 'STEP:complete') { setRunning(false); setDone(true); setTimeout(()=>setDone(false), 8000); break; }
+            if (l.msg === 'STEP:complete') { setRunning(false); setJobId(null); setProgress(null); // temp row removed via effect below
+              break; }
           }
         } catch {}
       }, 1500);
@@ -92,6 +93,31 @@ export default function StatisticsExportsPage() {
     if (!res.ok) throw new Error(await res.text());
     const js = await res.json();
     setJobId(js.jobId);
+    // Insert a temp row at top
+    setTempRows((prev) => [{ id: `temp-${js.jobId}`, kind: 'general_salesmen_zip', title: 'General · Salesmen', path: '', public_url: null, created_at: new Date().toISOString(), __temp: true }, ...prev]);
+  }
+
+  // Remove temp row when a corresponding export arrives
+  React.useEffect(() => {
+    if (!running && tempRows.length > 0) {
+      // If we detect an exports row with kind general_salesmen_zip newer than job start, remove temp
+      const found = (data ?? []).some((r: any) => r.kind === 'general_salesmen_zip');
+      if (found) setTempRows([]);
+    }
+  }, [running, data, tempRows.length]);
+
+  async function downloadPath(path: string) {
+    try {
+      const { data: file, error } = await supabase.storage.from('exports').download(path);
+      if (error || !file) throw error || new Error('Download failed');
+      const blobUrl = URL.createObjectURL(file as unknown as Blob);
+      const a = document.createElement('a');
+      a.href = blobUrl; a.download = path.split('/').pop() || 'file.pdf';
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(blobUrl);
+    } catch {
+      alert('File is not ready yet. Please try again in a moment.');
+    }
   }
 
   return (
@@ -105,24 +131,6 @@ export default function StatisticsExportsPage() {
           <button className="rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50" onClick={enqueueGeneralReactPdf}>Export General (React PDF · per salesperson)</button>
         </div>
       </div>
-      {(running || done) && (
-        <div className="rounded-md border p-3">
-          {running ? (
-            <div className="text-sm font-medium text-slate-700">
-              <span className="relative inline-block overflow-hidden">
-                <span className="relative z-10">Generating PDF Export — grab some coffee</span>
-                <span className="absolute inset-0 bg-gradient-to-r from-transparent via-slate-200 to-transparent animate-pulse" style={{ backgroundSize: '200% 100%' }} />
-              </span>
-            </div>
-          ) : (
-            <div className="text-sm font-semibold text-green-700">Completed!</div>
-          )}
-          {running && (
-            <div className="text-xs text-gray-600 mt-1">{progress ? `${progress.index}/${progress.total}` : 'Starting…'}</div>
-          )}
-        </div>
-      )}
-
       <div className="rounded-md border overflow-auto">
         <table className="min-w-full text-sm">
           <thead className="bg-gray-50">
@@ -132,10 +140,11 @@ export default function StatisticsExportsPage() {
               <th className="p-2 text-left border-b">Kind</th>
               <th className="p-2 text-left border-b">Title</th>
               <th className="p-2 text-left border-b">Link</th>
+              <th className="p-2 text-right border-b"> </th>
             </tr>
           </thead>
           <tbody>
-            {(data ?? []).map((r: any) => {
+            {[...tempRows, ...(data ?? [])].map((r: any) => {
               const files = (r.meta?.files as Array<{ name: string; path: string; publicUrl?: string | null }> | undefined) ?? [];
               const all = r.meta?.all as { path?: string | null; publicUrl?: string | null } | undefined;
               const hasChildren = Array.isArray(files) && files.length > 0;
@@ -148,7 +157,7 @@ export default function StatisticsExportsPage() {
                           className="rounded border px-2 py-0.5 text-xs hover:bg-slate-50"
                           onClick={() => setOpenId((prev) => (prev === r.id ? null : r.id))}
                           aria-label={openId === r.id ? 'Collapse' : 'Expand'}
-                        >{openId === r.id ? '▼' : '▶'}</button>
+                        >{openId === r.id ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}</button>
                       ) : null}
                     </td>
                     <td className="p-2 border-b whitespace-nowrap">{timeAgo(r.created_at)}</td>
@@ -157,26 +166,31 @@ export default function StatisticsExportsPage() {
                     <td className="p-2 border-b">{r.public_url ? (
                       <button
                         className="rounded-md border px-2 py-1 text-xs hover:bg-slate-50"
-                        onClick={() => { window.open(r.public_url, '_blank', 'noopener'); }}
+                        onClick={() => { r.path ? downloadPath(r.path) : window.open(r.public_url, '_blank', 'noopener'); }}
                       >Download ZIP</button>
                     ) : '—'}</td>
+                    <td className="p-2 border-b text-right">
+                      {r.__temp && (
+                        <span className="text-xs text-slate-600">Processing{progress?.total ? ` · ${progress.index}/${progress.total}` : ''}</span>
+                      )}
+                    </td>
                   </tr>
                   {hasChildren && openId === r.id && (
                     <tr>
-                      <td className="p-2 border-b bg-gray-50" colSpan={4}>
+                      <td className="p-2 border-b bg-gray-50" colSpan={6}>
                         <div className="mt-1 space-y-1">
                           {all?.publicUrl && (
                             <div className="flex items-center justify-between">
                               <div className="text-sm font-medium">All (combined)</div>
-                              <button className="rounded-md border px-2 py-1 text-xs hover:bg-slate-50" onClick={() => { window.open(all.publicUrl!, '_blank', 'noopener'); }}>Download</button>
+                              <button className="rounded-md border px-2 py-1 text-xs hover:bg-slate-50" onClick={() => { all.path ? downloadPath(all.path) : window.open(all.publicUrl!, '_blank', 'noopener'); }}>Download</button>
                             </div>
                           )}
                           {files.map((f: any, i: number) => (
                             <div key={i} className="flex items-center justify-between">
                               <div className="text-sm">{f.name}</div>
                               <div>
-                                {f.publicUrl ? (
-                                  <button className="rounded-md border px-2 py-1 text-xs hover:bg-slate-50" onClick={() => { window.open(f.publicUrl!, '_blank', 'noopener'); }}>Download</button>
+                                {f.publicUrl || f.path ? (
+                                  <button className="rounded-md border px-2 py-1 text-xs hover:bg-slate-50" onClick={() => { f.path ? downloadPath(f.path) : window.open(f.publicUrl!, '_blank', 'noopener'); }}>Download</button>
                                 ) : (
                                   <span className="text-xs text-gray-500">(pending)</span>
                                 )}
