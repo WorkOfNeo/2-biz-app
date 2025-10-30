@@ -133,13 +133,16 @@ export default function StatisticsExportsPage() {
           entry = zip.file(/\.pdf$/i);
         }
         if (entry && entry.length > 0) {
-          const content = await entry[0].async('blob');
-          const url = URL.createObjectURL(content);
-          const a = document.createElement('a');
-          a.href = url; a.download = entry[0].name.split('/').pop() || 'file.pdf';
-          document.body.appendChild(a); a.click(); a.remove();
-          URL.revokeObjectURL(url);
-          return;
+          const first = entry[0] as any;
+          if (first) {
+            const content = await first.async('blob');
+            const url = URL.createObjectURL(content);
+            const a = document.createElement('a');
+            a.href = url; a.download = (first.name?.split('/').pop()) || 'file.pdf';
+            document.body.appendChild(a); a.click(); a.remove();
+            URL.revokeObjectURL(url);
+            return;
+          }
         }
       } catch {}
     }
