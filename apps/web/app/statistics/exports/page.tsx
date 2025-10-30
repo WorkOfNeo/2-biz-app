@@ -45,7 +45,9 @@ export default function StatisticsExportsPage() {
     let value = -diff; // past -> negative
     let acc = diff;
     for (let i = 0, n = diff; i < units.length; i++) {
-      const [step, u] = units[i];
+      const pair = units[i];
+      if (!pair) break;
+      const [step, u] = pair;
       if (n < step) { unit = u; value = -Math.round(acc); break; }
       n = Math.floor(n / step);
       acc = n;
