@@ -27,6 +27,34 @@ export default function StatisticsExportsPage() {
   const [progress, setProgress] = React.useState<{ index: number; total: number } | null>(null as any);
   const [running, setRunning] = React.useState(false as any);
   const [done, setDone] = React.useState(false as any);
+  const [openId, setOpenId] = React.useState<string | null>(null);
+
+  function timeAgo(iso: string): string {
+    const d = new Date(iso).getTime();
+    const diff = Math.floor((Date.now() - d) / 1000);
+    const units: Array<[number, Intl.RelativeTimeFormatUnit]> = [
+      [60, 'second'],
+      [60, 'minute'],
+      [24, 'hour'],
+      [7, 'day'],
+      [4.34524, 'week'],
+      [12, 'month'],
+      [Number.POSITIVE_INFINITY, 'year']
+    ];
+    let unit: Intl.RelativeTimeFormatUnit = 'second';
+    let value = -diff; // past -> negative
+    let acc = diff;
+    for (let i = 0, n = diff; i < units.length; i++) {
+      const [step, u] = units[i];
+      if (n < step) { unit = u; value = -Math.round(acc); break; }
+      n = Math.floor(n / step);
+      acc = n;
+      unit = u;
+      value = -Math.round(acc);
+    }
+    const rtf = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
+    return rtf.format(value as number, unit);
+  }
 
   React.useEffect(() => {
     let timer: any;
@@ -97,10 +125,10 @@ export default function StatisticsExportsPage() {
         <table className="min-w-full text-sm">
           <thead className="bg-gray-50">
             <tr>
+              <th className="p-2 text-left border-b"> </th>
               <th className="p-2 text-left border-b">When</th>
               <th className="p-2 text-left border-b">Kind</th>
               <th className="p-2 text-left border-b">Title</th>
-              <th className="p-2 text-left border-b">Path</th>
               <th className="p-2 text-left border-b">Link</th>
             </tr>
           </thead>
@@ -112,33 +140,48 @@ export default function StatisticsExportsPage() {
               return (
                 <React.Fragment key={r.id}>
                   <tr>
-                    <td className="p-2 border-b whitespace-nowrap">{new Date(r.created_at).toLocaleString()}</td>
+                    <td className="p-2 border-b whitespace-nowrap w-[44px]">
+                      {hasChildren ? (
+                        <button
+                          className="rounded border px-2 py-0.5 text-xs hover:bg-slate-50"
+                          onClick={() => setOpenId((prev) => (prev === r.id ? null : r.id))}
+                          aria-label={openId === r.id ? 'Collapse' : 'Expand'}
+                        >{openId === r.id ? '▼' : '▶'}</button>
+                      ) : null}
+                    </td>
+                    <td className="p-2 border-b whitespace-nowrap">{timeAgo(r.created_at)}</td>
                     <td className="p-2 border-b">{r.kind}</td>
                     <td className="p-2 border-b">{r.title ?? '—'}</td>
-                    <td className="p-2 border-b font-mono text-[12px]">{r.path}</td>
-                    <td className="p-2 border-b">{r.public_url ? <a href={r.public_url} target="_blank" rel="noreferrer" download className="text-blue-700 underline">Download ZIP</a> : '—'}</td>
+                    <td className="p-2 border-b">{r.public_url ? (
+                      <button
+                        className="rounded-md border px-2 py-1 text-xs hover:bg-slate-50"
+                        onClick={() => { window.open(r.public_url, '_blank', 'noopener'); }}
+                      >Download ZIP</button>
+                    ) : '—'}</td>
                   </tr>
-                  {hasChildren && (
+                  {hasChildren && openId === r.id && (
                     <tr>
-                      <td className="p-2 border-b bg-gray-50" colSpan={5}>
-                        <details>
-                          <summary className="cursor-pointer select-none text-sm font-medium">Files</summary>
-                          <div className="mt-2 space-y-1">
-                            {all?.publicUrl && (
+                      <td className="p-2 border-b bg-gray-50" colSpan={4}>
+                        <div className="mt-1 space-y-1">
+                          {all?.publicUrl && (
+                            <div className="flex items-center justify-between">
+                              <div className="text-sm font-medium">All (combined)</div>
+                              <button className="rounded-md border px-2 py-1 text-xs hover:bg-slate-50" onClick={() => { window.open(all.publicUrl!, '_blank', 'noopener'); }}>Download</button>
+                            </div>
+                          )}
+                          {files.map((f: any, i: number) => (
+                            <div key={i} className="flex items-center justify-between">
+                              <div className="text-sm">{f.name}</div>
                               <div>
-                                <a href={all.publicUrl} target="_blank" rel="noreferrer" download className="text-blue-700 underline">All (combined)</a>
+                                {f.publicUrl ? (
+                                  <button className="rounded-md border px-2 py-1 text-xs hover:bg-slate-50" onClick={() => { window.open(f.publicUrl!, '_blank', 'noopener'); }}>Download</button>
+                                ) : (
+                                  <span className="text-xs text-gray-500">(pending)</span>
+                                )}
                               </div>
-                            )}
-                            {files.map((f, i) => (
-                              <div key={i} className="flex items-center justify-between">
-                                <div className="text-sm">{f.name}</div>
-                                <div>
-                                  {f.publicUrl ? <a href={f.publicUrl} target="_blank" rel="noreferrer" download className="text-blue-700 underline">Download</a> : <span className="text-xs text-gray-500">(pending)</span>}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </details>
+                            </div>
+                          ))}
+                        </div>
                       </td>
                     </tr>
                   )}
