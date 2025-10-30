@@ -26,7 +26,7 @@ export default function StatisticsExportsPage() {
   const [jobId, setJobId] = React.useState<string | null>(null as any);
   const [progress, setProgress] = React.useState<{ index: number; total: number } | null>(null as any);
   const [running, setRunning] = React.useState(false as any);
-  const [tempRows, setTempRows] = React.useState<any[]>([]);
+  const [elapsed, setElapsed] = React.useState(0 as any);
   const [openId, setOpenId] = React.useState<string | null>(null);
 
   function timeAgo(iso: string): string {
@@ -62,6 +62,8 @@ export default function StatisticsExportsPage() {
     let timer: any;
     if (jobId) {
       setRunning(true);
+      setElapsed(0);
+      const t = setInterval(() => setElapsed((v: number) => v + 1), 1000);
       timer = setInterval(async () => {
         try {
           const { data: logs } = await supabase
@@ -75,11 +77,12 @@ export default function StatisticsExportsPage() {
               setProgress({ index: Number(l.data.index || 0), total: Number(l.data.total || 0) });
               break;
             }
-            if (l.msg === 'STEP:complete') { setRunning(false); setJobId(null); setProgress(null); // temp row removed via effect below
+            if (l.msg === 'STEP:complete') { setRunning(false); setJobId(null); setProgress(null);
               break; }
           }
         } catch {}
       }, 1500);
+      return () => { if (timer) clearInterval(timer); clearInterval(t); };
     }
     return () => { if (timer) clearInterval(timer); };
   }, [jobId]);
@@ -93,18 +96,7 @@ export default function StatisticsExportsPage() {
     if (!res.ok) throw new Error(await res.text());
     const js = await res.json();
     setJobId(js.jobId);
-    // Insert a temp row at top
-    setTempRows((prev) => [{ id: `temp-${js.jobId}`, kind: 'general_salesmen_zip', title: 'General · Salesmen', path: '', public_url: null, created_at: new Date().toISOString(), __temp: true }, ...prev]);
   }
-
-  // Remove temp row when a corresponding export arrives
-  React.useEffect(() => {
-    if (!running && tempRows.length > 0) {
-      // If we detect an exports row with kind general_salesmen_zip newer than job start, remove temp
-      const found = (data ?? []).some((r: any) => r.kind === 'general_salesmen_zip');
-      if (found) setTempRows([]);
-    }
-  }, [running, data, tempRows.length]);
 
   async function downloadPath(path: string) {
     try {
@@ -120,6 +112,40 @@ export default function StatisticsExportsPage() {
     }
   }
 
+  async function downloadChildWithFallback(filePath?: string | null, publicUrl?: string | null, zipPath?: string | null) {
+    // Prefer direct path via Storage; else fall back to ZIP extraction if available
+    if (filePath) {
+      try { await downloadPath(filePath); return; } catch {}
+    }
+    if (publicUrl) {
+      try { window.open(publicUrl, '_blank', 'noopener'); return; } catch {}
+    }
+    if (zipPath) {
+      try {
+        const { data: zipBlob, error } = await supabase.storage.from('exports').download(zipPath);
+        if (error || !zipBlob) throw error || new Error('Zip download failed');
+        const { default: JSZip } = await import('jszip');
+        const zip = await JSZip.loadAsync(zipBlob as unknown as Blob);
+        const wanted = filePath ? (filePath.split('/').pop() || '') : '';
+        let entry = wanted ? zip.file(new RegExp(`${wanted.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}$`)) : null;
+        if (!entry || entry.length === 0) {
+          // fallback: first PDF
+          entry = zip.file(/\.pdf$/i);
+        }
+        if (entry && entry.length > 0) {
+          const content = await entry[0].async('blob');
+          const url = URL.createObjectURL(content);
+          const a = document.createElement('a');
+          a.href = url; a.download = entry[0].name.split('/').pop() || 'file.pdf';
+          document.body.appendChild(a); a.click(); a.remove();
+          URL.revokeObjectURL(url);
+          return;
+        }
+      } catch {}
+    }
+    alert('File is not ready yet. Please try again in a moment.');
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -128,14 +154,26 @@ export default function StatisticsExportsPage() {
           <h1 className="text-xl font-semibold">Exports</h1>
         </div>
         <div className="flex items-center gap-2">
-          <button className="rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50" onClick={enqueueGeneralReactPdf}>Export General (React PDF · per salesperson)</button>
+          <button
+            className="relative rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-60"
+            onClick={enqueueGeneralReactPdf}
+            disabled={running}
+          >
+            {running ? (
+              <span className="inline-flex items-center gap-2">
+                <span className="h-3 w-3 rounded-full border-2 border-slate-300 border-t-slate-900 animate-spin" />
+                <span>Generating… {elapsed}s</span>
+              </span>
+            ) : (
+              'Export General (React PDF · per salesperson)'
+            )}
+          </button>
         </div>
       </div>
       <div className="rounded-md border overflow-auto">
         <table className="min-w-full text-sm">
           <thead className="bg-gray-50">
             <tr>
-              <th className="p-2 text-left border-b"> </th>
               <th className="p-2 text-left border-b">When</th>
               <th className="p-2 text-left border-b">Kind</th>
               <th className="p-2 text-left border-b">Title</th>
@@ -144,22 +182,13 @@ export default function StatisticsExportsPage() {
             </tr>
           </thead>
           <tbody>
-            {[...tempRows, ...(data ?? [])].map((r: any) => {
+            {(data ?? []).map((r: any) => {
               const files = (r.meta?.files as Array<{ name: string; path: string; publicUrl?: string | null }> | undefined) ?? [];
               const all = r.meta?.all as { path?: string | null; publicUrl?: string | null } | undefined;
               const hasChildren = Array.isArray(files) && files.length > 0;
               return (
                 <React.Fragment key={r.id}>
                   <tr>
-                    <td className="p-2 border-b whitespace-nowrap w-[44px]">
-                      {hasChildren ? (
-                        <button
-                          className="rounded border px-2 py-0.5 text-xs hover:bg-slate-50"
-                          onClick={() => setOpenId((prev) => (prev === r.id ? null : r.id))}
-                          aria-label={openId === r.id ? 'Collapse' : 'Expand'}
-                        >{openId === r.id ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}</button>
-                      ) : null}
-                    </td>
                     <td className="p-2 border-b whitespace-nowrap">{timeAgo(r.created_at)}</td>
                     <td className="p-2 border-b">{r.kind}</td>
                     <td className="p-2 border-b">{r.title ?? '—'}</td>
@@ -169,15 +198,19 @@ export default function StatisticsExportsPage() {
                         onClick={() => { r.path ? downloadPath(r.path) : window.open(r.public_url, '_blank', 'noopener'); }}
                       >Download ZIP</button>
                     ) : '—'}</td>
-                    <td className="p-2 border-b text-right">
-                      {r.__temp && (
-                        <span className="text-xs text-slate-600">Processing{progress?.total ? ` · ${progress.index}/${progress.total}` : ''}</span>
-                      )}
+                    <td className="p-2 border-b text-right w-[44px]">
+                      {hasChildren ? (
+                        <button
+                          className="rounded border px-2 py-0.5 text-xs hover:bg-slate-50"
+                          onClick={() => setOpenId((prev) => (prev === r.id ? null : r.id))}
+                          aria-label={openId === r.id ? 'Collapse' : 'Expand'}
+                        >{openId === r.id ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}</button>
+                      ) : null}
                     </td>
                   </tr>
                   {hasChildren && openId === r.id && (
                     <tr>
-                      <td className="p-2 border-b bg-gray-50" colSpan={6}>
+                      <td className="p-2 border-b bg-gray-50" colSpan={5}>
                         <div className="mt-1 space-y-1">
                           {all?.publicUrl && (
                             <div className="flex items-center justify-between">
@@ -190,7 +223,7 @@ export default function StatisticsExportsPage() {
                               <div className="text-sm">{f.name}</div>
                               <div>
                                 {f.publicUrl || f.path ? (
-                                  <button className="rounded-md border px-2 py-1 text-xs hover:bg-slate-50" onClick={() => { f.path ? downloadPath(f.path) : window.open(f.publicUrl!, '_blank', 'noopener'); }}>Download</button>
+                                  <button className="rounded-md border px-2 py-1 text-xs hover:bg-slate-50" onClick={() => downloadChildWithFallback(f.path, f.publicUrl, r.path)}>Download</button>
                                 ) : (
                                   <span className="text-xs text-gray-500">(pending)</span>
                                 )}
