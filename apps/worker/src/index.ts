@@ -822,7 +822,14 @@ async function runJob(job: JobRow) {
         const dateInput = await findFirst(page!, [sel]);
         if (dateInput) {
           await dateInput.fill('', { timeout: 10_000 }).catch(() => {});
-          await dateInput.type(dateStr, { delay: 20 });
+          // Set value directly to avoid slow typing and datepicker interference
+          await page!.evaluate((s, v) => {
+            const el = document.querySelector<HTMLInputElement>(s);
+            if (el) { el.value = v; el.dispatchEvent(new Event('input', { bubbles: true })); }
+          }, sel, dateStr);
+          await log(job.id, 'info', 'STEP:stats_per_size_date_set', { value: dateStr });
+        } else {
+          await log(job.id, 'error', 'STEP:stats_per_size_date_input_not_found');
         }
       } catch (e: any) {
         await log(job.id, 'error', 'STEP:stats_per_size_fill_date_error', { error: e?.message || String(e) });
@@ -830,14 +837,30 @@ async function runJob(job: JobRow) {
       // Click Search
       try {
         const searchBtn = await findFirst(page!, ['button[name="search"]', 'button:has-text("Search")']);
-        if (searchBtn) { await searchBtn.click({ timeout: 30_000 }); }
+        if (searchBtn) { await searchBtn.click({ timeout: 30_000 }); await log(job.id, 'info', 'STEP:stats_per_size_search_clicked'); }
+        else { await log(job.id, 'error', 'STEP:stats_per_size_search_btn_not_found'); }
       } catch (e: any) {
         await log(job.id, 'error', 'STEP:stats_per_size_search_click_error', { error: e?.message || String(e) });
       }
-      // Wait for container and tables
-      await page!.waitForSelector('#StatisticsPerSizeTableContainer', { timeout: 120_000, state: 'attached' as any });
-      await page!.waitForSelector('#StatisticsPerSizeTableContainer table.standardList', { timeout: 120_000, state: 'attached' as any });
-      await log(job.id, 'info', 'STEP:stats_per_size_tables_found');
+      // Wait for container
+      await page!.waitForSelector('#StatisticsPerSizeTableContainer', { timeout: 180_000, state: 'attached' as any }).catch(() => null);
+      // Poll for tables for up to ~3 minutes (36 attempts * 5s)
+      let tablesFound = 0;
+      for (let attempt = 1; attempt <= 36; attempt++) {
+        await ensureNotCancelled(job.id);
+        try {
+          tablesFound = await page!.$$eval('#StatisticsPerSizeTableContainer table.standardList', (els) => els.length);
+        } catch { tablesFound = 0; }
+        await log(job.id, 'info', 'STEP:stats_per_size_poll', { attempt, tablesFound });
+        if (tablesFound > 0) break;
+        await page!.waitForTimeout(5000);
+      }
+      if (tablesFound === 0) {
+        const html = await captureHtmlSnippet(page!, page!);
+        await log(job.id, 'error', 'STEP:stats_per_size_no_tables', { html });
+        throw new Error('Statistics per size tables did not appear in time');
+      }
+      await log(job.id, 'info', 'STEP:stats_per_size_tables_found', { tablesFound });
       // Capture raw HTML of each table and parse rows
       const parsed = await page!.$$eval('#StatisticsPerSizeTableContainer table.standardList', (tables) => {
         function tx(el?: Element | null): string { return ((el as HTMLElement | null)?.textContent || '').replace(/\s+/g, ' ').trim(); }
@@ -889,19 +912,40 @@ async function runJob(job: JobRow) {
         return out;
       });
       const flatRows = parsed.flatMap((p) => p.rows);
-      // Insert snapshot and rows
+      await log(job.id, 'info', 'STEP:stats_per_size_parsed', { tables: parsed.length, rows: flatRows.length, sampleHeaders: (parsed[0]?.headers || []).slice(0, 10) });
+      // Insert or update snapshot and rows (idempotent per day)
       const isoDate = new Date().toISOString().slice(0, 10);
-      const { data: snap, error: snapErr } = await supabase
+      const { data: existingSnap } = await supabase
         .from('statistics_per_size_snapshots')
-        .insert({ date_from: isoDate, raw_tables_html: parsed.map((p) => p.table_html), scraped_at: new Date().toISOString(), rows_count: flatRows.length })
-        .select('*')
-        .single();
-      if (snapErr) throw snapErr;
-      const snapshot_id = (snap as any).id as string;
+        .select('id')
+        .eq('date_from', isoDate)
+        .maybeSingle();
+      let snapshot_id: string | null = existingSnap?.id || null;
+      if (snapshot_id) {
+        await log(job.id, 'info', 'STEP:stats_per_size_existing_snapshot', { snapshot_id, date_from: isoDate });
+        // Clean old rows, update snapshot metadata
+        await supabase.from('statistics_per_size_rows').delete().eq('snapshot_id', snapshot_id);
+        await supabase
+          .from('statistics_per_size_snapshots')
+          .update({ rows_count: flatRows.length, raw_tables_html: parsed.map((p) => p.table_html), scraped_at: new Date().toISOString() })
+          .eq('id', snapshot_id);
+      } else {
+        const { data: snap, error: snapErr } = await supabase
+          .from('statistics_per_size_snapshots')
+          .insert({ date_from: isoDate, raw_tables_html: parsed.map((p) => p.table_html), scraped_at: new Date().toISOString(), rows_count: flatRows.length })
+          .select('id')
+          .single();
+        if (snapErr) throw snapErr;
+        snapshot_id = (snap as any).id as string;
+        await log(job.id, 'info', 'STEP:stats_per_size_snapshot_created', { snapshot_id, date_from: isoDate });
+      }
+      const totalBatches = Math.ceil(flatRows.length / 1000) || 1;
       for (let i = 0; i < flatRows.length; i += 1000) {
+        const batchIndex = Math.floor(i / 1000) + 1;
         const batch = flatRows.slice(i, i + 1000).map((r) => ({ ...r, snapshot_id }));
         const { error: rowsErr } = await supabase.from('statistics_per_size_rows').insert(batch as any);
         if (rowsErr) throw rowsErr;
+        await log(job.id, 'info', 'STEP:stats_per_size_batch_insert', { batchIndex, totalBatches, count: batch.length });
       }
       await saveResult(job.id, 'Statistics per size snapshot', { snapshot_id, rows: flatRows.length });
       await setJobSucceeded(job.id);
