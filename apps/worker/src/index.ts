@@ -823,10 +823,10 @@ async function runJob(job: JobRow) {
         if (dateInput) {
           await dateInput.fill('', { timeout: 10_000 }).catch(() => {});
           // Set value directly to avoid slow typing and datepicker interference
-          await page!.evaluate((s, v) => {
-            const el = document.querySelector<HTMLInputElement>(s);
-            if (el) { el.value = v; el.dispatchEvent(new Event('input', { bubbles: true })); }
-          }, sel, dateStr);
+          await page!.evaluate(({ selector, value }: { selector: string; value: string }) => {
+            const el = document.querySelector<HTMLInputElement>(selector);
+            if (el) { el.value = value; el.dispatchEvent(new Event('input', { bubbles: true })); }
+          }, { selector: sel, value: dateStr });
           await log(job.id, 'info', 'STEP:stats_per_size_date_set', { value: dateStr });
         } else {
           await log(job.id, 'error', 'STEP:stats_per_size_date_input_not_found');
