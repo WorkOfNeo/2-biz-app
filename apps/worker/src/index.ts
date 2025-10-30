@@ -804,6 +804,114 @@ async function runJob(job: JobRow) {
     await log(job.id, 'info', 'STEP:complete', { updated });
     return;
   }
+  if (job.type === 'scrape_statistics') {
+    try {
+      await ensureNotCancelled(job.id);
+      await log(job.id, 'info', 'STEP:stats_per_size_begin', job.payload || {});
+      const listUrl = new URL('?controller=Confident%5CMiscellaneous%5CStatisticsPerSize&action=List', SPY_BASE_URL).toString();
+      await page!.goto(listUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+      await log(job.id, 'info', 'STEP:stats_per_size_nav', { url: listUrl });
+      // Fill Date From with today's date (DD-MM-YYYY)
+      const today = new Date();
+      const dd = String(today.getDate()).padStart(2, '0');
+      const mm = String(today.getMonth() + 1).padStart(2, '0');
+      const yyyy = today.getFullYear();
+      const dateStr = `${dd}-${mm}-${yyyy}`;
+      try {
+        const sel = 'input[name="Spy\\Model\\Confident\\Miscellaneous\\StatisticsPerSize\\ListReportSearch[strDateFrom]"]';
+        const dateInput = await findFirst(page!, [sel]);
+        if (dateInput) {
+          await dateInput.fill('', { timeout: 10_000 }).catch(() => {});
+          await dateInput.type(dateStr, { delay: 20 });
+        }
+      } catch (e: any) {
+        await log(job.id, 'error', 'STEP:stats_per_size_fill_date_error', { error: e?.message || String(e) });
+      }
+      // Click Search
+      try {
+        const searchBtn = await findFirst(page!, ['button[name="search"]', 'button:has-text("Search")']);
+        if (searchBtn) { await searchBtn.click({ timeout: 30_000 }); }
+      } catch (e: any) {
+        await log(job.id, 'error', 'STEP:stats_per_size_search_click_error', { error: e?.message || String(e) });
+      }
+      // Wait for container and tables
+      await page!.waitForSelector('#StatisticsPerSizeTableContainer', { timeout: 120_000, state: 'attached' as any });
+      await page!.waitForSelector('#StatisticsPerSizeTableContainer table.standardList', { timeout: 120_000, state: 'attached' as any });
+      await log(job.id, 'info', 'STEP:stats_per_size_tables_found');
+      // Capture raw HTML of each table and parse rows
+      const parsed = await page!.$$eval('#StatisticsPerSizeTableContainer table.standardList', (tables) => {
+        function tx(el?: Element | null): string { return ((el as HTMLElement | null)?.textContent || '').replace(/\s+/g, ' ').trim(); }
+        function toNum(s: string): number { const n = Number(s.replace(/[^0-9\-]/g, '')); return isFinite(n) ? n : 0; }
+        const out: Array<{ table_html: string; headers: string[]; rows: any[] }> = [];
+        for (const tbl of Array.from(tables) as HTMLTableElement[]) {
+          const html = (tbl.outerHTML || '').toString();
+          const headRows = Array.from((tbl.querySelector('thead') || tbl).querySelectorAll('tr')) as HTMLTableRowElement[];
+          const header2 = headRows[1] || headRows[0];
+          const ths = Array.from(header2?.querySelectorAll('th') || []) as HTMLElement[];
+          const headers = ths.map((th) => tx(th));
+          // Map indices
+          const idxStyleNo = headers.findIndex((h) => /Style\s*No\.?/i.test(h));
+          const idxStyleName = headers.findIndex((h) => /Style\s*Name/i.test(h));
+          const idxType = headers.findIndex((h) => /^Type$/i.test(h));
+          const idxTotal = headers.findIndex((h) => /^Total$/i.test(h));
+          const idxMinCol = headers.findIndex((h) => /Min\.\s*col/i.test(h));
+          const idxDiff = headers.findIndex((h) => /^Diff$/i.test(h));
+          const sizeStart = idxType >= 0 ? idxType + 1 : 4;
+          const sizeEnd = idxTotal > sizeStart ? idxTotal : ths.length - 3;
+          const sizeIndices = [] as number[];
+          const sizeLabels = [] as string[];
+          for (let i = sizeStart; i < sizeEnd; i++) { sizeIndices.push(i); sizeLabels.push(headers[i] || ''); }
+          const bodyRows = Array.from(tbl.querySelectorAll('tbody tr')) as HTMLTableRowElement[];
+          const rows: any[] = [];
+          for (const tr of bodyRows) {
+            const tds = Array.from(tr.querySelectorAll('td')) as HTMLElement[];
+            if (tds.length === 0) continue;
+            const styleCell = tds[idxStyleNo] || tds[1];
+            const styleCellText = (styleCell?.innerHTML || styleCell?.textContent || '').toString();
+            const parts = styleCellText
+              .replace(/<br\s*\/?>(?=\S)/gi, '\n')
+              .replace(/<[^>]+>/g, ' ')
+              .replace(/\s+/g, ' ')
+              .trim()
+              .split(/\n+/);
+            const style_no = (parts[0] || '').trim();
+            const color = (parts[1] || '').trim();
+            const style_name = tx(tds[idxStyleName] || tds[2] || null) || null;
+            const type = tx(tds[idxType] || tds[3] || null) || null;
+            const values = sizeIndices.map((i) => toNum(tx(tds[i] || null)));
+            const total = idxTotal >= 0 ? toNum(tx(tds[idxTotal] || null)) : values.reduce((a, b) => a + b, 0);
+            const min_col = idxMinCol >= 0 ? toNum(tx(tds[idxMinCol] || null)) : 0;
+            const diff = idxDiff >= 0 ? toNum(tx(tds[idxDiff] || null)) : 0;
+            if (style_no) rows.push({ style_no, color, style_name, type, sizes: sizeLabels, values, total, min_col, diff });
+          }
+          out.push({ table_html: html, headers: sizeLabels, rows });
+        }
+        return out;
+      });
+      const flatRows = parsed.flatMap((p) => p.rows);
+      // Insert snapshot and rows
+      const isoDate = new Date().toISOString().slice(0, 10);
+      const { data: snap, error: snapErr } = await supabase
+        .from('statistics_per_size_snapshots')
+        .insert({ date_from: isoDate, raw_tables_html: parsed.map((p) => p.table_html), scraped_at: new Date().toISOString(), rows_count: flatRows.length })
+        .select('*')
+        .single();
+      if (snapErr) throw snapErr;
+      const snapshot_id = (snap as any).id as string;
+      for (let i = 0; i < flatRows.length; i += 1000) {
+        const batch = flatRows.slice(i, i + 1000).map((r) => ({ ...r, snapshot_id }));
+        const { error: rowsErr } = await supabase.from('statistics_per_size_rows').insert(batch as any);
+        if (rowsErr) throw rowsErr;
+      }
+      await saveResult(job.id, 'Statistics per size snapshot', { snapshot_id, rows: flatRows.length });
+      await setJobSucceeded(job.id);
+      await log(job.id, 'info', 'STEP:complete', { snapshot_id, rows: flatRows.length });
+      return;
+    } catch (e: any) {
+      await setJobFailedOrRequeue(job, e?.message || String(e));
+      return;
+    }
+  }
   if (job.type === 'export_overview') {
     try {
       await log(job.id, 'info', 'STEP:export_overview_begin', job.payload || {});

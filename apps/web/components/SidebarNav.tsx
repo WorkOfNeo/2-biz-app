@@ -42,6 +42,7 @@ export function SidebarNav() {
           <NavLink href="/styles" label="Styles" />
           {(has('admin') || has('manager')) && <NavLink href="/styles/settings" label="Settings" />}
           <NavLink href="/styles/stock-list" label="Stock List" />
+          {has('admin') && <NavLink href="/styles/statistics" label="Statistics" />}
         </div>
       </div>
       <div>
