@@ -113,13 +113,25 @@ export default function StatisticsExportsPage() {
   }
 
   async function downloadChildWithFallback(filePath?: string | null, publicUrl?: string | null, zipPath?: string | null) {
-    // Prefer direct path via Storage; else fall back to ZIP extraction if available
+    // Try direct storage first; do not alert here so fallbacks can run
     if (filePath) {
-      try { await downloadPath(filePath); return; } catch {}
+      try {
+        const { data: file, error } = await supabase.storage.from('exports').download(filePath);
+        if (!error && file) {
+          const blobUrl = URL.createObjectURL(file as unknown as Blob);
+          const a = document.createElement('a');
+          a.href = blobUrl; a.download = filePath.split('/').pop() || 'file.pdf';
+          document.body.appendChild(a); a.click(); a.remove();
+          URL.revokeObjectURL(blobUrl);
+          return;
+        }
+      } catch {}
     }
+    // Then public URL if present
     if (publicUrl) {
       try { window.open(publicUrl, '_blank', 'noopener'); return; } catch {}
     }
+    // Finally, fall back to ZIP extraction if available
     if (zipPath) {
       try {
         const { data: zipBlob, error } = await supabase.storage.from('exports').download(zipPath);
