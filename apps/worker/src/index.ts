@@ -960,6 +960,13 @@ async function runJob(job: JobRow) {
           });
           const Cell = (txt: string, w: string | number, align: 'left' | 'right' = 'left', extra?: any) => React.createElement(Text, { style: [{ width: w }, styles.cell, align === 'left' ? styles.left : styles.right, extra || {}] }, txt);
           const fmt = (n: number) => new Intl.NumberFormat('da-DK').format(Math.round(n));
+          // Group header row
+          const groupHeader = React.createElement(View, { style: styles.tableHeader },
+            Cell('KUNDE', '45%', 'left', styles.headerCell),
+            Cell(s1Name ?? 'S1', '20%', 'right', styles.headerCell),
+            Cell(s2Name ?? 'S2', '20%', 'right', styles.headerCell),
+            Cell('Forskel', '15%', 'right', styles.headerCell)
+          );
           const header = React.createElement(View, { style: styles.tableHeader },
             Cell('Customer', '30%', 'left', styles.headerCell),
             Cell('City', '15%', 'left', styles.headerCell),
@@ -977,15 +984,17 @@ async function runJob(job: JobRow) {
             const baseRow = i % 2 === 1 ? [styles.row, styles.rowAlt] : [styles.row];
             const rowStyle = r.nulled ? [...baseRow, styles.mutedRow] : baseRow;
             const nameStyle = r.nulled ? styles.strike : undefined;
+            const s1QtyStyle = r.s1Qty === 0 ? undefined : (r.s1Qty > r.s2Qty ? styles.green : r.s1Qty < r.s2Qty ? styles.red : undefined);
+            const s1PriceStyle = r.s1Price === 0 ? undefined : (r.s1Price > r.s2Price ? styles.green : r.s1Price < r.s2Price ? styles.red : undefined);
             return React.createElement(View, { style: rowStyle },
               Cell(r.company, '30%', 'left', nameStyle),
               Cell(r.city, '15%', 'left', nameStyle),
-              Cell(String(r.s1Qty), '8%', 'right'),
-              Cell(fmt(r.s1Price), '12%', 'right'),
+              Cell(String(r.s1Qty), '8%', 'right', s1QtyStyle),
+              Cell(fmt(r.s1Price), '12%', 'right', s1PriceStyle),
               Cell(String(r.s2Qty), '8%', 'right'),
               Cell(fmt(r.s2Price), '12%', 'right'),
-              Cell((devQty>0?'+':'')+String(devQty), '7%', 'right', devQtyStyle),
-              Cell((devPrice>0?'+':'')+fmt(devPrice), '8%', 'right', devPriceStyle)
+              Cell((devQty>0?'+':'')+String(devQty), '7%', 'right', r.nulled ? [devQtyStyle, styles.strike] : devQtyStyle),
+              Cell((devPrice>0?'+':'')+fmt(devPrice), '8%', 'right', r.nulled ? [devPriceStyle, styles.strike] : devPriceStyle)
             );
           });
           // Totals (local currency and DKK)
@@ -1019,6 +1028,7 @@ async function runJob(job: JobRow) {
             React.createElement(PdfPage, { size: 'A4', orientation: 'landscape', style: styles.page },
               React.createElement(Text, { style: styles.h1 }, `${sp.name}`),
               React.createElement(Text, { style: styles.small }, `${s1Name ?? 'S1'} vs ${s2Name ?? 'S2'}`),
+              groupHeader,
               header,
               ...body,
               totalsView

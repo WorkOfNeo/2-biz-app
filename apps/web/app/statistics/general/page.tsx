@@ -553,6 +553,8 @@ export default function StatisticsGeneralPage() {
                       const devPrice = row.s1Price - row.s2Price;
                       const nulled = isNulled(row.account_no);
                       const currency = row.salespersonId ? (spCurrencyById[row.salespersonId] ?? 'DKK') : 'DKK';
+                      const s1QtyClass = row.s1Qty === 0 ? '' : (row.s1Qty > row.s2Qty ? 'text-green-600' : row.s1Qty < row.s2Qty ? 'text-red-600' : '');
+                      const s1PriceClass = row.s1Price === 0 ? '' : (row.s1Price > row.s2Price ? 'text-green-600' : row.s1Price < row.s2Price ? 'text-red-600' : '');
                       return (
                         <tr key={row.account_no} className={"border-t hover:bg-slate-50 " + (nulled ? 'opacity-80' : '')}>
                           <td className={"relative p-2 font-medium " + (nulled ? '' : '')}>
@@ -563,11 +565,11 @@ export default function StatisticsGeneralPage() {
                             {row.city}
                             {nulled && <div className="pointer-events-none absolute inset-x-0 top-1/2 -translate-y-1/2 h-px bg-gray-500/70" />}
                           </td>
-                          <td className={"relative p-2 text-center " + (row.s1Qty < row.s2Qty ? 'text-red-600' : '')}>
+                          <td className={"relative p-2 text-center " + s1QtyClass}>
                             {row.s1Qty}
                             {nulled && <div className="pointer-events-none absolute inset-x-0 top-1/2 -translate-y-1/2 h-px bg-gray-500/70" />}
                           </td>
-                          <td className={"relative p-2 text-center " + (row.s1Price < row.s2Price ? 'text-red-600' : '')}>
+                          <td className={"relative p-2 text-center " + s1PriceClass}>
                             {row.s1Price.toLocaleString('da-DK')} {currency}
                             {nulled && <div className="pointer-events-none absolute inset-x-0 top-1/2 -translate-y-1/2 h-px bg-gray-500/70" />}
                           </td>
@@ -580,12 +582,12 @@ export default function StatisticsGeneralPage() {
                             {nulled && <div className="pointer-events-none absolute inset-x-0 top-1/2 -translate-y-1/2 h-px bg-gray-500/70" />}
                           </td>
                           <td className="p-2 text-center">
-                            <span className={devQty > 0 ? 'text-green-600' : devQty < 0 ? 'text-red-600' : ''}>
+                            <span className={(devQty > 0 ? 'text-green-600' : devQty < 0 ? 'text-red-600' : '') + (nulled ? ' line-through' : '')}>
                               {devQty > 0 ? '+' : ''}{devQty}
                             </span>
                           </td>
                           <td className="p-2 text-center">
-                            <span className={devPrice > 0 ? 'text-green-600' : devPrice < 0 ? 'text-red-600' : ''}>
+                            <span className={(devPrice > 0 ? 'text-green-600' : devPrice < 0 ? 'text-red-600' : '') + (nulled ? ' line-through' : '')}>
                               {devPrice > 0 ? '+' : ''}{devPrice.toLocaleString()} {currency}
                             </span>
                           </td>

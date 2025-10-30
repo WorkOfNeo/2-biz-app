@@ -2,7 +2,7 @@
 import React from 'react';
 import useSWR from 'swr';
 import { supabase } from '../../../lib/supabaseClient';
-import { ProgressBar } from '../../../components/ProgressBar';
+// Progress text with shimmer instead of bar
 
 type ExportRow = { id: string; kind: string; title: string | null; path: string; public_url: string | null; created_at: string };
 
@@ -26,6 +26,7 @@ export default function StatisticsExportsPage() {
   const [jobId, setJobId] = React.useState<string | null>(null as any);
   const [progress, setProgress] = React.useState<{ index: number; total: number } | null>(null as any);
   const [running, setRunning] = React.useState(false as any);
+  const [done, setDone] = React.useState(false as any);
 
   React.useEffect(() => {
     let timer: any;
@@ -44,10 +45,7 @@ export default function StatisticsExportsPage() {
               setProgress({ index: Number(l.data.index || 0), total: Number(l.data.total || 0) });
               break;
             }
-            if (l.msg === 'STEP:complete') {
-              setRunning(false);
-              break;
-            }
+            if (l.msg === 'STEP:complete') { setRunning(false); setDone(true); setTimeout(()=>setDone(false), 8000); break; }
           }
         } catch {}
       }, 1500);
@@ -77,13 +75,21 @@ export default function StatisticsExportsPage() {
           <button className="rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50" onClick={enqueueGeneralReactPdf}>Export General (React PDF · per salesperson)</button>
         </div>
       </div>
-      {running && (
+      {(running || done) && (
         <div className="rounded-md border p-3">
-          <div className="text-sm font-medium mb-1">Generating…</div>
-          <div className="max-w-sm">
-            <ProgressBar value={progress?.total ? Math.round((Math.min(progress.index, progress.total) / progress.total) * 100) : 5} />
-          </div>
-          <div className="text-xs text-gray-600 mt-1">{progress ? `${progress.index}/${progress.total}` : 'Starting…'}</div>
+          {running ? (
+            <div className="text-sm font-medium text-slate-700">
+              <span className="relative inline-block overflow-hidden">
+                <span className="relative z-10">Generating PDF Export — grab some coffee</span>
+                <span className="absolute inset-0 bg-gradient-to-r from-transparent via-slate-200 to-transparent animate-pulse" style={{ backgroundSize: '200% 100%' }} />
+              </span>
+            </div>
+          ) : (
+            <div className="text-sm font-semibold text-green-700">Completed!</div>
+          )}
+          {running && (
+            <div className="text-xs text-gray-600 mt-1">{progress ? `${progress.index}/${progress.total}` : 'Starting…'}</div>
+          )}
         </div>
       )}
 
