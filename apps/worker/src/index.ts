@@ -1251,31 +1251,42 @@ async function runJob(job: JobRow) {
           } catch {}
           // Skip updates when row is frozen
           if (existingRow && (existingRow as any).frozen) { unchangedCount++; continue; }
-          if (existingRow && (Number(existingRow.qty || 0) === qty) && (Number(existingRow.price || 0) === price) && ((existingRow.currency || null) === (currency || null))) {
+          const hasChange = !existingRow || (Number(existingRow.qty || 0) !== qty) || (Number(existingRow.price || 0) !== price) || ((existingRow.currency || null) !== (currency || null));
+          if (!hasChange) {
             unchangedCount++;
-            // Do not add 'unchanged' to op-typed log; keep sample compact
             continue;
           }
-          const upsertRow: any = {
-            season_id: targetSeasonId,
-            account_no: accountNo,
-            customer_id: customerUuid,
-            customer_name: customerName || null,
-            city: null,
-            salesperson_id: salespersonId,
-            salesperson_name: sp.name,
-            qty,
-            price,
-            currency: currency || null
-          };
-          const { error: upErr } = await supabase
-            .from('sales_stats')
-            .upsert(upsertRow, { onConflict: 'season_id,account_no' });
-          if (upErr) throw upErr;
-          upsertedForSp++;
-          if (existingRow) updatedCount++; else createdCount++;
-          if (upsertedRowsForLog.length < 10) {
-            upsertedRowsForLog.push({ account: accountNo, customer: customerName, qty, price, currency: currency || null, op: existingRow ? 'updated' : 'created' });
+          if (existingRow) {
+            const { error: updErr } = await supabase
+              .from('sales_stats')
+              .update({ qty, price, currency: currency || null, customer_id: customerUuid, customer_name: customerName || null, salesperson_id: salespersonId, salesperson_name: sp.name })
+              .eq('id', (existingRow as any).id);
+            if (updErr) throw updErr;
+            updatedCount++;
+            upsertedForSp++;
+            if (upsertedRowsForLog.length < 10) {
+              upsertedRowsForLog.push({ account: accountNo, customer: customerName, qty, price, currency: currency || null, op: 'updated' });
+            }
+          } else {
+            const insertRow: any = {
+              season_id: targetSeasonId,
+              account_no: accountNo,
+              customer_id: customerUuid,
+              customer_name: customerName || null,
+              city: null,
+              salesperson_id: salespersonId,
+              salesperson_name: sp.name,
+              qty,
+              price,
+              currency: currency || null
+            };
+            const { error: insErr } = await supabase.from('sales_stats').insert(insertRow);
+            if (insErr) throw insErr;
+            createdCount++;
+            upsertedForSp++;
+            if (upsertedRowsForLog.length < 10) {
+              upsertedRowsForLog.push({ account: accountNo, customer: customerName, qty, price, currency: currency || null, op: 'created' });
+            }
           }
         }
         totalRowsUpserted += upsertedForSp;
