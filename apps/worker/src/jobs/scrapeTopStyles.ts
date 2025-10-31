@@ -37,12 +37,24 @@ export async function scrapeTopStyles(ctx: Ctx) {
     // Switch grouping to color
     try {
       await page.selectOption('select[name="strGroupBy"]', 'color');
+      // Some pages require a JS event to fire request
+      await page.evaluate(() => {
+        const sel = document.querySelector('select[name="strGroupBy"]') as HTMLSelectElement | null;
+        if (sel) sel.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+      // wait for table update (either XHR or DOM change)
+      await Promise.race([
+        page.waitForResponse((res) => res.url().includes('confident.php') || res.request().url().includes('confident.php'), { timeout: 15_000 }).catch(() => null),
+        page.waitForTimeout(1500)
+      ]);
       await page.waitForSelector('.spy-container table.standardList tbody tr', { timeout: 60_000 });
       await page.waitForTimeout(500);
       await log(job.id, 'info', 'STEP:topstyles_group_set', { groupBy: 'color' });
-    } catch {}
+    } catch (e: any) {
+      await log(job.id, 'error', 'STEP:topstyles_group_set_failed', { error: e?.message || String(e) });
+    }
     // Extract rows
-    const rows = await page.$$eval('.spy-container table.standardList tbody tr', (trs) => {
+    let rows = await page.$$eval('.spy-container table.standardList tbody tr', (trs) => {
       return Array.from(trs).slice(0, 100).map((tr) => {
         const tds = Array.from(tr.querySelectorAll('td'));
         const img = (tds[0]?.querySelector('img') as HTMLImageElement | null)?.src || '';
@@ -56,6 +68,24 @@ export async function scrapeTopStyles(ctx: Ctx) {
         return { img, styleNo, styleName, color, type, quality, qty, amount };
       });
     });
+    if (!rows || rows.length === 0) {
+      // fallback: try without changing group
+      await log(job.id, 'info', 'STEP:topstyles_zero_rows_try_style');
+      rows = await page.$$eval('table.standardList tbody tr', (trs) => {
+        return Array.from(trs).slice(0, 100).map((tr) => {
+          const tds = Array.from(tr.querySelectorAll('td'));
+          const img = (tds[0]?.querySelector('img') as HTMLImageElement | null)?.src || '';
+          const styleNo = (tds[1]?.textContent || '').trim();
+          const styleName = (tds[2]?.textContent || '').trim();
+          const color = (tds[3]?.textContent || '').trim();
+          const type = (tds[4]?.textContent || '').trim();
+          const quality = (tds[5]?.textContent || '').trim();
+          const qty = (tds[6]?.textContent || '').trim();
+          const amount = (tds[7]?.textContent || '').trim();
+          return { img, styleNo, styleName, color, type, quality, qty, amount };
+        });
+      });
+    }
     await log(job.id, 'info', 'STEP:topstyles_rows_extracted', { rows: rows.length });
     const parsed = rows.map((r) => {
       const img1024 = r.img.replace('s24', 's1024');
