@@ -30,6 +30,7 @@ export function SidebarNav() {
       <div>
         <div className="mt-4 mb-1 text-xs uppercase tracking-wider text-slate-400">Statistics</div>
         <div className="ml-2 space-y-1">
+          <NavLink href="/statistics/dashboard" label="Dashboard" />
           <NavLink href="/statistics/general" label="General" />
           <NavLink href="/statistics/overview" label="Overview" />
           <NavLink href="/statistics/countries" label="Countries" />
