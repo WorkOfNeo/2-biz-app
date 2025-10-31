@@ -656,7 +656,49 @@ export default function StatisticsGeneralPage() {
                       );
                     })}
                   </tbody>
-                  <tfoot></tfoot>
+                  <tfoot>
+                    {(() => {
+                      const rates = { DKK: 1, ...(currencyRatesRow ?? {}) } as Record<string, number>;
+                      const totals = items.reduce((a, r) => {
+                        const cur = r.salespersonId ? (spCurrencyById[r.salespersonId] ?? 'DKK') : 'DKK';
+                        const rate = rates[cur] ?? 1;
+                        a.s1Qty += r.s1Qty; a.s2Qty += r.s2Qty;
+                        a.s1Local += r.s1Price; a.s2Local += r.s2Price;
+                        a.s1Dkk += r.s1Price * rate; a.s2Dkk += r.s2Price * rate;
+                        return a;
+                      }, { s1Qty: 0, s2Qty: 0, s1Local: 0, s2Local: 0, s1Dkk: 0, s2Dkk: 0 });
+                      const devQty = totals.s1Qty - totals.s2Qty;
+                      const devLocal = totals.s1Local - totals.s2Local;
+                      const devDkk = totals.s1Dkk - totals.s2Dkk;
+                      const rowCurrency = tableCurrency;
+                      return (
+                        <>
+                          {activePerson && (
+                            <tr className="bg-gray-50 font-semibold">
+                              <td className="p-2" colSpan={2}>TOTAL (Local)</td>
+                              <td className="p-2 text-center">{totals.s1Qty.toLocaleString('da-DK')}</td>
+                              <td className="p-2 text-center">{Math.round(totals.s1Local).toLocaleString('da-DK')} {rowCurrency}</td>
+                              <td className="p-2 text-center">{totals.s2Qty.toLocaleString('da-DK')}</td>
+                              <td className="p-2 text-center">{Math.round(totals.s2Local).toLocaleString('da-DK')} {rowCurrency}</td>
+                              <td className="p-2 text-center">{(devQty>0?'+':'')+devQty.toLocaleString('da-DK')}</td>
+                              <td className="p-2 text-center">{(devLocal>0?'+':'')+Math.round(devLocal).toLocaleString('da-DK')} {rowCurrency}</td>
+                              <td className="p-2"></td>
+                            </tr>
+                          )}
+                          <tr className="bg-gray-50 font-semibold">
+                            <td className="p-2" colSpan={2}>TOTAL (DKK)</td>
+                            <td className="p-2 text-center">{totals.s1Qty.toLocaleString('da-DK')}</td>
+                            <td className="p-2 text-center">{Math.round(totals.s1Dkk).toLocaleString('da-DK')} DKK</td>
+                            <td className="p-2 text-center">{totals.s2Qty.toLocaleString('da-DK')}</td>
+                            <td className="p-2 text-center">{Math.round(totals.s2Dkk).toLocaleString('da-DK')} DKK</td>
+                            <td className="p-2 text-center">{(devQty>0?'+':'')+devQty.toLocaleString('da-DK')}</td>
+                            <td className="p-2 text-center">{(devDkk>0?'+':'')+Math.round(devDkk).toLocaleString('da-DK')} DKK</td>
+                            <td className="p-2"></td>
+                          </tr>
+                        </>
+                      );
+                    })()}
+                  </tfoot>
                 </table>
               </div>
               {/* Removed sticky overlay totals; separate TOTALS section below */}
@@ -819,6 +861,7 @@ export default function StatisticsGeneralPage() {
                           <th className="text-right p-2 border-b">Price</th>
                           <th className="text-left p-2 border-b">Invoice</th>
                           <th className="text-right p-2 border-b">Scraped</th>
+                          <th className="text-right p-2 border-b">Actions</th>
                         </tr>
                       </thead>
                       <tbody>
