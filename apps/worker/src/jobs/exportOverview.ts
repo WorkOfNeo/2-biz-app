@@ -405,7 +405,11 @@ export async function exportOverview(ctx: Ctx) {
       const countryCurrency: Record<string, string> = { Denmark: 'DKK', Norway: 'NOK', Sweden: 'SEK', Finland: 'EUR' };
       // Pair countries: two per page
       const pairs: Array<[string, string | null]> = [];
-      for (let i = 0; i < countries.length; i += 2) pairs.push([countries[i], countries[i + 1] ?? null]);
+      for (let i = 0; i < countries.length; i += 2) {
+        const c1 = countries[i] as string;
+        const c2 = (i + 1) < countries.length ? (countries[i + 1] as string) : null;
+        pairs.push([c1, c2]);
+      }
       const pages = pairs.map((pair) => {
         const [c1, c2] = pair;
         const row1 = totals[c1] || { s1Qty: 0, s2Qty: 0, s1Price: 0, s2Price: 0 };
