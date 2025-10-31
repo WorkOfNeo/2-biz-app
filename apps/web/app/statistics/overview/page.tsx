@@ -159,7 +159,8 @@ export default function OverviewPage() {
       const totalCustomers = (bySpCustomers.get(sp.id) ?? []).length;
       const nulledCount = (bySpCustomers.get(sp.id) ?? []).filter(c => !!(c.nulled || c.permanently_closed || c.excluded)).length;
       const a = agg.get(sp.id)!;
-      const effectiveTotal = Math.max(0, totalCustomers - nulledCount);
+      // Use the exact set size of valid, non-nulled/non-closed/non-excluded accounts to determine denominator
+      const validTotal = validTargetsBySp.get(sp.id)?.size ?? Math.max(0, totalCustomers - nulledCount);
       const s1Avg = a.s1Qty > 0 ? a.s1Price / a.s1Qty : 0;
       const s2Avg = a.s2Qty > 0 ? a.s2Price / a.s2Qty : 0;
       const diffQty = a.s1Qty - a.s2Qty;
@@ -175,9 +176,9 @@ export default function OverviewPage() {
         totalCustomers,
         nulledCount,
         visited: a.visitedValid.size,
-        effectiveTotal,
-        visitedPct: effectiveTotal > 0 ? (a.visitedValid.size / effectiveTotal) * 100 : 0,
-        notVisited: Math.max(0, effectiveTotal - a.visitedValid.size),
+        effectiveTotal: validTotal,
+        visitedPct: validTotal > 0 ? (a.visitedValid.size / validTotal) * 100 : 0,
+        notVisited: Math.max(0, validTotal - a.visitedValid.size),
         s1Qty: a.s1Qty, s1Price: a.s1Price, s1Avg,
         s2Qty: a.s2Qty, s2Price: a.s2Price, s2Avg,
         diffPct,
