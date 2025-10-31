@@ -7,6 +7,7 @@ import { scrapeCustomers } from './jobs/scrapeCustomers.js';
 import { updateStyleStock as updateStyleStockJob } from './jobs/updateStyleStock.js';
 import { deepScrapeStyles as deepScrapeStylesJob } from './jobs/deepScrapeStyles.js';
 import { exportOverview as exportOverviewJob } from './jobs/exportOverview.js';
+import { scrapeTopStyles as scrapeTopStylesJob } from './jobs/scrapeTopStyles.js';
 import { scrapeStatisticsPerSize } from './jobs/scrapeStatisticsPerSize.js';
 // (imported with .js extension above)
 
@@ -629,6 +630,10 @@ async function runJob(job: JobRow) {
   }
   if (job.type === 'export_overview') {
     await exportOverviewJob({ job, page: page!, log, saveResult, setJobFailedOrRequeue, setJobSucceeded, supabase });
+    return;
+  }
+  if ((job.type as any) === 'scrape_top_styles') {
+    await scrapeTopStylesJob({ job, page: page!, log, saveResult, setJobFailedOrRequeue, setJobSucceeded, supabase });
     return;
   }
   /* LEGACY export_overview handler (disabled)

@@ -151,6 +151,7 @@ export default function SeasonsSettingsPage() {
               <th className="text-left p-2 border-b">Year</th>
               <th className="text-left p-2 border-b">Spy ID</th>
               <th className="text-left p-2 border-b">Display Currency</th>
+              <th className="text-left p-2 border-b">Current</th>
               <th className="text-left p-2 border-b">Created</th>
               <th className="text-left p-2 border-b">Hide</th>
               <th className="text-left p-2 border-b">Edit</th>
@@ -212,6 +213,21 @@ export default function SeasonsSettingsPage() {
                     <option value="">(default)</option>
                     {['DKK','SEK','NOK','EUR'].map((c) => <option key={c} value={c}>{c}</option>)}
                   </select>
+                </td>
+                <td className="p-2 border-b">
+                  <button
+                    className={"rounded px-2 py-1 text-xs " + ((s as any).is_current ? 'bg-green-600 text-white' : 'border')}
+                    onClick={async () => {
+                      try {
+                        await supabase.from('seasons').update({ is_current: false }).neq('id', s.id);
+                        const { error } = await supabase.from('seasons').update({ is_current: true }).eq('id', s.id);
+                        if (error) throw error;
+                        mutate();
+                      } catch (e: any) {
+                        alert(e?.message || 'Failed to set current');
+                      }
+                    }}
+                  >{(s as any).is_current ? 'Current' : 'Set current'}</button>
                 </td>
                 <td className="p-2 border-b">{new Date(s.created_at).toLocaleString()}</td>
                 <td className="p-2 border-b">
