@@ -116,10 +116,6 @@ export default function StatisticsDashboardPage() {
       const to = receivers.split(',').map(s => s.trim()).filter(Boolean);
       if (to.length === 0) { alert('Enter at least one receiver email.'); return; }
       const attachments: Array<{ name: string; data: string }> = [];
-      if (overallType === 'all' || overallType === 'overview') {
-        const row = latestByKind.get('overview_pdf');
-        if (row?.public_url) { try { const du = await fetchToDataUrl(row.public_url); attachments.push({ name: 'Overview.pdf', data: du.split(',')[1] || '' }); } catch {} }
-      }
       if (overallType === 'all' || overallType === 'countries') {
         const row = latestByKind.get('countries_pdf');
         if (row?.public_url) { try { const du = await fetchToDataUrl(row.public_url); attachments.push({ name: 'Countries.pdf', data: du.split(',')[1] || '' }); } catch {} }
@@ -128,9 +124,7 @@ export default function StatisticsDashboardPage() {
       const subject = tplSubject || 'Statistics Update';
       const bodyHtml = (tplHtml || '').replaceAll('{name}', '');
       const dynamicParams: Record<string, string> = {};
-      const overview = attachments.find(a => a.name.toLowerCase().includes('overview'));
       const countriesA = attachments.find(a => a.name.toLowerCase().includes('countries'));
-      if (overview) dynamicParams['overview_pdf'] = `data:application/pdf;base64,${overview.data}`;
       if (countriesA) dynamicParams['countries_pdf'] = `data:application/pdf;base64,${countriesA.data}`;
       await sendEmailJs(to, subject, bodyHtml, undefined, dynamicParams);
       alert('Email sent');
