@@ -135,7 +135,8 @@ export default function StatisticsDashboardPage() {
       throw new Error('EmailJS browser env missing. Set NEXT_PUBLIC_EMAILJS_* variables.');
     }
     for (const recipient of to) {
-      const payload = {
+      // Try multiple attachment shapes; EmailJS REST docs vary across examples
+      const basePayload = {
         service_id: EMAILJS_SERVICE_ID,
         template_id: EMAILJS_TEMPLATE_ID,
         user_id: EMAILJS_PUBLIC_KEY,
@@ -146,13 +147,30 @@ export default function StatisticsDashboardPage() {
           from_name: EMAILJS_FROM_NAME,
           from_email: EMAILJS_FROM_EMAIL,
         },
-        attachments: (attachments || []).map((a) => ({ filename: a.name, content: a.data })),
       } as any;
-      const res = await fetch(EMAILJS_ENDPOINT, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-      if (!res.ok) {
-        const text = await res.text();
-        try { console.error('[EmailJS error]', text); } catch {}
-        throw new Error(text || 'EmailJS send failed');
+      const shapes: Array<any> = [
+        { // filename/content (base64)
+          ...basePayload,
+          attachments: (attachments || []).map((a) => ({ filename: a.name, content: a.data }))
+        },
+        { // name/data (base64)
+          ...basePayload,
+          attachments: (attachments || []).map((a) => ({ name: a.name, data: a.data }))
+        },
+        { // name/data with data URL prefix
+          ...basePayload,
+          attachments: (attachments || []).map((a) => ({ name: a.name, data: `data:application/pdf;base64,${a.data}` }))
+        }
+      ];
+      let sent = false; let lastErr: string | null = null;
+      for (const payload of shapes) {
+        const res = await fetch(EMAILJS_ENDPOINT, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        if (res.ok) { sent = true; break; }
+        lastErr = await res.text();
+        try { console.error('[EmailJS error]', lastErr); } catch {}
+      }
+      if (!sent) {
+        throw new Error(lastErr || 'EmailJS send failed');
       }
     }
   }
