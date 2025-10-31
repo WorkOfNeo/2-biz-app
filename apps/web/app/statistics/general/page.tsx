@@ -807,10 +807,57 @@ export default function StatisticsGeneralPage() {
                                 }} />
                               )}
                             </td>
-                            <td className="p-2 border-b text-right">{Number(r.qty ?? 0)}</td>
-                            <td className="p-2 border-b text-right">{Number(r.price ?? 0).toLocaleString('da-DK')}</td>
+                            <td className="p-2 border-b text-right">
+                              {r.invoice_no ? (
+                                Number(r.qty ?? 0)
+                              ) : (
+                                <input
+                                  className="w-20 border rounded px-1 text-right"
+                                  defaultValue={Number(r.qty ?? 0)}
+                                  onBlur={async (e) => {
+                                    try {
+                                      const v = Number(e.target.value || 0) || 0;
+                                      await supabase.from('sales_stats').update({ qty: v }).eq('id', (r as any).id);
+                                    } catch {}
+                                  }}
+                                />
+                              )}
+                            </td>
+                            <td className="p-2 border-b text-right">
+                              {r.invoice_no ? (
+                                Number(r.price ?? 0).toLocaleString('da-DK')
+                              ) : (
+                                <input
+                                  className="w-28 border rounded px-1 text-right"
+                                  defaultValue={Number(r.price ?? 0)}
+                                  onBlur={async (e) => {
+                                    try {
+                                      const v = Number(e.target.value || 0) || 0;
+                                      await supabase.from('sales_stats').update({ price: v }).eq('id', (r as any).id);
+                                    } catch {}
+                                  }}
+                                />
+                              )}
+                            </td>
                             <td className="p-2 border-b">{(r as any).invoice_no ?? '—'}</td>
                             <td className="p-2 border-b text-right">{r.updated_at ? new Date(r.updated_at).toLocaleString() : '—'}</td>
+                            <td className="p-2 border-b">
+                              <label className="inline-flex items-center gap-1 text-xs">
+                                <input
+                                  type="checkbox"
+                                  defaultChecked={(r as any).invoice_no ? Boolean((r as any).manual_edited) : Boolean((r as any).frozen)}
+                                  onChange={async (e) => {
+                                    try {
+                                      if ((r as any).invoice_no) {
+                                        await supabase.from('sales_invoices').update({ manual_edited: e.target.checked }).eq('id', (r as any).id);
+                                      } else {
+                                        await supabase.from('sales_stats').update({ frozen: e.target.checked }).eq('id', (r as any).id);
+                                      }
+                                    } catch {}
+                                  }}
+                                /> Freeze
+                              </label>
+                            </td>
                             {!r.invoice_no && (
                               <td className="p-2 border-b">
                                 <label className="inline-flex items-center gap-1 text-xs">
