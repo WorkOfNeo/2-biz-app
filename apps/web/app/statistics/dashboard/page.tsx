@@ -3,6 +3,11 @@ import React from 'react';
 import useSWR from 'swr';
 import { supabase } from '../../../lib/supabaseClient';
 
+const EMAILJS_ENDPOINT = 'https://api.emailjs.com/api/v1.0/email/send';
+const EMAILJS_SERVICE_ID = process.env.NEXT_PUBLIC_EMAILJS_SERVICE_ID || process.env.NEXT_PUBLIC_EMAILJS_SERVICE_KEY || '';
+const EMAILJS_TEMPLATE_ID = process.env.NEXT_PUBLIC_EMAILJS_TEMPLATE_ID || '';
+const EMAILJS_PUBLIC_KEY = process.env.NEXT_PUBLIC_EMAILJS_PUBLIC_KEY || '';
+
 export default function StatisticsDashboardPage() {
   const { data: salespersons } = useSWR('salespersons:list', async () => {
     const { data, error } = await supabase.from('salespersons').select('id, name, email, currency').order('sort_index', { ascending: true });
@@ -64,7 +69,7 @@ export default function StatisticsDashboardPage() {
             <p>${links.join(' · ')}</p>
           </div>
         `;
-        await fetch('/api/email/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to: [recipient], subject: 'Your latest statistics', html }) });
+        await sendEmailJs([recipient], 'Your latest statistics', html);
       }
       alert('Emails queued for sending.');
     } finally {
@@ -96,10 +101,33 @@ export default function StatisticsDashboardPage() {
       if (overallType === 'top10vendors') parts.push('Top 10 Vendors - coming soon');
       if (parts.length === 0) { alert('No exports available yet.'); return; }
       const html = `<div><p>Latest statistics:</p><p>${parts.join(' · ')}</p></div>`;
-      await fetch('/api/email/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to, subject: 'Statistics Update', html }) });
+      await sendEmailJs(to, 'Statistics Update', html);
       alert('Email sent');
     } finally {
       setSendingOverall(false);
+    }
+  }
+
+  async function sendEmailJs(to: string[], subject: string, html: string) {
+    if (!EMAILJS_SERVICE_ID || !EMAILJS_TEMPLATE_ID || !EMAILJS_PUBLIC_KEY) {
+      throw new Error('EmailJS browser env missing. Set NEXT_PUBLIC_EMAILJS_* variables.');
+    }
+    for (const recipient of to) {
+      const payload = {
+        service_id: EMAILJS_SERVICE_ID,
+        template_id: EMAILJS_TEMPLATE_ID,
+        user_id: EMAILJS_PUBLIC_KEY,
+        template_params: {
+          to_email: recipient,
+          subject,
+          message_html: html,
+        },
+      } as any;
+      const res = await fetch(EMAILJS_ENDPOINT, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || 'EmailJS send failed');
+      }
     }
   }
 
