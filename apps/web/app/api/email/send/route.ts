@@ -64,8 +64,9 @@ export async function POST(req: NextRequest) {
         body: JSON.stringify(payload),
       });
       if (!res.ok) {
-        let detail: any = null;
-        try { detail = await res.json(); } catch { detail = await res.text(); }
+        const text = await res.text();
+        let detail: any = text;
+        try { detail = JSON.parse(text); } catch {}
         return NextResponse.json({ error: 'Email send failed', detail }, { status: 502 });
       }
     }
