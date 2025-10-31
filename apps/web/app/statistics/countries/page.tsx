@@ -48,6 +48,22 @@ export default function CountriesPage() {
     if (error) throw new Error(error.message);
     return data as any[];
   });
+  // Minimal customers map to resolve country for invoices
+  const { data: customers } = useSWR('countries:customers', async () => {
+    const { data, error } = await supabase.from('customers').select('customer_id, country');
+    if (error) throw new Error(error.message);
+    return (data ?? []) as { customer_id: string; country: string | null }[];
+  });
+  // Fetch invoices
+  const { data: invoices } = useSWR(s1 && s2 ? ['countries:invoices', s1, s2] : null, async () => {
+    const { data, error } = await supabase
+      .from('sales_invoices')
+      .select('account_no, qty, amount, currency, season_id')
+      .in('season_id', [s1, s2])
+      .limit(200000);
+    if (error) throw new Error(error.message);
+    return (data ?? []) as { account_no: string | null; qty: number | null; amount: number | null; currency: string | null; season_id: string }[];
+  });
   // Currency rates (1 unit equals how many DKK), e.g. { EUR: 7.45, NOK: 0.67, SEK: 0.64 }
   const { data: currencyRatesRow } = useSWR('app-settings:currency-rates', async () => {
     const { data, error } = await supabase.from('app_settings').select('*').eq('key', 'currency_rates').maybeSingle();
@@ -68,8 +84,23 @@ export default function CountriesPage() {
       if (r.season_id === s1) { bucket.s1Qty += Number(r.qty||0); bucket.s1Price += priceDkk; }
       else if (r.season_id === s2) { bucket.s2Qty += Number(r.qty||0); bucket.s2Price += priceDkk; }
     }
+    // Add invoices mapped to country via customers
+    const customerCountryById = new Map<string, string | null>();
+    for (const c of (customers ?? [])) { customerCountryById.set(c.customer_id, c.country ?? null); }
+    for (const inv of (invoices ?? [])) {
+      const acc = inv.account_no ?? '';
+      if (!acc) continue;
+      const ctry = String(customerCountryById.get(acc) || '').trim();
+      if (!countries.includes(ctry)) continue;
+      const bucket = out[ctry] || (out[ctry] = { s1Qty: 0, s2Qty: 0, s1Price: 0, s2Price: 0 });
+      const rate = rates[(String(inv.currency || 'DKK').toUpperCase())] ?? 1;
+      const amountDkk = Number(inv.amount || 0) * rate;
+      const qty = Number(inv.qty || 0) || 0;
+      if (inv.season_id === s1) { bucket.s1Qty += qty; bucket.s1Price += amountDkk; }
+      else if (inv.season_id === s2) { bucket.s2Qty += qty; bucket.s2Price += amountDkk; }
+    }
     return out;
-  }, [stats, s1, s2, currencyRatesRow]);
+  }, [stats, invoices, customers, s1, s2, currencyRatesRow]);
   function getSeasonLabel(seasonId: string | undefined) {
     if (!seasonId) return '';
     const s = (seasons ?? []).find((x) => x.id === seasonId);

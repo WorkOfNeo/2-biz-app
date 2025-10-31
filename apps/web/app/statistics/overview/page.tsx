@@ -81,6 +81,17 @@ export default function OverviewPage() {
     return (data ?? []) as StatsRow[];
   }, { refreshInterval: 20000 });
 
+  // Fetch invoices and combine with stats for aligned totals
+  const { data: invoices } = useSWR(s1 && s2 ? ['overview:invoices', s1, s2] : null, async () => {
+    const { data, error } = await supabase
+      .from('sales_invoices')
+      .select('account_no, qty, amount, currency, season_id')
+      .in('season_id', [s1, s2])
+      .limit(200000);
+    if (error) throw new Error(error.message);
+    return (data ?? []) as { account_no: string | null; qty: number | null; amount: number | null; currency: string | null; season_id: string }[];
+  }, { refreshInterval: 20000 });
+
   const rows = useMemo(() => {
     if (!people || !customers || !stats) return [] as any[];
     const targetCountry = country === 'All' ? null : country.toUpperCase();
@@ -123,6 +134,25 @@ export default function OverviewPage() {
       if (r.season_id === s1) { row.s1Qty += Number(r.qty||0); row.s1Price += priceDkk; row.visited.add(acc); if (validTargetsBySp.get(spId)?.has(acc)) row.visitedValid.add(acc); }
       else if (r.season_id === s2) { row.s2Qty += Number(r.qty||0); row.s2Price += priceDkk; }
     }
+    // Aggregate invoices mapped to salesperson via customers
+    const customerById = new Map<string, Customer>();
+    for (const c of customers) { if (c.customer_id) customerById.set(c.customer_id, c); }
+    for (const inv of (invoices ?? [])) {
+      const acc = inv.account_no ?? '';
+      if (!acc) continue;
+      const c = customerById.get(acc);
+      const spId = c?.salesperson_id ?? '';
+      if (!spId) continue;
+      const set = targetsBySp.get(spId);
+      if (!set || !set.has(acc)) continue;
+      const row = agg.get(spId)!;
+      const currency = (inv.currency || 'DKK').toUpperCase();
+      const rate = rates[currency] ?? 1;
+      const amountDkk = Number(inv.amount || 0) * rate;
+      const qty = Number(inv.qty || 0) || 0;
+      if (inv.season_id === s1) { row.s1Qty += qty; row.s1Price += amountDkk; }
+      else if (inv.season_id === s2) { row.s2Qty += qty; row.s2Price += amountDkk; }
+    }
     // Build output rows
     const out = [] as any[];
     for (const sp of people) {
@@ -160,7 +190,7 @@ export default function OverviewPage() {
       });
     }
     return out;
-  }, [people, customers, stats, country, s1, s2]);
+  }, [people, customers, stats, invoices, country, s1, s2, rates, spCurrencyById]);
 
   // Totals across all salespersons for selected country, converted to DKK
   const totals = useMemo(() => {
@@ -182,8 +212,17 @@ export default function OverviewPage() {
       if (r.season_id === s1) { out.s1Qty += qty; out.s1PriceDkk += priceDkk; }
       else if (r.season_id === s2) { out.s2Qty += qty; out.s2PriceDkk += priceDkk; }
     }
+    for (const inv of (invoices ?? [])) {
+      const acc = inv.account_no ?? '';
+      if (!acc || !targetAccounts.has(acc)) continue;
+      const rate = rates[(String(inv.currency || 'DKK').toUpperCase())] ?? 1;
+      const qty = Number(inv.qty || 0) || 0;
+      const amountDkk = Number(inv.amount || 0) * rate;
+      if (inv.season_id === s1) { out.s1Qty += qty; out.s1PriceDkk += amountDkk; }
+      else if (inv.season_id === s2) { out.s2Qty += qty; out.s2PriceDkk += amountDkk; }
+    }
     return out;
-  }, [customers, stats, country, s1, s2, rates, spCurrencyById]);
+  }, [customers, stats, invoices, country, s1, s2, rates, spCurrencyById]);
 
   // navigation helper
   function buildDetailsHref(spId: string, mode: 'nulled' | 'not_visited' | 'visited') {
