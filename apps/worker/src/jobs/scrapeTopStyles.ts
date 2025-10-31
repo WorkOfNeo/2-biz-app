@@ -33,30 +33,56 @@ export async function scrapeTopStyles(ctx: Ctx) {
     // Navigate and login using existing authenticated browser (assumed)
     const webBase = 'https://2-biz.spysystem.dk/confident.php?mode=Topstyles';
     await page.goto(webBase, { waitUntil: 'networkidle', timeout: 120_000 });
-    await log(job.id, 'info', 'STEP:topstyles_nav_ok', { url: webBase });
+    const ready = await page.evaluate(() => document.readyState).catch(() => 'unknown');
+    const frames = page.frames();
+    const frameUrls = frames.map((f) => f.url());
+    await log(job.id, 'info', 'STEP:topstyles_nav_ok', { url: webBase, readyState: ready, frames: frameUrls });
+
+    // Helper: find a frame that contains a selector
+    async function findFrameWith(selector: string) {
+      // Try main page first
+      const hasOnMain = await page.evaluate((sel) => !!document.querySelector(sel), selector).catch(() => false);
+      if (hasOnMain) return page.mainFrame();
+      for (const f of page.frames()) {
+        try {
+          const ok = await f.evaluate((sel) => !!document.querySelector(sel), selector).catch(() => false);
+          if (ok) return f;
+        } catch {}
+      }
+      return null as any;
+    }
+
+    // Resolve frame for select + table
+    const selectFrame = await findFrameWith('select[name="strGroupBy"]');
+    const tableFrame = await findFrameWith('table.standardList tbody tr');
+    await log(job.id, 'info', 'STEP:topstyles_selectors_resolved', {
+      selectFrameUrl: selectFrame?.url?.() || null,
+      tableFrameUrl: tableFrame?.url?.() || null,
+    });
     // Switch grouping to color
     try {
-      await page.selectOption('select[name="strGroupBy"]', 'color');
+      const target = selectFrame || page;
+      await target.selectOption('select[name="strGroupBy"]', 'color');
       // Some pages require a JS event to fire request
-      await page.evaluate(() => {
+      await target.evaluate(() => {
         const sel = document.querySelector('select[name="strGroupBy"]') as HTMLSelectElement | null;
         if (sel) sel.dispatchEvent(new Event('change', { bubbles: true }));
       });
       // wait for table update (either XHR or DOM change)
       await Promise.race([
-        page.waitForResponse((res) => res.url().includes('confident.php') || res.request().url().includes('confident.php'), { timeout: 15_000 }).catch(() => null),
-        page.waitForTimeout(1500)
+        (tableFrame || page).waitForResponse((res: any) => res.url().includes('confident.php') || res.request().url().includes('confident.php'), { timeout: 15_000 }).catch(() => null),
+        (tableFrame || page).waitForTimeout(1500)
       ]);
-      await page.waitForSelector('.spy-container table.standardList tbody tr', { timeout: 60_000 });
-      await page.waitForTimeout(500);
+      await (tableFrame || page).waitForSelector('table.standardList tbody tr', { timeout: 60_000 });
+      await (tableFrame || page).waitForTimeout(500);
       await log(job.id, 'info', 'STEP:topstyles_group_set', { groupBy: 'color' });
     } catch (e: any) {
       await log(job.id, 'error', 'STEP:topstyles_group_set_failed', { error: e?.message || String(e) });
     }
     // Extract rows
-    let rows = await page.$$eval('.spy-container table.standardList tbody tr', (trs) => {
-      return Array.from(trs).slice(0, 100).map((tr) => {
-        const tds = Array.from(tr.querySelectorAll('td'));
+    let rows = await (tableFrame || page).$$eval('table.standardList tbody tr', (trs: any[]) => {
+      return Array.from(trs).slice(0, 100).map((tr: any) => {
+        const tds = Array.from((tr as any).querySelectorAll('td')) as any[];
         const img = (tds[0]?.querySelector('img') as HTMLImageElement | null)?.src || '';
         const styleNo = (tds[1]?.textContent || '').trim();
         const styleName = (tds[2]?.textContent || '').trim();
@@ -71,9 +97,9 @@ export async function scrapeTopStyles(ctx: Ctx) {
     if (!rows || rows.length === 0) {
       // fallback: try without changing group
       await log(job.id, 'info', 'STEP:topstyles_zero_rows_try_style');
-      rows = await page.$$eval('table.standardList tbody tr', (trs) => {
-        return Array.from(trs).slice(0, 100).map((tr) => {
-          const tds = Array.from(tr.querySelectorAll('td'));
+      rows = await (tableFrame || page).$$eval('table.standardList tbody tr', (trs: any[]) => {
+        return Array.from(trs).slice(0, 100).map((tr: any) => {
+          const tds = Array.from((tr as any).querySelectorAll('td')) as any[];
           const img = (tds[0]?.querySelector('img') as HTMLImageElement | null)?.src || '';
           const styleNo = (tds[1]?.textContent || '').trim();
           const styleName = (tds[2]?.textContent || '').trim();
@@ -85,21 +111,29 @@ export async function scrapeTopStyles(ctx: Ctx) {
           return { img, styleNo, styleName, color, type, quality, qty, amount };
         });
       });
+      // If still empty, log a small HTML snippet to debug
+      if (!rows || rows.length === 0) {
+        const snippet = await (tableFrame || page).evaluate(() => {
+          const el = document.querySelector('table.standardList');
+          return el ? el.outerHTML.slice(0, 800) : (document.body?.innerText || '').slice(0, 800);
+        }).catch(() => 'no-html');
+        await log(job.id, 'error', 'STEP:topstyles_no_rows_after_fallback', { htmlSnippet: snippet });
+      }
     }
     await log(job.id, 'info', 'STEP:topstyles_rows_extracted', { rows: rows.length });
-    const parsed = rows.map((r) => {
+    const parsed = (rows as any[]).map((r: any) => {
       const img1024 = r.img.replace('s24', 's1024');
       const qty = parseNumberEu(r.qty);
       const amount = parseNumberEu(r.amount);
       return { image_url: img1024, style_no: r.styleNo, style_name: r.styleName, color: r.color, type: r.type, quality: r.quality, qty, amount, currency: 'DKK' };
-    }).sort((a, b) => b.qty - a.qty).slice(0, 10);
+    }).sort((a: any, b: any) => b.qty - a.qty).slice(0, 10);
     if (parsed[0]) {
       await log(job.id, 'info', 'STEP:topstyles_sample', { first: parsed[0] });
     }
     // Replace existing rows for season
     try { await supabase.from('top_styles').delete().eq('season_id', currentSeasonId); } catch {}
     if (parsed.length) {
-      const insert = parsed.map((p) => ({ season_id: currentSeasonId, ...p }));
+      const insert = parsed.map((p: any) => ({ season_id: currentSeasonId, ...p }));
       const { error } = await supabase.from('top_styles').insert(insert);
       if (error) throw error;
     }
