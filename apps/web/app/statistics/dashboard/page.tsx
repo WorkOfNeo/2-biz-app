@@ -7,6 +7,8 @@ const EMAILJS_ENDPOINT = 'https://api.emailjs.com/api/v1.0/email/send';
 const EMAILJS_SERVICE_ID = process.env.NEXT_PUBLIC_EMAILJS_SERVICE_ID || process.env.NEXT_PUBLIC_EMAILJS_SERVICE_KEY || '';
 const EMAILJS_TEMPLATE_ID = process.env.NEXT_PUBLIC_EMAILJS_TEMPLATE_ID || '';
 const EMAILJS_PUBLIC_KEY = process.env.NEXT_PUBLIC_EMAILJS_PUBLIC_KEY || '';
+const EMAILJS_FROM_NAME = process.env.NEXT_PUBLIC_EMAILJS_FROM_NAME || '2-BIZ';
+const EMAILJS_FROM_EMAIL = process.env.NEXT_PUBLIC_EMAILJS_FROM_EMAIL || '';
 
 export default function StatisticsDashboardPage() {
   const { data: salespersons } = useSWR('salespersons:list', async () => {
@@ -60,13 +62,15 @@ export default function StatisticsDashboardPage() {
         const attachments: Array<{ name: string; data: string }> = [];
         try {
           const dataUrl = await fetchToDataUrl(my.publicUrl);
+          const base64 = dataUrl.split(',')[1] || '';
           const name = (my.name ? `${my.name}.pdf` : (my.path?.split('/').pop() || 'statistics.pdf'));
-          attachments.push({ name, data: dataUrl });
+          attachments.push({ name, data: base64 });
         } catch {}
         if (includeCountries && countries?.public_url) {
           try {
             const dataUrl = await fetchToDataUrl(countries.public_url);
-            attachments.push({ name: 'Countries.pdf', data: dataUrl });
+            const base64 = dataUrl.split(',')[1] || '';
+            attachments.push({ name: 'Countries.pdf', data: base64 });
           } catch {}
         }
         if (attachments.length === 0) continue;
@@ -93,11 +97,11 @@ export default function StatisticsDashboardPage() {
       const attachments: Array<{ name: string; data: string }> = [];
       if (overallType === 'all' || overallType === 'overview') {
         const row = latestByKind.get('overview_pdf');
-        if (row?.public_url) { try { attachments.push({ name: 'Overview.pdf', data: await fetchToDataUrl(row.public_url) }); } catch {} }
+        if (row?.public_url) { try { const du = await fetchToDataUrl(row.public_url); attachments.push({ name: 'Overview.pdf', data: du.split(',')[1] || '' }); } catch {} }
       }
       if (overallType === 'all' || overallType === 'countries') {
         const row = latestByKind.get('countries_pdf');
-        if (row?.public_url) { try { attachments.push({ name: 'Countries.pdf', data: await fetchToDataUrl(row.public_url) }); } catch {} }
+        if (row?.public_url) { try { const du = await fetchToDataUrl(row.public_url); attachments.push({ name: 'Countries.pdf', data: du.split(',')[1] || '' }); } catch {} }
       }
       if (attachments.length === 0) { alert('No exports available yet.'); return; }
       const msg = 'Latest statistics are attached.';
@@ -121,6 +125,8 @@ export default function StatisticsDashboardPage() {
           to_email: recipient,
           subject,
           message_html: message,
+          from_name: EMAILJS_FROM_NAME,
+          from_email: EMAILJS_FROM_EMAIL,
         },
         attachments: (attachments || []).map((a) => ({ name: a.name, data: a.data })),
       } as any;
