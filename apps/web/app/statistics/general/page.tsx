@@ -693,71 +693,59 @@ export default function StatisticsGeneralPage() {
                         {detailsS1.map((r, idx) => (
                           <tr key={idx}>
                             <td className="p-2 border-b">{r.account_no}</td>
-                            <td className="p-2 border-b">
-                              {r.invoice_no ? r.customer_name : (
-                                <input className="w-40 border rounded px-1" defaultValue={r.customer_name || ''} onBlur={async (e) => {
-                                  try { await supabase.from('sales_stats').update({ customer_name: e.target.value }).eq('id', (r as any).id); } catch {}
-                                }} />
-                              )}
-                            </td>
-                            <td className="p-2 border-b">
-                              {r.invoice_no ? r.city : (
-                                <input className="w-32 border rounded px-1" defaultValue={r.city || ''} onBlur={async (e) => {
-                                  try { await supabase.from('sales_stats').update({ city: e.target.value }).eq('id', (r as any).id); } catch {}
-                                }} />
-                              )}
+                            <td className="p-2 border-b">{r.customer_name}</td>
+                            <td className="p-2 border-b">{r.city}</td>
+                            <td className="p-2 border-b text-right">
+                              <input
+                                className="w-20 border rounded px-1 text-right"
+                                defaultValue={Number(r.qty ?? 0)}
+                                onBlur={async (e) => {
+                                  try {
+                                    const v = Number(e.target.value || 0) || 0;
+                                    if ((r as any).invoice_no) {
+                                      await supabase.from('sales_invoices').update({ qty: v, manual_edited: true }).eq('id', (r as any).id);
+                                    } else {
+                                      await supabase.from('sales_stats').update({ qty: v }).eq('id', (r as any).id);
+                                    }
+                                  } catch {}
+                                }}
+                              />
                             </td>
                             <td className="p-2 border-b text-right">
-                              {r.invoice_no ? (
-                                <input
-                                  className="w-20 border rounded px-1 text-right"
-                                  defaultValue={Number(r.qty ?? 0)}
-                                  onBlur={async (e) => {
-                                    try {
-                                      const v = Number(e.target.value || 0) || 0;
-                                      if ((r as any).invoice_no) {
-                                        await supabase.from('sales_invoices').update({ qty: v, manual_edited: true }).eq('id', (r as any).id);
-                                      } else {
-                                        await supabase.from('sales_stats').update({ qty: v }).eq('id', (r as any).id);
-                                      }
-                                    } catch {}
-                                  }}
-                                />
-                              ) : (
-                                Number(r.qty ?? 0)
-                              )}
-                            </td>
-                            <td className="p-2 border-b text-right">
-                              {r.invoice_no ? (
-                                <input
-                                  className="w-28 border rounded px-1 text-right"
-                                  defaultValue={Number(r.price ?? 0)}
-                                  onBlur={async (e) => {
-                                    try {
-                                      const v = Number(e.target.value || 0) || 0;
-                                      if ((r as any).invoice_no) {
-                                        await supabase.from('sales_invoices').update({ amount: v, manual_edited: true }).eq('id', (r as any).id);
-                                      } else {
-                                        await supabase.from('sales_stats').update({ price: v }).eq('id', (r as any).id);
-                                      }
-                                    } catch {}
-                                  }}
-                                />
-                              ) : (
-                                Number(r.price ?? 0).toLocaleString('da-DK')
-                              )}
+                              <input
+                                className="w-28 border rounded px-1 text-right"
+                                defaultValue={Number(r.price ?? 0)}
+                                onBlur={async (e) => {
+                                  try {
+                                    const v = Number(e.target.value || 0) || 0;
+                                    if ((r as any).invoice_no) {
+                                      await supabase.from('sales_invoices').update({ amount: v, manual_edited: true }).eq('id', (r as any).id);
+                                    } else {
+                                      await supabase.from('sales_stats').update({ price: v }).eq('id', (r as any).id);
+                                    }
+                                  } catch {}
+                                }}
+                              />
                             </td>
                             <td className="p-2 border-b">{(r as any).invoice_no ?? '—'}</td>
                             <td className="p-2 border-b text-right">{r.updated_at ? new Date(r.updated_at).toLocaleString() : '—'}</td>
-                            {!r.invoice_no && (
-                              <td className="p-2 border-b">
-                                <label className="inline-flex items-center gap-1 text-xs">
-                                  <input type="checkbox" defaultChecked={(r as any).frozen === true} onChange={async (e) => {
-                                    try { await supabase.from('sales_stats').update({ frozen: e.target.checked }).eq('id', (r as any).id); } catch {}
-                                  }} /> Freeze
-                                </label>
-                              </td>
-                            )}
+                            <td className="p-2 border-b">
+                              <label className="inline-flex items-center gap-1 text-xs">
+                                <input
+                                  type="checkbox"
+                                  defaultChecked={(r as any).invoice_no ? Boolean((r as any).manual_edited) : Boolean((r as any).frozen)}
+                                  onChange={async (e) => {
+                                    try {
+                                      if ((r as any).invoice_no) {
+                                        await supabase.from('sales_invoices').update({ manual_edited: e.target.checked }).eq('id', (r as any).id);
+                                      } else {
+                                        await supabase.from('sales_stats').update({ frozen: e.target.checked }).eq('id', (r as any).id);
+                                      }
+                                    } catch {}
+                                  }}
+                                /> Freeze
+                              </label>
+                            </td>
                           </tr>
                         ))}
                       </tbody>
@@ -793,51 +781,39 @@ export default function StatisticsGeneralPage() {
                         {detailsS2.map((r, idx) => (
                           <tr key={idx}>
                             <td className="p-2 border-b">{r.account_no}</td>
-                            <td className="p-2 border-b">
-                              {r.invoice_no ? r.customer_name : (
-                                <input className="w-40 border rounded px-1" defaultValue={r.customer_name || ''} onBlur={async (e) => {
-                                  try { await supabase.from('sales_stats').update({ customer_name: e.target.value }).eq('id', (r as any).id); } catch {}
-                                }} />
-                              )}
-                            </td>
-                            <td className="p-2 border-b">
-                              {r.invoice_no ? r.city : (
-                                <input className="w-32 border rounded px-1" defaultValue={r.city || ''} onBlur={async (e) => {
-                                  try { await supabase.from('sales_stats').update({ city: e.target.value }).eq('id', (r as any).id); } catch {}
-                                }} />
-                              )}
-                            </td>
+                            <td className="p-2 border-b">{r.customer_name}</td>
+                            <td className="p-2 border-b">{r.city}</td>
                             <td className="p-2 border-b text-right">
-                              {r.invoice_no ? (
-                                Number(r.qty ?? 0)
-                              ) : (
-                                <input
-                                  className="w-20 border rounded px-1 text-right"
-                                  defaultValue={Number(r.qty ?? 0)}
-                                  onBlur={async (e) => {
-                                    try {
-                                      const v = Number(e.target.value || 0) || 0;
+                              <input
+                                className="w-20 border rounded px-1 text-right"
+                                defaultValue={Number(r.qty ?? 0)}
+                                onBlur={async (e) => {
+                                  try {
+                                    const v = Number(e.target.value || 0) || 0;
+                                    if ((r as any).invoice_no) {
+                                      await supabase.from('sales_invoices').update({ qty: v, manual_edited: true }).eq('id', (r as any).id);
+                                    } else {
                                       await supabase.from('sales_stats').update({ qty: v }).eq('id', (r as any).id);
-                                    } catch {}
-                                  }}
-                                />
-                              )}
+                                    }
+                                  } catch {}
+                                }}
+                              />
                             </td>
                             <td className="p-2 border-b text-right">
-                              {r.invoice_no ? (
-                                Number(r.price ?? 0).toLocaleString('da-DK')
-                              ) : (
-                                <input
-                                  className="w-28 border rounded px-1 text-right"
-                                  defaultValue={Number(r.price ?? 0)}
-                                  onBlur={async (e) => {
-                                    try {
-                                      const v = Number(e.target.value || 0) || 0;
+                              <input
+                                className="w-28 border rounded px-1 text-right"
+                                defaultValue={Number(r.price ?? 0)}
+                                onBlur={async (e) => {
+                                  try {
+                                    const v = Number(e.target.value || 0) || 0;
+                                    if ((r as any).invoice_no) {
+                                      await supabase.from('sales_invoices').update({ amount: v, manual_edited: true }).eq('id', (r as any).id);
+                                    } else {
                                       await supabase.from('sales_stats').update({ price: v }).eq('id', (r as any).id);
-                                    } catch {}
-                                  }}
-                                />
-                              )}
+                                    }
+                                  } catch {}
+                                }}
+                              />
                             </td>
                             <td className="p-2 border-b">{(r as any).invoice_no ?? '—'}</td>
                             <td className="p-2 border-b text-right">{r.updated_at ? new Date(r.updated_at).toLocaleString() : '—'}</td>
@@ -858,15 +834,23 @@ export default function StatisticsGeneralPage() {
                                 /> Freeze
                               </label>
                             </td>
-                            {!r.invoice_no && (
-                              <td className="p-2 border-b">
-                                <label className="inline-flex items-center gap-1 text-xs">
-                                  <input type="checkbox" defaultChecked={(r as any).frozen === true} onChange={async (e) => {
-                                    try { await supabase.from('sales_stats').update({ frozen: e.target.checked }).eq('id', (r as any).id); } catch {}
-                                  }} /> Freeze
-                                </label>
-                              </td>
-                            )}
+                            <td className="p-2 border-b">
+                              <label className="inline-flex items-center gap-1 text-xs">
+                                <input
+                                  type="checkbox"
+                                  defaultChecked={(r as any).invoice_no ? Boolean((r as any).manual_edited) : Boolean((r as any).frozen)}
+                                  onChange={async (e) => {
+                                    try {
+                                      if ((r as any).invoice_no) {
+                                        await supabase.from('sales_invoices').update({ manual_edited: e.target.checked }).eq('id', (r as any).id);
+                                      } else {
+                                        await supabase.from('sales_stats').update({ frozen: e.target.checked }).eq('id', (r as any).id);
+                                      }
+                                    } catch {}
+                                  }}
+                                /> Freeze
+                              </label>
+                            </td>
                           </tr>
                         ))}
                       </tbody>
