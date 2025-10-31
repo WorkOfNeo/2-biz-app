@@ -75,8 +75,10 @@ export default function StatisticsDashboardPage() {
           } catch {}
         }
         if (attachments.length === 0) continue;
-        const subject = 'Your latest statistics';
-        const bodyHtml = '<p>Your latest statistics are attached.</p>';
+        const subject = 'Din statistik';
+        const firstName = String(byId[sp.id]?.name || '');
+        const hej = firstName ? `Hej ${firstName.split(' ')[0]},` : 'Hej,';
+        const bodyHtml = `${hej}\n\nHermed statistik :)`;
         // Dynamic attachment params for EmailJS template
         const dynamicParams: Record<string, string> = {};
         if (attachments[0]) dynamicParams['salesman_pdf'] = `data:application/pdf;base64,${attachments[0].data}`;
@@ -106,8 +108,8 @@ export default function StatisticsDashboardPage() {
         if (row?.public_url) { try { const du = await fetchToDataUrl(row.public_url); attachments.push({ name: 'Countries.pdf', data: du.split(',')[1] || '' }); } catch {} }
       }
       if (attachments.length === 0) { alert('No exports available yet.'); return; }
-      const subject = 'Statistics Update';
-      const bodyHtml = '<p>Latest statistics are attached.</p>';
+      const subject = 'Statistik opdatering';
+      const bodyHtml = 'Hermed statistik :)';
       const dynamicParams: Record<string, string> = {};
       const countriesA = attachments.find(a => a.name.toLowerCase().includes('countries'));
       if (countriesA) dynamicParams['countries_pdf'] = `data:application/pdf;base64,${countriesA.data}`;
@@ -197,7 +199,21 @@ export default function StatisticsDashboardPage() {
         <div className="rounded-md border p-3 space-y-3">
           <div className="text-sm font-semibold">Send out statistics</div>
           <div className="text-sm font-medium">Salesperson Statistics</div>
-          <div className="max-h-64 overflow-auto border rounded">
+          <div className="flex items-center justify-between text-sm">
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                onChange={(e) => {
+                  const all = e.target.checked;
+                  const next: Record<string, boolean> = {};
+                  for (const sp of (salespersons ?? [])) next[sp.id] = all;
+                  setSelected(next);
+                }}
+              />
+              Vælg alle
+            </label>
+          </div>
+          <div className="max-h-64 overflow-auto border rounded mt-2">
             <table className="min-w-full text-sm">
               <tbody>
                 {(salespersons ?? []).map((sp) => (
