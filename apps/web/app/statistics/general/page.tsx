@@ -271,19 +271,31 @@ export default function StatisticsGeneralPage() {
     s1 && s2 ? ['general-stats', s1, s2, selectedSalespersonId ?? 'all'] : null,
     async () => {
       // Fetch both seasons at once and aggregate client-side by account_no
-      const query = supabase
+      const statsQuery = supabase
         .from('sales_stats')
         .select('account_no, customer_name, city, qty, price, season_id, salesperson_id')
         .in('season_id', [s1, s2]);
       if (selectedSalespersonId) {
-        query.eq('salesperson_id', selectedSalespersonId);
+        statsQuery.eq('salesperson_id', selectedSalespersonId);
       }
-      const { data, error } = await query.limit(100000);
-      if (error) throw new Error(error.message);
-      console.log('[stats] fetched raw rows', (data ?? []).length);
+      const invoicesQuery = supabase
+        .from('sales_invoices')
+        .select('account_no, customer_name, qty, amount, season_id')
+        .in('season_id', [s1, s2]);
+
+      const [statsRes, invoicesRes] = await Promise.all([
+        statsQuery.limit(100000),
+        invoicesQuery.limit(100000)
+      ]);
+      if (statsRes.error) throw new Error(statsRes.error.message);
+      if (invoicesRes.error) throw new Error(invoicesRes.error.message);
+      const statsData = statsRes.data ?? [];
+      const invoicesData = invoicesRes.data ?? [];
+      console.log('[stats] fetched raw rows', statsData.length, 'invoices', invoicesData.length);
 
       const map = new Map<string, RowOut>();
-      for (const r of (data ?? []) as any[]) {
+      // Aggregate TopSeller (sales_stats)
+      for (const r of statsData as any[]) {
         const key: string = r.account_no ?? `${r.customer_name ?? ''}:${r.city ?? ''}`;
         const rawCity = r.city ?? '';
         let itemCity: string = rawCity && rawCity !== '-' ? rawCity : '';
@@ -312,8 +324,40 @@ export default function StatisticsGeneralPage() {
         }
         map.set(key, item);
       }
+      // Aggregate Invoices (sales_invoices) into same keys to make top table equal sum of details
+      for (const inv of invoicesData as any[]) {
+        const key: string = inv.account_no ?? `${inv.customer_name ?? ''}:-`;
+        const itemExisting = map.get(key);
+        // Derive city if possible
+        let itemCity: string = itemExisting?.city ?? '';
+        if (!itemCity && inv.account_no) itemCity = customerIndex?.byId?.[inv.account_no] ?? '';
+        if (!itemCity && inv.customer_name) itemCity = customerIndex?.byName?.[inv.customer_name] ?? '';
+        if (!itemCity) itemCity = '-';
+        const item = itemExisting ?? {
+          account_no: inv.account_no ?? key,
+          customer: inv.customer_name ?? '-',
+          city: itemCity,
+          s1Qty: 0,
+          s1Price: 0,
+          s2Qty: 0,
+          s2Price: 0,
+          salespersonId: null,
+          salespersonName: '—'
+        } as RowOut;
+        const qty = Number(inv.qty ?? 0) || 0;
+        const amount = Number(inv.amount ?? 0) || 0;
+        if (inv.season_id === s1) {
+          item.s1Qty += qty;
+          item.s1Price += amount;
+        } else if (inv.season_id === s2) {
+          item.s2Qty += qty;
+          item.s2Price += amount;
+        }
+        map.set(key, item);
+      }
+
       const out = Array.from(map.values()).sort((a, b) => a.customer.localeCompare(b.customer));
-      console.log('[stats] aggregated rows', out.length, 'sample', out[0]);
+      console.log('[stats] aggregated rows (stats+invoices)', out.length, 'sample', out[0]);
       return out;
     },
     { refreshInterval: 20000 }
