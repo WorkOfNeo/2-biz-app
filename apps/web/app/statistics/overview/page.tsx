@@ -313,14 +313,14 @@ export default function OverviewPage() {
                 <td className="p-2 text-center">{Math.round(r.s2Avg).toLocaleString('da-DK')}</td>
                 {(() => {
                   const qtyPct = r.s2Qty === 0 ? 0 : ((r.s1Qty - r.s2Qty) / r.s2Qty) * 100;
-                  const qtyCls = qtyPct > 0 ? 'text-red-700' : qtyPct < 0 ? 'text-green-700' : '';
+                  const qtyCls = qtyPct > 0 ? 'text-green-700' : qtyPct < 0 ? 'text-red-700' : '';
                   return (
                     <td className="p-2 text-center"><span className={qtyCls}>{(qtyPct>=0?'+':'') + qtyPct.toFixed(2)}%</span></td>
                   );
                 })()}
                 {(() => {
                   const pricePct = typeof r.diffPct === 'number' ? r.diffPct : (r.s2Price === 0 ? 0 : ((r.s1Price - r.s2Price) / r.s2Price) * 100);
-                  const priceCls = pricePct > 0 ? 'text-red-700' : pricePct < 0 ? 'text-green-700' : '';
+                  const priceCls = pricePct > 0 ? 'text-green-700' : pricePct < 0 ? 'text-red-700' : '';
                   return (
                     <td className="p-2 text-center"><span className={priceCls}>{(pricePct>=0?'+':'') + pricePct.toFixed(2)}%</span></td>
                   );
@@ -363,8 +363,8 @@ export default function OverviewPage() {
                 const achievedPricePct = s2Price === 0 ? 0 : (s1Price / s2Price) * 100;
                 const diffQtyPct = s2Qty === 0 ? 0 : ((s1Qty - s2Qty) / s2Qty) * 100;
                 const diffPricePct = s2Price === 0 ? 0 : ((s1Price - s2Price) / s2Price) * 100;
-                const qtyCls = diffQtyPct > 0 ? 'text-red-700' : diffQtyPct < 0 ? 'text-green-700' : '';
-                const priceCls = diffPricePct > 0 ? 'text-red-700' : diffPricePct < 0 ? 'text-green-700' : '';
+                const qtyCls = diffQtyPct > 0 ? 'text-green-700' : diffQtyPct < 0 ? 'text-red-700' : '';
+                const priceCls = diffPricePct > 0 ? 'text-green-700' : diffPricePct < 0 ? 'text-red-700' : '';
                 return (
                   <>
                     <tr>
