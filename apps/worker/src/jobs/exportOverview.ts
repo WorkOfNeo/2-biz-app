@@ -3,7 +3,7 @@ import type { JobRow } from '@shared/types';
 import React from 'react';
 import { pdf, Document, Page as PdfPage, Text, StyleSheet, View } from '@react-pdf/renderer';
 import JSZip from 'jszip';
-// Use ArrayBuffer slices from Node Buffers for uploads
+// Use ArrayBuffer slices from Node Buffers for uploads and normalize React-PDF outputs
 
 type Ctx = {
   job: JobRow;
@@ -74,7 +74,8 @@ export async function exportOverview(ctx: Ctx) {
         return React.createElement(View, { style: styles.row }, Cell(sp.name, '28%'), Cell(String(a.s1Qty), '9%', 'right'), Cell(fmt(a.s1Price), '13%', 'right'), Cell(String(a.s2Qty), '9%', 'right'), Cell(fmt(a.s2Price), '13%', 'right'), Cell(String(visited), '8%', 'right'), Cell(String(effective), '8%', 'right'), Cell(visitedPct.toFixed(2) + '%', '12%', 'right'));
       });
       const doc = React.createElement(Document, null, React.createElement(PdfPage, { size: 'A4', style: styles.page }, React.createElement(Text, { style: styles.h1 }, 'Overview'), head, ...body));
-      const pdfBuf = await pdf(doc).toBuffer();
+      const pdfOut = await pdf(doc).toBuffer();
+      const pdfBuf = await ensureBuffer(pdfOut);
       const path = `overview/${job.id}/overview.pdf`;
       try {
         const ab = pdfBuf.buffer.slice(pdfBuf.byteOffset, pdfBuf.byteOffset + pdfBuf.byteLength);
@@ -122,7 +123,8 @@ export async function exportOverview(ctx: Ctx) {
           React.createElement(Text, { style: styles.p }, `Generated: ${new Date().toLocaleString()}`)
         )
       );
-      const pdfBuf = await pdf(doc).toBuffer();
+      const pdfOut2 = await pdf(doc).toBuffer();
+      const pdfBuf = await ensureBuffer(pdfOut2);
       const zip = new JSZip();
       zip.file('general.pdf', pdfBuf);
       const zipBuf = await zip.generateAsync({ type: 'nodebuffer' });
@@ -297,7 +299,8 @@ export async function exportOverview(ctx: Ctx) {
           totalsView
         );
         const doc = React.createElement(Document, null, pageEl);
-        const buf = await pdf(doc).toBuffer();
+        const out = await pdf(doc).toBuffer();
+        const buf = await ensureBuffer(out);
         const safeName = (sp.name || 'salesperson').replace(/[^a-z0-9_-]+/gi, '_');
         // Only store individual PDFs in storage; skip bundling zip server-side
         const indivPath = `General/${job.id}/salesmen/${safeName}.pdf`;
@@ -374,7 +377,8 @@ export async function exportOverview(ctx: Ctx) {
         return React.createElement(PdfPage, { size: 'A4', style: styles.page }, React.createElement(Text, { style: styles.h1 }, `Countries · ${c}`), React.createElement(View, { style: styles.row }, React.createElement(Text, null, `S1 Qty: ${row.s1Qty}`), React.createElement(Text, null, `S2 Qty: ${row.s2Qty}`), React.createElement(Text, null, `Qty %: ${qtyPct.toFixed(2)}%`)), React.createElement(View, { style: styles.row }, React.createElement(Text, null, `S1 Price (DKK): ${fmt(row.s1Price)}`), React.createElement(Text, null, `S2 Price (DKK): ${fmt(row.s2Price)}`), React.createElement(Text, null, `Price %: ${pricePct.toFixed(2)}%`)));
       });
       const combined = React.createElement(Document, null, ...pages);
-      const combinedBuf = await pdf(combined).toBuffer();
+      const combinedOut = await pdf(combined).toBuffer();
+      const combinedBuf = await ensureBuffer(combinedOut);
       // Upload a single combined PDF instead of a zip
       const path = `countries/${job.id}/countries.pdf`;
       try {
@@ -393,6 +397,35 @@ export async function exportOverview(ctx: Ctx) {
   } catch (e: any) {
     await setJobFailedOrRequeue(job, e?.message || String(e));
   }
+}
+
+async function ensureBuffer(data: any): Promise<Buffer> {
+  if (Buffer.isBuffer(data)) return data as Buffer;
+  if (data instanceof Uint8Array) return Buffer.from(data as Uint8Array);
+  if (data instanceof ArrayBuffer) return Buffer.from(new Uint8Array(data as ArrayBuffer));
+  // Web ReadableStream
+  if (data && typeof (data as any).getReader === 'function') {
+    const reader = (data as any).getReader();
+    const chunks: Uint8Array[] = [];
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) chunks.push(value);
+    }
+    return Buffer.concat(chunks.map((u) => Buffer.from(u)));
+  }
+  // Node stream
+  if (data && typeof (data as any).on === 'function') {
+    const chunks: Buffer[] = [];
+    await new Promise<void>((resolve, reject) => {
+      (data as any).on('data', (c: any) => chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c)));
+      (data as any).on('end', () => resolve());
+      (data as any).on('error', (err: any) => reject(err));
+    });
+    return Buffer.concat(chunks);
+  }
+  if (typeof data === 'string') return Buffer.from(data as string);
+  return Buffer.from([]);
 }
 
 
