@@ -158,20 +158,22 @@ export default function StatisticsDashboardPage() {
           ...(extraTemplateParams || {}),
         },
       } as any;
-      const shapes: Array<any> = [
-        { // filename/content (base64)
-          ...basePayload,
-          attachments: (attachments || []).map((a) => ({ filename: a.name, content: a.data }))
-        },
-        { // name/data (base64)
-          ...basePayload,
-          attachments: (attachments || []).map((a) => ({ name: a.name, data: a.data }))
-        },
-        { // name/data with data URL prefix
-          ...basePayload,
-          attachments: (attachments || []).map((a) => ({ name: a.name, data: `data:application/pdf;base64,${a.data}` }))
-        }
-      ];
+      const shapes: Array<any> = extraTemplateParams && Object.keys(extraTemplateParams).length > 0
+        ? [ basePayload ]
+        : [
+            { // filename/content (base64)
+              ...basePayload,
+              attachments: (attachments || []).map((a) => ({ filename: a.name, content: a.data }))
+            },
+            { // name/data (base64)
+              ...basePayload,
+              attachments: (attachments || []).map((a) => ({ name: a.name, data: a.data }))
+            },
+            { // name/data with data URL prefix
+              ...basePayload,
+              attachments: (attachments || []).map((a) => ({ name: a.name, data: `data:application/pdf;base64,${a.data}` }))
+            }
+          ];
       let sent = false; let lastErr: string | null = null;
       for (const payload of shapes) {
         const res = await fetch(EMAILJS_ENDPOINT, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
