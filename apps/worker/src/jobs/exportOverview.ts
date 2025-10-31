@@ -160,7 +160,7 @@ export async function exportOverview(ctx: Ctx) {
       const s2Name = await seasonNames(s2);
       const total = list.length;
       const zip = new JSZip();
-      const filesList: Array<{ name: string; path: string; publicUrl: string | null }> = [];
+      const filesList: Array<{ name: string; path: string; publicUrl: string | null; salesperson_id: string }> = [];
       const pagesAll: any[] = [];
       let idx = 0;
       let uploadedSingles = 0;
@@ -312,7 +312,7 @@ export async function exportOverview(ctx: Ctx) {
             if (upErr) throw upErr;
             let indivUrl: string | null = null;
             try { const { data: pub } = supabase.storage.from('exports').getPublicUrl(indivPath); indivUrl = pub?.publicUrl ?? null; } catch {}
-            filesList.push({ name: sp.name, path: indivPath, publicUrl: indivUrl });
+            filesList.push({ name: sp.name, path: indivPath, publicUrl: indivUrl, salesperson_id: sp.id });
             uploadedSingles++;
             break;
           } catch (e: any) {
