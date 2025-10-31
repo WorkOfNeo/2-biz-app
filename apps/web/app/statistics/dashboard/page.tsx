@@ -151,6 +151,7 @@ export default function StatisticsDashboardPage() {
       const res = await fetch(EMAILJS_ENDPOINT, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       if (!res.ok) {
         const text = await res.text();
+        try { console.error('[EmailJS error]', text); } catch {}
         throw new Error(text || 'EmailJS send failed');
       }
     }
