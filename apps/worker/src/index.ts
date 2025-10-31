@@ -1239,16 +1239,18 @@ async function runJob(job: JobRow) {
           // Ensure customer exists
           const customerUuid = await ensureCustomerIdByAccount(accountNo, { company: customerName || null, country: country || null, salesperson_id: salespersonId });
           // Determine existing state for comparison
-          let existingRow: { id: string; qty: number; price: number; currency: string | null } | null = null;
+          let existingRow: { id: string; qty: number; price: number; currency: string | null; frozen?: boolean } | null = null;
           try {
             const { data: existing } = await supabase
               .from('sales_stats')
-              .select('id, qty, price, currency')
+              .select('id, qty, price, currency, frozen')
               .eq('season_id', targetSeasonId)
               .eq('account_no', accountNo)
               .maybeSingle();
             existingRow = (existing as any) || null;
           } catch {}
+          // Skip updates when row is frozen
+          if (existingRow && (existingRow as any).frozen) { unchangedCount++; continue; }
           if (existingRow && (Number(existingRow.qty || 0) === qty) && (Number(existingRow.price || 0) === price) && ((existingRow.currency || null) === (currency || null))) {
             unchangedCount++;
             // Do not add 'unchanged' to op-typed log; keep sample compact
