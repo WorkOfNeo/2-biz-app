@@ -292,7 +292,7 @@ export async function exportOverview(ctx: Ctx) {
         const doc = React.createElement(Document, null, pageEl);
         const buf = await pdf(doc).toBuffer();
         const safeName = (sp.name || 'salesperson').replace(/[^a-z0-9_-]+/gi, '_');
-        zip.file(`${safeName}.pdf`, buf);
+        // Only store individual PDFs in storage; skip bundling zip server-side
         const indivPath = `General/${job.id}/salesmen/${safeName}.pdf`;
         // retry upload up to 3 times for single PDF
         for (let attempt = 1; attempt <= 3; attempt++) {
@@ -310,17 +310,11 @@ export async function exportOverview(ctx: Ctx) {
         }
         pagesAll.push(pageEl);
       }
-      const combined = React.createElement(Document, null, ...pagesAll);
-      const combinedBuf = await pdf(combined).toBuffer();
-      zip.file('all.pdf', combinedBuf);
-      const zipBuf = await zip.generateAsync({ type: 'nodebuffer' });
-      const path = `General/${job.id}/salesmen.zip`;
-      try { await supabase.storage.from('exports').upload(path, zipBuf as any, { contentType: 'application/zip', upsert: true }); } catch {}
-      let publicUrl: string | null = null;
-      try { const { data: pub } = supabase.storage.from('exports').getPublicUrl(path); publicUrl = pub?.publicUrl ?? null; } catch {}
-      try { await supabase.from('exports').insert({ kind: 'general_salesmen_zip', title: 'General · Salesmen', path, public_url: publicUrl, job_id: job.id, meta: { files: filesList } }); } catch {}
+      // Insert a record pointing to the folder (no zip). Main link left empty; files are listed in meta.files
+      const folderPath = `General/${job.id}/salesmen/`;
+      try { await supabase.from('exports').insert({ kind: 'general_salesmen_pdfs', title: 'General · Salesmen', path: folderPath, public_url: null, job_id: job.id, meta: { files: filesList } }); } catch {}
       await log(job.id, 'info', 'STEP:export_general_singles_uploaded', { uploaded: uploadedSingles, total: list.length });
-      await saveResult(job.id, 'export_general_salesmen_zip', { file: { path, publicUrl }, singles: uploadedSingles });
+      await saveResult(job.id, 'export_general_salesmen_pdfs', { singles: uploadedSingles, folder: folderPath });
       await setJobSucceeded(job.id);
       return;
     }
@@ -373,15 +367,13 @@ export async function exportOverview(ctx: Ctx) {
       });
       const combined = React.createElement(Document, null, ...pages);
       const combinedBuf = await pdf(combined).toBuffer();
-      const zip = new JSZip();
-      zip.file('countries_all.pdf', combinedBuf);
-      const zipBuf = await zip.generateAsync({ type: 'nodebuffer' });
-      const path = `countries/${job.id}/countries.zip`;
-      try { await supabase.storage.from('exports').upload(path, zipBuf as any, { contentType: 'application/zip', upsert: true }); } catch {}
+      // Upload a single combined PDF instead of a zip
+      const path = `countries/${job.id}/countries.pdf`;
+      try { await supabase.storage.from('exports').upload(path, combinedBuf as any, { contentType: 'application/pdf', upsert: true }); } catch {}
       let publicUrl: string | null = null;
       try { const { data: pub } = supabase.storage.from('exports').getPublicUrl(path); publicUrl = pub?.publicUrl ?? null; } catch {}
-      try { await supabase.from('exports').insert({ kind: 'countries_zip', title: 'Countries', path, public_url: publicUrl, job_id: job.id, meta: {} }); } catch {}
-      await saveResult(job.id, 'export_countries_zip', { file: { path, publicUrl } });
+      try { await supabase.from('exports').insert({ kind: 'countries_pdf', title: 'Countries', path, public_url: publicUrl, job_id: job.id, meta: {} }); } catch {}
+      await saveResult(job.id, 'export_countries_pdf', { file: { path, publicUrl } });
       await setJobSucceeded(job.id);
       return;
     }

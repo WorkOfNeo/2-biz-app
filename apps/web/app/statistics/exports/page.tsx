@@ -29,6 +29,7 @@ export default function StatisticsExportsPage() {
   const [elapsed, setElapsed] = React.useState(0 as any);
   const [jobDone, setJobDone] = React.useState(false);
   const [openId, setOpenId] = React.useState<string | null>(null);
+  const [selected, setSelected] = React.useState<Record<string, Set<string>>>({});
 
   async function waitForUrlReady(url: string, attempts = 8, delayMs = 750): Promise<boolean> {
     for (let i = 0; i < attempts; i++) {
@@ -135,6 +136,42 @@ export default function StatisticsExportsPage() {
     setJobId(js.jobId);
   }
 
+  function toggleSelect(exportId: string, filePath: string) {
+    setSelected((prev) => {
+      const copy: Record<string, Set<string>> = { ...prev };
+      const set = new Set(copy[exportId] ? Array.from(copy[exportId]) : []);
+      if (set.has(filePath)) set.delete(filePath); else set.add(filePath);
+      copy[exportId] = set;
+      return copy;
+    });
+  }
+
+  function isSelected(exportId: string, filePath: string): boolean {
+    return Boolean(selected[exportId] && selected[exportId].has(filePath));
+  }
+
+  async function downloadSelectedAsZip(exportId: string, files: Array<{ path: string; name?: string }>) {
+    const chosen = files.filter((f) => selected[exportId]?.has(f.path));
+    if (chosen.length === 0) return;
+    const { default: JSZip } = await import('jszip');
+    const zip = new JSZip();
+    for (const f of chosen) {
+      try {
+        const { data: blob, error } = await supabase.storage.from('exports').download(f.path);
+        if (!error && blob) {
+          const filename = f.name ? `${f.name}.pdf` : (f.path.split('/').pop() || 'file.pdf');
+          zip.file(filename, blob as unknown as Blob);
+        }
+      } catch {}
+    }
+    const out = await zip.generateAsync({ type: 'blob' });
+    const url = URL.createObjectURL(out);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'selected.pdf.zip';
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+  }
+
   async function downloadPath(path: string, publicUrl?: string | null) {
     try {
       const { data: file, error } = await supabase.storage.from('exports').download(path);
@@ -234,7 +271,7 @@ export default function StatisticsExportsPage() {
             onClick={enqueueCountriesPdf}
             disabled={running}
           >
-            Export Countries (ZIP)
+            Export Countries (PDF)
           </button>
           <div className="ml-2 min-w-[180px] text-xs text-gray-700 flex items-center gap-2">
             {running && (
@@ -300,9 +337,27 @@ export default function StatisticsExportsPage() {
                               <button className="rounded-md border px-2 py-1 text-xs hover:bg-slate-50" onClick={() => { all.path ? downloadPath(all.path) : window.open(all.publicUrl!, '_blank', 'noopener'); }}>Download</button>
                             </div>
                           )}
+                          {files.length > 0 && (
+                            <div className="flex items-center justify-between">
+                              <div className="text-sm font-medium">Selection</div>
+                              <button
+                                className="rounded-md border px-2 py-1 text-xs hover:bg-slate-50 disabled:opacity-50"
+                                onClick={() => downloadSelectedAsZip(r.id, files.map((f:any)=>({ path: f.path, name: f.name })))}
+                                disabled={(selected[r.id]?.size ?? 0) === 0}
+                              >Download selected as ZIP</button>
+                            </div>
+                          )}
                           {files.map((f: any, i: number) => (
                             <div key={i} className="flex items-center justify-between">
-                              <div className="text-sm">{f.name}</div>
+                              <div className="text-sm flex items-center gap-2">
+                                <input
+                                  type="checkbox"
+                                  className="h-3 w-3"
+                                  checked={isSelected(r.id, f.path)}
+                                  onChange={() => toggleSelect(r.id, f.path)}
+                                />
+                                <span>{f.name}</span>
+                              </div>
                               <div>
                                 {f.publicUrl || f.path ? (
                                   <button className="rounded-md border px-2 py-1 text-xs hover:bg-slate-50" onClick={() => downloadChildWithFallback(f.path, f.publicUrl, r.path)}>Download</button>
