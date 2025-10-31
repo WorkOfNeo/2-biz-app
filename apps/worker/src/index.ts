@@ -610,19 +610,25 @@ async function runJob(job: JobRow) {
     return;
   }
   if (job.type === 'scrape_statistics') {
-    await scrapeStatisticsPerSize({
-      job,
-      page: page!,
-      log,
-      saveResult,
-      setJobFailedOrRequeue,
-      setJobSucceeded,
-      ensureNotCancelled,
-      captureHtmlSnippet,
-      supabase,
-      SPY_BASE_URL,
-    });
-    return;
+    // Route: when explicitly requested (kind === 'per_size'), run per-size snapshot.
+    // Otherwise, allow the deep/shallow statistics block below (toggled by payload.toggles.deep) to execute.
+    const kind = (job.payload as any)?.kind as string | undefined;
+    if (kind === 'per_size') {
+      await scrapeStatisticsPerSize({
+        job,
+        page: page!,
+        log,
+        saveResult,
+        setJobFailedOrRequeue,
+        setJobSucceeded,
+        ensureNotCancelled,
+        captureHtmlSnippet,
+        supabase,
+        SPY_BASE_URL,
+      });
+      return;
+    }
+    // fall through to deep/shallow stats handling when not per_size
   }
   if (job.type === 'export_overview') {
     await exportOverviewJob({ job, page: page!, log, saveResult, setJobFailedOrRequeue, setJobSucceeded, supabase });
