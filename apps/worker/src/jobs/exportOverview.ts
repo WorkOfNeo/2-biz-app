@@ -122,7 +122,7 @@ export async function exportOverview(ctx: Ctx) {
       const zip = new JSZip();
       zip.file('general.pdf', pdfBuf);
       const zipBuf = await zip.generateAsync({ type: 'nodebuffer' });
-      const path = `general/${job.id}/general.zip`;
+      const path = `General/${job.id}/general.zip`;
       try { await supabase.storage.from('exports').upload(path, zipBuf as any, { contentType: 'application/zip', upsert: true }); } catch {}
       let publicUrl: string | null = null;
       try { const { data: pub } = supabase.storage.from('exports').getPublicUrl(path); publicUrl = pub?.publicUrl ?? null; } catch {}
@@ -154,6 +154,7 @@ export async function exportOverview(ctx: Ctx) {
       const filesList: Array<{ name: string; path: string; publicUrl: string | null }> = [];
       const pagesAll: any[] = [];
       let idx = 0;
+      let uploadedSingles = 0;
       for (const sp of list) {
         idx++;
         await log(job.id, 'info', 'STEP:export_general_progress', { index: idx, total, name: sp.name });
@@ -292,25 +293,34 @@ export async function exportOverview(ctx: Ctx) {
         const buf = await pdf(doc).toBuffer();
         const safeName = (sp.name || 'salesperson').replace(/[^a-z0-9_-]+/gi, '_');
         zip.file(`${safeName}.pdf`, buf);
-        try {
-          const indivPath = `general/${job.id}/salesmen/${safeName}.pdf`;
-          await supabase.storage.from('exports').upload(indivPath, buf as any, { contentType: 'application/pdf', upsert: true });
-          let indivUrl: string | null = null;
-          try { const { data: pub } = supabase.storage.from('exports').getPublicUrl(indivPath); indivUrl = pub?.publicUrl ?? null; } catch {}
-          filesList.push({ name: sp.name, path: indivPath, publicUrl: indivUrl });
-        } catch {}
+        const indivPath = `General/${job.id}/salesmen/${safeName}.pdf`;
+        // retry upload up to 3 times for single PDF
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          try {
+            const { error: upErr } = await supabase.storage.from('exports').upload(indivPath, buf as any, { contentType: 'application/pdf', upsert: true });
+            if (upErr) throw upErr;
+            let indivUrl: string | null = null;
+            try { const { data: pub } = supabase.storage.from('exports').getPublicUrl(indivPath); indivUrl = pub?.publicUrl ?? null; } catch {}
+            filesList.push({ name: sp.name, path: indivPath, publicUrl: indivUrl });
+            uploadedSingles++;
+            break;
+          } catch (e: any) {
+            if (attempt === 3) { await log(job.id, 'error', 'STEP:export_single_upload_failed', { name: sp.name, path: indivPath, error: e?.message || String(e) }); }
+          }
+        }
         pagesAll.push(pageEl);
       }
       const combined = React.createElement(Document, null, ...pagesAll);
       const combinedBuf = await pdf(combined).toBuffer();
       zip.file('all.pdf', combinedBuf);
       const zipBuf = await zip.generateAsync({ type: 'nodebuffer' });
-      const path = `general/${job.id}/salesmen.zip`;
+      const path = `General/${job.id}/salesmen.zip`;
       try { await supabase.storage.from('exports').upload(path, zipBuf as any, { contentType: 'application/zip', upsert: true }); } catch {}
       let publicUrl: string | null = null;
       try { const { data: pub } = supabase.storage.from('exports').getPublicUrl(path); publicUrl = pub?.publicUrl ?? null; } catch {}
       try { await supabase.from('exports').insert({ kind: 'general_salesmen_zip', title: 'General · Salesmen', path, public_url: publicUrl, job_id: job.id, meta: { files: filesList } }); } catch {}
-      await saveResult(job.id, 'export_general_salesmen_zip', { file: { path, publicUrl } });
+      await log(job.id, 'info', 'STEP:export_general_singles_uploaded', { uploaded: uploadedSingles, total: list.length });
+      await saveResult(job.id, 'export_general_salesmen_zip', { file: { path, publicUrl }, singles: uploadedSingles });
       await setJobSucceeded(job.id);
       return;
     }
