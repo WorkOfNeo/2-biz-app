@@ -1443,47 +1443,90 @@ async function runJob(job: JobRow) {
       await log(job.id, 'info', 'STEP:invoiced_call', { targetSeasonId, spySeasonId: spySeasonId ?? null });
       const invoicedLines: Array<{ customerName: string; qty: number; userCurrencyAmount: { amount: number; currency: string | null } | null; customerCurrencyAmount: { amount: number; currency: string | null } | null; invoiceNo?: string; invoiceDate?: string; matchedCustomerId?: string | null; matchedAccount?: string | null; salespersonName?: string | null; }> = await scrapeInvoicedLines(targetSeasonId, spySeasonId);
 
-      // Persist raw invoices for idempotency and detail views
+      // Persist invoices idempotently: UPDATE existing unless frozen, else INSERT; add detailed logging
       try {
-        let upserts = 0;
-        for (const inv of invoicedLines) {
-          const accountNo = (inv.matchedAccount || '').trim();
-          if (!accountNo || !inv.invoiceNo) continue;
-          const pick = inv.userCurrencyAmount || inv.customerCurrencyAmount;
-          const amount = Number(pick?.amount || 0) || 0;
-          // If this invoice row has been manually edited, skip overwriting qty/amount
-          const { data: existingInv } = await supabase
-            .from('sales_invoices')
-            .select('id, manual_edited')
-            .eq('season_id', targetSeasonId)
-            .eq('account_no', accountNo)
-            .eq('invoice_no', inv.invoiceNo)
-            .maybeSingle();
-          if (existingInv?.id && existingInv.manual_edited) {
-            // keep manual values, update non-destructive fields only
-            await supabase
-              .from('sales_invoices')
-              .update({ customer_name: inv.customerName || null, currency: pick?.currency || null, invoice_date: inv.invoiceDate || null, updated_at: new Date().toISOString() })
-              .eq('id', existingInv.id as string);
-          } else {
-            await supabase
-              .from('sales_invoices')
-              .upsert({
-                season_id: targetSeasonId,
-                account_no: accountNo,
-                customer_name: inv.customerName || null,
-                qty: Number(inv.qty || 0) || 0,
-                amount,
-                currency: pick?.currency || null,
-                invoice_no: inv.invoiceNo,
-                invoice_date: inv.invoiceDate || null
-              }, { onConflict: 'season_id,account_no,invoice_no' });
-          }
-          upserts++;
+        const t0 = Date.now();
+        const scraped = invoicedLines
+          .map((inv) => {
+            const accountNo = (inv.matchedAccount || '').trim();
+            const invoiceNo = (inv.invoiceNo || '').trim();
+            const pick = inv.userCurrencyAmount || inv.customerCurrencyAmount;
+            const qty = Number(inv.qty || 0) || 0;
+            const amount = Number(pick?.amount || 0) || 0;
+            const currency = pick?.currency || null;
+            if (!accountNo || !invoiceNo) return null;
+            return { accountNo, invoiceNo, qty, amount, currency, customerName: inv.customerName || null, invoiceDate: inv.invoiceDate || null };
+          })
+          .filter(Boolean) as Array<{ accountNo: string; invoiceNo: string; qty: number; amount: number; currency: string | null; customerName: string | null; invoiceDate: string | null }>;
+        await log(job.id, 'info', 'STEP:invoiced_normalized', { total: scraped.length });
+
+        // Prefetch existing for season to avoid N queries
+        const { data: existingAll, error: exErr } = await supabase
+          .from('sales_invoices')
+          .select('id, account_no, invoice_no, qty, amount, currency, manual_edited')
+          .eq('season_id', targetSeasonId)
+          .limit(100000);
+        if (exErr) throw exErr;
+        const existingMap = new Map<string, { id: string; qty: number; amount: number; currency: string | null; manual_edited: boolean }>();
+        for (const r of (existingAll ?? []) as any[]) {
+          existingMap.set(`${r.account_no}|${r.invoice_no}`, { id: r.id as string, qty: Number(r.qty || 0) || 0, amount: Number(r.amount || 0) || 0, currency: r.currency || null, manual_edited: Boolean(r.manual_edited) });
         }
-        await log(job.id, 'info', 'STEP:invoiced_rows_upserted', { count: upserts });
+
+        const toInsert: any[] = [];
+        const toUpdate: Array<{ id: string; values: { qty: number; amount: number; currency: string | null; customer_name: string | null; invoice_date: string | null } }> = [];
+        let skippedFrozen = 0;
+        let unchanged = 0;
+        for (const inv of scraped) {
+          const key = `${inv.accountNo}|${inv.invoiceNo}`;
+          const existing = existingMap.get(key) || null;
+          if (existing) {
+            if (existing.manual_edited) {
+              skippedFrozen++;
+              continue;
+            }
+            const needsUpdate = existing.qty !== inv.qty || existing.amount !== inv.amount || (existing.currency || null) !== (inv.currency || null);
+            if (needsUpdate) {
+              toUpdate.push({ id: existing.id, values: { qty: inv.qty, amount: inv.amount, currency: inv.currency, customer_name: inv.customerName, invoice_date: inv.invoiceDate } });
+            } else {
+              unchanged++;
+            }
+          } else {
+            toInsert.push({
+              season_id: targetSeasonId,
+              account_no: inv.accountNo,
+              customer_name: inv.customerName,
+              qty: inv.qty,
+              amount: inv.amount,
+              currency: inv.currency,
+              invoice_no: inv.invoiceNo,
+              invoice_date: inv.invoiceDate
+            });
+          }
+        }
+
+        // Bulk insert
+        if (toInsert.length) {
+          const { error: insErr } = await supabase.from('sales_invoices').insert(toInsert);
+          if (insErr) throw insErr;
+        }
+        // Apply updates (per-id)
+        for (let i = 0; i < toUpdate.length; i++) {
+          const u = toUpdate[i];
+          const { error: updErr } = await supabase.from('sales_invoices').update(u.values).eq('id', u.id);
+          if (updErr) throw updErr;
+        }
+        const dt = Date.now() - t0;
+        await log(job.id, 'info', 'STEP:invoiced_rows_persisted', {
+          inserted: toInsert.length,
+          updated: toUpdate.length,
+          skippedFrozen,
+          unchanged,
+          ms: dt,
+          sampleInsert: toInsert[0] || null,
+          sampleUpdate: toUpdate[0] || null
+        });
       } catch (e: any) {
-        await log(job.id, 'error', 'STEP:invoiced_rows_upsert_error', { error: e?.message || String(e) });
+        await log(job.id, 'error', 'STEP:invoiced_rows_persist_error', { error: e?.message || String(e) });
       }
 
       // Do not adjust TopSeller (sales_stats) with invoice deltas; keep separate sources
