@@ -2,7 +2,6 @@
 import React from 'react';
 import useSWR from 'swr';
 import { supabase } from '../../../lib/supabaseClient';
-import { Modal } from '../../../components/Modal';
 
 const EMAILJS_ENDPOINT = 'https://api.emailjs.com/api/v1.0/email/send';
 const EMAILJS_SERVICE_ID = process.env.NEXT_PUBLIC_EMAILJS_SERVICE_ID || process.env.NEXT_PUBLIC_EMAILJS_SERVICE_KEY || '';
@@ -38,21 +37,7 @@ export default function StatisticsDashboardPage() {
   const [selected, setSelected] = React.useState<Record<string, boolean>>({});
   const [includeCountries, setIncludeCountries] = React.useState(true);
   const [sendingSp, setSendingSp] = React.useState(false);
-  const [tplOpen, setTplOpen] = React.useState(false);
-  const [tplSubject, setTplSubject] = React.useState<string>('Your latest statistics');
-  const [tplHtml, setTplHtml] = React.useState<string>('<p>Hi {name},</p><p>Your latest statistics are attached.</p>');
-
-  const editorRef = React.useRef<HTMLDivElement | null>(null);
-  function applyFormat(cmd: 'bold' | 'italic' | 'createLink') {
-    try {
-      if (cmd === 'createLink') {
-        const url = window.prompt('Enter link URL');
-        if (url) document.execCommand('createLink', false, url);
-        return;
-      }
-      document.execCommand(cmd, false);
-    } catch {}
-  }
+  
 
   function toggleSp(id: string) {
     setSelected((p) => ({ ...p, [id]: !p[id] }));
@@ -90,8 +75,8 @@ export default function StatisticsDashboardPage() {
           } catch {}
         }
         if (attachments.length === 0) continue;
-        const subject = tplSubject || 'Your latest statistics';
-        const bodyHtml = (tplHtml || '').replaceAll('{name}', byId[sp.id]?.name || 'Salesperson');
+        const subject = 'Your latest statistics';
+        const bodyHtml = '<p>Your latest statistics are attached.</p>';
         // Dynamic attachment params for EmailJS template
         const dynamicParams: Record<string, string> = {};
         if (attachments[0]) dynamicParams['salesman_pdf'] = `data:application/pdf;base64,${attachments[0].data}`;
@@ -121,8 +106,8 @@ export default function StatisticsDashboardPage() {
         if (row?.public_url) { try { const du = await fetchToDataUrl(row.public_url); attachments.push({ name: 'Countries.pdf', data: du.split(',')[1] || '' }); } catch {} }
       }
       if (attachments.length === 0) { alert('No exports available yet.'); return; }
-      const subject = tplSubject || 'Statistics Update';
-      const bodyHtml = (tplHtml || '').replaceAll('{name}', '');
+      const subject = 'Statistics Update';
+      const bodyHtml = '<p>Latest statistics are attached.</p>';
       const dynamicParams: Record<string, string> = {};
       const countriesA = attachments.find(a => a.name.toLowerCase().includes('countries'));
       if (countriesA) dynamicParams['countries_pdf'] = `data:application/pdf;base64,${countriesA.data}`;
@@ -232,10 +217,7 @@ export default function StatisticsDashboardPage() {
             Include Countries
           </label>
           <div>
-            <div className="flex items-center gap-2">
-              <button className="rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-50" disabled={sendingSp} onClick={sendSalespersonEmails}>Send</button>
-              <button className="rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50" onClick={() => setTplOpen(true)}>Template</button>
-            </div>
+            <button className="rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-50" disabled={sendingSp} onClick={sendSalespersonEmails}>Send</button>
           </div>
         </div>
 
@@ -253,46 +235,11 @@ export default function StatisticsDashboardPage() {
             <label className="flex items-center gap-2"><input type="radio" name="overall_type" checked={overallType==='top10vendors'} onChange={() => setOverallType('top10vendors')} />Top 10 Vendors</label>
           </div>
           <div>
-            <div className="flex items-center gap-2">
-              <button className="rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-50" disabled={sendingOverall} onClick={sendOverall}>Send</button>
-              <button className="rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50" onClick={() => setTplOpen(true)}>Template</button>
-            </div>
+            <button className="rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-50" disabled={sendingOverall} onClick={sendOverall}>Send</button>
           </div>
         </div>
       </div>
-      <Modal
-        open={tplOpen}
-        onClose={() => setTplOpen(false)}
-        title="Email Template"
-        footer={(
-          <div className="flex items-center gap-2">
-            <button className="px-3 py-1.5 text-sm" onClick={() => setTplOpen(false)}>Close</button>
-            <button className="rounded-md bg-slate-800 text-white px-3 py-1.5 text-sm" onClick={() => { setTplHtml(editorRef.current?.innerHTML || tplHtml); setTplOpen(false); }}>Save</button>
-          </div>
-        )}
-      >
-        <div className="space-y-3">
-          <label className="block text-sm">
-            <div className="text-gray-600 mb-1">Subject</div>
-            <input className="w-full rounded border px-2 py-1 text-sm" value={tplSubject} onChange={(e) => setTplSubject(e.target.value)} />
-          </label>
-          <div className="space-y-1">
-            <div className="flex items-center gap-2 text-xs">
-              <button className="rounded border px-2 py-0.5" onClick={() => applyFormat('bold')}><b>B</b></button>
-              <button className="rounded border px-2 py-0.5" onClick={() => applyFormat('italic')}><i>I</i></button>
-              <button className="rounded border px-2 py-0.5" onClick={() => applyFormat('createLink')}>Link</button>
-              <div className="text-gray-500 ml-2">Tokens: {'{name}'}</div>
-            </div>
-            <div
-              className="rounded border p-2 text-sm min-h-[140px]"
-              contentEditable
-              ref={editorRef}
-              suppressContentEditableWarning
-              dangerouslySetInnerHTML={{ __html: tplHtml }}
-            />
-          </div>
-        </div>
-      </Modal>
+      
     </div>
   );
 }
