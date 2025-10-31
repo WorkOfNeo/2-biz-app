@@ -333,12 +333,27 @@ export async function exportOverview(ctx: Ctx) {
       const totals: Record<string, { s1Qty: number; s2Qty: number; s1Price: number; s2Price: number }> = {};
       for (const c of countries) totals[c] = { s1Qty: 0, s2Qty: 0, s1Price: 0, s2Price: 0 };
       for (const r of (stats ?? []) as any[]) {
-        const ctry = String(r.customers?.country || '').trim(); if (!countries.includes(ctry)) continue; const bucket = totals[ctry]; const rate = rates[(String(r.currency || 'DKK').toUpperCase())] ?? 1; const priceDkk = Number(r.price || 0) * rate;
-        if (r.season_id === s1) { bucket.s1Qty += Number(r.qty||0); bucket.s1Price += priceDkk; } else if (r.season_id === s2) { bucket.s2Qty += Number(r.qty||0); bucket.s2Price += priceDkk; }
+        const ctry = String(r.customers?.country || '').trim();
+        if (!countries.includes(ctry)) continue;
+        let bucket = totals[ctry];
+        if (!bucket) { bucket = totals[ctry] = { s1Qty: 0, s2Qty: 0, s1Price: 0, s2Price: 0 }; }
+        const rate = rates[(String(r.currency || 'DKK').toUpperCase())] ?? 1;
+        const priceDkk = Number(r.price || 0) * rate;
+        if (r.season_id === s1) { bucket.s1Qty += Number(r.qty||0); bucket.s1Price += priceDkk; }
+        else if (r.season_id === s2) { bucket.s2Qty += Number(r.qty||0); bucket.s2Price += priceDkk; }
       }
       for (const inv of (invoices ?? []) as any[]) {
-        const acc = inv.account_no ?? ''; if (!acc) continue; const ctry = String(customerCountryById.get(acc) || '').trim(); if (!countries.includes(ctry)) continue; const bucket = totals[ctry]; const rate = rates[(String(inv.currency || 'DKK').toUpperCase())] ?? 1; const amountDkk = Number(inv.amount || 0) * rate; const qty = Number(inv.qty || 0) || 0;
-        if (inv.season_id === s1) { bucket.s1Qty += qty; bucket.s1Price += amountDkk; } else if (inv.season_id === s2) { bucket.s2Qty += qty; bucket.s2Price += amountDkk; }
+        const acc = inv.account_no ?? '';
+        if (!acc) continue;
+        const ctry = String(customerCountryById.get(acc) || '').trim();
+        if (!countries.includes(ctry)) continue;
+        let bucket = totals[ctry];
+        if (!bucket) { bucket = totals[ctry] = { s1Qty: 0, s2Qty: 0, s1Price: 0, s2Price: 0 }; }
+        const rate = rates[(String(inv.currency || 'DKK').toUpperCase())] ?? 1;
+        const amountDkk = Number(inv.amount || 0) * rate;
+        const qty = Number(inv.qty || 0) || 0;
+        if (inv.season_id === s1) { bucket.s1Qty += qty; bucket.s1Price += amountDkk; }
+        else if (inv.season_id === s2) { bucket.s2Qty += qty; bucket.s2Price += amountDkk; }
       }
       const styles = StyleSheet.create({ page: { padding: 16, fontSize: 12, color: '#0f172a' }, h1: { fontSize: 18, marginBottom: 10 }, row: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 } });
       const fmt = (n: number) => new Intl.NumberFormat('da-DK').format(Math.round(n));
