@@ -5,6 +5,11 @@ import type { JobRow, JobResult } from '@shared/types';
 import React from 'react';
 import { pdf, Document, Page as PdfPage, Text, StyleSheet, View } from '@react-pdf/renderer';
 import JSZip from 'jszip';
+import { scrapeStyles } from './jobs/scrapeStyles';
+import { scrapeCustomers } from './jobs/scrapeCustomers';
+import { updateStyleStock as updateStyleStockJob } from './jobs/updateStyleStock';
+import { deepScrapeStyles as deepScrapeStylesJob } from './jobs/deepScrapeStyles';
+import { exportOverview as exportOverviewJob } from './jobs/exportOverview';
 import { scrapeStatisticsPerSize } from './jobs/scrapeStatisticsPerSize';
 
 const SUPABASE_URL = process.env.SUPABASE_URL!;
@@ -215,170 +220,12 @@ async function runJob(job: JobRow) {
     }
 
   if (job.type === 'scrape_styles') {
-    await ensureNotCancelled(job.id);
-    // Scrape Styles index page
-    await log(job.id, 'info', 'STEP:styles_begin');
-    const stylesUrl = new URL('?controller=Style%5CIndex&action=List&Spy%5CModel%5CStyle%5CIndex%5CListReportSearch%5BbForceSearch%5D=true', SPY_BASE_URL).toString();
-    await page!.goto(stylesUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
-    await ensureNotCancelled(job.id);
-    await log(job.id, 'info', 'STEP:styles_url', { url: stylesUrl });
-    // Ensure table exists (attached), not necessarily visible yet
-    try {
-      await page!.waitForSelector('table.standardList', { timeout: 60_000, state: 'attached' as any });
-      await log(job.id, 'info', 'STEP:styles_table_found');
-    } catch (e: any) {
-      const html = await captureHtmlSnippet(page, page!);
-      await log(job.id, 'error', 'STEP:styles_table_not_found', { error: e?.message || String(e), html });
-      throw e;
-    }
-    // Try clicking "Show All" to load full list
-    try {
-      const showAll = await findFirst(page!, ['button[name="show_all"]', 'input[name="show_all"]', 'button:has-text("Show All")']);
-      if (showAll) {
-        await showAll.click({ timeout: 30_000 }).catch(() => {});
-        await log(job.id, 'info', 'STEP:styles_show_all_clicked');
-        await page!.waitForTimeout(1200);
-      } else {
-        await log(job.id, 'info', 'STEP:styles_show_all_not_found');
-      }
-    } catch (e: any) {
-      await log(job.id, 'error', 'STEP:styles_show_all_error', { error: e?.message || String(e) });
-    }
-    // Wait for at least some rows to appear (attached)
-    await page!.waitForSelector('table.standardList tbody tr', { timeout: 60_000, state: 'attached' as any });
-    // Scroll to load more rows up to >=100 or until stable
-    try {
-      let last = 0;
-      for (let i = 0; i < 20; i++) {
-        await ensureNotCancelled(job.id);
-        const count = await page!.$$eval('table.standardList tbody tr', (trs) => trs.length);
-        await log(job.id, 'info', 'STEP:styles_rows_count', { iteration: i + 1, count });
-        if (count >= 100) break;
-        if (count > last) {
-          last = count;
-          await page!.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-          await page!.waitForTimeout(800);
-        } else {
-          break;
-        }
-      }
-    } catch (e: any) {
-      await log(job.id, 'error', 'STEP:styles_scroll_error', { error: e?.message || String(e) });
-    }
-    await ensureNotCancelled(job.id);
-    const rows = await page!.$$eval('table.standardList tbody tr', (trs) => {
-      const out: { spy_id: string | null; style_no: string; style_name: string | null; supplier: string | null; image_url: string | null; link_href: string | null }[] = [];
-      for (const tr of Array.from(trs) as HTMLTableRowElement[]) {
-        const tds = Array.from(tr.querySelectorAll('td')) as HTMLElement[];
-        const spyId = (tr.getAttribute('data-reference') || null);
-        const img = tds[0]?.querySelector('img') as HTMLImageElement | null;
-        const a = tds[1]?.querySelector('a') as HTMLAnchorElement | null; // Style No. link
-        const styleNo = (a?.textContent || '').trim();
-        const styleName = (tds[2]?.textContent || '').replace(/\s+/g, ' ').trim() || null;
-        const supplier = (tds[7]?.textContent || '').replace(/\s+/g, ' ').trim() || null;
-        if (styleNo) {
-          // Normalize image size to large variant (replace tr:n-s24 with tr:n-s1024 if present)
-          const rawImg = (img?.getAttribute('src') || '') as string;
-          const bigImg = rawImg ? rawImg.replace(/tr:n-s\d+/i, 'tr:n-s1024') : null;
-          out.push({
-            spy_id: spyId,
-            style_no: styleNo,
-            style_name: styleName,
-            supplier,
-            image_url: (bigImg || null),
-            link_href: (a?.getAttribute('href') || null)
-          });
-        }
-      }
-      return out;
-    });
-    await log(job.id, 'info', 'STEP:styles_rows', { count: rows.length });
-    // Upsert in batches by unique style_no
-    let upserted = 0;
-    for (let i = 0; i < rows.length; i += 1000) {
-      await ensureNotCancelled(job.id);
-      const batch = rows.slice(i, i + 1000);
-      const { error } = await supabase.from('styles').upsert(batch.map(r => ({
-        spy_id: r.spy_id,
-        style_no: r.style_no,
-        style_name: r.style_name,
-        supplier: r.supplier,
-        image_url: r.image_url,
-        link_href: r.link_href,
-        updated_at: new Date().toISOString()
-      })), { onConflict: 'style_no' });
-      if (error) throw error;
-      upserted += batch.length;
-      await log(job.id, 'info', 'STEP:styles_batch_upsert', { upserted, total: rows.length });
-    }
-    await saveResult(job.id, 'Styles scrape completed', { upserted });
-    await log(job.id, 'info', 'STEP:complete', { upserted });
+    await scrapeStyles({ job, page: page!, log, saveResult, ensureNotCancelled, captureHtmlSnippet, supabase, SPY_BASE_URL, findFirst });
     return;
   }
   if (job.type === 'scrape_customers') {
-    await ensureNotCancelled(job.id);
-    try {
-      await log(job.id, 'info', 'STEP:customers_begin');
-      const listUrl = new URL('?controller=Admin%5CCustomer%5CIndex&action=ActiveList', SPY_BASE_URL).toString();
-      await page!.goto(listUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
-      await log(job.id, 'info', 'STEP:customers_url', { url: listUrl });
-      // click Show All if present
-      try {
-        const btn = await findFirst(page!, ['button[name="show_all"]']);
-        if (btn) { await btn.click({ timeout: 10_000 }).catch(() => {}); await page!.waitForTimeout(1000); }
-      } catch {}
-      // wait for table and some rows
-      await page!.waitForSelector('table.standardList tbody tr', { timeout: 60_000 });
-      const rows = await page!.$$eval('table.standardList tbody tr', (trs) => {
-        function tx(el?: Element | null): string { return ((el as HTMLElement | null)?.textContent || '').replace(/\s+/g, ' ').trim(); }
-        return Array.from(trs).map(tr => {
-          const tds = Array.from((tr as HTMLTableRowElement).querySelectorAll('td')) as HTMLElement[];
-          const account = tx(tds[9]);
-          const company = tx(tds[1]);
-          const city = tx(tds[6]);
-          const country = tx(tds[7]);
-          const sales_person = tx(tds[5]);
-          const phone = tx(tds[12]);
-          const priority = tx(tds[14]);
-          const ordersA = (tr as HTMLTableRowElement).querySelector('a[href*="show_sales_order"], a[href*="orders"]') as HTMLAnchorElement | null;
-          const orders_link = ordersA ? (ordersA.getAttribute('href') || '') : '';
-          const spy_id = (tr as HTMLElement).getAttribute('data-reference') || '';
-          return { account, company, city, country, sales_person, phone, priority, orders_link, spy_id };
-        });
-      });
-      await log(job.id, 'info', 'STEP:customers_rows', { count: rows.length });
-      // Prefetch all salespersons and create a normalized lookup by name
-      const { data: spAll } = await supabase.from('salespersons').select('id, name');
-      const salespersonByName = new Map<string, string>();
-      for (const sp of (spAll ?? []) as any[]) {
-        const key = String(sp.name || '').trim().toLowerCase();
-        if (key) salespersonByName.set(key, sp.id as string);
-      }
-      for (const r of rows) {
-        if (!r.account) continue;
-        // resolve salesperson_id by name
-        let salesperson_id: string | null = null;
-        const spName = String(r.sales_person || '').trim();
-        if (spName) {
-          const key = spName.toLowerCase();
-          salesperson_id = salespersonByName.get(key) || null;
-          if (!salesperson_id) await log(job.id, 'info', 'STEP:customers_salesperson_unmatched', { name: spName });
-        }
-        const { data: existing } = await supabase.from('customers').select('id').eq('customer_id', r.account).maybeSingle();
-        const base = { company: r.company, city: r.city, country: r.country, phone: r.phone, priority: r.priority, orders_link: r.orders_link, spy_id: r.spy_id, salesperson_id } as any;
-        if (existing?.id) {
-          await supabase.from('customers').update(base).eq('id', existing.id as string);
-        } else {
-          await supabase.from('customers').insert({ customer_id: r.account, ...base });
-        }
-      }
-      await saveResult(job.id, 'scrape_customers', { imported: rows.length });
-      await setJobSucceeded(job.id);
-      return;
-    } catch (e: any) {
-      await setJobFailedOrRequeue(job, e?.message || String(e));
-      return;
-    }
+    await scrapeCustomers({ job, page: page!, log, saveResult, setJobFailedOrRequeue, setJobSucceeded, ensureNotCancelled, supabase, SPY_BASE_URL, findFirst });
+    return;
   }
 
   if (job.type === 'update_style_stock') {
@@ -758,51 +605,7 @@ async function runJob(job: JobRow) {
     return;
   }
   if (job.type === 'deep_scrape_styles') {
-    await ensureNotCancelled(job.id);
-    await log(job.id, 'info', 'STEP:deep_styles_begin');
-    // Fetch all styles with links
-    const { data: styles } = await supabase.from('styles').select('style_no, link_href');
-    if (!styles || styles.length === 0) {
-      await saveResult(job.id, 'Deep styles: no styles', { count: 0 });
-      await log(job.id, 'info', 'STEP:complete', { upserted: 0 });
-      return;
-    }
-    let updated = 0;
-    for (const s of styles as any[]) {
-      await ensureNotCancelled(job.id);
-      const href = (s.link_href || '').toString();
-      if (!href) continue;
-      const base = new URL(href, SPY_BASE_URL).toString().replace(/#.*$/, '');
-      const url = base + '#tab=materials';
-      await log(job.id, 'info', 'STEP:deep_styles_nav', { style_no: s.style_no, url });
-      await page!.goto(url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
-      try {
-        // Wait for any colorDeliveryBox
-        await page!.waitForSelector('.colorDeliveryBox', { timeout: 30_000 });
-      } catch (e: any) {
-        await log(job.id, 'error', 'STEP:deep_styles_no_color_box', { style_no: s.style_no, error: e?.message || String(e) });
-        continue;
-      }
-      const seasons = await page!.$$eval('.colorDeliveryBox select.season_id', (sels) => {
-        const out: string[] = [];
-        for (const sel of Array.from(sels) as HTMLSelectElement[]) {
-          const val = sel.value || (sel.selectedOptions?.[0]?.value || '').trim();
-          if (val && !out.includes(val)) out.push(val);
-        }
-        return out;
-      });
-      const uniq = Array.from(new Set(seasons));
-      const { data: exist } = await supabase.from('style_seasons').select('id, seasons').eq('style_no', s.style_no).maybeSingle();
-      const merged = Array.from(new Set([...(exist?.seasons as any[] || []), ...uniq]));
-      if (exist?.id) {
-        await supabase.from('style_seasons').update({ seasons: merged, scraped_at: new Date().toISOString() }).eq('id', exist.id as string);
-      } else {
-        await supabase.from('style_seasons').insert({ style_no: s.style_no, seasons: merged, scraped_at: new Date().toISOString() });
-      }
-      updated++;
-    }
-    await saveResult(job.id, 'Deep styles completed', { updated });
-    await log(job.id, 'info', 'STEP:complete', { updated });
+    await deepScrapeStylesJob({ job, page: page!, log, saveResult, ensureNotCancelled, supabase, SPY_BASE_URL });
     return;
   }
   if (job.type === 'scrape_statistics') {
@@ -818,6 +621,10 @@ async function runJob(job: JobRow) {
       supabase,
       SPY_BASE_URL,
     });
+    return;
+  }
+  if (job.type === 'export_overview') {
+    await exportOverviewJob({ job, page: page!, log, saveResult, setJobFailedOrRequeue, setJobSucceeded, supabase });
     return;
   }
   if (job.type === 'export_overview') {

@@ -1,0 +1,282 @@
+import type { Page } from 'playwright-core';
+import type { JobRow } from '@shared/types';
+
+type Ctx = {
+  job: JobRow;
+  page: Page;
+  log: (jobId: string, level: 'info' | 'error', msg: string, data?: Record<string, any>) => Promise<void>;
+  saveResult: (jobId: string, summary: string, data: Record<string, any>) => Promise<any>;
+  ensureNotCancelled: (jobId: string) => Promise<void>;
+  supabase: any;
+  SPY_BASE_URL: string;
+};
+
+export async function updateStyleStock(ctx: Ctx) {
+  const { job, page, log, saveResult, ensureNotCancelled, supabase, SPY_BASE_URL } = ctx;
+  await ensureNotCancelled(job.id);
+  await log(job.id, 'info', 'STEP:style_stock_begin');
+  let styleNos: string[] = Array.isArray(job.payload?.styleNos) ? (job.payload?.styleNos as string[]) : [];
+  if (styleNos.length === 0) {
+    try {
+      const { data } = await supabase.from('app_settings').select('value').eq('key', 'styles_daily_selection').maybeSingle();
+      styleNos = ((data?.value as any)?.styleNos as string[] | undefined) ?? [];
+    } catch {}
+  }
+  if (styleNos.length === 0) {
+    await log(job.id, 'info', 'STEP:style_stock_no_selection');
+    await saveResult(job.id, 'Style stock: no styles selected', { count: 0 });
+    await log(job.id, 'info', 'STEP:complete', { upserted: 0 });
+    return;
+  }
+  const { data: styles } = await supabase.from('styles').select('id, style_no, link_href, scrape_enabled').in('style_no', styleNos);
+  let totalRows = 0;
+  for (const s of (styles ?? []) as any[]) {
+    await ensureNotCancelled(job.id);
+    const href = (s.link_href || '').toString();
+    if (!href) continue;
+    const styleId: string | null = (s.id as string | undefined) || null;
+    const styleScrapeEnabled: boolean = (s as any)?.scrape_enabled !== false;
+    if (!styleScrapeEnabled) { await log(job.id, 'info', 'STEP:style_stock_skip_style_disabled', { style_no: s.style_no }); continue; }
+    let allowedColors: Record<string, boolean> = {};
+    if (styleId) {
+      try {
+        const { data: colorRows } = await supabase.from('style_colors').select('color, scrape_enabled').eq('style_id', styleId);
+        for (const c of (colorRows ?? []) as any[]) { const key = String(c.color || '').trim().toLowerCase(); if (key) allowedColors[key] = c.scrape_enabled !== false; }
+      } catch {}
+    }
+    const knownColorKeys = Object.keys(allowedColors);
+    if (knownColorKeys.length > 0 && knownColorKeys.every((k) => allowedColors[k] === false)) {
+      await log(job.id, 'info', 'STEP:style_stock_skip_all_colors_disabled', { style_no: s.style_no });
+      continue;
+    }
+    const url = new URL(href, SPY_BASE_URL).toString().replace(/#.*$/, '') + '#tab=statandstock';
+    await log(job.id, 'info', 'STEP:style_stock_nav', { style_no: s.style_no, url });
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+    try {
+      const clickedTab = await page.evaluate(() => {
+        const a = document.querySelector('a[href$="#tab=statandstock"], a[href*="#tab=statandstock"]') as HTMLAnchorElement | null;
+        if (a) { a.click(); return true; }
+        return false;
+      });
+      if (clickedTab) { await log(job.id, 'info', 'STEP:style_stock_tab_clicked'); await page.waitForTimeout(500); }
+    } catch {}
+    try {
+      await page.waitForFunction(() => !!document.querySelector('.statAndStockBox, .sprite.sprite168.spriteArrowDown.right.clickable, .sprite.sprite168.spriteArrowUp.right.clickable'), {}, { timeout: 30_000 }).catch(() => {});
+      try {
+        const counts = await page.evaluate(() => ({
+          boxes: document.querySelectorAll('.statAndStockBox').length,
+          arrowsDown: document.querySelectorAll('.sprite.sprite168.spriteArrowDown.right.clickable').length,
+          arrowsUp: document.querySelectorAll('.sprite.sprite168.spriteArrowUp.right.clickable').length
+        }));
+        await log(job.id, 'info', 'STEP:style_stock_pre_counts', counts as any);
+      } catch {}
+      for (let i = 0; i < 10; i++) {
+        const clicked = await page.evaluate((allowed: Record<string, boolean>) => {
+          let clicks = 0;
+          const headers = Array.from(document.querySelectorAll('.statAndStockBox tr.tableBackgroundBlack')) as HTMLTableRowElement[];
+          function getColorName(tr: HTMLTableRowElement): string {
+            const td = tr.querySelector('td');
+            const raw = (td?.textContent || '').replace(/\s+/g, ' ').trim();
+            return raw;
+          }
+          for (const tr of headers) {
+            const colorName = getColorName(tr);
+            const lower = colorName.toLowerCase();
+            const hasInactive = /\(inactive\)/i.test(colorName);
+            const styleAttr = (tr.getAttribute('style') || '').toLowerCase();
+            const hasRedBg = /#900/.test(styleAttr) || /background[-\s]*color\s*:\s*#900/.test(styleAttr);
+            const allowedByDb = Object.keys(allowed || {}).length ? (allowed[lower] !== false) : true;
+            if (hasInactive || hasRedBg || !allowedByDb) continue;
+            const arrow = tr.querySelector('.sprite.sprite168.spriteArrowDown.right.clickable') as HTMLElement | null;
+            if (arrow) { arrow.click(); clicks++; }
+          }
+          return clicks;
+        }, allowedColors);
+        await log(job.id, 'info', 'STEP:style_stock_expand_click', { iteration: i + 1, clicked });
+        if (!clicked) break;
+        await page.waitForTimeout(500);
+      }
+      const headerClicks = await page.evaluate((allowed: Record<string, boolean>) => {
+        let clicked = 0;
+        const headers = Array.from(document.querySelectorAll('.statAndStockBox tr.tableBackgroundBlack')) as HTMLTableRowElement[];
+        for (const tr of headers) {
+          const td = tr.querySelector('td');
+          const colorName = (td?.textContent || '').replace(/\s+/g, ' ').trim();
+          const lower = colorName.toLowerCase();
+          const hasInactive = /\(inactive\)/i.test(colorName);
+          const styleAttr = (tr.getAttribute('style') || '').toLowerCase();
+          const hasRedBg = /#900/.test(styleAttr) || /background[-\s]*color\s*:\s*#900/.test(styleAttr);
+          const allowedByDb = Object.keys(allowed || {}).length ? (allowed[lower] !== false) : true;
+          if (hasInactive || hasRedBg || !allowedByDb) continue;
+          const arrow = tr.querySelector('.sprite.sprite168.spriteArrowDown.right.clickable') as HTMLElement | null;
+          if (arrow) { arrow.click(); clicked++; }
+        }
+        return clicked;
+      }, allowedColors).catch(() => 0);
+      if (headerClicks) await log(job.id, 'info', 'STEP:style_stock_header_clicks', { clicked: headerClicks });
+      await page.waitForTimeout(500);
+    } catch (e: any) {
+      await log(job.id, 'error', 'STEP:style_stock_expand_error', { error: e?.message || String(e) });
+    }
+    try {
+      await page.waitForSelector('.statAndStockDetails', { timeout: 120_000, state: 'attached' as any });
+    } catch (e: any) {
+      try {
+        const forced = await page.evaluate(() => {
+          let shown = 0;
+          (document.querySelectorAll('.statAndStockBox table[style*="display: none"]') as any).forEach((t: HTMLElement) => { (t as HTMLElement).style.display = 'table'; shown++; });
+          return shown;
+        });
+        await log(job.id, 'info', 'STEP:style_stock_force_show', { tablesShown: forced });
+        await page.waitForTimeout(500);
+        await page.waitForSelector('.statAndStockDetails', { timeout: 10_000, state: 'attached' as any });
+      } catch {}
+      const html = await page.content();
+      await log(job.id, 'error', 'STEP:style_stock_missing', { style_no: s.style_no, error: e?.message || String(e), html });
+      continue;
+    }
+    const extracted = await page.$$eval('.statAndStockBox', (boxes, allowed: Record<string, boolean>) => {
+      function text(el: Element | null | undefined): string { return ((el as HTMLElement | null)?.textContent || '').replace(/\s+/g, ' ').trim(); }
+      function numbersFromRow(tds: HTMLElement[]): number[] {
+        const arr: number[] = [];
+        for (let i = 1; i < tds.length - 1; i++) {
+          const raw = (tds[i]?.textContent || '').replace(/\s+/g, ' ').trim();
+          const n = Number(raw.replace(/[^0-9\-]/g, '')) || 0;
+          arr.push(n);
+        }
+        return arr;
+      }
+      const out: Array<{ color: string; sizes: string[]; section: string; row_label: string; values: number[]; po_link: string | null }> = [];
+      for (const box of Array.from(boxes) as HTMLElement[]) {
+        const details = box.querySelector('.statAndStockDetails') as HTMLElement | null;
+        if (!details) continue;
+        const firstTable = details.querySelector('table') as HTMLTableElement | null;
+        if (!firstTable) continue;
+        const rows = Array.from(firstTable.querySelectorAll('tr')) as HTMLTableRowElement[];
+        if (rows.length === 0) continue;
+        const first = rows[0] as HTMLTableRowElement | undefined;
+        if (!first) continue;
+        const headerTds = Array.from(first.querySelectorAll('td')) as HTMLElement[];
+        const color = text(headerTds[0]);
+        const colorLower = color.toLowerCase();
+        const headerRowOutside = box.querySelector('tr.tableBackgroundBlack') as HTMLTableRowElement | null;
+        const styleAttr = (headerRowOutside?.getAttribute('style') || '').toLowerCase();
+        const hasRedBg = /#900/.test(styleAttr) || /background[-\s]*color\s*:\s*#900/.test(styleAttr);
+        const hasInactive = /\(inactive\)/i.test(color);
+        const allowedByDb = Object.keys(allowed || {}).length ? (allowed[colorLower] !== false) : true;
+        if (hasInactive || hasRedBg || !allowedByDb) continue;
+        const sizeLabels: string[] = [];
+        for (let i = 1; i < headerTds.length - 1; i++) sizeLabels.push(text(headerTds[i]));
+        let inSold = false; let inPurchase = false; let inDedicated = false;
+        let lastPurchaseHeading: { label: string; link: string | null } | null = null;
+        const seenPurchase = new Set<string>();
+        for (let r = 1; r < rows.length; r++) {
+          const rowEl = rows[r] as HTMLTableRowElement;
+          const tds = Array.from(rowEl.querySelectorAll('td')) as HTMLElement[];
+          const label = text(tds[0]);
+          const cls = rowEl.className || '';
+          if (/Sold/.test(label) && /header/.test(cls)) { inSold = true; inPurchase = false; inDedicated = false; continue; }
+          if (/Available/.test(label) && /header/.test(cls)) { inSold = false; inDedicated = false; continue; }
+          if (/Purchase/.test(label) && /header/.test(cls)) { inPurchase = true; inSold = false; inDedicated = false; continue; }
+          if (/Net Need/.test(label) && /header/.test(cls)) { inPurchase = false; inDedicated = false; break; }
+          if (!inSold && !inPurchase && label === 'Stock') { out.push({ color, sizes: sizeLabels, section: 'Stock', row_label: 'Stock', values: (numbersFromRow(tds)), po_link: null }); continue; }
+          if (rowEl.querySelector('a.edit-dedication')) { inDedicated = true; continue; }
+          if (inDedicated && cls.includes('stylecolor-expanded--main') || inDedicated && cls.includes('stylecolor-expanded--sub')) {
+            const kind = /Pre/i.test(label) ? 'Pre Dedicated' : 'Stock Dedicated';
+            out.push({ color, sizes: sizeLabels, section: kind, row_label: label || kind, values: numbersFromRow(tds), po_link: null });
+            continue;
+          }
+          if (inSold && cls.includes('stylecolor-expanded--sub')) {
+            out.push({ color, sizes: sizeLabels, section: 'Sold', row_label: label || 'Row', values: numbersFromRow(tds), po_link: null });
+            continue;
+          }
+          if (!inSold && !inPurchase && cls.includes('stylecolor-expanded--main')) {
+            if (/^Available$/i.test(label)) { out.push({ color, sizes: sizeLabels, section: 'Available', row_label: 'Available', values: numbersFromRow(tds), po_link: null }); continue; }
+            if (/PO Available/i.test(label)) { out.push({ color, sizes: sizeLabels, section: 'PO Available', row_label: 'PO Available', values: numbersFromRow(tds), po_link: null }); continue; }
+            if (/^Corrected$/i.test(label)) { out.push({ color, sizes: sizeLabels, section: 'Corrected', row_label: 'Corrected', values: numbersFromRow(tds), po_link: null }); continue; }
+          }
+          if (inPurchase && (cls.includes('stylecolor-expanded--main') || cls.includes('stylecolor-expanded--sub'))) {
+            const isSumRow = /^NOOS$/i.test(label) || /^Total\s+PO/i.test(label);
+            if (isSumRow) { continue; }
+            const nextEl = (rows[r + 1] as HTMLTableRowElement | undefined) || undefined;
+            const nextCls = nextEl ? (nextEl.className || '') : '';
+            const nextLabel = nextEl ? text((Array.from(nextEl.querySelectorAll('td')) as HTMLElement[])[0] || null) : '';
+            const isDedicatedLabel = /(Stock\s+Dedicated|Pre\s+Dedicated)/i.test(label);
+            const nextIsDedicatedLabel = /(Stock\s+Dedicated|Pre\s+Dedicated)/i.test(nextLabel);
+            const headingLinkA = rowEl.querySelector('a[href*="purchase_orders.php"]') as HTMLAnchorElement | null;
+            const headingLink = headingLinkA ? (headingLinkA.getAttribute('href') || null) : null;
+            if (headingLink) { lastPurchaseHeading = { label: label || 'Row', link: headingLink }; }
+            if (!isDedicatedLabel && cls.includes('stylecolor-expanded--sub') && nextEl && nextCls.includes('stylecolor-expanded--sub') && nextIsDedicatedLabel) {
+              continue;
+            }
+            let po_link: string | null = headingLink;
+            if (!po_link) {
+              const poA = rowEl.querySelector('a[href*="purchase_orders.php"]') as HTMLAnchorElement | null;
+              po_link = poA ? (poA.getAttribute('href') || null) : null;
+            }
+            if (isDedicatedLabel && !po_link && lastPurchaseHeading) { po_link = lastPurchaseHeading.link; }
+            const key = (label || 'Row') + '|' + String(po_link || '');
+            (seenPurchase as any).add?.(key);
+            out.push({ color, sizes: sizeLabels, section: 'Purchase (Running + Shipped)', row_label: label || 'Row', values: numbersFromRow(tds), po_link });
+            continue;
+          }
+        }
+      }
+      return out;
+    }, allowedColors);
+    const byColor = new Map<string, typeof extracted>();
+    for (const row of extracted) {
+      const arr = byColor.get(row.color) || [] as any;
+      (arr as any).push(row);
+      byColor.set(row.color, arr as any);
+    }
+    try {
+      const trim = (arr: number[]) => (arr || []).slice(0, 20);
+      for (const [colorName, rowsList] of byColor.entries()) {
+        const sizes = (rowsList.find((r: any) => r.section === 'Stock') || rowsList[0])?.sizes || [];
+        const stockVals = (rowsList.find((r: any) => r.section === 'Stock')?.values) || [];
+        const soldRows = rowsList.filter((r: any) => r.section === 'Sold');
+        const purchaseRows = rowsList.filter((r: any) => r.section === 'Purchase (Running + Shipped)');
+        const stockDed = rowsList.filter((r: any) => r.section === 'Stock Dedicated');
+        const preDed = rowsList.filter((r: any) => r.section === 'Pre Dedicated');
+        const sum = (rows: any[]) => {
+          const len = sizes.length; const zero = Array.from({ length: len }, () => 0);
+          return rows.reduce((acc: number[], r: any) => acc.map((v: number, i: number) => v + Number((r.values?.[i] ?? 0) || 0)), zero);
+        };
+        await log(job.id, 'info', 'STEP:style_stock_parsed', {
+          style_no: s.style_no,
+          color: colorName,
+          sizes,
+          stock: trim(stockVals as any),
+          sold: { count: soldRows.length, sum: trim(sum(soldRows)), sample: soldRows.slice(0, 2).map((r: any) => ({ label: r.row_label, values: trim(r.values) })) },
+          purchase: { count: purchaseRows.length, sum: trim(sum(purchaseRows)), sample: purchaseRows.slice(0, 2).map((r: any) => ({ label: r.row_label, values: trim(r.values) })) },
+          dedicated: { stockDedicated: { count: stockDed.length, sum: trim(sum(stockDed)) }, preDedicated: { count: preDed.length, sum: trim(sum(preDed)) } }
+        });
+      }
+    } catch {}
+    try {
+      if (styleId) {
+        const presentColors = Array.from(byColor.keys());
+        const { data: existingColors } = await supabase.from('style_colors').select('id, color').eq('style_id', styleId);
+        const existing = new Set((existingColors ?? []).map((r: any) => String(r.color || '').trim().toLowerCase()));
+        const toInsert = presentColors.filter((c) => !existing.has(String(c || '').trim().toLowerCase())).map((c) => ({ style_id: styleId, color: c, sort_index: 0 }));
+        if (toInsert.length) { await supabase.from('style_colors').insert(toInsert); }
+      }
+    } catch {}
+    const scrapeTs = new Date().toISOString();
+    const payload = extracted.map((row: any) => ({ style_no: s.style_no, color: row.color, sizes: row.sizes, section: row.section, row_label: row.row_label || '', values: row.values, po_link: row.po_link, scraped_at: scrapeTs }));
+    const dedupMap = new Map<string, any>();
+    for (const r of payload) { const key = `${r.style_no}|${r.color}|${r.section}|${r.row_label || ''}`; dedupMap.set(key, r); }
+    const deduped = Array.from(dedupMap.values());
+    if (deduped.length) {
+      const { error: upErr } = await supabase.from('style_stock').upsert(deduped, { onConflict: 'style_no,color,section,row_label' as any });
+      if (upErr) throw upErr;
+      totalRows += deduped.length;
+    }
+    await log(job.id, 'info', 'STEP:style_stock_rows', { style_no: s.style_no, rows: extracted.length });
+  }
+  await saveResult(job.id, 'Style stock scrape completed', { totalRows });
+  await log(job.id, 'info', 'STEP:complete', { totalRows });
+}
+
+
