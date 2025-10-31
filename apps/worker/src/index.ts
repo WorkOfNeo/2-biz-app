@@ -5,12 +5,13 @@ import type { JobRow, JobResult } from '@shared/types';
 import React from 'react';
 import { pdf, Document, Page as PdfPage, Text, StyleSheet, View } from '@react-pdf/renderer';
 import JSZip from 'jszip';
-import { scrapeStyles } from './jobs/scrapeStyles';
-import { scrapeCustomers } from './jobs/scrapeCustomers';
-import { updateStyleStock as updateStyleStockJob } from './jobs/updateStyleStock';
-import { deepScrapeStyles as deepScrapeStylesJob } from './jobs/deepScrapeStyles';
-import { exportOverview as exportOverviewJob } from './jobs/exportOverview';
-import { scrapeStatisticsPerSize } from './jobs/scrapeStatisticsPerSize';
+import { scrapeStyles } from './jobs/scrapeStyles.js';
+import { scrapeCustomers } from './jobs/scrapeCustomers.js';
+import { updateStyleStock as updateStyleStockJob } from './jobs/updateStyleStock.js';
+import { deepScrapeStyles as deepScrapeStylesJob } from './jobs/deepScrapeStyles.js';
+import { exportOverview as exportOverviewJob } from './jobs/exportOverview.js';
+import { scrapeStatisticsPerSize } from './jobs/scrapeStatisticsPerSize.js';
+// (imported with .js extension above)
 
 const SUPABASE_URL = process.env.SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
