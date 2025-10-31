@@ -1510,8 +1510,7 @@ async function runJob(job: JobRow) {
           if (insErr) throw insErr;
         }
         // Apply updates (per-id)
-        for (let i = 0; i < toUpdate.length; i++) {
-          const u = toUpdate[i];
+        for (const u of toUpdate) {
           const { error: updErr } = await supabase.from('sales_invoices').update(u.values).eq('id', u.id);
           if (updErr) throw updErr;
         }
