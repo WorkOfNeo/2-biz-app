@@ -1155,6 +1155,7 @@ async function runJob(job: JobRow) {
       let totalRowsUpserted = 0;
       const resultSamples: Array<{ salesperson: string; rows: Array<{ customer: string; account: string; country: string; qty: string; amount: string; salesperson: string }> }> = [];
       const topsellerDump: Array<{ salesperson: string; rows: Array<{ customer: string; account: string; country: string; qty: number; amount: number; currency: string | null }> }> = [];
+      const perSalespersonCounts: Array<{ salesperson: string; created: number; updated: number; unchanged: number }> = [];
       for (const sp of salespeople) {
         await ensureNotCancelled(job.id);
         processed++;
@@ -1213,6 +1214,9 @@ async function runJob(job: JobRow) {
         // Upsert rows into DB
         const salespersonId = await ensureSalespersonId(sp.name);
         let upsertedForSp = 0;
+        let createdCount = 0;
+        let updatedCount = 0;
+        let unchangedCount = 0;
         // Collect up to 5 sample rows for results visibility
         try {
           resultSamples.push({ salesperson: sp.name, rows: rows.slice(0, Math.min(5, rows.length)) });
@@ -1234,7 +1238,23 @@ async function runJob(job: JobRow) {
           const country = (r.country || '').trim();
           // Ensure customer exists
           const customerUuid = await ensureCustomerIdByAccount(accountNo, { company: customerName || null, country: country || null, salesperson_id: salespersonId });
-          const insertRow: any = {
+          // Determine existing state for comparison
+          let existingRow: { id: string; qty: number; price: number; currency: string | null } | null = null;
+          try {
+            const { data: existing } = await supabase
+              .from('sales_stats')
+              .select('id, qty, price, currency')
+              .eq('season_id', targetSeasonId)
+              .eq('account_no', accountNo)
+              .maybeSingle();
+            existingRow = (existing as any) || null;
+          } catch {}
+          if (existingRow && (Number(existingRow.qty || 0) === qty) && (Number(existingRow.price || 0) === price) && ((existingRow.currency || null) === (currency || null))) {
+            unchangedCount++;
+            // Do not add 'unchanged' to op-typed log; keep sample compact
+            continue;
+          }
+          const upsertRow: any = {
             season_id: targetSeasonId,
             account_no: accountNo,
             customer_id: customerUuid,
@@ -1246,29 +1266,19 @@ async function runJob(job: JobRow) {
             price,
             currency: currency || null
           };
-          // Determine whether this will create or update
-          let op: 'created' | 'updated' = 'created';
-          try {
-            const { data: existing } = await supabase
-              .from('sales_stats')
-              .select('id')
-              .eq('season_id', targetSeasonId)
-              .eq('account_no', accountNo)
-              .maybeSingle();
-            if (existing?.id) op = 'updated';
-          } catch {}
-
           const { error: upErr } = await supabase
             .from('sales_stats')
-            .upsert(insertRow, { onConflict: 'season_id,account_no' });
+            .upsert(upsertRow, { onConflict: 'season_id,account_no' });
           if (upErr) throw upErr;
           upsertedForSp++;
+          if (existingRow) updatedCount++; else createdCount++;
           if (upsertedRowsForLog.length < 10) {
-            upsertedRowsForLog.push({ account: accountNo, customer: customerName, qty, price, currency: currency || null, op });
+            upsertedRowsForLog.push({ account: accountNo, customer: customerName, qty, price, currency: currency || null, op: existingRow ? 'updated' : 'created' });
           }
         }
         totalRowsUpserted += upsertedForSp;
         await log(job.id, 'info', 'STEP:salesperson_done', { index: processed, total: salespeople.length, upserted: upsertedForSp, name: sp.name, rows: upsertedRowsForLog });
+        perSalespersonCounts.push({ salesperson: sp.name, created: createdCount, updated: updatedCount, unchanged: unchangedCount });
       }
 
       // After seasonal totals per salesperson, fetch invoiced list for the same season
@@ -1515,7 +1525,8 @@ async function runJob(job: JobRow) {
         salespersons: salespeople.length,
         rowsUpserted: totalRowsUpserted,
         samples: resultSamples,
-        parsed: { topseller: topsellerDump, invoiced: { count: invoicedLines.length, lines: invoicedLines } }
+        parsed: { topseller: topsellerDump, invoiced: { count: invoicedLines.length, lines: invoicedLines } },
+        perSalesperson: perSalespersonCounts
       });
       await log(job.id, 'info', 'STEP:complete', { rows: totalRowsUpserted });
     } else {
