@@ -54,22 +54,24 @@ export default function StatisticsDashboardPage() {
       const countries = includeCountries ? latestByKind.get('countries_pdf') : null;
       for (const sp of chosen) {
         const my = files.find((f) => f.salesperson_id === sp.id);
-        const link = my?.publicUrl ? my.publicUrl : (my?.path ? `https://` : '');
-        if (!my || (!my.publicUrl && !my.path)) continue;
-        const links: string[] = [];
-        if (my.publicUrl) links.push(`<a href="${my.publicUrl}" target="_blank" rel="noopener">Download PDF</a>`);
-        if (!my.publicUrl && my.path) links.push(`${my.path}`);
-        if (countries?.public_url) links.push(`<a href="${countries.public_url}" target="_blank" rel="noopener">Countries PDF</a>`);
+        if (!my || !my.publicUrl) continue;
         const recipient = byId[sp.id]?.email || '';
         if (!recipient) continue;
-        const html = `
-          <div>
-            <p>Hi ${byId[sp.id]?.name || 'Salesperson'},</p>
-            <p>Your latest statistics PDF is ready.</p>
-            <p>${links.join(' · ')}</p>
-          </div>
-        `;
-        await sendEmailJs([recipient], 'Your latest statistics', html);
+        const attachments: Array<{ name: string; data: string }> = [];
+        try {
+          const dataUrl = await fetchToDataUrl(my.publicUrl);
+          const name = (my.name ? `${my.name}.pdf` : (my.path?.split('/').pop() || 'statistics.pdf'));
+          attachments.push({ name, data: dataUrl });
+        } catch {}
+        if (includeCountries && countries?.public_url) {
+          try {
+            const dataUrl = await fetchToDataUrl(countries.public_url);
+            attachments.push({ name: 'Countries.pdf', data: dataUrl });
+          } catch {}
+        }
+        if (attachments.length === 0) continue;
+        const msg = `Hi ${byId[sp.id]?.name || 'Salesperson'},\nYour latest statistics are attached.`;
+        await sendEmailJs([recipient], 'Your latest statistics', msg, attachments);
       }
       alert('Emails queued for sending.');
     } finally {
@@ -88,27 +90,25 @@ export default function StatisticsDashboardPage() {
     try {
       const to = receivers.split(',').map(s => s.trim()).filter(Boolean);
       if (to.length === 0) { alert('Enter at least one receiver email.'); return; }
-      const parts: string[] = [];
+      const attachments: Array<{ name: string; data: string }> = [];
       if (overallType === 'all' || overallType === 'overview') {
         const row = latestByKind.get('overview_pdf');
-        if (row?.public_url) parts.push(`<a href="${row.public_url}" target="_blank" rel="noopener">Overview PDF</a>`);
+        if (row?.public_url) { try { attachments.push({ name: 'Overview.pdf', data: await fetchToDataUrl(row.public_url) }); } catch {} }
       }
       if (overallType === 'all' || overallType === 'countries') {
         const row = latestByKind.get('countries_pdf');
-        if (row?.public_url) parts.push(`<a href="${row.public_url}" target="_blank" rel="noopener">Countries PDF</a>`);
+        if (row?.public_url) { try { attachments.push({ name: 'Countries.pdf', data: await fetchToDataUrl(row.public_url) }); } catch {} }
       }
-      if (overallType === 'top10styles') parts.push('Top 10 Styles - coming soon');
-      if (overallType === 'top10vendors') parts.push('Top 10 Vendors - coming soon');
-      if (parts.length === 0) { alert('No exports available yet.'); return; }
-      const html = `<div><p>Latest statistics:</p><p>${parts.join(' · ')}</p></div>`;
-      await sendEmailJs(to, 'Statistics Update', html);
+      if (attachments.length === 0) { alert('No exports available yet.'); return; }
+      const msg = 'Latest statistics are attached.';
+      await sendEmailJs(to, 'Statistics Update', msg, attachments);
       alert('Email sent');
     } finally {
       setSendingOverall(false);
     }
   }
 
-  async function sendEmailJs(to: string[], subject: string, html: string) {
+  async function sendEmailJs(to: string[], subject: string, message: string, attachments?: Array<{ name: string; data: string }>) {
     if (!EMAILJS_SERVICE_ID || !EMAILJS_TEMPLATE_ID || !EMAILJS_PUBLIC_KEY) {
       throw new Error('EmailJS browser env missing. Set NEXT_PUBLIC_EMAILJS_* variables.');
     }
@@ -120,8 +120,9 @@ export default function StatisticsDashboardPage() {
         template_params: {
           to_email: recipient,
           subject,
-          message_html: html,
+          message_html: message,
         },
+        attachments: (attachments || []).map((a) => ({ name: a.name, data: a.data })),
       } as any;
       const res = await fetch(EMAILJS_ENDPOINT, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       if (!res.ok) {
@@ -129,6 +130,22 @@ export default function StatisticsDashboardPage() {
         throw new Error(text || 'EmailJS send failed');
       }
     }
+  }
+
+  async function fetchToDataUrl(url: string): Promise<string> {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('Failed to fetch file');
+    const blob = await res.blob();
+    return await blobToDataUrl(blob);
+  }
+
+  function blobToDataUrl(blob: Blob): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
   }
 
   return (
