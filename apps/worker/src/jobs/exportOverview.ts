@@ -3,7 +3,7 @@ import type { JobRow } from '@shared/types';
 import React from 'react';
 import { pdf, Document, Page as PdfPage, Text, StyleSheet, View } from '@react-pdf/renderer';
 import JSZip from 'jszip';
-import { Blob } from 'buffer';
+// Use ArrayBuffer slices from Node Buffers for uploads
 
 type Ctx = {
   job: JobRow;
@@ -77,8 +77,8 @@ export async function exportOverview(ctx: Ctx) {
       const pdfBuf = await pdf(doc).toBuffer();
       const path = `overview/${job.id}/overview.pdf`;
       try {
-        const body = new Blob([pdfBuf], { type: 'application/pdf' });
-        await supabase.storage.from('exports').upload(path, body as any, { contentType: 'application/pdf', upsert: true });
+        const ab = pdfBuf.buffer.slice(pdfBuf.byteOffset, pdfBuf.byteOffset + pdfBuf.byteLength);
+        await supabase.storage.from('exports').upload(path, ab as ArrayBuffer, { contentType: 'application/pdf', upsert: true });
       } catch {}
       let publicUrl: string | null = null;
       try { const { data: pub } = supabase.storage.from('exports').getPublicUrl(path); publicUrl = pub?.publicUrl ?? null; } catch {}
@@ -128,8 +128,8 @@ export async function exportOverview(ctx: Ctx) {
       const zipBuf = await zip.generateAsync({ type: 'nodebuffer' });
       const path = `General/${job.id}/general.zip`;
       try {
-        const body = new Blob([zipBuf], { type: 'application/zip' });
-        await supabase.storage.from('exports').upload(path, body as any, { contentType: 'application/zip', upsert: true });
+        const ab = zipBuf.buffer.slice(zipBuf.byteOffset, zipBuf.byteOffset + zipBuf.byteLength);
+        await supabase.storage.from('exports').upload(path, ab as ArrayBuffer, { contentType: 'application/zip', upsert: true });
       } catch {}
       let publicUrl: string | null = null;
       try { const { data: pub } = supabase.storage.from('exports').getPublicUrl(path); publicUrl = pub?.publicUrl ?? null; } catch {}
@@ -304,8 +304,8 @@ export async function exportOverview(ctx: Ctx) {
         // retry upload up to 3 times for single PDF
         for (let attempt = 1; attempt <= 3; attempt++) {
           try {
-            const body = new Blob([buf], { type: 'application/pdf' });
-            const { error: upErr } = await supabase.storage.from('exports').upload(indivPath, body as any, { contentType: 'application/pdf', upsert: true });
+            const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+            const { error: upErr } = await supabase.storage.from('exports').upload(indivPath, ab as ArrayBuffer, { contentType: 'application/pdf', upsert: true });
             if (upErr) throw upErr;
             let indivUrl: string | null = null;
             try { const { data: pub } = supabase.storage.from('exports').getPublicUrl(indivPath); indivUrl = pub?.publicUrl ?? null; } catch {}
@@ -378,8 +378,8 @@ export async function exportOverview(ctx: Ctx) {
       // Upload a single combined PDF instead of a zip
       const path = `countries/${job.id}/countries.pdf`;
       try {
-        const body = new Blob([combinedBuf], { type: 'application/pdf' });
-        await supabase.storage.from('exports').upload(path, body as any, { contentType: 'application/pdf', upsert: true });
+        const ab = combinedBuf.buffer.slice(combinedBuf.byteOffset, combinedBuf.byteOffset + combinedBuf.byteLength);
+        await supabase.storage.from('exports').upload(path, ab as ArrayBuffer, { contentType: 'application/pdf', upsert: true });
       } catch {}
       let publicUrl: string | null = null;
       try { const { data: pub } = supabase.storage.from('exports').getPublicUrl(path); publicUrl = pub?.publicUrl ?? null; } catch {}
