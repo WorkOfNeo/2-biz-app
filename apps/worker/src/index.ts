@@ -1625,7 +1625,7 @@ async function runJob(job: JobRow) {
         if (!spySeasonIdParam) {
           try {
             await page!.waitForSelector('select#Spy\\.Model\\.Sale\\.Invoiced\\.InvoicedReportSearch\\[iSeasonID\\]', { timeout: 30_000 });
-            await page!.evaluate((label) => {
+            await page!.evaluate((label: string | null) => {
               const sel = document.querySelector('select#Spy\\.Model\\.Sale\\.Invoiced\\.InvoicedReportSearch\\[iSeasonID\\]') as HTMLSelectElement | null;
               if (!sel || !label) return;
               for (const opt of Array.from(sel.options)) {
