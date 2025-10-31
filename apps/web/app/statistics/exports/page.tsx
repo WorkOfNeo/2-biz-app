@@ -27,6 +27,7 @@ export default function StatisticsExportsPage() {
   const [progress, setProgress] = React.useState<{ index: number; total: number } | null>(null as any);
   const [running, setRunning] = React.useState(false as any);
   const [elapsed, setElapsed] = React.useState(0 as any);
+  const [jobDone, setJobDone] = React.useState(false);
   const [openId, setOpenId] = React.useState<string | null>(null);
 
   function timeAgo(iso: string): string {
@@ -77,8 +78,11 @@ export default function StatisticsExportsPage() {
               setProgress({ index: Number(l.data.index || 0), total: Number(l.data.total || 0) });
               break;
             }
-            if (l.msg === 'STEP:complete') { setRunning(false); setJobId(null); setProgress(null);
-              break; }
+            if (l.msg === 'STEP:complete') {
+              setRunning(false); setJobId(null); setProgress(null); setJobDone(true);
+              setTimeout(() => setJobDone(false), 4000);
+              break;
+            }
           }
         } catch {}
       }, 1500);
@@ -120,7 +124,7 @@ export default function StatisticsExportsPage() {
     setJobId(js.jobId);
   }
 
-  async function downloadPath(path: string) {
+  async function downloadPath(path: string, publicUrl?: string | null) {
     try {
       const { data: file, error } = await supabase.storage.from('exports').download(path);
       if (error || !file) throw error || new Error('Download failed');
@@ -130,6 +134,9 @@ export default function StatisticsExportsPage() {
       document.body.appendChild(a); a.click(); a.remove();
       URL.revokeObjectURL(blobUrl);
     } catch {
+      if (publicUrl) {
+        try { window.open(publicUrl, '_blank', 'noopener'); return; } catch {}
+      }
       alert('File is not ready yet. Please try again in a moment.');
     }
   }
@@ -196,29 +203,36 @@ export default function StatisticsExportsPage() {
             onClick={enqueueGeneralReactPdf}
             disabled={running}
           >
-            {running ? (
-              <span className="inline-flex items-center gap-2">
-                <span className="h-3 w-3 rounded-full border-2 border-slate-300 border-t-slate-900 animate-spin" />
-                <span>Generating… {elapsed}s</span>
-              </span>
-            ) : (
-              'Export General (React PDF · per salesperson)'
-            )}
+            Export General (React PDF · per salesperson)
           </button>
           <button
             className="relative rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-60"
             onClick={enqueueOverviewPdf}
             disabled={running}
           >
-            {running ? 'Running…' : 'Export Overview (PDF)'}
+            Export Overview (PDF)
           </button>
           <button
             className="relative rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-60"
             onClick={enqueueCountriesPdf}
             disabled={running}
           >
-            {running ? 'Running…' : 'Export Countries (ZIP)'}
+            Export Countries (ZIP)
           </button>
+          <div className="ml-2 min-w-[180px] text-xs text-gray-700 flex items-center gap-2">
+            {running && (
+              <>
+                <span className="h-3 w-3 rounded-full border-2 border-slate-300 border-t-slate-900 animate-spin" />
+                <span>Generating… {elapsed}s{progress ? ` (${progress.index}/${progress.total})` : ''}</span>
+              </>
+            )}
+            {!running && jobDone && (
+              <span className="inline-flex items-center gap-1 text-green-700">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4"><path fillRule="evenodd" d="M16.704 4.153a.75.75 0 01.143 1.052l-7.5 9.5a.75.75 0 01-1.127.03l-3.5-4a.75.75 0 111.14-.976l2.918 3.335 6.943-8.792a.75.75 0 011.051-.149z" clipRule="evenodd" /></svg>
+                Job complete
+              </span>
+            )}
+          </div>
         </div>
       </div>
       <div className="rounded-md border overflow-auto">
@@ -246,8 +260,8 @@ export default function StatisticsExportsPage() {
                     <td className="p-2 border-b">{r.public_url ? (
                       <button
                         className="rounded-md border px-2 py-1 text-xs hover:bg-slate-50"
-                        onClick={() => { r.path ? downloadPath(r.path) : window.open(r.public_url, '_blank', 'noopener'); }}
-                      >Download ZIP</button>
+                        onClick={() => { r.path ? downloadPath(r.path, r.public_url) : window.open(r.public_url, '_blank', 'noopener'); }}
+                      >Download</button>
                     ) : '—'}</td>
                     <td className="p-2 border-b text-right w-[44px]">
                       {hasChildren ? (
