@@ -92,7 +92,11 @@ export default function StatisticsDashboardPage() {
         if (attachments.length === 0) continue;
         const subject = tplSubject || 'Your latest statistics';
         const bodyHtml = (tplHtml || '').replaceAll('{name}', byId[sp.id]?.name || 'Salesperson');
-        await sendEmailJs([recipient], subject, bodyHtml, attachments);
+        // Dynamic attachment params for EmailJS template
+        const dynamicParams: Record<string, string> = {};
+        if (attachments[0]) dynamicParams['salesman_pdf'] = `data:application/pdf;base64,${attachments[0].data}`;
+        if (attachments[1]) dynamicParams['countries_pdf'] = `data:application/pdf;base64,${attachments[1].data}`;
+        await sendEmailJs([recipient], subject, bodyHtml, undefined, dynamicParams);
       }
       alert('Emails queued for sending.');
     } finally {
@@ -123,19 +127,30 @@ export default function StatisticsDashboardPage() {
       if (attachments.length === 0) { alert('No exports available yet.'); return; }
       const subject = tplSubject || 'Statistics Update';
       const bodyHtml = (tplHtml || '').replaceAll('{name}', '');
-      await sendEmailJs(to, subject, bodyHtml, attachments);
+      const dynamicParams: Record<string, string> = {};
+      const overview = attachments.find(a => a.name.toLowerCase().includes('overview'));
+      const countriesA = attachments.find(a => a.name.toLowerCase().includes('countries'));
+      if (overview) dynamicParams['overview_pdf'] = `data:application/pdf;base64,${overview.data}`;
+      if (countriesA) dynamicParams['countries_pdf'] = `data:application/pdf;base64,${countriesA.data}`;
+      await sendEmailJs(to, subject, bodyHtml, undefined, dynamicParams);
       alert('Email sent');
     } finally {
       setSendingOverall(false);
     }
   }
 
-  async function sendEmailJs(to: string[], subject: string, message: string, attachments?: Array<{ name: string; data: string }>) {
+  async function sendEmailJs(
+    to: string[],
+    subject: string,
+    message: string,
+    attachments?: Array<{ name: string; data: string }>,
+    extraTemplateParams?: Record<string, string>
+  ) {
     if (!EMAILJS_SERVICE_ID || !EMAILJS_TEMPLATE_ID || !EMAILJS_PUBLIC_KEY) {
       throw new Error('EmailJS browser env missing. Set NEXT_PUBLIC_EMAILJS_* variables.');
     }
     for (const recipient of to) {
-      // Try multiple attachment shapes; EmailJS REST docs vary across examples
+      // Prefer Dynamic Attachments via template params; fall back to attachments shapes if needed
       const basePayload = {
         service_id: EMAILJS_SERVICE_ID,
         template_id: EMAILJS_TEMPLATE_ID,
@@ -146,6 +161,7 @@ export default function StatisticsDashboardPage() {
           message_html: message,
           from_name: EMAILJS_FROM_NAME,
           from_email: EMAILJS_FROM_EMAIL,
+          ...(extraTemplateParams || {}),
         },
       } as any;
       const shapes: Array<any> = [
