@@ -401,6 +401,8 @@ export async function exportOverview(ctx: Ctx) {
           React.createElement(Text, { style: { fontSize: 10, marginTop: 2 } }, `${label} · ${Math.round(pct)}%`)
         );
       }
+      // Map country -> currency like on page
+      const countryCurrency: Record<string, string> = { Denmark: 'DKK', Norway: 'NOK', Sweden: 'SEK', Finland: 'EUR' };
       // Pair countries: two per page
       const pairs: Array<[string, string | null]> = [];
       for (let i = 0; i < countries.length; i += 2) pairs.push([countries[i], countries[i + 1] ?? null]);
@@ -412,6 +414,14 @@ export async function exportOverview(ctx: Ctx) {
         const pricePct1 = row1.s2Price === 0 ? 0 : (row1.s1Price / row1.s2Price) * 100;
         const qtyPct2 = row2 ? (row2.s2Qty === 0 ? 0 : (row2.s1Qty / row2.s2Qty) * 100) : 0;
         const pricePct2 = row2 ? (row2.s2Price === 0 ? 0 : (row2.s1Price / row2.s2Price) * 100) : 0;
+        const cur1 = countryCurrency[c1] || 'DKK';
+        const r1 = (rates as any)[cur1] ?? 1;
+        const s1Local1 = r1 ? row1.s1Price / r1 : row1.s1Price;
+        const s2Local1 = r1 ? row1.s2Price / r1 : row1.s2Price;
+        const cur2 = c2 ? (countryCurrency[c2] || 'DKK') : 'DKK';
+        const r2 = c2 ? ((rates as any)[cur2] ?? 1) : 1;
+        const s1Local2 = row2 ? (r2 ? row2.s1Price / r2 : row2.s1Price) : 0;
+        const s2Local2 = row2 ? (r2 ? row2.s2Price / r2 : row2.s2Price) : 0;
         return React.createElement(PdfPage, { size: 'A4', orientation: 'landscape', style: styles.page },
           React.createElement(View, { style: { flexDirection: 'row', gap: 24 } },
             React.createElement(View, { style: { width: '50%' as any } },
@@ -423,8 +433,9 @@ export async function exportOverview(ctx: Ctx) {
                   React.createElement(Donut as any, { pct: qtyPct1, label: 'Stk' })
                 ),
                 React.createElement(View, { style: styles.box },
-                  React.createElement(Text, { style: styles.boxTitle }, 'Omsætning (DKK)'),
-                  React.createElement(Text, { style: styles.boxNums }, `${fmt(row1.s1Price)} vs ${fmt(row1.s2Price)}`),
+                  React.createElement(Text, { style: styles.boxTitle }, 'Omsætning'),
+                  React.createElement(Text, { style: styles.boxNums }, `${fmt(s1Local1)} ${cur1} vs ${fmt(s2Local1)} ${cur1}`),
+                  React.createElement(Text, { style: styles.boxSub }, `${fmt(row1.s1Price)} DKK vs ${fmt(row1.s2Price)} DKK`),
                   React.createElement(Donut as any, { pct: pricePct1, label: 'Omsætning' })
                 )
               )
@@ -438,8 +449,9 @@ export async function exportOverview(ctx: Ctx) {
                   React.createElement(Donut as any, { pct: qtyPct2, label: 'Stk' })
                 ),
                 React.createElement(View, { style: styles.box },
-                  React.createElement(Text, { style: styles.boxTitle }, 'Omsætning (DKK)'),
-                  React.createElement(Text, { style: styles.boxNums }, `${fmt(row2!.s1Price)} vs ${fmt(row2!.s2Price)}`),
+                  React.createElement(Text, { style: styles.boxTitle }, 'Omsætning'),
+                  React.createElement(Text, { style: styles.boxNums }, `${fmt(s1Local2)} ${cur2} vs ${fmt(s2Local2)} ${cur2}`),
+                  React.createElement(Text, { style: styles.boxSub }, `${fmt(row2!.s1Price)} DKK vs ${fmt(row2!.s2Price)} DKK`),
                   React.createElement(Donut as any, { pct: pricePct2, label: 'Omsætning' })
                 )
               )
