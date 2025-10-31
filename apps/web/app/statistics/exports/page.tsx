@@ -73,7 +73,7 @@ export default function StatisticsExportsPage() {
             .order('ts', { ascending: false })
             .limit(50);
           for (const l of (logs ?? []) as any[]) {
-            if (l.msg === 'STEP:export_general_progress' && l.data) {
+            if ((l.msg === 'STEP:export_general_progress' || l.msg === 'STEP:export_overview_progress' || l.msg === 'STEP:export_countries_progress') && l.data) {
               setProgress({ index: Number(l.data.index || 0), total: Number(l.data.total || 0) });
               break;
             }
@@ -92,6 +92,28 @@ export default function StatisticsExportsPage() {
     if (!session) throw new Error('Not signed in');
     const token = session.access_token;
     const body = { type: 'export_overview', payload: { mode: 'general_salesmen_react_pdf', requestedBy: session.user.email, s1: saved?.s1, s2: saved?.s2 } };
+    const res = await fetch('/api/enqueue', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(body) });
+    if (!res.ok) throw new Error(await res.text());
+    const js = await res.json();
+    setJobId(js.jobId);
+  }
+
+  async function enqueueOverviewPdf() {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) throw new Error('Not signed in');
+    const token = session.access_token;
+    const body = { type: 'export_overview', payload: { mode: 'overview_react_pdf', requestedBy: session.user.email, s1: saved?.s1, s2: saved?.s2 } };
+    const res = await fetch('/api/enqueue', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(body) });
+    if (!res.ok) throw new Error(await res.text());
+    const js = await res.json();
+    setJobId(js.jobId);
+  }
+
+  async function enqueueCountriesPdf() {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) throw new Error('Not signed in');
+    const token = session.access_token;
+    const body = { type: 'export_overview', payload: { mode: 'countries_react_pdf', requestedBy: session.user.email, s1: saved?.s1, s2: saved?.s2 } };
     const res = await fetch('/api/enqueue', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(body) });
     if (!res.ok) throw new Error(await res.text());
     const js = await res.json();
@@ -182,6 +204,20 @@ export default function StatisticsExportsPage() {
             ) : (
               'Export General (React PDF · per salesperson)'
             )}
+          </button>
+          <button
+            className="relative rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-60"
+            onClick={enqueueOverviewPdf}
+            disabled={running}
+          >
+            {running ? 'Running…' : 'Export Overview (PDF)'}
+          </button>
+          <button
+            className="relative rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-60"
+            onClick={enqueueCountriesPdf}
+            disabled={running}
+          >
+            {running ? 'Running…' : 'Export Countries (ZIP)'}
           </button>
         </div>
       </div>
