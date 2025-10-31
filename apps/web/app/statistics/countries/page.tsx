@@ -71,18 +71,19 @@ export default function CountriesPage() {
     return (data?.value as Record<string, number> | undefined) ?? {};
   });
   const countries = useMemo(() => ['Denmark', 'Norway', 'Sweden', 'Finland'], []);
+  const countryCurrency: Record<string, string> = useMemo(() => ({ Denmark: 'DKK', Norway: 'NOK', Sweden: 'SEK', Finland: 'EUR' }), []);
   const byCountry = useMemo(() => {
-    const out: Record<string, { s1Qty: number; s2Qty: number; s1Price: number; s2Price: number }> = {};
-    for (const c of countries) out[c] = { s1Qty: 0, s2Qty: 0, s1Price: 0, s2Price: 0 };
+    const out: Record<string, { s1Qty: number; s2Qty: number; s1PriceDkk: number; s2PriceDkk: number }> = {};
+    for (const c of countries) out[c] = { s1Qty: 0, s2Qty: 0, s1PriceDkk: 0, s2PriceDkk: 0 };
     const rates = { DKK: 1, ...(currencyRatesRow ?? {}) } as Record<string, number>;
     for (const r of (stats ?? []) as any[]) {
       const ctry = String(r.customers?.country || '').trim();
       if (!countries.includes(ctry)) continue;
-      const bucket = out[ctry] || (out[ctry] = { s1Qty: 0, s2Qty: 0, s1Price: 0, s2Price: 0 });
+      const bucket = out[ctry] || (out[ctry] = { s1Qty: 0, s2Qty: 0, s1PriceDkk: 0, s2PriceDkk: 0 });
       const rate = rates[(String(r.currency || 'DKK').toUpperCase())] ?? 1;
       const priceDkk = Number(r.price || 0) * rate;
-      if (r.season_id === s1) { bucket.s1Qty += Number(r.qty||0); bucket.s1Price += priceDkk; }
-      else if (r.season_id === s2) { bucket.s2Qty += Number(r.qty||0); bucket.s2Price += priceDkk; }
+      if (r.season_id === s1) { bucket.s1Qty += Number(r.qty||0); bucket.s1PriceDkk += priceDkk; }
+      else if (r.season_id === s2) { bucket.s2Qty += Number(r.qty||0); bucket.s2PriceDkk += priceDkk; }
     }
     // Add invoices mapped to country via customers
     const customerCountryById = new Map<string, string | null>();
@@ -92,12 +93,12 @@ export default function CountriesPage() {
       if (!acc) continue;
       const ctry = String(customerCountryById.get(acc) || '').trim();
       if (!countries.includes(ctry)) continue;
-      const bucket = out[ctry] || (out[ctry] = { s1Qty: 0, s2Qty: 0, s1Price: 0, s2Price: 0 });
+      const bucket = out[ctry] || (out[ctry] = { s1Qty: 0, s2Qty: 0, s1PriceDkk: 0, s2PriceDkk: 0 });
       const rate = rates[(String(inv.currency || 'DKK').toUpperCase())] ?? 1;
       const amountDkk = Number(inv.amount || 0) * rate;
       const qty = Number(inv.qty || 0) || 0;
-      if (inv.season_id === s1) { bucket.s1Qty += qty; bucket.s1Price += amountDkk; }
-      else if (inv.season_id === s2) { bucket.s2Qty += qty; bucket.s2Price += amountDkk; }
+      if (inv.season_id === s1) { bucket.s1Qty += qty; bucket.s1PriceDkk += amountDkk; }
+      else if (inv.season_id === s2) { bucket.s2Qty += qty; bucket.s2PriceDkk += amountDkk; }
     }
     return out;
   }, [stats, invoices, customers, s1, s2, currencyRatesRow]);
@@ -120,9 +121,14 @@ export default function CountriesPage() {
       </div>
       <div ref={containerRef} className="space-y-6">
       {(countries).map((c) => {
-        const row = byCountry[c] || { s1Qty: 0, s2Qty: 0, s1Price: 0, s2Price: 0 };
+        const row = byCountry[c] || { s1Qty: 0, s2Qty: 0, s1PriceDkk: 0, s2PriceDkk: 0 };
         const qtyPct = row.s2Qty === 0 ? 0 : (row.s1Qty / row.s2Qty) * 100;
-        const pricePct = row.s2Price === 0 ? 0 : (row.s1Price / row.s2Price) * 100;
+        const pricePct = row.s2PriceDkk === 0 ? 0 : (row.s1PriceDkk / row.s2PriceDkk) * 100;
+        const cur = countryCurrency[c] || 'DKK';
+        const rates = { DKK: 1, ...(currencyRatesRow ?? {}) } as Record<string, number>;
+        const r = rates[cur] ?? 1;
+        const s1Local = row.s1PriceDkk / (r || 1);
+        const s2Local = row.s2PriceDkk / (r || 1);
         return (
           <div key={c} className="rounded-lg border bg-white">
             <div className="border-b text-center bg-[#0f172a] text-white rounded-t-lg text-[2rem] leading-tight py-2">{c}</div>
@@ -136,7 +142,8 @@ export default function CountriesPage() {
               <div className="space-y-3">
                 <div className="font-medium">Omsætning</div>
                 <div className="text-sm text-gray-600">{getSeasonLabel(s1) || 'Season 1'} vs {getSeasonLabel(s2) || 'Season 2'}</div>
-                <div className="text-lg font-semibold">{Math.round(row.s1Price).toLocaleString('da-DK')} vs {Math.round(row.s2Price).toLocaleString('da-DK')}</div>
+                <div className="text-lg font-semibold">{Math.round(s1Local).toLocaleString('da-DK')} {cur} vs {Math.round(s2Local).toLocaleString('da-DK')} {cur}</div>
+                <div className="text-sm text-gray-600">{Math.round(row.s1PriceDkk).toLocaleString('da-DK')} DKK vs {Math.round(row.s2PriceDkk).toLocaleString('da-DK')} DKK</div>
                 <Donut pct={pricePct} label={`Omsætning`} />
               </div>
             </div>

@@ -384,7 +384,8 @@ export async function exportOverview(ctx: Ctx) {
       const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
       function Donut({ pct, label }: { pct: number; label: string }) {
         const visualPct = clamp(pct, 0, 100);
-        const r = 36; const cx = 40; const cy = 40; const strokeW = 6;
+        // 250% larger: size ~200px with thicker progress stroke
+        const r = 90; const cx = 100; const cy = 100; const restW = 8; const progW = 16;
         const endAngle = (-90 + (visualPct / 100) * 360) * (Math.PI / 180);
         const x = cx + r * Math.cos(endAngle);
         const y = cy + r * Math.sin(endAngle);
@@ -393,30 +394,56 @@ export async function exportOverview(ctx: Ctx) {
         const hue = Math.round((visualPct / 100) * 120);
         const color = `hsl(${hue}, 70%, 40%)`;
         return React.createElement(View, { style: { alignItems: 'center' } },
-          React.createElement(Svg, { width: 80, height: 80 },
-            React.createElement(Circle, { cx, cy, r, stroke: '#e5e7eb', strokeWidth: strokeW, fill: 'none' }),
-            visualPct > 0 ? React.createElement(Path, { d: arcPath, stroke: color, strokeWidth: strokeW, fill: 'none' }) : null
+          React.createElement(Svg, { width: 200, height: 200 },
+            React.createElement(Circle, { cx, cy, r, stroke: '#e5e7eb', strokeWidth: restW, fill: 'none' }),
+            visualPct > 0 ? React.createElement(Path, { d: arcPath, stroke: color, strokeWidth: progW, fill: 'none' }) : null
           ),
           React.createElement(Text, { style: { fontSize: 10, marginTop: 2 } }, `${label} · ${Math.round(pct)}%`)
         );
       }
-      const pages = countries.map((c) => {
-        const row = totals[c] || { s1Qty: 0, s2Qty: 0, s1Price: 0, s2Price: 0 };
-        const qtyPct = row.s2Qty === 0 ? 0 : (row.s1Qty / row.s2Qty) * 100;
-        const pricePct = row.s2Price === 0 ? 0 : (row.s1Price / row.s2Price) * 100;
-        return React.createElement(PdfPage, { size: 'A4', style: styles.page },
-          React.createElement(Text, { style: styles.h1 }, `Countries · ${c}`),
-          React.createElement(View, { style: styles.section },
-            React.createElement(View, { style: styles.box },
-              React.createElement(Text, { style: styles.boxTitle }, 'Antal stk'),
-              React.createElement(Text, { style: styles.boxNums }, `${row.s1Qty} vs ${row.s2Qty}`),
-              React.createElement(Donut as any, { pct: qtyPct, label: 'Stk' })
+      // Pair countries: two per page
+      const pairs: Array<[string, string | null]> = [];
+      for (let i = 0; i < countries.length; i += 2) pairs.push([countries[i], countries[i + 1] ?? null]);
+      const pages = pairs.map((pair) => {
+        const [c1, c2] = pair;
+        const row1 = totals[c1] || { s1Qty: 0, s2Qty: 0, s1Price: 0, s2Price: 0 };
+        const row2 = c2 ? (totals[c2] || { s1Qty: 0, s2Qty: 0, s1Price: 0, s2Price: 0 }) : null;
+        const qtyPct1 = row1.s2Qty === 0 ? 0 : (row1.s1Qty / row1.s2Qty) * 100;
+        const pricePct1 = row1.s2Price === 0 ? 0 : (row1.s1Price / row1.s2Price) * 100;
+        const qtyPct2 = row2 ? (row2.s2Qty === 0 ? 0 : (row2.s1Qty / row2.s2Qty) * 100) : 0;
+        const pricePct2 = row2 ? (row2.s2Price === 0 ? 0 : (row2.s1Price / row2.s2Price) * 100) : 0;
+        return React.createElement(PdfPage, { size: 'A4', orientation: 'landscape', style: styles.page },
+          React.createElement(View, { style: { flexDirection: 'row', gap: 24 } },
+            React.createElement(View, { style: { width: '50%' as any } },
+              React.createElement(Text, { style: styles.h1 }, `Countries · ${c1}`),
+              React.createElement(View, { style: styles.section },
+                React.createElement(View, { style: styles.box },
+                  React.createElement(Text, { style: styles.boxTitle }, 'Antal stk'),
+                  React.createElement(Text, { style: styles.boxNums }, `${row1.s1Qty} vs ${row1.s2Qty}`),
+                  React.createElement(Donut as any, { pct: qtyPct1, label: 'Stk' })
+                ),
+                React.createElement(View, { style: styles.box },
+                  React.createElement(Text, { style: styles.boxTitle }, 'Omsætning (DKK)'),
+                  React.createElement(Text, { style: styles.boxNums }, `${fmt(row1.s1Price)} vs ${fmt(row1.s2Price)}`),
+                  React.createElement(Donut as any, { pct: pricePct1, label: 'Omsætning' })
+                )
+              )
             ),
-            React.createElement(View, { style: styles.box },
-              React.createElement(Text, { style: styles.boxTitle }, 'Omsætning (DKK)'),
-              React.createElement(Text, { style: styles.boxNums }, `${fmt(row.s1Price)} vs ${fmt(row.s2Price)}`),
-              React.createElement(Donut as any, { pct: pricePct, label: 'Omsætning' })
-            )
+            c2 ? React.createElement(View, { style: { width: '50%' as any } },
+              React.createElement(Text, { style: styles.h1 }, `Countries · ${c2}`),
+              React.createElement(View, { style: styles.section },
+                React.createElement(View, { style: styles.box },
+                  React.createElement(Text, { style: styles.boxTitle }, 'Antal stk'),
+                  React.createElement(Text, { style: styles.boxNums }, `${row2!.s1Qty} vs ${row2!.s2Qty}`),
+                  React.createElement(Donut as any, { pct: qtyPct2, label: 'Stk' })
+                ),
+                React.createElement(View, { style: styles.box },
+                  React.createElement(Text, { style: styles.boxTitle }, 'Omsætning (DKK)'),
+                  React.createElement(Text, { style: styles.boxNums }, `${fmt(row2!.s1Price)} vs ${fmt(row2!.s2Price)}`),
+                  React.createElement(Donut as any, { pct: pricePct2, label: 'Omsætning' })
+                )
+              )
+            ) : null
           )
         );
       });
