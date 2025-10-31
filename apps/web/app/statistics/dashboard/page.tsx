@@ -146,7 +146,7 @@ export default function StatisticsDashboardPage() {
           from_name: EMAILJS_FROM_NAME,
           from_email: EMAILJS_FROM_EMAIL,
         },
-        attachments: (attachments || []).map((a) => ({ name: a.name, data: a.data })),
+        attachments: (attachments || []).map((a) => ({ filename: a.name, content: a.data })),
       } as any;
       const res = await fetch(EMAILJS_ENDPOINT, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       if (!res.ok) {
