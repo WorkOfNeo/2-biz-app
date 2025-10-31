@@ -1,7 +1,7 @@
 import type { Page } from 'playwright-core';
 import type { JobRow } from '@shared/types';
 import React from 'react';
-import { pdf, Document, Page as PdfPage, Text, StyleSheet, View } from '@react-pdf/renderer';
+import { pdf, Document, Page as PdfPage, Text, StyleSheet, View, Svg, Circle, Path } from '@react-pdf/renderer';
 import JSZip from 'jszip';
 // Use ArrayBuffer slices from Node Buffers for uploads and normalize React-PDF outputs
 
@@ -370,11 +370,55 @@ export async function exportOverview(ctx: Ctx) {
         if (inv.season_id === s1) { bucket.s1Qty += qty; bucket.s1Price += amountDkk; }
         else if (inv.season_id === s2) { bucket.s2Qty += qty; bucket.s2Price += amountDkk; }
       }
-      const styles = StyleSheet.create({ page: { padding: 16, fontSize: 12, color: '#0f172a' }, h1: { fontSize: 18, marginBottom: 10 }, row: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 } });
+      const styles = StyleSheet.create({
+        page: { padding: 16, fontSize: 12, color: '#0f172a' },
+        h1: { fontSize: 18, marginBottom: 10 },
+        row: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 },
+        section: { flexDirection: 'row', gap: 16 },
+        box: { width: '50%' as any, padding: 8, alignItems: 'center' as any },
+        boxTitle: { fontSize: 12, marginBottom: 2 },
+        boxSub: { fontSize: 10, color: '#64748b', marginBottom: 4 },
+        boxNums: { fontSize: 12, fontWeight: 700 as any, marginBottom: 6 }
+      });
       const fmt = (n: number) => new Intl.NumberFormat('da-DK').format(Math.round(n));
+      const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+      function Donut({ pct, label }: { pct: number; label: string }) {
+        const visualPct = clamp(pct, 0, 100);
+        const r = 36; const cx = 40; const cy = 40; const strokeW = 6;
+        const endAngle = (-90 + (visualPct / 100) * 360) * (Math.PI / 180);
+        const x = cx + r * Math.cos(endAngle);
+        const y = cy + r * Math.sin(endAngle);
+        const largeArc = visualPct > 50 ? 1 : 0;
+        const arcPath = `M ${cx} ${cy - r} A ${r} ${r} 0 ${largeArc} 1 ${x} ${y}`;
+        const hue = Math.round((visualPct / 100) * 120);
+        const color = `hsl(${hue}, 70%, 40%)`;
+        return React.createElement(View, { style: { alignItems: 'center' } },
+          React.createElement(Svg, { width: 80, height: 80 },
+            React.createElement(Circle, { cx, cy, r, stroke: '#e5e7eb', strokeWidth: strokeW, fill: 'none' }),
+            visualPct > 0 ? React.createElement(Path, { d: arcPath, stroke: color, strokeWidth: strokeW, fill: 'none' }) : null
+          ),
+          React.createElement(Text, { style: { fontSize: 10, marginTop: 2 } }, `${label} · ${Math.round(pct)}%`)
+        );
+      }
       const pages = countries.map((c) => {
-        const row = totals[c] || { s1Qty: 0, s2Qty: 0, s1Price: 0, s2Price: 0 }; const qtyPct = row.s2Qty === 0 ? 0 : (row.s1Qty / row.s2Qty) * 100; const pricePct = row.s2Price === 0 ? 0 : (row.s1Price / row.s2Price) * 100;
-        return React.createElement(PdfPage, { size: 'A4', style: styles.page }, React.createElement(Text, { style: styles.h1 }, `Countries · ${c}`), React.createElement(View, { style: styles.row }, React.createElement(Text, null, `S1 Qty: ${row.s1Qty}`), React.createElement(Text, null, `S2 Qty: ${row.s2Qty}`), React.createElement(Text, null, `Qty %: ${qtyPct.toFixed(2)}%`)), React.createElement(View, { style: styles.row }, React.createElement(Text, null, `S1 Price (DKK): ${fmt(row.s1Price)}`), React.createElement(Text, null, `S2 Price (DKK): ${fmt(row.s2Price)}`), React.createElement(Text, null, `Price %: ${pricePct.toFixed(2)}%`)));
+        const row = totals[c] || { s1Qty: 0, s2Qty: 0, s1Price: 0, s2Price: 0 };
+        const qtyPct = row.s2Qty === 0 ? 0 : (row.s1Qty / row.s2Qty) * 100;
+        const pricePct = row.s2Price === 0 ? 0 : (row.s1Price / row.s2Price) * 100;
+        return React.createElement(PdfPage, { size: 'A4', style: styles.page },
+          React.createElement(Text, { style: styles.h1 }, `Countries · ${c}`),
+          React.createElement(View, { style: styles.section },
+            React.createElement(View, { style: styles.box },
+              React.createElement(Text, { style: styles.boxTitle }, 'Antal stk'),
+              React.createElement(Text, { style: styles.boxNums }, `${row.s1Qty} vs ${row.s2Qty}`),
+              React.createElement(Donut as any, { pct: qtyPct, label: 'Stk' })
+            ),
+            React.createElement(View, { style: styles.box },
+              React.createElement(Text, { style: styles.boxTitle }, 'Omsætning (DKK)'),
+              React.createElement(Text, { style: styles.boxNums }, `${fmt(row.s1Price)} vs ${fmt(row.s2Price)}`),
+              React.createElement(Donut as any, { pct: pricePct, label: 'Omsætning' })
+            )
+          )
+        );
       });
       const combined = React.createElement(Document, null, ...pages);
       const combinedOut = await pdf(combined).toBuffer();
