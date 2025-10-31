@@ -808,40 +808,14 @@ async function runJob(job: JobRow) {
     try {
       await ensureNotCancelled(job.id);
       await log(job.id, 'info', 'STEP:stats_per_size_begin', job.payload || {});
-      const listUrl = new URL('?controller=Confident%5CMiscellaneous%5CStatisticsPerSize&action=List', SPY_BASE_URL).toString();
-      await page!.goto(listUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
-      await log(job.id, 'info', 'STEP:stats_per_size_nav', { url: listUrl });
-      // Fill Date From with today's date (DD-MM-YYYY)
-      const today = new Date();
-      const dd = String(today.getDate()).padStart(2, '0');
-      const mm = String(today.getMonth() + 1).padStart(2, '0');
-      const yyyy = today.getFullYear();
-      const dateStr = `${dd}-${mm}-${yyyy}`;
-      try {
-        const sel = 'input[name="Spy\\Model\\Confident\\Miscellaneous\\StatisticsPerSize\\ListReportSearch[strDateFrom]"]';
-        const dateInput = await findFirst(page!, [sel]);
-        if (dateInput) {
-          await dateInput.fill('', { timeout: 10_000 }).catch(() => {});
-          // Set value directly to avoid slow typing and datepicker interference
-          await page!.evaluate(({ selector, value }: { selector: string; value: string }) => {
-            const el = document.querySelector<HTMLInputElement>(selector);
-            if (el) { el.value = value; el.dispatchEvent(new Event('input', { bubbles: true })); }
-          }, { selector: sel, value: dateStr });
-          await log(job.id, 'info', 'STEP:stats_per_size_date_set', { value: dateStr });
-        } else {
-          await log(job.id, 'error', 'STEP:stats_per_size_date_input_not_found');
-        }
-      } catch (e: any) {
-        await log(job.id, 'error', 'STEP:stats_per_size_fill_date_error', { error: e?.message || String(e) });
-      }
-      // Click Search
-      try {
-        const searchBtn = await findFirst(page!, ['button[name="search"]', 'button:has-text("Search")']);
-        if (searchBtn) { await searchBtn.click({ timeout: 30_000 }); await log(job.id, 'info', 'STEP:stats_per_size_search_clicked'); }
-        else { await log(job.id, 'error', 'STEP:stats_per_size_search_btn_not_found'); }
-      } catch (e: any) {
-        await log(job.id, 'error', 'STEP:stats_per_size_search_click_error', { error: e?.message || String(e) });
-      }
+      // Build force-search URL with ISO date (YYYY-MM-DD); allow override via payload.dateFrom
+      const isoDate = (job.payload?.dateFrom as string | undefined) || new Date().toISOString().slice(0, 10);
+      const urlObj = new URL('?controller=Confident%5CMiscellaneous%5CStatisticsPerSize&action=List', SPY_BASE_URL);
+      urlObj.searchParams.set('Spy\\Model\\Confident\\Miscellaneous\\StatisticsPerSize\\ListReportSearch[bForceSearch]', 'true');
+      urlObj.searchParams.set('Spy\\Model\\Confident\\Miscellaneous\\StatisticsPerSize\\ListReportSearch[strDateFrom]', isoDate);
+      const forceUrl = urlObj.toString();
+      await page!.goto(forceUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+      await log(job.id, 'info', 'STEP:stats_per_size_nav', { url: forceUrl, dateFrom: isoDate });
       // Wait for container
       await page!.waitForSelector('#StatisticsPerSizeTableContainer', { timeout: 180_000, state: 'attached' as any }).catch(() => null);
       // Poll for tables for up to ~3 minutes (36 attempts * 5s)
@@ -914,7 +888,6 @@ async function runJob(job: JobRow) {
       const flatRows = parsed.flatMap((p) => p.rows);
       await log(job.id, 'info', 'STEP:stats_per_size_parsed', { tables: parsed.length, rows: flatRows.length, sampleHeaders: (parsed[0]?.headers || []).slice(0, 10) });
       // Insert or update snapshot and rows (idempotent per day)
-      const isoDate = new Date().toISOString().slice(0, 10);
       const { data: existingSnap } = await supabase
         .from('statistics_per_size_snapshots')
         .select('id')
