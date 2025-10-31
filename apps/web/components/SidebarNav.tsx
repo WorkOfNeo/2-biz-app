@@ -52,6 +52,7 @@ export function SidebarNav() {
           {has('admin') && <NavLink href="/settings/salespersons" label="SALESPERSONS" />}
           {(has('admin') || has('manager')) && <NavLink href="/settings/customers" label="CUSTOMERS" />}
           {has('admin') && <NavLink href="/settings/misc" label="MISC" />}
+          {has('admin') && <NavLink href="/settings/jobs" label="JOBS" />}
           {has('admin') && <NavLink href="/settings/runs" label="RUNS" />}
         </div>
       </div>
