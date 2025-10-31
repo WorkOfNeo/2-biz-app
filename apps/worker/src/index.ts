@@ -634,7 +634,7 @@ async function runJob(job: JobRow) {
     await exportOverviewJob({ job, page: page!, log, saveResult, setJobFailedOrRequeue, setJobSucceeded, supabase });
     return;
   }
-  if (job.type === 'export_overview') {
+  /* LEGACY export_overview handler (disabled)
     try {
       await log(job.id, 'info', 'STEP:export_overview_begin', job.payload || {});
       // React-PDF export for General (zipped)
@@ -956,6 +956,7 @@ async function runJob(job: JobRow) {
     }
   }
 
+  */
   if (doSeasons) {
     // Scrape seasons list and upsert into Supabase
     await log(job.id, 'info', 'STEP:seasons_scrape_begin');

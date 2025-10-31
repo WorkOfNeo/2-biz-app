@@ -8,16 +8,17 @@ type JobRow = { id: string; type: string; status: string; finished_at: string | 
 type JobResult = { job_id: string; summary?: string | null; data?: any; created_at: string };
 
 async function fetchOverview() {
-  // Fetch latest succeeded jobs (cap 200) then pick last per type
+  // Fetch latest jobs (cap 200), then pick last per type and map results
   const { data: jobs } = await supabase
     .from('jobs')
-    .select('*')
-    .eq('status', 'succeeded')
-    .order('finished_at', { ascending: false })
+    .select('id,type,status,finished_at,started_at,created_at')
+    .order('created_at', { ascending: false })
     .limit(200);
   const list = (jobs ?? []) as JobRow[];
   const byType = new Map<string, JobRow>();
+  const runningByType = new Set<string>();
   for (const j of list) {
+    if (j.status === 'running') runningByType.add(j.type);
     if (!byType.has(j.type)) byType.set(j.type, j);
   }
   const lastPerType = Array.from(byType.entries());
@@ -38,6 +39,8 @@ async function fetchOverview() {
   const items = lastPerType.map(([type, j]) => {
     const r = results[j.id];
     const when = j.finished_at || j.started_at || j.created_at;
+    const status = j.status;
+    const isRunning = runningByType.has(type);
     const metrics: Array<{ label: string; value: string | number }> = [];
     const summary = (r?.summary || '').toString();
     const data = (r?.data ?? {}) as any;
@@ -63,7 +66,7 @@ async function fetchOverview() {
       const n = files ?? file;
       if (n) metrics.push({ label: 'Files generated', value: n });
     }
-    return { type, job: j, lastWhen: when, summary, metrics };
+    return { type, job: j, lastWhen: when, summary, metrics, status, isRunning };
   }).sort((a, b) => (new Date(b.lastWhen || '').getTime()) - (new Date(a.lastWhen || '').getTime()));
   return { items };
 }
@@ -83,8 +86,14 @@ export default function JobsOverviewPage() {
         {(data?.items ?? []).map((it) => (
           <div key={it.type} className="rounded-md border p-3">
             <div className="flex items-center justify-between">
-              <div className="text-sm font-semibold">{it.type.replace(/_/g,' ').replace(/\b\w/g, (m: string) => m.toUpperCase())}</div>
-              <div className="text-xs text-gray-600">{it.lastWhen ? new Date(it.lastWhen).toLocaleString() : '—'}</div>
+              <div className="flex items-center gap-2">
+                {(() => {
+                  const dot = it.isRunning ? 'bg-amber-500' : (it.status === 'succeeded' ? 'bg-green-600' : (it.status === 'failed' || it.status === 'cancelled' ? 'bg-red-600' : 'bg-gray-400'));
+                  return <span className={`inline-block h-2 w-2 rounded-full ${dot}`} />;
+                })()}
+                <div className="text-sm font-semibold">{it.type.replace(/_/g,' ').replace(/\b\w/g, (m: string) => m.toUpperCase())}</div>
+              </div>
+              <div className="text-xs text-gray-600">{it.isRunning ? 'Running…' : (it.lastWhen ? new Date(it.lastWhen).toLocaleString() : '—')}</div>
             </div>
             <div className="mt-1 text-xs text-gray-600">{it.summary || '—'}</div>
             <div className="mt-3 flex flex-wrap gap-2">
