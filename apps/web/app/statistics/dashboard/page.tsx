@@ -93,7 +93,7 @@ export default function StatisticsDashboardPage() {
 
   // Box #2 - Overall Statistics
   const [receivers, setReceivers] = React.useState('');
-  const [overallType, setOverallType] = React.useState<'all' | 'overview' | 'countries' | 'top10styles' | 'top10vendors'>('all');
+  const [overallOpts, setOverallOpts] = React.useState<{ all: boolean; overview: boolean; countries: boolean; top10styles: boolean; top10vendors: boolean }>({ all: false, overview: true, countries: true, top10styles: false, top10vendors: false });
   const [sendingOverall, setSendingOverall] = React.useState(false);
 
   async function sendOverall() {
@@ -103,11 +103,15 @@ export default function StatisticsDashboardPage() {
       const to = receivers.split(',').map(s => s.trim()).filter(Boolean);
       if (to.length === 0) { alert('Enter at least one receiver email.'); return; }
       const attachments: Array<{ name: string; data: string }> = [];
-      if (overallType === 'all' || overallType === 'countries') {
+      if (overallOpts.overview) {
+        const row = latestByKind.get('overview_pdf');
+        if (row?.public_url) { try { const du = await fetchToDataUrl(row.public_url); attachments.push({ name: 'Overview.pdf', data: du.split(',')[1] || '' }); } catch {} }
+      }
+      if (overallOpts.countries) {
         const row = latestByKind.get('countries_pdf');
         if (row?.public_url) { try { const du = await fetchToDataUrl(row.public_url); attachments.push({ name: 'Countries.pdf', data: du.split(',')[1] || '' }); } catch {} }
       }
-      if (attachments.length === 0) { alert('No exports available yet.'); return; }
+      if (attachments.length === 0) { alert('No exports available yet or no options selected.'); return; }
       const subject = 'Statistik opdatering';
       const bodyHtml = 'Hermed statistik :)';
       const dynamicParams: Record<string, string> = {};
@@ -200,26 +204,36 @@ export default function StatisticsDashboardPage() {
           <div className="text-sm font-semibold">Send out statistics</div>
           <div className="text-sm font-medium">Salesperson Statistics</div>
           <div className="flex items-center justify-between text-sm">
-            <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                onChange={(e) => {
-                  const all = e.target.checked;
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  const allOn = !Object.values(selected).every(Boolean);
                   const next: Record<string, boolean> = {};
-                  for (const sp of (salespersons ?? [])) next[sp.id] = all;
+                  for (const sp of (salespersons ?? [])) next[sp.id] = allOn;
                   setSelected(next);
                 }}
-              />
-              Vælg alle
-            </label>
+                className="relative inline-flex h-5 w-9 items-center rounded-full transition-colors bg-slate-200"
+              >
+                <span className="inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform translate-x-0" />
+              </button>
+              <span>Vælg alle</span>
+            </div>
           </div>
           <div className="max-h-64 overflow-auto border rounded mt-2">
             <table className="min-w-full text-sm">
               <tbody>
                 {(salespersons ?? []).map((sp) => (
                   <tr key={sp.id}>
-                    <td className="p-2 border-b w-8">
-                      <input type="checkbox" checked={!!selected[sp.id]} onChange={() => toggleSp(sp.id)} />
+                    <td className="p-2 border-b w-28">
+                      <button
+                        type="button"
+                        onClick={() => toggleSp(sp.id)}
+                        className={"relative inline-flex h-5 w-9 items-center rounded-full transition-colors " + (selected[sp.id] ? 'bg-slate-900' : 'bg-slate-200')}
+                        aria-pressed={!!selected[sp.id]}
+                      >
+                        <span className={"inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform " + (selected[sp.id] ? 'translate-x-4' : 'translate-x-0')} />
+                      </button>
                     </td>
                     <td className="p-2 border-b">{sp.name}</td>
                     <td className="p-2 border-b text-xs text-gray-500">{sp.email || '—'}</td>
@@ -243,12 +257,26 @@ export default function StatisticsDashboardPage() {
             <div className="text-gray-600 mb-1">Receivers</div>
             <input className="w-full rounded border px-2 py-1 text-sm" placeholder="comma,separated@example.com" value={receivers} onChange={(e) => setReceivers(e.target.value)} />
           </label>
-          <div className="text-sm space-y-1">
-            <label className="flex items-center gap-2"><input type="radio" name="overall_type" checked={overallType==='all'} onChange={() => setOverallType('all')} />All salespeople</label>
-            <label className="flex items-center gap-2"><input type="radio" name="overall_type" checked={overallType==='overview'} onChange={() => setOverallType('overview')} />Overview</label>
-            <label className="flex items-center gap-2"><input type="radio" name="overall_type" checked={overallType==='countries'} onChange={() => setOverallType('countries')} />Countries</label>
-            <label className="flex items-center gap-2"><input type="radio" name="overall_type" checked={overallType==='top10styles'} onChange={() => setOverallType('top10styles')} />Top 10 Styles</label>
-            <label className="flex items-center gap-2"><input type="radio" name="overall_type" checked={overallType==='top10vendors'} onChange={() => setOverallType('top10vendors')} />Top 10 Vendors</label>
+          <div className="text-sm space-y-2">
+            {[
+              { key: 'all', label: 'All salespeople' },
+              { key: 'overview', label: 'Overview' },
+              { key: 'countries', label: 'Countries' },
+              { key: 'top10styles', label: 'Top 10 Styles' },
+              { key: 'top10vendors', label: 'Top 10 Vendors' }
+            ].map((opt: any) => (
+              <div key={opt.key} className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setOverallOpts((p) => ({ ...p, [opt.key]: !p[opt.key as keyof typeof p] }))}
+                  className={"relative inline-flex h-5 w-9 items-center rounded-full transition-colors " + (overallOpts[opt.key as keyof typeof overallOpts] ? 'bg-slate-900' : 'bg-slate-200')}
+                  aria-pressed={overallOpts[opt.key as keyof typeof overallOpts] as boolean}
+                >
+                  <span className={"inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform " + ((overallOpts[opt.key as keyof typeof overallOpts] as boolean) ? 'translate-x-4' : 'translate-x-0')} />
+                </button>
+                <span>{opt.label}</span>
+              </div>
+            ))}
           </div>
           <div>
             <button className="rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-50" disabled={sendingOverall} onClick={sendOverall}>Send</button>

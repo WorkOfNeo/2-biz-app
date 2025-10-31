@@ -34,6 +34,8 @@ export function SidebarNav() {
           <NavLink href="/statistics/general" label="General" />
           <NavLink href="/statistics/overview" label="Overview" />
           <NavLink href="/statistics/countries" label="Countries" />
+          <NavLink href="/statistics/styles/top10" label="Top 10 Styles" />
+          <NavLink href="/statistics/vendors/top10" label="Top 10 Vendors" />
           {has('admin') && <NavLink href="/statistics/exports" label="Exports" />}
         </div>
       </div>
