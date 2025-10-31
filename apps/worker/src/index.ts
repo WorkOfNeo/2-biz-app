@@ -808,14 +808,16 @@ async function runJob(job: JobRow) {
     try {
       await ensureNotCancelled(job.id);
       await log(job.id, 'info', 'STEP:stats_per_size_begin', job.payload || {});
-      // Build force-search URL with ISO date (YYYY-MM-DD); allow override via payload.dateFrom
+      // Build force-search URL with ISO dates (YYYY-MM-DD); allow override via payload.dateFrom/dateTo
       const isoDate = (job.payload?.dateFrom as string | undefined) || new Date().toISOString().slice(0, 10);
+      const isoDateTo = (job.payload?.dateTo as string | undefined) || isoDate;
       const urlObj = new URL('?controller=Confident%5CMiscellaneous%5CStatisticsPerSize&action=List', SPY_BASE_URL);
       urlObj.searchParams.set('Spy\\Model\\Confident\\Miscellaneous\\StatisticsPerSize\\ListReportSearch[bForceSearch]', 'true');
       urlObj.searchParams.set('Spy\\Model\\Confident\\Miscellaneous\\StatisticsPerSize\\ListReportSearch[strDateFrom]', isoDate);
+      urlObj.searchParams.set('Spy\\Model\\Confident\\Miscellaneous\\StatisticsPerSize\\ListReportSearch[strDateTo]', isoDateTo);
       const forceUrl = urlObj.toString();
       await page!.goto(forceUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
-      await log(job.id, 'info', 'STEP:stats_per_size_nav', { url: forceUrl, dateFrom: isoDate });
+      await log(job.id, 'info', 'STEP:stats_per_size_nav', { url: forceUrl, dateFrom: isoDate, dateTo: isoDateTo });
       // Wait for container
       await page!.waitForSelector('#StatisticsPerSizeTableContainer', { timeout: 180_000, state: 'attached' as any }).catch(() => null);
       // Poll for tables for up to ~3 minutes (36 attempts * 5s)
