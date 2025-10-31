@@ -107,12 +107,22 @@ export async function exportOverview(ctx: Ctx) {
         if (accountNos.length) {
           const statResp = await supabase.from('sales_stats').select('account_no, qty, price, season_id').in('season_id', [s1, s2]).in('account_no', accountNos).limit(200000);
           const statRows: Array<{ account_no: string | null; qty: number | null; price: number | null; season_id: string }> = ((statResp as any)?.data ?? []) as any[];
+          // Also fetch invoices to align with General page totals
+          const invResp = await supabase.from('sales_invoices').select('account_no, qty, amount, season_id').in('season_id', [s1, s2]).in('account_no', accountNos).limit(200000);
+          const invRows: Array<{ account_no: string | null; qty: number | null; amount: number | null; season_id: string }> = ((invResp as any)?.data ?? []) as any[];
           const map = new Map<string, { s1Qty: number; s1Price: number; s2Qty: number; s2Price: number }>();
           for (const rowItem of statRows) {
             const key = String(rowItem.account_no || ''); if (!key) continue;
             const agg = map.get(key) || { s1Qty: 0, s1Price: 0, s2Qty: 0, s2Price: 0 };
             if (rowItem.season_id === s1) { agg.s1Qty += Number(rowItem.qty||0); agg.s1Price += Number(rowItem.price||0); }
             else if (rowItem.season_id === s2) { agg.s2Qty += Number(rowItem.qty||0); agg.s2Price += Number(rowItem.price||0); }
+            map.set(key, agg);
+          }
+          for (const inv of invRows) {
+            const key = String(inv.account_no || ''); if (!key) continue;
+            const agg = map.get(key) || { s1Qty: 0, s1Price: 0, s2Qty: 0, s2Price: 0 };
+            if (inv.season_id === s1) { agg.s1Qty += Number(inv.qty||0); agg.s1Price += Number(inv.amount||0); }
+            else if (inv.season_id === s2) { agg.s2Qty += Number(inv.qty||0); agg.s2Price += Number(inv.amount||0); }
             map.set(key, agg);
           }
           for (const c of items) {
