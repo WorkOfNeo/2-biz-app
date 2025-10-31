@@ -2,6 +2,24 @@ import { NextRequest, NextResponse } from 'next/server';
 
 const EMAILJS_ENDPOINT = 'https://api.emailjs.com/api/v1.0/email/send';
 
+export async function GET() {
+  const serviceId = process.env.EMAILJS_SERVICE_ID || process.env.EMAILJS_SERVICE_KEY || '';
+  const templateId = process.env.EMAILJS_TEMPLATE_ID || '';
+  const publicKey = process.env.EMAILJS_PUBLIC_KEY || '';
+  const fromEmail = process.env.EMAILJS_FROM_EMAIL || '';
+  const fromName = process.env.EMAILJS_FROM_NAME || '';
+  return NextResponse.json({
+    ok: Boolean(serviceId && templateId && publicKey && fromEmail),
+    has: {
+      EMAILJS_SERVICE_ID_or_KEY: Boolean(serviceId),
+      EMAILJS_TEMPLATE_ID: Boolean(templateId),
+      EMAILJS_PUBLIC_KEY: Boolean(publicKey),
+      EMAILJS_FROM_EMAIL: Boolean(fromEmail),
+      EMAILJS_FROM_NAME: Boolean(fromName || true),
+    }
+  });
+}
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
@@ -16,8 +34,13 @@ export async function POST(req: NextRequest) {
     const publicKey = process.env.EMAILJS_PUBLIC_KEY || '';
     const fromEmail = process.env.EMAILJS_FROM_EMAIL || '';
     const fromName = process.env.EMAILJS_FROM_NAME || '2-BIZ';
-    if (!serviceId || !templateId || !publicKey || !fromEmail) {
-      return NextResponse.json({ error: 'EmailJS env not configured' }, { status: 500 });
+    const missing: string[] = [];
+    if (!serviceId) missing.push('EMAILJS_SERVICE_ID/EMAILJS_SERVICE_KEY');
+    if (!templateId) missing.push('EMAILJS_TEMPLATE_ID');
+    if (!publicKey) missing.push('EMAILJS_PUBLIC_KEY');
+    if (!fromEmail) missing.push('EMAILJS_FROM_EMAIL');
+    if (missing.length) {
+      return NextResponse.json({ error: 'Missing environment variables', missing }, { status: 500 });
     }
 
     // Send one-by-one to ensure proper personalization and deliverability
@@ -41,8 +64,9 @@ export async function POST(req: NextRequest) {
         body: JSON.stringify(payload),
       });
       if (!res.ok) {
-        const txt = await res.text();
-        return NextResponse.json({ error: `Email send failed: ${txt}` }, { status: 502 });
+        let detail: any = null;
+        try { detail = await res.json(); } catch { detail = await res.text(); }
+        return NextResponse.json({ error: 'Email send failed', detail }, { status: 502 });
       }
     }
     return NextResponse.json({ ok: true });
