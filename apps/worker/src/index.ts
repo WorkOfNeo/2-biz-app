@@ -1486,52 +1486,8 @@ async function runJob(job: JobRow) {
         await log(job.id, 'error', 'STEP:invoiced_rows_upsert_error', { error: e?.message || String(e) });
       }
 
-      // Apply invoiced adjustments (add/subtract to the same season/account in sales_stats)
-      try {
-        let adjusted = 0;
-        for (const inv of invoicedLines) {
-          const accountNo = (inv.matchedAccount || '').trim();
-          if (!accountNo) continue;
-          const pick = inv.userCurrencyAmount || inv.customerCurrencyAmount;
-          if (!pick) continue;
-          const deltaPrice = Number(pick.amount || 0) || 0; // may be negative
-          let deltaQty = Number(inv.qty || 0) || 0;
-          if (deltaPrice < 0) deltaQty = -Math.abs(deltaQty); // reflect sign on qty as well
-
-          // Fetch existing row to aggregate
-          const { data: existing } = await supabase
-            .from('sales_stats')
-            .select('id, qty, price')
-            .eq('season_id', targetSeasonId)
-            .eq('account_no', accountNo)
-            .maybeSingle();
-
-          if (existing?.id) {
-            const newQty = (Number((existing as any).qty || 0) || 0) + deltaQty;
-            const newPrice = (Number((existing as any).price || 0) || 0) + deltaPrice;
-            const { error: upErr } = await supabase
-              .from('sales_stats')
-              .update({ qty: newQty, price: newPrice, currency: pick.currency || null })
-              .eq('id', existing.id as string);
-            if (upErr) throw upErr;
-          } else {
-            // Create a minimal row if none exists yet
-            const { error: insErr } = await supabase.from('sales_stats').insert({
-              season_id: targetSeasonId,
-              account_no: accountNo,
-              customer_id: null,
-              qty: deltaQty,
-              price: deltaPrice,
-              currency: pick.currency || null
-            });
-            if (insErr) throw insErr;
-          }
-          adjusted++;
-        }
-        await log(job.id, 'info', 'STEP:invoiced_adjustments_applied', { count: adjusted });
-      } catch (e: any) {
-        await log(job.id, 'error', 'STEP:invoiced_adjustments_error', { error: e?.message || String(e) });
-      }
+      // Do not adjust TopSeller (sales_stats) with invoice deltas; keep separate sources
+      try { await log(job.id, 'info', 'STEP:invoiced_adjustments_skipped'); } catch {}
 
       await saveResult(job.id, 'Deep scrape completed', {
         seasonId: targetSeasonId,
