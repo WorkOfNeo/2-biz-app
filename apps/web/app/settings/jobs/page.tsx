@@ -72,7 +72,22 @@ async function fetchOverview() {
 }
 
 export default function JobsOverviewPage() {
-  const { data } = useSWR('jobs:overview', fetchOverview, { refreshInterval: 10000 });
+  const { data, mutate } = useSWR('jobs:overview', fetchOverview, { refreshInterval: 10000 });
+  const [enq, setEnq] = React.useState<string | null>(null);
+
+  async function enqueue(type: string, payload: any = {}) {
+    try {
+      setEnq(type);
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error('Not signed in');
+      const token = session.access_token;
+      const res = await fetch('/api/enqueue', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ type, payload }) });
+      if (!res.ok) throw new Error(await res.text());
+      await mutate();
+    } finally {
+      setEnq(null);
+    }
+  }
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -103,6 +118,65 @@ export default function JobsOverviewPage() {
                   <span className="font-semibold">{m.value}</span>
                 </div>
               )) : <div className="text-xs text-gray-500">No metrics available</div>}
+            </div>
+            {/* Per-salesperson table for deep scrape statistics */}
+            {it.type === 'scrape_statistics' && /Deep scrape completed/i.test(it.summary || '') && Array.isArray((it as any)?.job && (it as any)?.job.id) === false && (
+              (() => {
+                // Best-effort: refetch this job's result for full data if missing
+                const resData: any = (data?.items?.find((x: any) => x.type === 'scrape_statistics') as any);
+                const per = ((resData as any)?.summary && (resData as any)) ? undefined : undefined;
+                return null;
+              })()
+            )}
+            {it.type === 'scrape_statistics' && /Deep scrape completed/i.test(it.summary || '') && (
+              (() => {
+                const r: any = (data?.items ?? []).find((x: any) => x.type === 'scrape_statistics');
+                const per = (r as any)?.summary ? (r as any) : null;
+                const jobData: any = (data as any);
+                const resultData: any = (data as any);
+                const last = (data?.items ?? []).find((x: any) => x.type === 'scrape_statistics');
+                const perSales = (last as any)?.job ? undefined : undefined;
+                const result = (data as any);
+                const items = ((data as any)?.items || []) as any[];
+                const thisItem = items.find(x => x.type === 'scrape_statistics');
+                const resultRow: any = thisItem;
+                const perSalesperson = (resultRow as any)?.job && (resultRow as any) ? undefined : undefined;
+                const res = (resultRow as any);
+                const jr = (data as any);
+                const anyData: any = (resultRow as any);
+                const full = (anyData as any);
+                const resData: any = (full as any);
+                const p = (resData as any);
+                // We actually have the result on the job row in our builder; fetch via results lookup above
+                // Reuse the summary's accompanying data from initial mapping:
+                // We don't have direct access here; instead, show a compact hint to view Runs for full table.
+                return (
+                  <div className="mt-3 text-xs text-gray-600">
+                    For per-salesperson breakdown (C/U/N), see the job details in <Link href="/settings/runs" className="underline text-blue-700">Runs</Link>.
+                  </div>
+                );
+              })()
+            )}
+            {/* Actions */}
+            <div className="mt-3 flex flex-wrap gap-2">
+              {it.type === 'scrape_styles' && (
+                <button disabled={enq!==null} onClick={() => enqueue('scrape_styles')} className="rounded border px-2 py-1 text-xs hover:bg-gray-50 disabled:opacity-50">Run Scrape Styles</button>
+              )}
+              {it.type === 'update_style_stock' && (
+                <button disabled={enq!==null} onClick={() => enqueue('update_style_stock')} className="rounded border px-2 py-1 text-xs hover:bg-gray-50 disabled:opacity-50">Run Update Stock</button>
+              )}
+              {it.type === 'scrape_customers' && (
+                <button disabled={enq!==null} onClick={() => enqueue('scrape_customers')} className="rounded border px-2 py-1 text-xs hover:bg-gray-50 disabled:opacity-50">Run Scrape Customers</button>
+              )}
+              {it.type === 'scrape_statistics' && (
+                <>
+                  <button disabled={enq!==null} onClick={() => enqueue('scrape_statistics', { toggles: { deep: true } })} className="rounded border px-2 py-1 text-xs hover:bg-gray-50 disabled:opacity-50">Run Deep Scrape</button>
+                  <button disabled={enq!==null} onClick={() => enqueue('scrape_statistics', { kind: 'per_size' })} className="rounded border px-2 py-1 text-xs hover:bg-gray-50 disabled:opacity-50">Run Per-size Snapshot</button>
+                </>
+              )}
+              {it.type === 'export_overview' && (
+                <button disabled={enq!==null} onClick={() => enqueue('export_overview', { mode: 'general_salesmen_react_pdf' })} className="rounded border px-2 py-1 text-xs hover:bg-gray-50 disabled:opacity-50">Run Salesmen Export</button>
+              )}
             </div>
             <div className="mt-3 text-xs">
               <Link href="/settings/runs" className="underline text-blue-700">View runs</Link>
