@@ -5,11 +5,12 @@ import { supabase } from '../../../lib/supabaseClient';
 import { Modal } from '../../../components/Modal';
 import { ProgressBar } from '../../../components/ProgressBar';
 import { GripVertical } from 'lucide-react';
+import Link from 'next/link';
 
 export default function SalespersonsSettingsPage() {
   const { data, mutate } = useSWR('salespersons-with-counts', async () => {
     // Fetch salespersons and customer counts
-    const { data: sps, error } = await supabase.from('salespersons').select('id, name, currency, sort_index').order('sort_index', { ascending: true });
+    const { data: sps, error } = await supabase.from('salespersons').select('id, name, currency, sort_index, email').order('sort_index', { ascending: true });
     if (error) throw new Error(error.message);
     const { data: counts, error: cntErr } = await supabase
       .from('customers')
@@ -21,7 +22,7 @@ export default function SalespersonsSettingsPage() {
       const id = c.salesperson_id as string;
       map.set(id, (map.get(id) ?? 0) + 1);
     }
-    return (sps ?? []).map((sp) => ({ id: sp.id, name: sp.name, currency: sp.currency ?? 'DKK', sort_index: sp.sort_index ?? 0, customers: map.get(sp.id) ?? 0 }));
+    return (sps ?? []).map((sp) => ({ id: sp.id, name: sp.name, currency: sp.currency ?? 'DKK', sort_index: sp.sort_index ?? 0, email: (sp as any).email ?? '', customers: map.get(sp.id) ?? 0 }));
   }, { refreshInterval: 15000 });
 
   // Local list for drag-and-drop ordering
@@ -115,6 +116,7 @@ export default function SalespersonsSettingsPage() {
             <tr>
               <th className="text-left p-2 border-b w-8"></th>
               <th className="text-left p-2 border-b">Name</th>
+              <th className="text-left p-2 border-b">Email</th>
               <th className="text-left p-2 border-b">Currency</th>
               <th className="text-left p-2 border-b">Customers</th>
               <th className="text-left p-2 border-b">Actions</th>
@@ -136,6 +138,26 @@ export default function SalespersonsSettingsPage() {
               >
                 <td className="p-2 border-b align-middle cursor-grab"><GripVertical className="h-4 w-4 text-gray-400" /></td>
                 <td className="p-2 border-b">{sp.name}</td>
+                <td className="p-2 border-b">
+                  <input
+                    type="email"
+                    className="rounded border px-2 py-1 text-sm w-64"
+                    defaultValue={sp.email || ''}
+                    placeholder="name@example.com"
+                    onBlur={async (e) => {
+                      const val = e.target.value.trim();
+                      try {
+                        (sp as any).email = val;
+                        const { error } = await supabase.from('salespersons').update({ email: val || null }).eq('id', sp.id);
+                        if (error) throw error;
+                      } catch (err: any) {
+                        console.error('[salespersons] email update failed', err?.message || err);
+                        alert(err?.message || 'Failed to update email');
+                        await mutate();
+                      }
+                    }}
+                  />
+                </td>
                 <td className="p-2 border-b">
                   <select
                     className="rounded border px-2 py-1 text-sm"
@@ -161,6 +183,7 @@ export default function SalespersonsSettingsPage() {
                 </td>
                 <td className="p-2 border-b">{sp.customers}</td>
                 <td className="p-2 border-b">
+                  <Link className="text-blue-600 hover:underline mr-3" href={`/settings/salespersons/${sp.id}`}>View</Link>
                   <button
                     className="text-red-600 hover:underline"
                     onClick={() => { setConfirmId(sp.id); setConfirmName(sp.name); setAlsoCustomers(false); setProgress(0); }}
