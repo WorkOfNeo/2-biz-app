@@ -30,6 +30,17 @@ export default function StatisticsExportsPage() {
   const [jobDone, setJobDone] = React.useState(false);
   const [openId, setOpenId] = React.useState<string | null>(null);
 
+  async function waitForUrlReady(url: string, attempts = 8, delayMs = 750): Promise<boolean> {
+    for (let i = 0; i < attempts; i++) {
+      try {
+        const res = await fetch(url, { method: 'HEAD', cache: 'no-store' });
+        if (res.ok) return true;
+      } catch {}
+      await new Promise(r => setTimeout(r, delayMs));
+    }
+    return false;
+  }
+
   function timeAgo(iso: string): string {
     const d = new Date(iso).getTime();
     const diff = Math.floor((Date.now() - d) / 1000);
@@ -135,7 +146,10 @@ export default function StatisticsExportsPage() {
       URL.revokeObjectURL(blobUrl);
     } catch {
       if (publicUrl) {
-        try { window.open(publicUrl, '_blank', 'noopener'); return; } catch {}
+        try {
+          const ready = await waitForUrlReady(publicUrl);
+          if (ready) { window.open(publicUrl, '_blank', 'noopener'); return; }
+        } catch {}
       }
       alert('File is not ready yet. Please try again in a moment.');
     }
@@ -158,7 +172,10 @@ export default function StatisticsExportsPage() {
     }
     // Then public URL if present
     if (publicUrl) {
-      try { window.open(publicUrl, '_blank', 'noopener'); return; } catch {}
+      try {
+        const ready = await waitForUrlReady(publicUrl);
+        if (ready) { window.open(publicUrl, '_blank', 'noopener'); return; }
+      } catch {}
     }
     // Finally, fall back to ZIP extraction if available
     if (zipPath) {
