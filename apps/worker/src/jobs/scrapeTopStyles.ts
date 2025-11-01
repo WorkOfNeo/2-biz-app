@@ -100,6 +100,51 @@ export async function scrapeTopStyles(ctx: Ctx) {
       await (tableFrame || page).waitForSelector('table.standardList tbody tr', { timeout: 60_000 });
       await (tableFrame || page).waitForTimeout(500);
       await log(job.id, 'info', 'STEP:topstyles_group_set', { groupBy: 'color' });
+
+      // Verify header shows Color in column 3; retry toggling if needed
+      const verifyHeader = async () => {
+        try {
+          const header = await (tableFrame || page).evaluate(() => {
+            const headers = Array.from(document.querySelectorAll('table.standardList thead th a')) as any[];
+            return headers.map((a: any) => (a?.textContent || '').trim());
+          });
+          await log(job.id, 'info', 'STEP:topstyles_header_check', { header });
+          return Array.isArray(header) && header[3] === 'Color';
+        } catch {
+          return false;
+        }
+      };
+
+      let ok = await verifyHeader();
+      let attempts = 0;
+      while (!ok && attempts < 4) {
+        attempts++;
+        await log(job.id, 'info', 'STEP:topstyles_header_retry', { attempts });
+        // Toggle to style then back to color to force refresh
+        try {
+          await target.selectOption('select[name="strGroupBy"]', 'style');
+          await target.evaluate(() => {
+            const sel = document.querySelector('select[name="strGroupBy"]') as HTMLSelectElement | null;
+            if (sel) sel.dispatchEvent(new Event('change', { bubbles: true }));
+          });
+          await (tableFrame || page).waitForTimeout(800);
+        } catch {}
+        try {
+          await target.selectOption('select[name="strGroupBy"]', 'color');
+          await target.evaluate(() => {
+            const sel = document.querySelector('select[name="strGroupBy"]') as HTMLSelectElement | null;
+            if (sel) sel.dispatchEvent(new Event('change', { bubbles: true }));
+          });
+          await Promise.race([
+            (tableFrame || page).waitForResponse((res: any) => res.url().includes('confident.php') || res.request().url().includes('confident.php'), { timeout: 10_000 }).catch(() => null),
+            (tableFrame || page).waitForTimeout(1200)
+          ]);
+          await (tableFrame || page).waitForSelector('table.standardList tbody tr', { timeout: 60_000 }).catch(() => null);
+          await (tableFrame || page).waitForTimeout(400);
+        } catch {}
+        ok = await verifyHeader();
+      }
+      await log(job.id, ok ? 'info' : 'error', ok ? 'STEP:topstyles_header_ok' : 'STEP:topstyles_header_still_wrong', { attempts });
     } catch (e: any) {
       await log(job.id, 'error', 'STEP:topstyles_group_set_failed', { error: e?.message || String(e) });
     }
