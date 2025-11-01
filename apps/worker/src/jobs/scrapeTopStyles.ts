@@ -20,7 +20,11 @@ function parseNumberEu(input: string): number {
 export async function scrapeTopStyles(ctx: Ctx) {
   const { job, page, log, saveResult, setJobFailedOrRequeue, setJobSucceeded, supabase } = ctx;
   try {
-    await log(job.id, 'info', 'STEP:topstyles_begin');
+    await log(job.id, 'info', 'STEP:topstyles_begin_v3');
+    // Precheck page state before navigation
+    const beforeUrl = page.url();
+    const beforeReady = await page.evaluate(() => document.readyState).catch(() => 'unknown');
+    await log(job.id, 'info', 'STEP:topstyles_precheck', { initialUrl: beforeUrl, readyState: beforeReady });
     // Ensure current season
     let currentSeasonId: string | null = null;
     try {
