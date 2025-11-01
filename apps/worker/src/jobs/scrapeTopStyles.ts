@@ -40,6 +40,20 @@ export async function scrapeTopStyles(ctx: Ctx) {
 
     // Navigate and login using existing authenticated browser (assumed)
     const webBase = 'https://2-biz.spysystem.dk/confident.php?mode=Topstyles';
+    // Hook network/console for diagnostics
+    try {
+      page.on('response', (res: any) => {
+        try {
+          const url = res.url?.() || res.url?.() || res.url();
+          if (String(url).includes('confident.php') || String(url).includes('Topstyles')) {
+            void log(job.id, 'info', 'STEP:topstyles_http_response', { url, status: res.status?.() || res.status?.() || res.status() });
+          }
+        } catch {}
+      });
+      page.on('console', (msg: any) => {
+        try { void log(job.id, 'info', 'STEP:topstyles_console', { type: msg.type?.() || 'log', text: msg.text?.() || msg.text?.() || String(msg) }); } catch {}
+      });
+    } catch {}
     await page.goto(webBase, { waitUntil: 'networkidle', timeout: 120_000 });
     const ready = await page.evaluate(() => document.readyState).catch(() => 'unknown');
     const frames = page.frames();
@@ -70,6 +84,7 @@ export async function scrapeTopStyles(ctx: Ctx) {
     // Switch grouping to color
     try {
       const target = selectFrame || page;
+      await log(job.id, 'info', 'STEP:topstyles_group_set_attempt', { groupBy: 'color', inFrameUrl: (selectFrame || page.mainFrame())?.url?.() || null });
       await target.selectOption('select[name="strGroupBy"]', 'color');
       // Some pages require a JS event to fire request
       await target.evaluate(() => {
@@ -81,6 +96,7 @@ export async function scrapeTopStyles(ctx: Ctx) {
         (tableFrame || page).waitForResponse((res: any) => res.url().includes('confident.php') || res.request().url().includes('confident.php'), { timeout: 15_000 }).catch(() => null),
         (tableFrame || page).waitForTimeout(1500)
       ]);
+      await log(job.id, 'info', 'STEP:topstyles_wait_done');
       await (tableFrame || page).waitForSelector('table.standardList tbody tr', { timeout: 60_000 });
       await (tableFrame || page).waitForTimeout(500);
       await log(job.id, 'info', 'STEP:topstyles_group_set', { groupBy: 'color' });
@@ -102,6 +118,12 @@ export async function scrapeTopStyles(ctx: Ctx) {
         return { img, styleNo, styleName, color, type, quality, qty, amount };
       });
     });
+    await log(job.id, 'info', 'STEP:topstyles_rows_raw', { count: (rows || []).length });
+    if (rows && rows.length) {
+      for (let i = 0; i < rows.length; i++) {
+        try { await log(job.id, 'info', 'STEP:topstyles_row_raw', { index: i, row: rows[i] }); } catch {}
+      }
+    }
     if (!rows || rows.length === 0) {
       // fallback: try without changing group
       await log(job.id, 'info', 'STEP:topstyles_zero_rows_try_style');
@@ -123,7 +145,7 @@ export async function scrapeTopStyles(ctx: Ctx) {
       if (!rows || rows.length === 0) {
         const snippet = await (tableFrame || page).evaluate(() => {
           const el = document.querySelector('table.standardList');
-          return el ? el.outerHTML.slice(0, 800) : (document.body?.innerText || '').slice(0, 800);
+          return el ? el.outerHTML.slice(0, 2000) : (document.body?.innerText || '').slice(0, 2000);
         }).catch(() => 'no-html');
         await log(job.id, 'error', 'STEP:topstyles_no_rows_after_fallback', { htmlSnippet: snippet });
       }
@@ -135,6 +157,12 @@ export async function scrapeTopStyles(ctx: Ctx) {
       const amount = parseNumberEu(r.amount);
       return { image_url: img1024, style_no: r.styleNo, style_name: r.styleName, color: r.color, type: r.type, quality: r.quality, qty, amount, currency: 'DKK' };
     }).sort((a: any, b: any) => b.qty - a.qty).slice(0, 10);
+    await log(job.id, 'info', 'STEP:topstyles_rows_parsed', { count: parsed.length });
+    if (parsed && parsed.length) {
+      for (let i = 0; i < parsed.length; i++) {
+        try { await log(job.id, 'info', 'STEP:topstyles_row_parsed', { index: i, row: parsed[i] }); } catch {}
+      }
+    }
     if (parsed[0]) {
       await log(job.id, 'info', 'STEP:topstyles_sample', { first: parsed[0] });
     }
@@ -142,7 +170,8 @@ export async function scrapeTopStyles(ctx: Ctx) {
     try { await supabase.from('top_styles').delete().eq('season_id', currentSeasonId); } catch {}
     if (parsed.length) {
       const insert = parsed.map((p: any) => ({ season_id: currentSeasonId, ...p }));
-      const { error } = await supabase.from('top_styles').insert(insert);
+      const { data: inserted, error } = await supabase.from('top_styles').insert(insert).select('id, season_id, style_no, color');
+      await log(job.id, 'info', 'STEP:topstyles_insert_result', { insertedCount: inserted?.length || 0, error: error ? String(error.message || error) : null });
       if (error) throw error;
     }
     await log(job.id, 'info', 'STEP:topstyles_saved', { season_id: currentSeasonId, count: parsed.length });
