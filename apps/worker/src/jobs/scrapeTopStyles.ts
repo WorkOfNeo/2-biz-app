@@ -31,7 +31,11 @@ export async function scrapeTopStyles(ctx: Ctx) {
       const { data } = await supabase.from('seasons').select('id').eq('is_current', true).maybeSingle();
       currentSeasonId = (data?.id as string | undefined) || null;
     } catch {}
-    if (!currentSeasonId) throw new Error('No current season set');
+    if (!currentSeasonId) {
+      await log(job.id, 'error', 'STEP:topstyles_no_current_season');
+      await setJobFailedOrRequeue(job, 'No current season set');
+      return;
+    }
     await log(job.id, 'info', 'STEP:topstyles_season', { season_id: currentSeasonId });
 
     // Navigate and login using existing authenticated browser (assumed)
