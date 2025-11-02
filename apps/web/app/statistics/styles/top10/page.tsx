@@ -124,7 +124,7 @@ export default function Top10StylesPage() {
               <th className="p-2 text-left">Image</th>
               <th className="p-2 text-left">Style No</th>
               <th className="p-2 text-left">Style Name</th>
-              <th className="p-2 text-left">Colors</th>
+              <th className="p-2 text-left">Color</th>
               <th className="p-2 text-left">Supplier</th>
               <th className="p-2 text-left">DG</th>
               <th className="p-2 text-left">Type</th>
@@ -139,7 +139,7 @@ export default function Top10StylesPage() {
                 <td className="p-2"><img src={r.image_url} alt="" className="h-10 w-10 object-cover rounded" /></td>
                 <td className="p-2">{r.style_no}</td>
                 <td className="p-2">{r.style_name}</td>
-                <td className="p-2">{Array.isArray(r.colors) && r.colors.length ? (r.colors as string[]).join(', ') : '—'}</td>
+                <td className="p-2">{r.color || '—'}</td>
                 <td className="p-2">{supplierMap?.get(r.style_no) || '—'}</td>
                 <td className="p-2">
                   <input
