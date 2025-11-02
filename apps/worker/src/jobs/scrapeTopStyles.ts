@@ -75,7 +75,7 @@ export async function scrapeTopStyles(ctx: Ctx) {
     }
 
     // Resolve frame for select + table
-    const selectFrame = await findFrameWith('select[name="strGroupBy"]');
+    const selectFrame = await findFrameWith('.top-styles-container select[name="strGroupBy"], select[name="strGroupBy"]');
     const tableFrame = await findFrameWith('.top-styles-container table.standardList tbody tr');
     await log(job.id, 'info', 'STEP:topstyles_selectors_resolved', {
       selectFrameUrl: selectFrame?.url?.() || null,
@@ -83,19 +83,41 @@ export async function scrapeTopStyles(ctx: Ctx) {
     });
     // Switch grouping to color
     try {
-      const target = selectFrame || page;
+      const target = (tableFrame || selectFrame || page);
       await log(job.id, 'info', 'STEP:topstyles_group_set_attempt', { groupBy: 'color', inFrameUrl: (selectFrame || page.mainFrame())?.url?.() || null });
-      await target.selectOption('select[name="strGroupBy"]', 'color');
+      // Prefer the select inside the top-styles container
+      await target.evaluate(() => {
+        const sc = document.querySelector('.top-styles-container select[name="strGroupBy"]') as HTMLSelectElement | null;
+        const sel = sc || (document.querySelector('select[name="strGroupBy"]') as HTMLSelectElement | null);
+        if (sel) {
+          sel.value = 'color';
+          sel.dispatchEvent(new Event('input', { bubbles: true }));
+          sel.dispatchEvent(new Event('change', { bubbles: true }));
+          // Some forms also need an explicit submit
+          if (sel.form) {
+            if (typeof (sel.form as any).requestSubmit === 'function') {
+              (sel.form as any).requestSubmit();
+            } else {
+              sel.form.submit();
+            }
+          }
+        }
+      });
+      // Double-check via selectOption as fallback
+      try { await target.selectOption('.top-styles-container select[name="strGroupBy"], select[name="strGroupBy"]', 'color'); } catch {}
       // Some pages require a JS event to fire request
       await target.evaluate(() => {
-        const sel = document.querySelector('select[name="strGroupBy"]') as HTMLSelectElement | null;
-        if (sel) sel.dispatchEvent(new Event('change', { bubbles: true }));
-        // Some forms also need an explicit submit
-        if (sel && sel.form) {
-          if (typeof (sel.form as any).requestSubmit === 'function') {
-            (sel.form as any).requestSubmit();
-          } else {
-            sel.form.submit();
+        const sc = document.querySelector('.top-styles-container select[name="strGroupBy"]') as HTMLSelectElement | null;
+        const sel = sc || (document.querySelector('select[name="strGroupBy"]') as HTMLSelectElement | null);
+        if (sel) {
+          sel.dispatchEvent(new Event('input', { bubbles: true }));
+          sel.dispatchEvent(new Event('change', { bubbles: true }));
+          if (sel.form) {
+            if (typeof (sel.form as any).requestSubmit === 'function') {
+              (sel.form as any).requestSubmit();
+            } else {
+              sel.form.submit();
+            }
           }
         }
       });
@@ -112,12 +134,24 @@ export async function scrapeTopStyles(ctx: Ctx) {
       // Verify header shows Color in column 3; retry toggling if needed
       const verifyHeader = async () => {
         try {
-          const header = await (tableFrame || page).evaluate(() => {
-            const ths = Array.from(document.querySelectorAll('.top-styles-container table.standardList thead th')) as HTMLElement[];
-            return ths.map((th) => ((th.innerText || th.textContent || '') as string).replace(/\s+/g, ' ').trim());
+          const info = await (tableFrame || page).evaluate(() => {
+            function headerTexts(): string[] {
+              const ths = Array.from(document.querySelectorAll('.top-styles-container table.standardList thead th')) as HTMLElement[];
+              return ths.map((th) => {
+                const a = th.querySelector('a');
+                const txt = (a?.textContent || th.innerText || th.textContent || '') as string;
+                return txt.replace(/\s+/g, ' ').trim();
+              });
+            }
+            const sel = (document.querySelector('.top-styles-container select[name="strGroupBy"]') || document.querySelector('select[name="strGroupBy"]')) as HTMLSelectElement | null;
+            return { headers: headerTexts(), selectValue: sel?.value || null };
           });
-          await log(job.id, 'info', 'STEP:topstyles_header_check', { header });
-          return Array.isArray(header) && header.some((h: any) => /color|colour/i.test(String(h)));
+          await log(job.id, 'info', 'STEP:topstyles_header_check', info as any);
+          const h = (info as any)?.headers as string[];
+          const expect = ['','Style No.','Style Name','Color','Type','Quality','Qty','Sales Amount'];
+          const exact = Array.isArray(h) && h.length >= 8 && h[1] === expect[1] && h[2] === expect[2] && h[3] === expect[3] && /qty/i.test(h[6]||'') && /sales/i.test(h[7]||'');
+          const isColorSelected = (info as any)?.selectValue === 'color';
+          return exact && isColorSelected;
         } catch {
           return false;
         }
@@ -125,28 +159,31 @@ export async function scrapeTopStyles(ctx: Ctx) {
 
       let ok = await verifyHeader();
       let attempts = 0;
-      while (!ok && attempts < 4) {
+      while (!ok && attempts < 6) {
         attempts++;
         await log(job.id, 'info', 'STEP:topstyles_header_retry', { attempts });
         // Toggle to style then back to color to force refresh
         try {
-          await target.selectOption('select[name="strGroupBy"]', 'style');
+          await target.selectOption('.top-styles-container select[name="strGroupBy"], select[name="strGroupBy"]', 'style');
           await target.evaluate(() => {
-            const sel = document.querySelector('select[name="strGroupBy"]') as HTMLSelectElement | null;
+            const sel = (document.querySelector('.top-styles-container select[name="strGroupBy"]') || document.querySelector('select[name="strGroupBy"]')) as HTMLSelectElement | null;
             if (sel) sel.dispatchEvent(new Event('change', { bubbles: true }));
           });
           await (tableFrame || page).waitForTimeout(800);
         } catch {}
         try {
-          await target.selectOption('select[name="strGroupBy"]', 'color');
+          await target.selectOption('.top-styles-container select[name="strGroupBy"], select[name="strGroupBy"]', 'color');
           await target.evaluate(() => {
-            const sel = document.querySelector('select[name="strGroupBy"]') as HTMLSelectElement | null;
-            if (sel) sel.dispatchEvent(new Event('change', { bubbles: true }));
-            if (sel && sel.form) {
-              if (typeof (sel.form as any).requestSubmit === 'function') {
-                (sel.form as any).requestSubmit();
-              } else {
-                sel.form.submit();
+            const sel = (document.querySelector('.top-styles-container select[name="strGroupBy"]') || document.querySelector('select[name="strGroupBy"]')) as HTMLSelectElement | null;
+            if (sel) {
+              sel.dispatchEvent(new Event('input', { bubbles: true }));
+              sel.dispatchEvent(new Event('change', { bubbles: true }));
+              if (sel && sel.form) {
+                if (typeof (sel.form as any).requestSubmit === 'function') {
+                  (sel.form as any).requestSubmit();
+                } else {
+                  sel.form.submit();
+                }
               }
             }
           });
@@ -160,6 +197,17 @@ export async function scrapeTopStyles(ctx: Ctx) {
         ok = await verifyHeader();
       }
       await log(job.id, ok ? 'info' : 'error', ok ? 'STEP:topstyles_header_ok' : 'STEP:topstyles_header_still_wrong', { attempts });
+      if (!ok) {
+        // dump select and thead html for diagnostics
+        try {
+          const dump = await (tableFrame || page).evaluate(() => {
+            const sel = (document.querySelector('.top-styles-container select[name="strGroupBy"]') || document.querySelector('select[name="strGroupBy"]')) as HTMLSelectElement | null;
+            const thead = document.querySelector('.top-styles-container table.standardList thead');
+            return { selectHtml: sel ? sel.outerHTML.slice(0, 1000) : null, theadHtml: thead ? (thead as HTMLElement).outerHTML.slice(0, 2000) : null };
+          });
+          await log(job.id, 'error', 'STEP:topstyles_dump_html', dump as any);
+        } catch {}
+      }
     } catch (e: any) {
       await log(job.id, 'error', 'STEP:topstyles_group_set_failed', { error: e?.message || String(e) });
     }
