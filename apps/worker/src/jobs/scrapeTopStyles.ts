@@ -310,7 +310,7 @@ export async function scrapeTopStyles(ctx: Ctx) {
       await log(job.id, 'info', 'STEP:topstyles_sample', { first: parsed[0] });
     }
     // Aggregate by style_no (sum qty/sales_amount across colors) and UPSERT all for current season
-    const byStyle = new Map<string, { season_id: string; style_no: string; style_name: string | null; image_url: string | null; type: string | null; quality: string | null; qty: number; sales_amount: number; sort_index: number }>();
+    const byStyle = new Map<string, { season_id: string; style_no: string; style_name: string | null; image_url: string | null; type: string | null; quality: string | null; qty: number; sales_amount: number; sort_index: number; colors: Set<string> }>();
     for (const p of parsed) {
       const key = p.style_no;
       const prev = byStyle.get(key);
@@ -324,11 +324,13 @@ export async function scrapeTopStyles(ctx: Ctx) {
           quality: p.quality || null,
           qty: Number(p.qty || 0) || 0,
           sales_amount: Number(p.sales_amount || 0) || 0,
-          sort_index: 0
+          sort_index: 0,
+          colors: new Set<string>([(p.color || '').trim()].filter(Boolean))
         });
       } else {
         prev.qty += Number(p.qty || 0) || 0;
         prev.sales_amount += Number(p.sales_amount || 0) || 0;
+        if ((p.color || '').trim()) prev.colors.add((p.color || '').trim());
         // keep first non-null metadata
         if (!prev.style_name && p.style_name) prev.style_name = p.style_name;
         if (!prev.image_url && p.image_url) prev.image_url = p.image_url;
@@ -336,7 +338,18 @@ export async function scrapeTopStyles(ctx: Ctx) {
         if (!prev.quality && p.quality) prev.quality = p.quality;
       }
     }
-    const upsertList = Array.from(byStyle.values());
+    const upsertList = Array.from(byStyle.values()).map((v) => ({
+      season_id: v.season_id,
+      style_no: v.style_no,
+      style_name: v.style_name,
+      image_url: v.image_url,
+      type: v.type,
+      quality: v.quality,
+      qty: v.qty,
+      sales_amount: v.sales_amount,
+      sort_index: v.sort_index,
+      colors: Array.from(v.colors)
+    }));
     await log(job.id, 'info', 'STEP:topstyles_aggregate', { uniqueStyles: upsertList.length });
     if (upsertList.length) {
       const { error } = await supabase
