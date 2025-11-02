@@ -299,7 +299,7 @@ export async function scrapeTopStyles(ctx: Ctx) {
       const qty = parseNumberEu(r.qty);
       const amount = parseNumberEu(r.amount);
       return { image_url: img1024, style_no: r.styleNo, style_name: r.styleName, color: r.color, type: r.type, quality: r.quality, qty, sales_amount: amount, currency: 'DKK' };
-    }).sort((a: any, b: any) => b.qty - a.qty).slice(0, 10);
+    }).sort((a: any, b: any) => b.qty - a.qty);
     await log(job.id, 'info', 'STEP:topstyles_rows_parsed', { count: parsed.length });
     if (parsed && parsed.length) {
       for (let i = 0; i < parsed.length; i++) {
@@ -309,12 +309,40 @@ export async function scrapeTopStyles(ctx: Ctx) {
     if (parsed[0]) {
       await log(job.id, 'info', 'STEP:topstyles_sample', { first: parsed[0] });
     }
-    // Replace existing rows for season
-    try { await supabase.from('top_styles').delete().eq('season_id', currentSeasonId); } catch {}
-    if (parsed.length) {
-      const insert = parsed.map((p: any) => ({ season_id: currentSeasonId, image_url: p.image_url, style_no: p.style_no, style_name: p.style_name, color: p.color, type: p.type, quality: p.quality, qty: p.qty, sales_amount: p.sales_amount, sort_index: 0 }));
-      const { data: inserted, error } = await supabase.from('top_styles').insert(insert).select('id, season_id, style_no, color');
-      await log(job.id, 'info', 'STEP:topstyles_insert_result', { insertedCount: inserted?.length || 0, error: error ? String(error.message || error) : null });
+    // Aggregate by style_no (sum qty/sales_amount across colors) and UPSERT all for current season
+    const byStyle = new Map<string, { season_id: string; style_no: string; style_name: string | null; image_url: string | null; type: string | null; quality: string | null; qty: number; sales_amount: number; sort_index: number }>();
+    for (const p of parsed) {
+      const key = p.style_no;
+      const prev = byStyle.get(key);
+      if (!prev) {
+        byStyle.set(key, {
+          season_id: currentSeasonId!,
+          style_no: p.style_no,
+          style_name: p.style_name || null,
+          image_url: p.image_url || null,
+          type: p.type || null,
+          quality: p.quality || null,
+          qty: Number(p.qty || 0) || 0,
+          sales_amount: Number(p.sales_amount || 0) || 0,
+          sort_index: 0
+        });
+      } else {
+        prev.qty += Number(p.qty || 0) || 0;
+        prev.sales_amount += Number(p.sales_amount || 0) || 0;
+        // keep first non-null metadata
+        if (!prev.style_name && p.style_name) prev.style_name = p.style_name;
+        if (!prev.image_url && p.image_url) prev.image_url = p.image_url;
+        if (!prev.type && p.type) prev.type = p.type;
+        if (!prev.quality && p.quality) prev.quality = p.quality;
+      }
+    }
+    const upsertList = Array.from(byStyle.values());
+    await log(job.id, 'info', 'STEP:topstyles_aggregate', { uniqueStyles: upsertList.length });
+    if (upsertList.length) {
+      const { error } = await supabase
+        .from('top_styles')
+        .upsert(upsertList as any, { onConflict: 'season_id,style_no' as any });
+      await log(job.id, error ? 'error' : 'info', 'STEP:topstyles_upsert_result', { upserted: upsertList.length, error: error ? String(error.message || error) : null });
       if (error) throw error;
     }
     await log(job.id, 'info', 'STEP:topstyles_saved', { season_id: currentSeasonId, count: parsed.length });

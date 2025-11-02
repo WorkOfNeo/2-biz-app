@@ -3,12 +3,17 @@ import useSWR from 'swr';
 import { supabase } from '../../../../lib/supabaseClient';
 import React from 'react';
 export default function Top10StylesPage() {
-  const { data: season } = useSWR('current-season', async () => {
-    const { data } = await supabase.from('seasons').select('id, name, year').eq('is_current', true).maybeSingle();
-    return data as any;
+  const { data: seasons } = useSWR('seasons-all', async () => {
+    const { data } = await supabase.from('seasons').select('id, name, year, is_current').order('created_at', { ascending: false });
+    return (data ?? []) as Array<{ id: string; name: string; year: number | null; is_current?: boolean }>;
   });
-  const { data: items, mutate } = useSWR(season ? ['top-styles', season.id] : null, async () => {
-    const { data } = await supabase.from('top_styles').select('*').eq('season_id', season.id).order('qty', { ascending: false }).limit(10);
+  const defaultSeasonId = React.useMemo(() => (seasons ?? []).find(s => (s as any).is_current)?.id || (seasons ?? [])[0]?.id || null, [seasons?.length]);
+  const [seasonId, setSeasonId] = React.useState<string | null>(null);
+  React.useEffect(() => { if (!seasonId && defaultSeasonId) setSeasonId(defaultSeasonId); }, [defaultSeasonId]);
+  const [showAll, setShowAll] = React.useState(false);
+  const { data: items, mutate } = useSWR(seasonId ? ['top-styles', seasonId, showAll ? 'all' : 'top10'] : null, async () => {
+    const q = supabase.from('top_styles').select('*').eq('season_id', seasonId).order('qty', { ascending: false });
+    const { data } = showAll ? await q : await q.limit(10);
     return (data ?? []) as any[];
   });
   const [running, setRunning] = React.useState(false);
@@ -44,6 +49,18 @@ export default function Top10StylesPage() {
           disabled={running}
         >{running ? 'Running…' : 'Run scrape'}</button>
       </div>
+      <div className="flex items-center gap-2">
+        <label className="text-sm text-gray-600">Season</label>
+        <select
+          className="rounded border px-2 py-1 text-sm"
+          value={seasonId || ''}
+          onChange={(e) => setSeasonId(e.target.value || null)}
+        >
+          {(seasons ?? []).map((s) => (
+            <option key={s.id} value={s.id}>{s.name}{s.year ? ' ' + s.year : ''}</option>
+          ))}
+        </select>
+      </div>
       <div className="rounded-md border p-2 overflow-auto">
         <table className="min-w-full text-sm">
           <thead className="bg-gray-50">
@@ -52,11 +69,9 @@ export default function Top10StylesPage() {
               <th className="p-2 text-left">Image</th>
               <th className="p-2 text-left">Style No</th>
               <th className="p-2 text-left">Style Name</th>
-              <th className="p-2 text-left">Color</th>
               <th className="p-2 text-left">Type</th>
               <th className="p-2 text-left">Quality</th>
               <th className="p-2 text-right">Qty</th>
-              <th className="p-2 text-right">Amount</th>
             </tr>
           </thead>
           <tbody>
@@ -66,15 +81,21 @@ export default function Top10StylesPage() {
                 <td className="p-2"><img src={r.image_url} alt="" className="h-10 w-10 object-cover rounded" /></td>
                 <td className="p-2">{r.style_no}</td>
                 <td className="p-2">{r.style_name}</td>
-                <td className="p-2">{r.color}</td>
                 <td className="p-2">{r.type}</td>
                 <td className="p-2">{r.quality}</td>
                 <td className="p-2 text-right">{Number(r.qty || 0).toLocaleString('da-DK')}</td>
-                <td className="p-2 text-right">{Number(r.amount || 0).toLocaleString('da-DK')} {r.currency || 'DKK'}</td>
               </tr>
             ))}
           </tbody>
         </table>
+        <div className="p-2">
+          {!showAll && (items?.length ?? 0) >= 10 && (
+            <button
+              className="text-xs text-gray-600 hover:underline"
+              onClick={() => setShowAll(true)}
+            >View more</button>
+          )}
+        </div>
       </div>
     </div>
   );
