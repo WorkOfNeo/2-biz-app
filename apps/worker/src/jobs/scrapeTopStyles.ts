@@ -212,10 +212,17 @@ export async function scrapeTopStyles(ctx: Ctx) {
       await log(job.id, 'error', 'STEP:topstyles_group_set_failed', { error: e?.message || String(e) });
     }
     // Resolve header mapping to be robust against column order
-    const headerTexts: string[] = await (tableFrame || page).evaluate(() => {
+    const headerEval = await (tableFrame || page).evaluate(() => {
       const ths = Array.from(document.querySelectorAll('.top-styles-container table.standardList thead th')) as HTMLElement[];
-      return ths.map((th) => ((th.innerText || th.textContent || '') as string).replace(/\s+/g, ' ').trim());
+      const headers = ths.map((th) => ((th.innerText || th.textContent || '') as string).replace(/\s+/g, ' ').trim());
+      const anchors = ths.map((th) => {
+        const a = th.querySelector('a');
+        return ((a?.textContent || th.innerText || th.textContent || '') as string).replace(/\s+/g, ' ').trim();
+      });
+      return { headers, anchors };
     });
+    const headerTexts: string[] = (headerEval as any)?.headers || [];
+    const anchorTexts: string[] = (headerEval as any)?.anchors || headerTexts;
     const findIdx = (patterns: RegExp[]): number => {
       for (let i = 0; i < headerTexts.length; i++) {
         const h = headerTexts[i] || '';
@@ -233,7 +240,24 @@ export async function scrapeTopStyles(ctx: Ctx) {
       qty: findIdx([/^qty/i, /quantity/i]),
       amount: findIdx([/amount/i, /sales/i])
     } as { img: number; styleNo: number; styleName: number; color: number; type: number; quality: number; qty: number; amount: number };
-    await log(job.id, 'info', 'STEP:topstyles_header_map', { headers: headerTexts, idxMap });
+    // Prefer exact anchor positions when available
+    const exact = {
+      styleNo: anchorTexts.findIndex((h) => /^Style\s*No\.?$/i.test(h)),
+      styleName: anchorTexts.findIndex((h) => /^Style\s*Name$/i.test(h)),
+      color: anchorTexts.findIndex((h) => /^Color$/i.test(h)),
+      type: anchorTexts.findIndex((h) => /^Type$/i.test(h)),
+      quality: anchorTexts.findIndex((h) => /^Quality$/i.test(h)),
+      qty: anchorTexts.findIndex((h) => /^Qty$/i.test(h) || /Qty\s*$/i.test(h)),
+      amount: anchorTexts.findIndex((h) => /Sales\s*Amount/i.test(h) || /^Amount$/i.test(h)),
+    };
+    if (exact.styleNo >= 0) idxMap.styleNo = exact.styleNo;
+    if (exact.styleName >= 0) idxMap.styleName = exact.styleName;
+    if (exact.color >= 0) idxMap.color = exact.color;
+    if (exact.type >= 0) idxMap.type = exact.type;
+    if (exact.quality >= 0) idxMap.quality = exact.quality;
+    if (exact.qty >= 0) idxMap.qty = exact.qty;
+    if (exact.amount >= 0) idxMap.amount = exact.amount;
+    await log(job.id, 'info', 'STEP:topstyles_header_map', { headers: headerTexts, anchors: anchorTexts, idxMap });
     // Fallback to expected positions if detection failed
     if (idxMap.styleNo < 0) idxMap.styleNo = 1;
     if (idxMap.styleName < 0) idxMap.styleName = 2;
@@ -260,7 +284,7 @@ export async function scrapeTopStyles(ctx: Ctx) {
     }, idxMap as any);
     await log(job.id, 'info', 'STEP:topstyles_rows_raw', { count: (rows || []).length });
     if (rows && rows.length) {
-      for (let i = 0; i < rows.length; i++) {
+      for (let i = 0; i < Math.min(rows.length, 10); i++) {
         try { await log(job.id, 'info', 'STEP:topstyles_row_raw', { index: i, row: rows[i] }); } catch {}
       }
     }
@@ -302,10 +326,18 @@ export async function scrapeTopStyles(ctx: Ctx) {
     }).sort((a: any, b: any) => b.qty - a.qty);
     await log(job.id, 'info', 'STEP:topstyles_rows_parsed', { count: parsed.length });
     if (parsed && parsed.length) {
-      for (let i = 0; i < parsed.length; i++) {
+      for (let i = 0; i < Math.min(parsed.length, 10); i++) {
         try { await log(job.id, 'info', 'STEP:topstyles_row_parsed', { index: i, row: parsed[i] }); } catch {}
       }
     }
+    // Sanity check: if color equals type in majority of first 10, warn
+    try {
+      const sample = parsed.slice(0, 10);
+      const eq = sample.reduce((a, r) => a + (String(r.color || '').toUpperCase() === String(r.type || '').toUpperCase() ? 1 : 0), 0);
+      if (sample.length >= 5 && eq / sample.length > 0.7) {
+        await log(job.id, 'error', 'STEP:topstyles_color_suspect', { eq, sample: sample.map(r => ({ style_no: r.style_no, color: r.color, type: r.type })).slice(0, 10) });
+      }
+    } catch {}
     if (parsed[0]) {
       await log(job.id, 'info', 'STEP:topstyles_sample', { first: parsed[0] });
     }
