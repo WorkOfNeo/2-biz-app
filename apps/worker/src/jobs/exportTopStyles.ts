@@ -23,6 +23,7 @@ export async function exportTopStyles(ctx: Ctx) {
       try { const { data } = await supabase.from('seasons').select('id').eq('is_current', true).maybeSingle(); seasonId = (data?.id as string | undefined) || null; } catch {}
     }
     if (!seasonId) throw new Error('No current season set');
+    await log(job.id, 'info', 'STEP:top_styles_export_season', { season_id: seasonId });
     // Fetch top 10 and suppliers
     const { data: rows } = await supabase
       .from('top_styles')
@@ -31,12 +32,14 @@ export async function exportTopStyles(ctx: Ctx) {
       .order('qty', { ascending: false })
       .limit(10);
     const list = (rows ?? []) as Array<{ id: string; style_no: string; style_name?: string | null; image_url?: string | null; type?: string | null; quality?: string | null; qty: number; dg?: string | null }>;
+    await log(job.id, 'info', 'STEP:top_styles_export_rows', { count: list.length });
     let supplierByStyle = new Map<string, string | null>();
     if (list.length) {
       try {
         const { data: s } = await supabase.from('styles').select('style_no, supplier').in('style_no', list.map(r => r.style_no));
         for (const r of (s ?? []) as any[]) supplierByStyle.set(r.style_no as string, (r.supplier as string | null) ?? null);
       } catch {}
+      await log(job.id, 'info', 'STEP:top_styles_export_suppliers_resolved', { mapped: supplierByStyle.size });
     }
     const styles = StyleSheet.create({
       page: { padding: 16, fontSize: 9, color: '#0f172a' },
@@ -64,16 +67,33 @@ export async function exportTopStyles(ctx: Ctx) {
       Cell(new Intl.NumberFormat('da-DK').format(Math.round(Number(r.qty || 0))), '5%','right')
     ));
     const doc = React.createElement(Document, null, React.createElement(PdfPage, { size: 'A4', style: styles.page }, React.createElement(Text, { style: styles.h1 }, 'Top 10 Styles'), Head, ...body));
+    await log(job.id, 'info', 'STEP:top_styles_export_pdf_building');
     const out = await pdf(doc).toBuffer();
     const buf = Buffer.isBuffer(out) ? out : Buffer.from(out as any);
     const path = `top_styles/${job.id}/top_styles.pdf`;
     try {
       const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
-      await supabase.storage.from('exports').upload(path, ab as ArrayBuffer, { contentType: 'application/pdf', upsert: true });
-    } catch {}
+      const { error: upErr } = await supabase.storage.from('exports').upload(path, ab as ArrayBuffer, { contentType: 'application/pdf', upsert: true });
+      if (upErr) throw upErr;
+      await log(job.id, 'info', 'STEP:top_styles_export_uploaded', { path });
+    } catch (e: any) {
+      await log(job.id, 'error', 'STEP:top_styles_export_upload_failed', { error: e?.message || String(e) });
+      throw e;
+    }
     let publicUrl: string | null = null;
-    try { const { data: pub } = supabase.storage.from('exports').getPublicUrl(path); publicUrl = pub?.publicUrl ?? null; } catch {}
-    try { await supabase.from('exports').insert({ kind: 'top_styles_pdf', title: 'Top 10 Styles', path, public_url: publicUrl, job_id: job.id, meta: { season_id: seasonId } }); } catch {}
+    try {
+      const { data: pub } = supabase.storage.from('exports').getPublicUrl(path);
+      publicUrl = pub?.publicUrl ?? null;
+      await log(job.id, 'info', 'STEP:top_styles_export_public_url', { publicUrl });
+    } catch {}
+    try {
+      const { error: insErr } = await supabase.from('exports').insert({ kind: 'top_styles_pdf', title: 'Top 10 Styles', path, public_url: publicUrl, job_id: job.id, meta: { season_id: seasonId } });
+      if (insErr) throw insErr;
+      await log(job.id, 'info', 'STEP:top_styles_export_row_inserted', { path, publicUrl });
+    } catch (e: any) {
+      await log(job.id, 'error', 'STEP:top_styles_export_row_failed', { error: e?.message || String(e) });
+      throw e;
+    }
     await saveResult(job.id, 'export_top_styles_pdf', { file: { path, publicUrl }, season_id: seasonId });
     await setJobSucceeded(job.id);
   } catch (e: any) {
