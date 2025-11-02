@@ -33,6 +33,14 @@ export async function exportTopStyles(ctx: Ctx) {
       .limit(10);
     const list = (rows ?? []) as Array<{ id: string; style_no: string; style_name?: string | null; image_url?: string | null; type?: string | null; quality?: string | null; qty: number; dg?: string | null }>;
     await log(job.id, 'info', 'STEP:top_styles_export_rows', { count: list.length });
+    // Season display name
+    let seasonName = 'Season';
+    try {
+      const { data: srow } = await supabase.from('seasons').select('name, year').eq('id', seasonId).maybeSingle();
+      const nm = (srow?.name as string | undefined) || 'Season';
+      const yr = (srow?.year as number | undefined) || undefined;
+      seasonName = yr ? `${nm} ${yr}` : nm;
+    } catch {}
     let supplierByStyle = new Map<string, string | null>();
     if (list.length) {
       try {
@@ -43,7 +51,8 @@ export async function exportTopStyles(ctx: Ctx) {
     }
     const styles = StyleSheet.create({
       page: { padding: 16, fontSize: 9, color: '#0f172a' },
-      h1: { fontSize: 14, marginBottom: 6 },
+      h1: { fontSize: 16, marginBottom: 2 },
+      sub: { fontSize: 10, color: '#64748b', marginBottom: 6 },
       header: { flexDirection: 'row', backgroundColor: '#1d4ed8', color: '#ffffff' },
       cell: { padding: 4, fontSize: 8 },
       row: { flexDirection: 'row', borderBottom: 0.5, borderColor: '#e2e8f0' },
@@ -66,10 +75,21 @@ export async function exportTopStyles(ctx: Ctx) {
       Cell(r.quality || '—', '7%','left'),
       Cell(new Intl.NumberFormat('da-DK').format(Math.round(Number(r.qty || 0))), '5%','right')
     ));
-    const doc = React.createElement(Document, null, React.createElement(PdfPage, { size: 'A4', style: styles.page }, React.createElement(Text, { style: styles.h1 }, 'Top 10 Styles'), Head, ...body));
+    const doc = React.createElement(
+      Document,
+      null,
+      React.createElement(
+        PdfPage,
+        { size: 'A4', style: styles.page },
+        React.createElement(Text, { style: styles.h1 }, 'Top 10 Styles'),
+        React.createElement(Text, { style: styles.sub }, seasonName),
+        Head,
+        ...body
+      )
+    );
     await log(job.id, 'info', 'STEP:top_styles_export_pdf_building');
     const out = await pdf(doc).toBuffer();
-    const buf = Buffer.isBuffer(out) ? out : Buffer.from(out as any);
+    const buf = await ensureBuffer(out as any);
     const path = `top_styles/${job.id}/top_styles.pdf`;
     try {
       const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
@@ -99,6 +119,33 @@ export async function exportTopStyles(ctx: Ctx) {
   } catch (e: any) {
     await setJobFailedOrRequeue(job, e?.message || String(e));
   }
+}
+
+async function ensureBuffer(data: any): Promise<Buffer> {
+  if (Buffer.isBuffer(data)) return data as Buffer;
+  if (data instanceof Uint8Array) return Buffer.from(data as Uint8Array);
+  if (data instanceof ArrayBuffer) return Buffer.from(new Uint8Array(data as ArrayBuffer));
+  if (data && typeof (data as any).getReader === 'function') {
+    const reader = (data as any).getReader();
+    const chunks: Uint8Array[] = [];
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) chunks.push(value);
+    }
+    return Buffer.concat(chunks.map((u) => Buffer.from(u)));
+  }
+  if (data && typeof (data as any).on === 'function') {
+    const chunks: Buffer[] = [];
+    await new Promise<void>((resolve, reject) => {
+      (data as any).on('data', (c: any) => chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c)));
+      (data as any).on('end', () => resolve());
+      (data as any).on('error', (err: any) => reject(err));
+    });
+    return Buffer.concat(chunks);
+  }
+  if (typeof data === 'string') return Buffer.from(data as string);
+  return Buffer.from([]);
 }
 
 
