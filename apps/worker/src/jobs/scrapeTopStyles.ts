@@ -76,7 +76,7 @@ export async function scrapeTopStyles(ctx: Ctx) {
 
     // Resolve frame for select + table
     const selectFrame = await findFrameWith('select[name="strGroupBy"]');
-    const tableFrame = await findFrameWith('table.standardList tbody tr');
+    const tableFrame = await findFrameWith('.top-styles-container table.standardList tbody tr');
     await log(job.id, 'info', 'STEP:topstyles_selectors_resolved', {
       selectFrameUrl: selectFrame?.url?.() || null,
       tableFrameUrl: tableFrame?.url?.() || null,
@@ -105,7 +105,7 @@ export async function scrapeTopStyles(ctx: Ctx) {
         (tableFrame || page).waitForTimeout(1500)
       ]);
       await log(job.id, 'info', 'STEP:topstyles_wait_done');
-      await (tableFrame || page).waitForSelector('table.standardList tbody tr', { timeout: 60_000 });
+      await (tableFrame || page).waitForSelector('.top-styles-container table.standardList tbody tr', { timeout: 60_000 });
       await (tableFrame || page).waitForTimeout(500);
       await log(job.id, 'info', 'STEP:topstyles_group_set', { groupBy: 'color' });
 
@@ -113,7 +113,7 @@ export async function scrapeTopStyles(ctx: Ctx) {
       const verifyHeader = async () => {
         try {
           const header = await (tableFrame || page).evaluate(() => {
-            const ths = Array.from(document.querySelectorAll('table.standardList thead th')) as HTMLElement[];
+            const ths = Array.from(document.querySelectorAll('.top-styles-container table.standardList thead th')) as HTMLElement[];
             return ths.map((th) => ((th.innerText || th.textContent || '') as string).replace(/\s+/g, ' ').trim());
           });
           await log(job.id, 'info', 'STEP:topstyles_header_check', { header });
@@ -154,7 +154,7 @@ export async function scrapeTopStyles(ctx: Ctx) {
             (tableFrame || page).waitForResponse((res: any) => res.url().includes('confident.php') || res.request().url().includes('confident.php'), { timeout: 10_000 }).catch(() => null),
             (tableFrame || page).waitForTimeout(1200)
           ]);
-          await (tableFrame || page).waitForSelector('table.standardList tbody tr', { timeout: 60_000 }).catch(() => null);
+          await (tableFrame || page).waitForSelector('.top-styles-container table.standardList tbody tr', { timeout: 60_000 }).catch(() => null);
           await (tableFrame || page).waitForTimeout(400);
         } catch {}
         ok = await verifyHeader();
@@ -165,7 +165,7 @@ export async function scrapeTopStyles(ctx: Ctx) {
     }
     // Resolve header mapping to be robust against column order
     const headerTexts: string[] = await (tableFrame || page).evaluate(() => {
-      const ths = Array.from(document.querySelectorAll('table.standardList thead th')) as HTMLElement[];
+      const ths = Array.from(document.querySelectorAll('.top-styles-container table.standardList thead th')) as HTMLElement[];
       return ths.map((th) => ((th.innerText || th.textContent || '') as string).replace(/\s+/g, ' ').trim());
     });
     const findIdx = (patterns: RegExp[]): number => {
@@ -196,7 +196,7 @@ export async function scrapeTopStyles(ctx: Ctx) {
     if (idxMap.amount < 0) idxMap.amount = 7;
 
     // Extract rows using detected indices
-    let rows = await (tableFrame || page).$$eval('table.standardList tbody tr', (trs: any[], idx: any) => {
+    let rows = await (tableFrame || page).$$eval('.top-styles-container table.standardList tbody tr', (trs: any[], idx: any) => {
       return Array.from(trs).slice(0, 100).map((tr: any) => {
         const tds = Array.from((tr as any).querySelectorAll('td')) as any[];
         const img = (tds[idx.img]?.querySelector('img') as HTMLImageElement | null)?.src || '';
@@ -219,7 +219,7 @@ export async function scrapeTopStyles(ctx: Ctx) {
     if (!rows || rows.length === 0) {
       // fallback: try without changing group
       await log(job.id, 'info', 'STEP:topstyles_zero_rows_try_style');
-      rows = await (tableFrame || page).$$eval('table.standardList tbody tr', (trs: any[]) => {
+      rows = await (tableFrame || page).$$eval('.top-styles-container table.standardList tbody tr', (trs: any[]) => {
         return Array.from(trs).slice(0, 100).map((tr: any) => {
           const tds = Array.from((tr as any).querySelectorAll('td')) as any[];
           const img = (tds[0]?.querySelector('img') as HTMLImageElement | null)?.src || '';
@@ -236,8 +236,11 @@ export async function scrapeTopStyles(ctx: Ctx) {
       // If still empty, log a small HTML snippet to debug
       if (!rows || rows.length === 0) {
         const snippet = await (tableFrame || page).evaluate(() => {
-          const el = document.querySelector('table.standardList');
-          return el ? el.outerHTML.slice(0, 2000) : (document.body?.innerText || '').slice(0, 2000);
+          const container = document.querySelector('.top-styles-container');
+          const table = container?.querySelector('table.standardList') as HTMLElement | null;
+          if (table) return table.outerHTML.slice(0, 2000);
+          if (container) return container.outerHTML.slice(0, 2000);
+          return (document.body?.innerText || '').slice(0, 2000);
         }).catch(() => 'no-html');
         await log(job.id, 'error', 'STEP:topstyles_no_rows_after_fallback', { htmlSnippet: snippet });
       }
