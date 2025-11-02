@@ -90,6 +90,14 @@ export async function scrapeTopStyles(ctx: Ctx) {
       await target.evaluate(() => {
         const sel = document.querySelector('select[name="strGroupBy"]') as HTMLSelectElement | null;
         if (sel) sel.dispatchEvent(new Event('change', { bubbles: true }));
+        // Some forms also need an explicit submit
+        if (sel && sel.form) {
+          if (typeof (sel.form as any).requestSubmit === 'function') {
+            (sel.form as any).requestSubmit();
+          } else {
+            sel.form.submit();
+          }
+        }
       });
       // wait for table update (either XHR or DOM change)
       await Promise.race([
@@ -105,11 +113,11 @@ export async function scrapeTopStyles(ctx: Ctx) {
       const verifyHeader = async () => {
         try {
           const header = await (tableFrame || page).evaluate(() => {
-            const headers = Array.from(document.querySelectorAll('table.standardList thead th a')) as any[];
-            return headers.map((a: any) => (a?.textContent || '').trim());
+            const ths = Array.from(document.querySelectorAll('table.standardList thead th')) as HTMLElement[];
+            return ths.map((th) => ((th.innerText || th.textContent || '') as string).replace(/\s+/g, ' ').trim());
           });
           await log(job.id, 'info', 'STEP:topstyles_header_check', { header });
-          return Array.isArray(header) && header[3] === 'Color';
+          return Array.isArray(header) && header.some((h: any) => /color|colour/i.test(String(h)));
         } catch {
           return false;
         }
@@ -134,6 +142,13 @@ export async function scrapeTopStyles(ctx: Ctx) {
           await target.evaluate(() => {
             const sel = document.querySelector('select[name="strGroupBy"]') as HTMLSelectElement | null;
             if (sel) sel.dispatchEvent(new Event('change', { bubbles: true }));
+            if (sel && sel.form) {
+              if (typeof (sel.form as any).requestSubmit === 'function') {
+                (sel.form as any).requestSubmit();
+              } else {
+                sel.form.submit();
+              }
+            }
           });
           await Promise.race([
             (tableFrame || page).waitForResponse((res: any) => res.url().includes('confident.php') || res.request().url().includes('confident.php'), { timeout: 10_000 }).catch(() => null),
@@ -148,21 +163,53 @@ export async function scrapeTopStyles(ctx: Ctx) {
     } catch (e: any) {
       await log(job.id, 'error', 'STEP:topstyles_group_set_failed', { error: e?.message || String(e) });
     }
-    // Extract rows
-    let rows = await (tableFrame || page).$$eval('table.standardList tbody tr', (trs: any[]) => {
+    // Resolve header mapping to be robust against column order
+    const headerTexts: string[] = await (tableFrame || page).evaluate(() => {
+      const ths = Array.from(document.querySelectorAll('table.standardList thead th')) as HTMLElement[];
+      return ths.map((th) => ((th.innerText || th.textContent || '') as string).replace(/\s+/g, ' ').trim());
+    });
+    const findIdx = (patterns: RegExp[]): number => {
+      for (let i = 0; i < headerTexts.length; i++) {
+        const h = headerTexts[i] || '';
+        if (patterns.some((re) => re.test(h))) return i;
+      }
+      return -1;
+    };
+    const idxMap = {
+      img: 0,
+      styleNo: findIdx([/style\s*no\.?/i, /^style$/i]),
+      styleName: findIdx([/style\s*name/i, /^name$/i]),
+      color: findIdx([/color/i, /colour/i]),
+      type: findIdx([/^type$/i]),
+      quality: findIdx([/^quality$/i]),
+      qty: findIdx([/^qty/i, /quantity/i]),
+      amount: findIdx([/amount/i, /sales/i])
+    } as { img: number; styleNo: number; styleName: number; color: number; type: number; quality: number; qty: number; amount: number };
+    await log(job.id, 'info', 'STEP:topstyles_header_map', { headers: headerTexts, idxMap });
+    // Fallback to expected positions if detection failed
+    if (idxMap.styleNo < 0) idxMap.styleNo = 1;
+    if (idxMap.styleName < 0) idxMap.styleName = 2;
+    if (idxMap.color < 0) idxMap.color = 3;
+    if (idxMap.type < 0) idxMap.type = 4;
+    if (idxMap.quality < 0) idxMap.quality = 5;
+    if (idxMap.qty < 0) idxMap.qty = 6;
+    if (idxMap.amount < 0) idxMap.amount = 7;
+
+    // Extract rows using detected indices
+    let rows = await (tableFrame || page).$$eval('table.standardList tbody tr', (trs: any[], idx: any) => {
       return Array.from(trs).slice(0, 100).map((tr: any) => {
         const tds = Array.from((tr as any).querySelectorAll('td')) as any[];
-        const img = (tds[0]?.querySelector('img') as HTMLImageElement | null)?.src || '';
-        const styleNo = (tds[1]?.textContent || '').trim();
-        const styleName = (tds[2]?.textContent || '').trim();
-        const color = (tds[3]?.textContent || '').trim();
-        const type = (tds[4]?.textContent || '').trim();
-        const quality = (tds[5]?.textContent || '').trim();
-        const qty = (tds[6]?.textContent || '').trim();
-        const amount = (tds[7]?.textContent || '').trim();
+        const img = (tds[idx.img]?.querySelector('img') as HTMLImageElement | null)?.src || '';
+        const styleNo = (tds[idx.styleNo]?.textContent || '').toString().trim();
+        const styleName = (tds[idx.styleName]?.textContent || '').toString().trim();
+        const color = (tds[idx.color]?.textContent || '').toString().trim();
+        const type = (tds[idx.type]?.textContent || '').toString().trim();
+        const quality = (tds[idx.quality]?.textContent || '').toString().trim();
+        const qty = (tds[idx.qty]?.textContent || '').toString().trim();
+        const amount = (tds[idx.amount]?.textContent || '').toString().trim();
         return { img, styleNo, styleName, color, type, quality, qty, amount };
       });
-    });
+    }, idxMap as any);
     await log(job.id, 'info', 'STEP:topstyles_rows_raw', { count: (rows || []).length });
     if (rows && rows.length) {
       for (let i = 0; i < rows.length; i++) {
@@ -200,7 +247,7 @@ export async function scrapeTopStyles(ctx: Ctx) {
       const img1024 = r.img.replace('s24', 's1024');
       const qty = parseNumberEu(r.qty);
       const amount = parseNumberEu(r.amount);
-      return { image_url: img1024, style_no: r.styleNo, style_name: r.styleName, color: r.color, type: r.type, quality: r.quality, qty, amount, currency: 'DKK' };
+      return { image_url: img1024, style_no: r.styleNo, style_name: r.styleName, color: r.color, type: r.type, quality: r.quality, qty, sales_amount: amount, currency: 'DKK' };
     }).sort((a: any, b: any) => b.qty - a.qty).slice(0, 10);
     await log(job.id, 'info', 'STEP:topstyles_rows_parsed', { count: parsed.length });
     if (parsed && parsed.length) {
@@ -214,7 +261,7 @@ export async function scrapeTopStyles(ctx: Ctx) {
     // Replace existing rows for season
     try { await supabase.from('top_styles').delete().eq('season_id', currentSeasonId); } catch {}
     if (parsed.length) {
-      const insert = parsed.map((p: any) => ({ season_id: currentSeasonId, ...p }));
+      const insert = parsed.map((p: any) => ({ season_id: currentSeasonId, image_url: p.image_url, style_no: p.style_no, style_name: p.style_name, color: p.color, type: p.type, quality: p.quality, qty: p.qty, sales_amount: p.sales_amount, sort_index: 0 }));
       const { data: inserted, error } = await supabase.from('top_styles').insert(insert).select('id, season_id, style_no, color');
       await log(job.id, 'info', 'STEP:topstyles_insert_result', { insertedCount: inserted?.length || 0, error: error ? String(error.message || error) : null });
       if (error) throw error;
