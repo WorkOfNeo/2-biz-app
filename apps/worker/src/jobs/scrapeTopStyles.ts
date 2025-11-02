@@ -174,6 +174,15 @@ export async function scrapeTopStyles(ctx: Ctx) {
       await log(job.id, 'error', 'STEP:topstyles_group_set_gave_up');
       throw new Error('Could not switch group to color');
     }
+    // Extra guard: wait for .spy-container change and exact header labels
+    try {
+      await (tableFrame || page).waitForFunction(() => {
+        const container = document.querySelector('.spy-container') as HTMLElement | null;
+        const anchors = Array.from(document.querySelectorAll('.top-styles-container table.standardList thead th a')).map(a => (a.textContent || '').trim());
+        const rows = document.querySelectorAll('.top-styles-container table.standardList tbody tr').length;
+        return Boolean(container) && anchors.length >= 8 && anchors[1] === 'Style No.' && anchors[2] === 'Style Name' && anchors[3] === 'Color' && anchors[6] === 'Qty' && /Sales\s*Amount/i.test(anchors[7] || '') && rows > 0;
+      }, {}, { timeout: 20_000 });
+    } catch {}
     // Resolve header mapping to be robust against column order
     const headerEval = await (tableFrame || page).evaluate(() => {
       const ths = Array.from(document.querySelectorAll('.top-styles-container table.standardList thead th')) as HTMLElement[];
@@ -221,18 +230,18 @@ export async function scrapeTopStyles(ctx: Ctx) {
     if (exact.qty >= 0) idxMap.qty = exact.qty;
     if (exact.amount >= 0) idxMap.amount = exact.amount;
     await log(job.id, 'info', 'STEP:topstyles_header_map', { headers: headerTexts, anchors: anchorTexts, idxMap });
-    // Fallback to expected positions if detection failed
-    if (idxMap.styleNo < 0) idxMap.styleNo = 1;
-    if (idxMap.styleName < 0) idxMap.styleName = 2;
-    if (idxMap.color < 0) idxMap.color = 3;
-    if (idxMap.type < 0) idxMap.type = 4;
-    if (idxMap.quality < 0) idxMap.quality = 5;
-    if (idxMap.qty < 0) idxMap.qty = 6;
-    if (idxMap.amount < 0) idxMap.amount = 7;
+    // Use fixed column indices once header is verified
+    idxMap.styleNo = 1;
+    idxMap.styleName = 2;
+    idxMap.color = 3;
+    idxMap.type = 4;
+    idxMap.quality = 5;
+    idxMap.qty = 6;
+    idxMap.amount = 7;
 
     // Extract rows using detected indices (with validation pass)
     let rows = await (tableFrame || page).$$eval('.top-styles-container table.standardList tbody tr', (trs: any[], idx: any) => {
-      return Array.from(trs).slice(0, 100).map((tr: any) => {
+      return Array.from(trs).map((tr: any) => {
         const tds = Array.from((tr as any).querySelectorAll('td')) as any[];
         const img = (tds[idx.img]?.querySelector('img') as HTMLImageElement | null)?.src || '';
         const styleNo = (tds[idx.styleNo]?.textContent || '').toString().trim();
@@ -255,7 +264,7 @@ export async function scrapeTopStyles(ctx: Ctx) {
       // fallback: try without changing group
       await log(job.id, 'info', 'STEP:topstyles_zero_rows_try_style');
       rows = await (tableFrame || page).$$eval('.top-styles-container table.standardList tbody tr', (trs: any[]) => {
-        return Array.from(trs).slice(0, 100).map((tr: any) => {
+        return Array.from(trs).map((tr: any) => {
           const tds = Array.from((tr as any).querySelectorAll('td')) as any[];
           const img = (tds[0]?.querySelector('img') as HTMLImageElement | null)?.src || '';
           const styleNo = (tds[1]?.textContent || '').trim();
