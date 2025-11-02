@@ -1,3 +1,7 @@
+-- Add is_current flag to seasons
+alter table if exists public.seasons
+  add column if not exists is_current boolean not null default false;
+
 -- 34_seasons_current.sql
 -- Add is_current flag to seasons, and a partial unique index so only one season can be current
 

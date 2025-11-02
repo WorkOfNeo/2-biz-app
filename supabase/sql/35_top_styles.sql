@@ -1,3 +1,20 @@
+-- Create table for scraped top styles per season
+create table if not exists public.top_styles (
+  id uuid primary key default gen_random_uuid(),
+  season_id uuid references public.seasons(id) on delete cascade,
+  style_no text not null,
+  style_name text,
+  color text,
+  type text,
+  quality text,
+  image_url text,
+  qty int not null default 0,
+  sales_amount numeric not null default 0,
+  sort_index int not null default 0,
+  created_at timestamptz not null default now(),
+  unique (season_id, style_no, color)
+);
+
 -- 35_top_styles.sql
 -- Table to store Top 10 Styles per (current) season
 

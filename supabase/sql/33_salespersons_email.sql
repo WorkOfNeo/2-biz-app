@@ -1,3 +1,7 @@
+-- Add email field to salespersons
+alter table if exists public.salespersons
+  add column if not exists email text;
+
 -- 33_salespersons_email.sql
 -- Add email field to salespersons
 
