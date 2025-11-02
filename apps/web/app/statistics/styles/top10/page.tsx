@@ -1,6 +1,7 @@
 'use client';
 import useSWR from 'swr';
 import { supabase } from '../../../../lib/supabaseClient';
+import { ProgressBar } from '../../../../components/ProgressBar';
 import React from 'react';
 export default function Top10StylesPage() {
   const { data: seasons } = useSWR('seasons-all', async () => {
@@ -16,9 +17,57 @@ export default function Top10StylesPage() {
     const { data } = showAll ? await q : await q.limit(10);
     return (data ?? []) as any[];
   });
+  const { data: supplierMap } = useSWR(items && items.length ? ['suppliers', items.map(i=>i.style_no).join(',')] : null, async () => {
+    const { data } = await supabase.from('styles').select('style_no, supplier').in('style_no', (items ?? []).map((i:any)=>i.style_no));
+    const map = new Map<string, string | null>();
+    for (const r of (data ?? []) as any[]) map.set(r.style_no, r.supplier ?? null);
+    return map;
+  });
   const [running, setRunning] = React.useState(false);
+  const [jobId, setJobId] = React.useState<string | null>(null);
+  const [pct, setPct] = React.useState(0);
+  const [showProgress, setShowProgress] = React.useState(false);
+  React.useEffect(() => {
+    if (!jobId) return;
+    setShowProgress(true);
+    setPct(5);
+    const stepMap: Record<string, number> = {
+      'STEP:topstyles_begin_v3': 5,
+      'STEP:topstyles_nav_ok': 10,
+      'STEP:topstyles_group_set_attempt': 20,
+      'STEP:topstyles_header_ok': 40,
+      'STEP:topstyles_rows_extracted': 60,
+      'STEP:topstyles_rows_parsed': 70,
+      'STEP:topstyles_aggregate': 80,
+      'STEP:topstyles_upsert_result': 90,
+      'STEP:topstyles_saved': 100
+    };
+    const timer = setInterval(async () => {
+      try {
+        const { data: logs } = await supabase
+          .from('job_logs')
+          .select('msg, ts')
+          .eq('job_id', jobId)
+          .order('ts', { ascending: false })
+          .limit(50);
+        let next = pct;
+        for (const l of (logs ?? []) as any[]) {
+          const m = (l.msg || '') as string;
+          if (stepMap[m] !== undefined) { next = Math.max(next, stepMap[m]); break; }
+          if (m === 'Job succeeded') { next = 100; break; }
+        }
+        if (next !== pct) setPct(next);
+        if (next >= 100) {
+          clearInterval(timer);
+          setTimeout(() => { setShowProgress(false); setJobId(null); setRunning(false); }, 800);
+          mutate();
+        }
+      } catch {}
+    }, 1200);
+    return () => clearInterval(timer);
+  }, [jobId]);
   async function runScrape() {
-    if (running) return;
+    if (running || jobId) return;
     try {
       setRunning(true);
       const { data: { session } } = await supabase.auth.getSession();
@@ -30,12 +79,12 @@ export default function Top10StylesPage() {
         body: JSON.stringify({ type: 'scrape_top_styles', payload: { requestedBy: session.user.email } })
       });
       if (!res.ok) throw new Error(await res.text());
-      // Give the worker some time, then refresh
-      setTimeout(() => mutate(), 3000);
+      const js = await res.json();
+      setJobId(js.jobId);
     } catch (e: any) {
       alert(e?.message || 'Failed to enqueue');
     } finally {
-      setRunning(false);
+      // running will be cleared when job finishes
     }
   }
   return (
@@ -46,9 +95,15 @@ export default function Top10StylesPage() {
         <button
           className="rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-50"
           onClick={runScrape}
-          disabled={running}
-        >{running ? 'Running…' : 'Run scrape'}</button>
+          disabled={running || !!jobId}
+        >{running || jobId ? 'Running…' : 'Run scrape'}</button>
       </div>
+      {showProgress && (
+        <div className="flex items-center gap-2">
+          <div className="w-64"><ProgressBar value={pct} /></div>
+          <div className="text-xs text-gray-600">{pct}%</div>
+        </div>
+      )}
       <div className="flex items-center gap-2">
         <label className="text-sm text-gray-600">Season</label>
         <select
@@ -69,6 +124,8 @@ export default function Top10StylesPage() {
               <th className="p-2 text-left">Image</th>
               <th className="p-2 text-left">Style No</th>
               <th className="p-2 text-left">Style Name</th>
+              <th className="p-2 text-left">Supplier</th>
+              <th className="p-2 text-left">DG</th>
               <th className="p-2 text-left">Type</th>
               <th className="p-2 text-left">Quality</th>
               <th className="p-2 text-right">Qty</th>
@@ -81,6 +138,21 @@ export default function Top10StylesPage() {
                 <td className="p-2"><img src={r.image_url} alt="" className="h-10 w-10 object-cover rounded" /></td>
                 <td className="p-2">{r.style_no}</td>
                 <td className="p-2">{r.style_name}</td>
+                <td className="p-2">{supplierMap?.get(r.style_no) || '—'}</td>
+                <td className="p-2">
+                  <input
+                    type="text"
+                    defaultValue={r.dg || ''}
+                    className="w-36 rounded border px-2 py-1 text-sm"
+                    placeholder="DG"
+                    onBlur={async (e) => {
+                      try {
+                        const val = e.target.value;
+                        await supabase.from('top_styles').update({ dg: val || null }).eq('id', r.id);
+                      } catch {}
+                    }}
+                  />
+                </td>
                 <td className="p-2">{r.type}</td>
                 <td className="p-2">{r.quality}</td>
                 <td className="p-2 text-right">{Number(r.qty || 0).toLocaleString('da-DK')}</td>
