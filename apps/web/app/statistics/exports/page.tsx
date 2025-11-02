@@ -136,6 +136,17 @@ export default function StatisticsExportsPage() {
     setJobId(js.jobId);
   }
 
+  async function enqueueTopStylesPdf() {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) throw new Error('Not signed in');
+    const token = session.access_token;
+    const body = { type: 'export_overview', payload: { mode: 'top_styles_pdf', requestedBy: session.user.email } };
+    const res = await fetch('/api/enqueue', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(body) });
+    if (!res.ok) throw new Error(await res.text());
+    const js = await res.json();
+    setJobId(js.jobId);
+  }
+
   function toggleSelect(exportId: string, filePath: string) {
     setSelected((prev) => {
       const copy: Record<string, Set<string>> = { ...prev };
@@ -272,6 +283,13 @@ export default function StatisticsExportsPage() {
             disabled={running}
           >
             Export Countries (PDF)
+          </button>
+          <button
+            className="relative rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-60"
+            onClick={enqueueTopStylesPdf}
+            disabled={running}
+          >
+            Export Top 10 Styles (PDF)
           </button>
           <div className="ml-2 min-w-[180px] text-xs text-gray-700 flex items-center gap-2">
             {running && (
