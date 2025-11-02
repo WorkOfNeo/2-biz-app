@@ -2,4 +2,6 @@
 alter table if exists public.top_styles
   add column if not exists colors text[] not null default '{}';
 
+-- note: migration is idempotent
+
 
