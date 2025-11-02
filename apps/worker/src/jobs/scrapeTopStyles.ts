@@ -104,10 +104,19 @@ export async function scrapeTopStyles(ctx: Ctx) {
           }
         });
         try { await target.selectOption('.top-styles-container select[name="strGroupBy"], select[name="strGroupBy"]', 'color'); } catch {}
+        // Robust waiting: allow either network response or DOM fulfillment of header + rows
         await Promise.race([
-          (tableFrame || page).waitForResponse((res: any) => res.url().includes('confident.php') || res.request().url().includes('confident.php'), { timeout: 15_000 }).catch(() => null),
-          (tableFrame || page).waitForTimeout(1500)
+          page.waitForResponse((res: any) => {
+            try { const url = res.url?.() || res.url?.() || res.url(); return String(url).includes('confident.php'); } catch { return false; }
+          }, { timeout: 15_000 }).catch(() => null),
+          (tableFrame || page).waitForFunction(() => {
+            const sel = (document.querySelector('.top-styles-container select[name="strGroupBy"]') || document.querySelector('select[name="strGroupBy"]')) as HTMLSelectElement | null;
+            const anchors = Array.from(document.querySelectorAll('.top-styles-container table.standardList thead th a')).map(a => (a.textContent || '').trim());
+            const rows = document.querySelectorAll('.top-styles-container table.standardList tbody tr').length;
+            return sel?.value === 'color' && anchors[3] === 'Color' && rows > 0;
+          }, {}, { timeout: 15_000 }).catch(() => null)
         ]);
+        try { await page.waitForLoadState('networkidle', { timeout: 5_000 }); } catch {}
         await (tableFrame || page).waitForSelector('.top-styles-container table.standardList tbody tr', { timeout: 60_000 });
         await (tableFrame || page).waitForTimeout(500);
         // Verify header
@@ -144,7 +153,12 @@ export async function scrapeTopStyles(ctx: Ctx) {
           } catch {}
           try {
             await target.selectOption('.top-styles-container select[name="strGroupBy"], select[name="strGroupBy"]', 'color');
-            await (tableFrame || page).waitForTimeout(800);
+            await (tableFrame || page).waitForFunction(() => {
+              const sel = (document.querySelector('.top-styles-container select[name="strGroupBy"]') || document.querySelector('select[name="strGroupBy"]')) as HTMLSelectElement | null;
+              const anchors = Array.from(document.querySelectorAll('.top-styles-container table.standardList thead th a')).map(a => (a.textContent || '').trim());
+              const rows = document.querySelectorAll('.top-styles-container table.standardList tbody tr').length;
+              return sel?.value === 'color' && anchors[3] === 'Color' && rows > 0;
+            }, {}, { timeout: 10_000 }).catch(() => null);
           } catch {}
           return await setGroupByColor();
         }
