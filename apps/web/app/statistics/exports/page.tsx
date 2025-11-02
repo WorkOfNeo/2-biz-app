@@ -140,7 +140,7 @@ export default function StatisticsExportsPage() {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) throw new Error('Not signed in');
     const token = session.access_token;
-    const body = { type: 'export_overview', payload: { mode: 'top_styles_pdf', requestedBy: session.user.email } };
+    const body = { type: 'export_top_styles', payload: { requestedBy: session.user.email } };
     const res = await fetch('/api/enqueue', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(body) });
     if (!res.ok) throw new Error(await res.text());
     const js = await res.json();
