@@ -3,9 +3,11 @@ import { useMemo, useState } from 'react';
 import useSWR from 'swr';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { useRoles } from '../../../lib/supabaseClient';
+import { useRoles } from '../../../lib/supabaseClient';
 
 export default function StylesSettingsPage() {
   const supabase = createClientComponentClient();
+  const { has } = useRoles();
   const { has } = useRoles();
   const [runLoading, setRunLoading] = useState(false);
   const { data: styles } = useSWR('styles:all', async () => {
@@ -133,48 +135,14 @@ export default function StylesSettingsPage() {
         )}
       </div>
 
+      {/* Colors per style removed */}
+
+      {has('admin') && (
       <div className="rounded-md border bg-white p-3">
-        <div className="flex items-center justify-between">
-          <div className="text-sm font-medium">Colors per style</div>
-        </div>
-        <div className="mt-3">
-          <div className="text-[11px] text-gray-500 mb-2">Toggle scrape per color. Colors are discovered automatically during scrapes.</div>
-          <div className="space-y-3 max-h-[600px] overflow-auto pr-1">
-            {(styles ?? []).map((s) => {
-              const list = (colorsByStyle?.get(s.id) ?? []).slice().sort((a,b)=>a.color.localeCompare(b.color));
-              return (
-                <details key={s.id} className="rounded border">
-                  <summary className="cursor-pointer select-none px-3 py-2 font-medium">
-                    {s.style_no} <span className="text-gray-500 font-normal">{s.style_name ?? ''}</span> <span className="text-[11px] text-gray-500">{list.length} colors</span>
-                  </summary>
-                  <div className="px-2 pb-2">
-                    {list.length === 0 ? (
-                      <div className="text-xs text-gray-500 px-2">No colors discovered yet.</div>
-                    ) : (
-                      <table className="min-w-full text-xs">
-                        <thead className="bg-gray-50">
-                          <tr>
-                            <th className="p-2 text-left border-b">Color</th>
-                            <th className="p-2 text-left border-b">Last Updated</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {list.map((c) => (
-                            <tr key={c.id}>
-                              <td className="p-2 border-b font-medium">{c.color}</td>
-                              <td className="p-2 border-b text-gray-500">{c.updated_at ? new Date(c.updated_at).toLocaleString() : '—'}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    )}
-                  </div>
-                </details>
-              );
-            })}
-          </div>
-        </div>
+        <div className="text-sm font-medium">Style Lists (for Salesman tabs)</div>
+        <StyleListsEditor styles={styles ?? []} />
       </div>
+      )}
 
       <div className="rounded-md border bg-white p-3">
         <div className="flex items-center justify-between">
@@ -245,4 +213,104 @@ export default function StylesSettingsPage() {
   );
 }
 
+
+function StyleListsEditor({ styles }: { styles: { id: string; style_no: string; style_name: string | null; scrape_enabled: boolean | null; updated_at: string }[] }) {
+  const supabase = createClientComponentClient();
+  const React = require('react') as typeof import('react');
+  const { data, mutate } = useSWR('app-settings:style-lists', async () => {
+    const { data } = await supabase.from('app_settings').select('id, value').eq('key', 'style_lists').maybeSingle();
+    const id = (data as any)?.id as string | null;
+    const value = (((data as any)?.value || {}) as { lists?: Record<string, string[]> }) || {};
+    const lists = value.lists || {};
+    return { id, lists } as { id: string | null; lists: Record<string, string[]> };
+  });
+  const [active, setActive] = React.useState<string>('');
+  React.useEffect(() => {
+    if (!active && data && Object.keys(data.lists).length) setActive(Object.keys(data.lists)[0]);
+  }, [data, active]);
+  const [newList, setNewList] = React.useState('');
+  const [query, setQuery] = React.useState('');
+  const filteredStyles = React.useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return styles;
+    return styles.filter((s) => (s.style_name || '').toLowerCase().includes(q) || (s.style_no || '').toLowerCase().includes(q));
+  }, [styles, query]);
+  async function save(next: Record<string, string[]>) {
+    const existsId = data?.id || null;
+    const payload = { key: 'style_lists', value: { lists: next } } as any;
+    if (existsId) await supabase.from('app_settings').update({ value: payload.value }).eq('id', existsId as any);
+    else await supabase.from('app_settings').insert(payload);
+    await mutate();
+  }
+  function addList() {
+    const name = newList.trim();
+    if (!name) return;
+    const next = { ...(data?.lists || {}) } as Record<string, string[]>;
+    if (!next[name]) next[name] = [];
+    save(next);
+    setActive(name);
+    setNewList('');
+  }
+  function removeFromList(styleNo: string) {
+    const next = { ...(data?.lists || {}) } as Record<string, string[]>;
+    const list = new Set(next[active] || []);
+    list.delete(styleNo);
+    next[active] = Array.from(list);
+    save(next);
+  }
+  function addToList(styleNo: string) {
+    const next = { ...(data?.lists || {}) } as Record<string, string[]>;
+    const list = new Set(next[active] || []);
+    list.add(styleNo);
+    next[active] = Array.from(list);
+    save(next);
+  }
+  const listItems = (data?.lists?.[active] || []) as string[];
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <div className="text-xs">Lists:</div>
+        <div className="flex flex-wrap gap-2">
+          {Object.keys(data?.lists || {}).map((name) => (
+            <button key={name} className={(active===name?'bg-slate-900 text-white ':'bg-white text-slate-900 ') + 'text-xs px-2 py-1 border rounded'} onClick={()=>setActive(name)}>{name}</button>
+          ))}
+        </div>
+      </div>
+      <div className="flex items-center gap-2">
+        <input className="text-xs border rounded px-2 py-1" value={newList} onChange={(e)=>setNewList(e.target.value)} placeholder="New list name" />
+        <button className="text-xs px-2 py-1 border rounded bg-slate-900 text-white" onClick={addList}>Add list</button>
+      </div>
+      {active && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="rounded border p-2">
+            <div className="text-xs font-medium mb-1">In “{active}”</div>
+            <div className="space-y-1 max-h-64 overflow-auto">
+              {listItems.length === 0 && <div className="text-[11px] text-gray-500">No styles yet.</div>}
+              {listItems.map((no) => (
+                <div key={no} className="flex items-center justify-between text-xs border rounded px-2 py-1">
+                  <span>{no}</span>
+                  <button className="underline" onClick={()=>removeFromList(no)}>Remove</button>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="rounded border p-2">
+            <div className="flex items-center justify-between">
+              <div className="text-xs font-medium">All styles</div>
+              <input className="text-xs border rounded px-2 py-1" placeholder="Search styles" value={query} onChange={(e)=>setQuery(e.target.value)} />
+            </div>
+            <div className="mt-1 max-h-64 overflow-auto space-y-1">
+              {filteredStyles.map((s) => (
+                <div key={s.id} className="flex items-center justify-between text-xs border rounded px-2 py-1">
+                  <span>{s.style_no} {s.style_name ? `— ${s.style_name}` : ''}</span>
+                  <button className="underline" onClick={()=>addToList(s.style_no)}>Add</button>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 

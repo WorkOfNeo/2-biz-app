@@ -2,7 +2,7 @@ import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 
 export const supabase = createClientComponentClient();
 
-export type UserRole = 'admin' | 'viewer';
+export type UserRole = 'admin' | 'viewer' | 'salesman';
 
 export async function fetchUserRoles(): Promise<Set<UserRole>> {
   try {

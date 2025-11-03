@@ -30,36 +30,36 @@ export function SidebarNav() {
       <div>
         <div className="mt-4 mb-1 text-xs uppercase tracking-wider text-slate-400">Statistics</div>
         <div className="ml-2 space-y-1">
-          {has('admin') && <NavLink href="/statistics/dashboard" label="Dashboard" />}
-          <NavLink href="/statistics/general" label="General" />
-          <NavLink href="/statistics/overview" label="Overview" />
-          <NavLink href="/statistics/countries" label="Countries" />
-          <NavLink href="/statistics/styles/top10" label="Top 10 Styles" />
-          {has('admin') && <NavLink href="/statistics/vendors/top10" label="Top 10 Vendors" />}
-          {has('admin') && <NavLink href="/statistics/exports" label="Exports" />}
+          {!has('salesman') && has('admin') && <NavLink href="/statistics/dashboard" label="Dashboard" />}
+          {!has('salesman') && <NavLink href="/statistics/general" label="General" />}
+          {!has('salesman') && <NavLink href="/statistics/overview" label="Overview" />}
+          {!has('salesman') && <NavLink href="/statistics/countries" label="Countries" />}
+          {!has('salesman') && <NavLink href="/statistics/styles/top10" label="Top 10 Styles" />}
+          {!has('salesman') && has('admin') && <NavLink href="/statistics/vendors/top10" label="Top 10 Vendors" />}
+          {!has('salesman') && has('admin') && <NavLink href="/statistics/exports" label="Exports" />}
         </div>
       </div>
       <div>
         <div className="mt-4 mb-1 text-xs uppercase tracking-wider text-slate-400">Styles</div>
         <div className="ml-2 space-y-1">
-          <NavLink href="/styles" label="Styles" />
-          <NavLink href="/styles/settings" label="Settings" />
+          {!has('salesman') && <NavLink href="/styles" label="Styles" />}
+          {!has('salesman') && <NavLink href="/styles/settings" label="Settings" />}
           <NavLink href="/styles/stock-list" label="Stock List" />
-          {has('admin') && <NavLink href="/styles/statistics" label="Statistics" />}
+          {!has('salesman') && has('admin') && <NavLink href="/styles/statistics" label="Statistics" />}
         </div>
       </div>
       <div>
         <div className="mt-4 mb-1 text-xs uppercase tracking-wider text-slate-400">Settings</div>
         <div className="ml-2 space-y-1">
-          {has('admin') && <NavLink href="/settings/seasons" label="SEASONS" />}
-          {has('admin') && <NavLink href="/settings/salespersons" label="SALESPERSONS" />}
-          {has('admin') && <NavLink href="/settings/customers" label="CUSTOMERS" />}
-          {has('admin') && <NavLink href="/settings/misc" label="MISC" />}
-          {has('admin') && <NavLink href="/settings/jobs" label="JOBS" />}
-          {has('admin') && <NavLink href="/settings/runs" label="RUNS" />}
+          {!has('salesman') && has('admin') && <NavLink href="/settings/seasons" label="SEASONS" />}
+          {!has('salesman') && has('admin') && <NavLink href="/settings/salespersons" label="SALESPERSONS" />}
+          {!has('salesman') && has('admin') && <NavLink href="/settings/customers" label="CUSTOMERS" />}
+          {!has('salesman') && has('admin') && <NavLink href="/settings/misc" label="MISC" />}
+          {!has('salesman') && has('admin') && <NavLink href="/settings/jobs" label="JOBS" />}
+          {!has('salesman') && has('admin') && <NavLink href="/settings/runs" label="RUNS" />}
         </div>
       </div>
-      {has('admin') && (
+      {(!has('salesman') && has('admin')) && (
         <div>
           <div className="mt-4 mb-1 text-xs uppercase tracking-wider text-slate-400">Admin</div>
           <div className="ml-2 space-y-1">

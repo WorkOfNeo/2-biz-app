@@ -36,6 +36,14 @@ export async function middleware(req: NextRequest) {
     if (pathname.startsWith('/admin') && !roles.has('admin')) {
       return NextResponse.redirect(new URL('/', req.url));
     }
+    // Restrict salesman to stock list only (and root)
+    if (roles.has('salesman')) {
+      const allowed = new Set<string>(['/', '/styles/stock-list']);
+      const ok = Array.from(allowed).some((p) => pathname === p || pathname.startsWith(p + '/'));
+      if (!ok) {
+        return NextResponse.redirect(new URL('/styles/stock-list', req.url));
+      }
+    }
   } catch {}
 
   return res;

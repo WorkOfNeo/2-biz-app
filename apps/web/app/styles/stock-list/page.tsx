@@ -2,6 +2,7 @@
 import useSWR from 'swr';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import React from 'react';
+import { useRoles } from '../../../lib/supabaseClient';
 
 type Row = {
   style_no: string;
@@ -16,6 +17,7 @@ type Row = {
 
 export default function StockListPage() {
   const supabase = createClientComponentClient();
+  const { has } = useRoles();
   const { data } = useSWR('style_stock:list', async () => {
     const { data, error } = await supabase
       .from('style_stock')
@@ -196,6 +198,20 @@ export default function StockListPage() {
     return m;
   }, [groupedByStyle]);
 
+  // Salesman: load style lists and use tabs
+  const { data: styleLists } = useSWR(has('salesman') ? 'app-settings:style-lists' : null, async () => {
+    const { data } = await supabase.from('app_settings').select('value').eq('key', 'style_lists').maybeSingle();
+    const lists = (((data as any)?.value || {}) as { lists?: Record<string, string[]> }).lists || {};
+    return lists as Record<string, string[]>;
+  });
+  const [activeList, setActiveList] = React.useState<string>('');
+  React.useEffect(() => {
+    if (has('salesman') && styleLists && !activeList) {
+      const names = Object.keys(styleLists);
+      if (names.length) setActiveList(names[0]);
+    }
+  }, [styleLists, activeList, has]);
+
   return (
     <div className="space-y-4">
       <div>
@@ -203,22 +219,33 @@ export default function StockListPage() {
         <h1 className="text-xl font-semibold">Stock List</h1>
       </div>
 
-      <div className="flex items-center gap-2">
-        <button
-          className={(view==='default' ? 'bg-slate-900 text-white ' : 'bg-white text-slate-900 ') + 'text-xs px-2 py-1 border rounded'}
-          onClick={() => setView('default')}
-        >Default</button>
-        <button
-          className={(view==='all' ? 'bg-slate-900 text-white ' : 'bg-white text-slate-900 ') + 'text-xs px-2 py-1 border rounded'}
-          onClick={() => setView('all')}
-        >All</button>
-      </div>
-      {view==='default' && selectionLoading && (
-        <div className="text-xs text-gray-500">Loading your selection…</div>
+      {!has('salesman') ? (
+        <>
+          <div className="flex items-center gap-2">
+            <button
+              className={(view==='default' ? 'bg-slate-900 text-white ' : 'bg-white text-slate-900 ') + 'text-xs px-2 py-1 border rounded'}
+              onClick={() => setView('default')}
+            >Default</button>
+            <button
+              className={(view==='all' ? 'bg-slate-900 text-white ' : 'bg-white text-slate-900 ') + 'text-xs px-2 py-1 border rounded'}
+              onClick={() => setView('all')}
+            >All</button>
+          </div>
+          {view==='default' && selectionLoading && (
+            <div className="text-xs text-gray-500">Loading your selection…</div>
+          )}
+        </>
+      ) : (
+        <div className="flex items-center gap-2">
+          {Object.keys(styleLists || {}).map((name) => (
+            <button key={name} className={(activeList===name?'bg-slate-900 text-white ':'bg-white text-slate-900 ') + 'text-xs px-2 py-1 border rounded'} onClick={()=>setActiveList(name)}>{name}</button>
+          ))}
+        </div>
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-[180px_1fr] gap-4 items-start">
         {/* Left: selected styles by supplier */}
+        {!has('salesman') && (
         <aside className="hidden lg:block sticky top-4 self-start">
           <div className="bg-[#f7f7f7] p-2 max-h-[70vh] overflow-auto">
             <div className="text-xs font-semibold text-gray-700 px-1 pb-1">Your styles</div>
@@ -253,10 +280,17 @@ export default function StockListPage() {
             )}
           </div>
         </aside>
+        )}
 
         {/* Right: main content */}
         <div className="space-y-4">
-      {groupedByStyle.map(({ styleNo, colors }) => {
+      {groupedByStyle
+        .filter(({ styleNo }) => {
+          if (!has('salesman')) return true;
+          const list = (styleLists?.[activeList] || []) as string[];
+          return list.includes(styleNo);
+        })
+        .map(({ styleNo, colors }) => {
         const meta = styleMetaByNo[styleNo] || { name: null, supplier: null, image: null };
         return (
           <div key={styleNo} id={`style-${styleNo}`} className="bg-white p-3">
