@@ -1,3 +1,4 @@
+export const runtime = 'nodejs';
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
@@ -7,10 +8,11 @@ export async function POST(request: Request) {
     if (!email || !password || !role) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
     }
-    const SUPABASE_URL = process.env.SUPABASE_URL!;
-    const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+    const SUPABASE_URL = process.env.SUPABASE_URL;
+    const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
     if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-      return NextResponse.json({ error: 'Server not configured' }, { status: 500 });
+      const missing = [!SUPABASE_URL ? 'SUPABASE_URL' : null, !SUPABASE_SERVICE_ROLE_KEY ? 'SUPABASE_SERVICE_ROLE_KEY' : null].filter(Boolean);
+      return NextResponse.json({ error: 'Server not configured', missing }, { status: 500 });
     }
     const admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
     const { data, error } = await admin.auth.admin.createUser({
