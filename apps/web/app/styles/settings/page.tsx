@@ -35,7 +35,7 @@ export default function StylesSettingsPage() {
     return new Set<string>(arr);
   }, [selectionMap, currentUserId]);
   // Seasons per style and season filter
-  const { data: styleSeasons } = useSWR('style_seasons', async () => {
+  const { data: styleSeasons } = useSWR<Map<string, string[]>>('style_seasons', async () => {
     const { data, error } = await supabase.from('style_seasons').select('style_no, seasons');
     if (error) throw new Error(error.message);
     const map = new Map<string, string[]>();
@@ -44,7 +44,7 @@ export default function StylesSettingsPage() {
   });
   const seasonOptions = useMemo(() => {
     const set = new Set<string>();
-    for (const arr of Array.from((styleSeasons ?? new Map()).values())) (arr || []).forEach((s) => { if (s) set.add(String(s)); });
+    for (const arr of Array.from((styleSeasons ?? new Map<string, string[]>()).values())) (arr || []).forEach((s: string) => { if (s) set.add(String(s)); });
     return Array.from(set).sort((a,b)=>a.localeCompare(b));
   }, [styleSeasons]);
   const [seasonFilter, setSeasonFilter] = useState<string>('');
