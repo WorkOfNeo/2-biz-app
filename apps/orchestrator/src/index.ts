@@ -249,11 +249,18 @@ app.post('/enqueue/update_style_stock_fanout', async (c) => {
     const body = await c.req.json<{ styleNos?: string[]; batchSize?: number }>();
     const batchSize = Math.max(1, Math.min(50, Number(body?.batchSize || 10)));
 
-    // Determine target styleNos: prefer provided, else app_settings.styles_daily_selection
+    // Determine target styleNos: prefer provided, else union from app_settings.styles_user_selection (fallback to legacy styles_daily_selection)
     let styleNos: string[] = Array.isArray(body?.styleNos) ? body!.styleNos! : [];
     if (styleNos.length === 0) {
-      const { data } = await supabase.from('app_settings').select('value').eq('key', 'styles_daily_selection').maybeSingle();
-      styleNos = ((data?.value as any)?.styleNos as string[] | undefined) ?? [];
+      const { data: sel } = await supabase.from('app_settings').select('value').eq('key', 'styles_user_selection').maybeSingle();
+      const map = ((sel?.value as any) || {}) as Record<string, string[]>;
+      const set = new Set<string>();
+      for (const arr of Object.values(map)) for (const no of (arr || [])) if (typeof no === 'string') set.add(no);
+      styleNos = Array.from(set);
+      if (styleNos.length === 0) {
+        const { data } = await supabase.from('app_settings').select('value').eq('key', 'styles_daily_selection').maybeSingle();
+        styleNos = ((data?.value as any)?.styleNos as string[] | undefined) ?? [];
+      }
     }
     if (styleNos.length === 0) return c.json({ error: 'No styles selected' }, 400);
 

@@ -231,12 +231,24 @@ async function runJob(job: JobRow) {
   if (job.type === 'update_style_stock') {
     await ensureNotCancelled(job.id);
     await log(job.id, 'info', 'STEP:style_stock_begin');
-    // Expect payload.styleNos or derive from app_settings.styles_daily_selection
+    // Expect payload.styleNos or derive from app_settings.styles_user_selection (union per-user),
+    // falling back to legacy app_settings.styles_daily_selection
     let styleNos: string[] = Array.isArray(job.payload?.styleNos) ? (job.payload?.styleNos as string[]) : [];
     if (styleNos.length === 0) {
       try {
-        const { data } = await supabase.from('app_settings').select('value').eq('key', 'styles_daily_selection').maybeSingle();
-        styleNos = ((data?.value as any)?.styleNos as string[] | undefined) ?? [];
+        // New per-user selection map: { [user_id]: string[] }
+        const { data: sel } = await supabase.from('app_settings').select('value').eq('key', 'styles_user_selection').maybeSingle();
+        const map = ((sel?.value as any) || {}) as Record<string, string[]>;
+        const set = new Set<string>();
+        for (const arr of Object.values(map)) {
+          for (const no of (arr || [])) if (no && typeof no === 'string') set.add(no);
+        }
+        styleNos = Array.from(set);
+        if (styleNos.length === 0) {
+          // Legacy fallback
+          const { data } = await supabase.from('app_settings').select('value').eq('key', 'styles_daily_selection').maybeSingle();
+          styleNos = ((data?.value as any)?.styleNos as string[] | undefined) ?? [];
+        }
       } catch {}
     }
     if (styleNos.length === 0) {

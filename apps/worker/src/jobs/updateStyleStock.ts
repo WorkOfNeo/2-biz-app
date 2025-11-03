@@ -18,8 +18,16 @@ export async function updateStyleStock(ctx: Ctx) {
   let styleNos: string[] = Array.isArray(job.payload?.styleNos) ? (job.payload?.styleNos as string[]) : [];
   if (styleNos.length === 0) {
     try {
-      const { data } = await supabase.from('app_settings').select('value').eq('key', 'styles_daily_selection').maybeSingle();
-      styleNos = ((data?.value as any)?.styleNos as string[] | undefined) ?? [];
+      // Prefer per-user selection union
+      const { data: sel } = await supabase.from('app_settings').select('value').eq('key', 'styles_user_selection').maybeSingle();
+      const map = ((sel?.value as any) || {}) as Record<string, string[]>;
+      const set = new Set<string>();
+      for (const arr of Object.values(map)) for (const no of (arr || [])) if (no && typeof no === 'string') set.add(no);
+      styleNos = Array.from(set);
+      if (styleNos.length === 0) {
+        const { data } = await supabase.from('app_settings').select('value').eq('key', 'styles_daily_selection').maybeSingle();
+        styleNos = ((data?.value as any)?.styleNos as string[] | undefined) ?? [];
+      }
     } catch {}
   }
   if (styleNos.length === 0) {
