@@ -138,6 +138,26 @@ export default function StockListPage() {
   const [openSold, setOpenSold] = React.useState<Record<string, boolean>>({});
   const [openPurchase, setOpenPurchase] = React.useState<Record<string, boolean>>({});
 
+  // Build left sidebar: selected styles grouped by supplier
+  const selectedSidebar = React.useMemo(() => {
+    const items: Array<{ supplier: string; styleNo: string; name: string | null }> = [];
+    for (const styleNo of Array.from(userSelected.values())) {
+      const meta = styleMetaByNo[styleNo];
+      if (!meta) continue;
+      items.push({ supplier: meta.supplier || '—', styleNo, name: meta.name });
+    }
+    // sort by supplier then style no
+    items.sort((a, b) => (a.supplier.localeCompare(b.supplier) || a.styleNo.localeCompare(b.styleNo)));
+    // group
+    const groups = new Map<string, Array<{ styleNo: string; name: string | null }>>();
+    for (const it of items) {
+      const arr = groups.get(it.supplier) || [];
+      arr.push({ styleNo: it.styleNo, name: it.name });
+      groups.set(it.supplier, arr);
+    }
+    return Array.from(groups.entries()).map(([supplier, list]) => ({ supplier, list }));
+  }, [userSelected, styleMetaByNo]);
+
   return (
     <div className="space-y-4">
       <div>
@@ -159,10 +179,45 @@ export default function StockListPage() {
         <div className="text-xs text-gray-500">Loading your selection…</div>
       )}
 
+      <div className="grid grid-cols-1 lg:grid-cols-[240px_1fr] gap-4 items-start">
+        {/* Left: selected styles by supplier */}
+        <aside className="hidden lg:block sticky top-4 self-start">
+          <div className="rounded-md border bg-white p-2 max-h-[70vh] overflow-auto">
+            <div className="text-xs font-semibold text-gray-700 px-1 pb-1">Your styles</div>
+            {selectedSidebar.length === 0 ? (
+              <div className="text-[11px] text-gray-500 px-1 py-2">No styles selected.</div>
+            ) : (
+              <div className="space-y-2">
+                {selectedSidebar.map((grp) => (
+                  <div key={grp.supplier}>
+                    <div className="text-[11px] font-medium text-gray-500 px-1 mb-1">{grp.supplier}</div>
+                    <ul className="space-y-0.5">
+                      {grp.list.map((it) => (
+                        <li key={it.styleNo}>
+                          <a
+                            href={`#style-${it.styleNo}`}
+                            className="block text-xs px-2 py-1 rounded hover:bg-slate-50"
+                            title={it.name || it.styleNo}
+                          >
+                            <span className="font-mono text-[11px]">{it.styleNo}</span>
+                            {it.name && <span className="text-[11px] text-gray-600 ml-1">{it.name}</span>}
+                          </a>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </aside>
+
+        {/* Right: main content */}
+        <div className="space-y-4">
       {groupedByStyle.map(({ styleNo, colors }) => {
         const meta = styleMetaByNo[styleNo] || { name: null, supplier: null, image: null };
         return (
-          <div key={styleNo} className="rounded-md border bg-white p-3">
+          <div key={styleNo} id={`style-${styleNo}`} className="rounded-md border bg-white p-3">
             <div className="grid grid-cols-[1fr_0.5fr_1fr] gap-3">
               {/* Left: sticky style info */}
               <div className="sticky top-2 self-start">
@@ -270,6 +325,8 @@ export default function StockListPage() {
           </div>
         );
       })}
+        </div>
+      </div>
     </div>
   );
 }
