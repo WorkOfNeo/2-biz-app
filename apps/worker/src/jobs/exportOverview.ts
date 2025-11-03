@@ -269,6 +269,7 @@ export async function exportOverview(ctx: Ctx) {
         const rate = rates[currency] ?? 1;
         const totalsDkk = { s1: totals.s1Price * rate, s2: totals.s2Price * rate };
         const totalsLocal = { s1: totals.s1Price, s2: totals.s2Price };
+        const totalsQty = { s1: totals.s1Qty, s2: totals.s2Qty };
         const totalsView = React.createElement(View, { style: { marginTop: 6 } },
           React.createElement(Text, { style: { fontSize: 10, fontWeight: 700, marginBottom: 3 } }, 'TOTALS'),
           React.createElement(View, { style: styles.tableHeader },
@@ -276,6 +277,12 @@ export async function exportOverview(ctx: Ctx) {
             Cell(`${s1Name ?? 'S1'} (${currency})`, '22%', 'right', (styles as any).headerCell),
             Cell(`${s2Name ?? 'S2'} (${currency})`, '22%', 'right', (styles as any).headerCell),
             Cell('Diff', '11%', 'right', (styles as any).headerCell)
+          ),
+          React.createElement(View, { style: styles.row },
+            Cell('Qty', '45%', 'left'),
+            Cell(String(totalsQty.s1), '22%', 'right'),
+            Cell(String(totalsQty.s2), '22%', 'right'),
+            Cell(((totalsQty.s1 - totalsQty.s2) > 0 ? '+' : '') + String(totalsQty.s1 - totalsQty.s2), '11%', 'right')
           ),
           React.createElement(View, { style: styles.row },
             Cell('Local', '45%', 'left'),
