@@ -30,6 +30,7 @@ export default function StatisticsExportsPage() {
   const [jobDone, setJobDone] = React.useState(false);
   const [openId, setOpenId] = React.useState<string | null>(null);
   const [selected, setSelected] = React.useState<Record<string, Set<string>>>({});
+  const [zipProgress, setZipProgress] = React.useState<Record<string, { done: number; total: number } | null>>({});
 
   async function waitForUrlReady(url: string, attempts = 8, delayMs = 750): Promise<boolean> {
     for (let i = 0; i < attempts; i++) {
@@ -216,6 +217,14 @@ export default function StatisticsExportsPage() {
     });
   }
 
+  function toggleSelectAll(exportId: string, filePaths: string[], on: boolean) {
+    setSelected((prev) => {
+      const copy: Record<string, Set<string>> = { ...prev };
+      copy[exportId] = on ? new Set(filePaths) : new Set();
+      return copy;
+    });
+  }
+
   function isSelected(exportId: string, filePath: string): boolean {
     return Boolean(selected[exportId] && selected[exportId].has(filePath));
   }
@@ -225,6 +234,7 @@ export default function StatisticsExportsPage() {
     if (chosen.length === 0) return;
     const { default: JSZip } = await import('jszip');
     const zip = new JSZip();
+    setZipProgress((p) => ({ ...p, [exportId]: { done: 0, total: chosen.length } }));
     for (const f of chosen) {
       try {
         const { data: blob, error } = await supabase.storage.from('exports').download(f.path);
@@ -233,6 +243,10 @@ export default function StatisticsExportsPage() {
           zip.file(filename, blob as unknown as Blob);
         }
       } catch {}
+      setZipProgress((p) => {
+        const cur = p[exportId] || { done: 0, total: chosen.length };
+        return { ...p, [exportId]: { done: Math.min(cur.done + 1, cur.total), total: cur.total } };
+      });
     }
     const out = await zip.generateAsync({ type: 'blob' });
     const url = URL.createObjectURL(out);
@@ -240,6 +254,7 @@ export default function StatisticsExportsPage() {
     a.href = url; a.download = 'selected.pdf.zip';
     document.body.appendChild(a); a.click(); a.remove();
     URL.revokeObjectURL(url);
+    setZipProgress((p) => ({ ...p, [exportId]: null }));
   }
 
   async function downloadPath(path: string, publicUrl?: string | null) {
@@ -423,12 +438,36 @@ export default function StatisticsExportsPage() {
                           )}
                           {files.length > 0 && (
                             <div className="flex items-center justify-between">
-                              <div className="text-sm font-medium">Selection</div>
-                              <button
-                                className="rounded-md border px-2 py-1 text-xs hover:bg-slate-50 disabled:opacity-50"
-                                onClick={() => downloadSelectedAsZip(r.id, files.map((f:any)=>({ path: f.path, name: f.name })))}
-                                disabled={(selected[r.id]?.size ?? 0) === 0}
-                              >Download selected as ZIP</button>
+                              <div className="flex items-center gap-3">
+                                <div className="text-sm font-medium">Selection</div>
+                                <label className="inline-flex items-center gap-1 text-xs">
+                                  {(() => {
+                                    const allPaths = files.map((f:any) => f.path);
+                                    const allOn = (selected[r.id]?.size ?? 0) === files.length;
+                                    return (
+                                      <>
+                                        <input
+                                          type="checkbox"
+                                          className="h-3 w-3"
+                                          checked={allOn}
+                                          onChange={(e) => toggleSelectAll(r.id, allPaths, e.target.checked)}
+                                        />
+                                        <span>Select all</span>
+                                      </>
+                                    );
+                                  })()}
+                                </label>
+                              </div>
+                              <div className="flex items-center gap-3">
+                                {zipProgress[r.id] && (
+                                  <div className="text-xs text-gray-600">Zipping {zipProgress[r.id]!.done}/{zipProgress[r.id]!.total}</div>
+                                )}
+                                <button
+                                  className="rounded-md border px-2 py-1 text-xs hover:bg-slate-50 disabled:opacity-50"
+                                  onClick={() => downloadSelectedAsZip(r.id, files.map((f:any)=>({ path: f.path, name: f.name })))}
+                                  disabled={(selected[r.id]?.size ?? 0) === 0}
+                                >Download selected as ZIP</button>
+                              </div>
                             </div>
                           )}
                           {files.map((f: any, i: number) => (
