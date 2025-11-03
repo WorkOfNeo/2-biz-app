@@ -34,12 +34,54 @@ export default function StylesSettingsPage() {
     const arr = selectionMap?.value?.[currentUserId] || [];
     return new Set<string>(arr);
   }, [selectionMap, currentUserId]);
+  // Seasons per style and season filter
+  const { data: styleSeasons } = useSWR('style_seasons', async () => {
+    const { data, error } = await supabase.from('style_seasons').select('style_no, seasons');
+    if (error) throw new Error(error.message);
+    const map = new Map<string, string[]>();
+    for (const r of (data ?? []) as any[]) map.set(r.style_no as string, Array.isArray(r.seasons) ? r.seasons as string[] : []);
+    return map;
+  });
+  const seasonOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const arr of Array.from((styleSeasons ?? new Map()).values())) (arr || []).forEach((s) => { if (s) set.add(String(s)); });
+    return Array.from(set).sort((a,b)=>a.localeCompare(b));
+  }, [styleSeasons]);
+  const [seasonFilter, setSeasonFilter] = useState<string>('');
+  const filteredStyles = useMemo(() => {
+    if (!styles) return [] as { id: string; style_no: string; style_name: string | null; scrape_enabled: boolean | null; updated_at: string }[];
+    if (!seasonFilter) return styles;
+    return styles.filter((s) => {
+      const arr = styleSeasons?.get(s.style_no) || [];
+      return arr.includes(seasonFilter);
+    });
+  }, [styles, styleSeasons, seasonFilter]);
   async function toggleStyleForUser(styleNo: string) {
     if (!currentUserId) return;
     const map = { ...(selectionMap?.value || {}) } as Record<string, string[]>;
     const list = new Set<string>(map[currentUserId] || []);
     if (list.has(styleNo)) list.delete(styleNo); else list.add(styleNo);
     map[currentUserId] = Array.from(list);
+    const existsId = selectionMap?.id || null;
+    if (existsId) await supabase.from('app_settings').update({ value: map }).eq('id', existsId as any);
+    else await supabase.from('app_settings').insert({ key: 'styles_user_selection', value: map } as any);
+    await mutateSelection();
+  }
+  async function addAllFiltered() {
+    if (!currentUserId) return;
+    const map = { ...(selectionMap?.value || {}) } as Record<string, string[]>;
+    const list = new Set<string>(map[currentUserId] || []);
+    for (const s of filteredStyles) list.add(s.style_no);
+    map[currentUserId] = Array.from(list);
+    const existsId = selectionMap?.id || null;
+    if (existsId) await supabase.from('app_settings').update({ value: map }).eq('id', existsId as any);
+    else await supabase.from('app_settings').insert({ key: 'styles_user_selection', value: map } as any);
+    await mutateSelection();
+  }
+  async function clearAll() {
+    if (!currentUserId) return;
+    const map = { ...(selectionMap?.value || {}) } as Record<string, string[]>;
+    map[currentUserId] = [];
     const existsId = selectionMap?.id || null;
     if (existsId) await supabase.from('app_settings').update({ value: map }).eq('id', existsId as any);
     else await supabase.from('app_settings').insert({ key: 'styles_user_selection', value: map } as any);
@@ -56,6 +98,13 @@ export default function StylesSettingsPage() {
       <div className="rounded-md border bg-white p-3">
         <div className="flex items-center justify-between">
           <div className="text-sm font-medium">Your list for stock updates</div>
+          <div className="flex items-center gap-2">
+            <select className="text-xs border rounded px-2 py-1" value={seasonFilter} onChange={(e)=>setSeasonFilter(e.target.value)}>
+              <option value="">All seasons</option>
+              {seasonOptions.map((opt)=> (<option key={opt} value={opt}>{opt}</option>))}
+            </select>
+            <button className="text-xs px-2 py-1 border rounded bg-slate-900 text-white hover:bg-slate-800" onClick={addAllFiltered}>Add all</button>
+          </div>
         </div>
         <div className="mt-3 max-h-96 overflow-auto border rounded">
           <table className="min-w-full text-xs">
@@ -68,7 +117,7 @@ export default function StylesSettingsPage() {
               </tr>
             </thead>
             <tbody>
-              {(styles ?? []).map((s) => {
+              {(filteredStyles ?? []).map((s) => {
                 const added = selectedForUser.has(s.style_no);
                 return (
                   <tr key={s.style_no} className={(added ? 'bg-slate-50 ' : '') + 'hover:bg-slate-50 transition-colors'}>
@@ -86,6 +135,9 @@ export default function StylesSettingsPage() {
               })}
             </tbody>
           </table>
+        </div>
+        <div className="flex justify-end mt-2">
+          <button className="text-xs text-gray-600 hover:text-black underline" onClick={clearAll}>Clear</button>
         </div>
       </div>
 
