@@ -119,6 +119,23 @@ export default function StockListPage() {
     return res;
   }, [data]);
 
+  // Load visibility flags for colors for styles shown
+  const { data: colorVisibility } = useSWR(styleIds.length ? ['style_colors:visible', styleIds.join(',')] : null, async () => {
+    const { data, error } = await supabase
+      .from('style_colors')
+      .select('style_id, color, visible')
+      .in('style_id', styleIds);
+    if (error) throw new Error(error.message);
+    const map = new Map<string, Map<string, boolean>>();
+    for (const r of (data ?? []) as any[]) {
+      const sid = String(r.style_id || '');
+      const ckey = String(r.color || '').trim().toLowerCase();
+      if (!map.has(sid)) map.set(sid, new Map());
+      map.get(sid)!.set(ckey, (r.visible as boolean | null) !== false);
+    }
+    return map;
+  }, { refreshInterval: 0 });
+
   // Group merged rows by style, then list colors within
   const groupedByStyle = React.useMemo(() => {
     const map = new Map<string, Group[]>();
@@ -129,11 +146,22 @@ export default function StockListPage() {
     const out = Array.from(map.entries()).map(([styleNo, list]) => ({ styleNo, colors: list.sort((a, b) => a.color.localeCompare(b.color)) }));
     // Sort styles numerically-then-lexicographically
     out.sort((a, b) => a.styleNo.localeCompare(b.styleNo));
-    const filtered = (view === 'default')
-      ? (selectionLoading ? [] : out.filter((row) => userSelected.has(row.styleNo)))
-      : out;
+    // Filter styles by Default view selection
+    let filtered = (view === 'default') ? (selectionLoading ? [] : out.filter((row) => userSelected.has(row.styleNo))) : out;
+    // Filter colors by visibility (if defined); default visible
+    filtered = filtered.map((row) => {
+      const sid = styleMetaByNo[row.styleNo]?.id || null;
+      if (!sid) return row;
+      const visMap = colorVisibility?.get(sid) || new Map<string, boolean>();
+      const colors = row.colors.filter((c) => {
+        const key = (c.color || '').trim().toLowerCase();
+        const vis = visMap.has(key) ? (visMap.get(key) as boolean) : true;
+        return vis;
+      });
+      return { ...row, colors };
+    });
     return filtered as Array<{ styleNo: string; colors: Group[] }>;
-  }, [groups, view, userSelected, selectionLoading]);
+  }, [groups, view, userSelected, selectionLoading, colorVisibility, styleMetaByNo]);
 
   const [openSold, setOpenSold] = React.useState<Record<string, boolean>>({});
   const [openPurchase, setOpenPurchase] = React.useState<Record<string, boolean>>({});

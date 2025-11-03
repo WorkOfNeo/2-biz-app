@@ -1,36 +1,33 @@
 'use client';
 import useSWR from 'swr';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
+import { useRoles } from '../../../lib/supabaseClient';
 
 export default function StyleDetailPage({ params }: { params: { styleNo: string } }) {
   const supabase = createClientComponentClient();
   const styleNo = decodeURIComponent(params.styleNo);
 
-  const { data: meta } = useSWR(['style:meta', styleNo], async () => {
+  const { data: meta, mutate: mutateMeta } = useSWR(['style:meta', styleNo], async () => {
     const { data, error } = await supabase
       .from('styles')
-      .select('style_no, style_name, supplier, image_url, link_href, updated_at')
+      .select('id, style_no, style_name, supplier, image_url, link_href, updated_at')
       .eq('style_no', styleNo)
       .maybeSingle();
     if (error) throw new Error(error.message);
-    return data as { style_no: string; style_name: string | null; supplier: string | null; image_url: string | null; link_href: string | null; updated_at: string } | null;
+    return data as { id: string; style_no: string; style_name: string | null; supplier: string | null; image_url: string | null; link_href: string | null; updated_at: string } | null;
   });
 
-  const { data: colors } = useSWR(['style:colors', styleNo], async () => {
+  const { data: colors } = useSWR(['style:colors', styleNo, meta?.id], async () => {
+    if (!meta?.id) return [] as Array<{ id: string; color: string; visible: boolean | null; updated_at: string | null }>;
     const { data, error } = await supabase
-      .from('style_stock')
-      .select('color, scraped_at')
-      .eq('style_no', styleNo)
-      .order('scraped_at', { ascending: false });
+      .from('style_colors')
+      .select('id, color, visible, updated_at')
+      .eq('style_id', meta.id)
+      .order('color');
     if (error) throw new Error(error.message);
-    // distinct by color, keep most recent scraped_at
-    const map = new Map<string, string>();
-    for (const r of (data ?? []) as any[]) {
-      const c = (r.color || '').toString();
-      if (!map.has(c)) map.set(c, r.scraped_at as string);
-    }
-    return Array.from(map.entries()).map(([color, scraped_at]) => ({ color, scraped_at }));
+    return (data ?? []) as Array<{ id: string; color: string; visible: boolean | null; updated_at: string | null }>;
   });
+  const { has } = useRoles();
 
   return (
     <div className="space-y-4">
@@ -66,12 +63,26 @@ export default function StyleDetailPage({ params }: { params: { styleNo: string 
 
       <div className="rounded-md border bg-white p-3">
         <div className="text-sm font-medium mb-2">Colors</div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-col gap-2">
           {(colors ?? []).length === 0 && <div className="text-xs text-gray-500">No colors found yet.</div>}
           {(colors ?? []).map((c) => (
-            <div key={c.color} className="rounded border px-2 py-1 text-sm bg-gray-50">
+            <div key={c.id} className="flex items-center justify-between rounded border px-2 py-1 text-sm bg-gray-50">
               <div className="font-medium">{c.color}</div>
-              <div className="text-[10px] text-gray-500">Scraped: {new Date(c.scraped_at).toLocaleString()}</div>
+              {has('admin') && (
+                <label className="text-xs flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 accent-slate-900 rounded"
+                    checked={c.visible !== false}
+                    onChange={async (e) => {
+                      try {
+                        await supabase.from('style_colors').update({ visible: e.target.checked }).eq('id', c.id);
+                      } catch {}
+                    }}
+                  />
+                  <span>Visible on Stock List</span>
+                </label>
+              )}
             </div>
           ))}
         </div>
