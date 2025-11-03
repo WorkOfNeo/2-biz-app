@@ -97,6 +97,41 @@ export default function JobsOverviewPage() {
         </div>
       </div>
 
+      {/* All job functions */}
+      <div className="rounded-md border p-3 bg-white">
+        <div className="flex items-center justify-between">
+          <div className="text-sm font-semibold">Available job functions</div>
+        </div>
+        <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+          {(
+            [
+              { type: 'scrape_styles', label: 'Scrape Styles', actions: [{ label: 'Run' }] },
+              { type: 'update_style_stock', label: 'Update Style Stock', actions: [{ label: 'Run (Selected)' }, { label: 'Run (All)', payload: { mode: 'all' } }] },
+              { type: 'scrape_customers', label: 'Scrape Customers', actions: [{ label: 'Run' }] },
+              { type: 'scrape_statistics', label: 'Scrape Statistics', actions: [{ label: 'Run Deep', payload: { toggles: { deep: true } } }, { label: 'Per-size Snapshot', payload: { kind: 'per_size' } }] },
+              { type: 'export_overview', label: 'Export Overview', actions: [{ label: 'Run' }] },
+              { type: 'scrape_top_styles', label: 'Scrape Top 10 Styles', actions: [{ label: 'Run' }] },
+              { type: 'export_top_styles', label: 'Export Top 10 Styles', actions: [{ label: 'Run' }] }
+            ] as Array<{ type: string; label: string; actions: Array<{ label: string; payload?: any }> }>
+          ).map((f) => (
+            <div key={f.type} className="rounded border p-2">
+              <div className="text-sm font-medium">{f.label}</div>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {f.actions.map((a, i) => (
+                  <button
+                    key={i}
+                    disabled={enq!==null}
+                    onClick={() => enqueue(f.type, a.payload || {})}
+                    className="rounded border px-2 py-1 text-xs hover:bg-gray-50 disabled:opacity-50"
+                  >{a.label}</button>
+                ))}
+              </div>
+              <div className="mt-1 text-[11px] text-gray-500 font-mono">{f.type}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
         {(data?.items ?? []).map((it) => (
           <div key={it.type} className="rounded-md border p-3">
