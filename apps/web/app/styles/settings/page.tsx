@@ -45,43 +45,7 @@ export default function StylesSettingsPage() {
     return styles.filter((s) => (s.style_name || '').toLowerCase().includes(q) || (s.style_no || '').toLowerCase().includes(q));
   }, [styles, searchQuery]);
 
-  // Load seasons per style for display (style_no -> seasons[])
-  const { data: styleSeasons } = useSWR<Map<string, string[]>>('style_seasons', async () => {
-    const { data, error } = await supabase.from('style_seasons').select('style_no, seasons');
-    if (error) throw new Error(error.message);
-    const map = new Map<string, string[]>();
-    for (const r of (data ?? []) as any[]) map.set(r.style_no as string, Array.isArray(r.seasons) ? (r.seasons as string[]) : []);
-    return map;
-  });
-  // Load seasons table for id -> label mapping
-  const { data: seasonsAll } = useSWR('seasons:map', async () => {
-    const { data, error } = await supabase.from('seasons').select('id, name, year');
-    if (error) throw new Error(error.message);
-    return (data ?? []) as Array<{ id: string; name: string | null; year: number | null }>;
-  });
-  const seasonsById = useMemo(() => {
-    const m = new Map<string, { name: string; year: number | null }>();
-    for (const s of (seasonsAll ?? [])) {
-      m.set(s.id, { name: (s.name || '').toUpperCase(), year: s.year ?? null });
-    }
-    return m;
-  }, [seasonsAll]);
-  function formatSeasonsFor(styleNo: string): string {
-    const arr = styleSeasons?.get(styleNo) || [];
-    if (!arr || arr.length === 0) return '—';
-    const firstRaw = String(arr[0] || '').trim();
-    // Prefer seasons table mapping when value is an id present in seasonsById
-    let name = firstRaw;
-    const byId = seasonsById.get(firstRaw);
-    if (byId) {
-      name = byId.name || firstRaw;
-    } else {
-      const m = firstRaw.match(/^(\d{2,4})\s+(.+)$/);
-      name = (m?.[2] ?? firstRaw).toString();
-    }
-    const extra = arr.length > 1 ? ` +${arr.length - 1}` : '';
-    return `${name}${extra}`;
-  }
+  // (Seasons column removed)
   async function toggleStyleForUser(styleNo: string) {
     if (!currentUserId) return;
     const map = { ...(selectionMap?.value || {}) } as Record<string, string[]>;
@@ -141,7 +105,6 @@ export default function StylesSettingsPage() {
                 <th className="p-2 text-left border-b">Action</th>
                 <th className="p-2 text-left border-b">Style No.</th>
                 <th className="p-2 text-left border-b">Style Name</th>
-                <th className="p-2 text-left border-b">Seasons</th>
               </tr>
             </thead>
             <tbody>
@@ -157,7 +120,6 @@ export default function StylesSettingsPage() {
                     </td>
                     <td className={(added ? 'border-l-4 border-l-slate-900 ' : '') + 'p-2 border-b font-medium'}>{s.style_no}</td>
                     <td className="p-2 border-b text-gray-700">{s.style_name ?? '—'}</td>
-                    <td className="p-2 border-b text-gray-700">{formatSeasonsFor(s.style_no)}</td>
                   </tr>
                 );
               })}
