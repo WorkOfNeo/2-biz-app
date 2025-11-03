@@ -158,6 +158,15 @@ export default function StockListPage() {
     return Array.from(groups.entries()).map(([supplier, list]) => ({ supplier, list }));
   }, [userSelected, styleMetaByNo]);
 
+  // Sidebar colors per style (from current grouped data)
+  const colorsByStyleNoSidebar = React.useMemo(() => {
+    const m: Record<string, string[]> = {};
+    for (const row of groupedByStyle) {
+      m[row.styleNo] = row.colors.map((c) => c.color).sort((a, b) => a.localeCompare(b));
+    }
+    return m;
+  }, [groupedByStyle]);
+
   return (
     <div className="space-y-4">
       <div>
@@ -193,15 +202,19 @@ export default function StockListPage() {
                     <div className="text-[11px] font-medium text-gray-500 px-1 mb-1">{grp.supplier}</div>
                     <ul className="space-y-0.5">
                       {grp.list.map((it) => (
-                        <li key={it.styleNo}>
+                        <li key={it.styleNo} className="group">
                           <a
                             href={`#style-${it.styleNo}`}
                             className="block text-xs px-2 py-1 rounded hover:bg-slate-50"
                             title={it.name || it.styleNo}
                           >
-                            <span className="font-mono text-[11px]">{it.styleNo}</span>
-                            {it.name && <span className="text-[11px] text-gray-600 ml-1">{it.name}</span>}
+                            <span className="text-[12px] text-black">{it.name || it.styleNo}</span>
                           </a>
+                          <div className="pl-3 text-[11px] text-gray-600 max-h-0 opacity-0 translate-y-1 overflow-hidden transition-all duration-300 ease-out group-hover:max-h-40 group-hover:opacity-100 group-hover:translate-y-0">
+                            {(colorsByStyleNoSidebar[it.styleNo] || []).map((c) => (
+                              <a key={c} href={`#style-${it.styleNo}`} className="block py-0.5 hover:underline">{c}</a>
+                            ))}
+                          </div>
                         </li>
                       ))}
                     </ul>

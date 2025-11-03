@@ -6,6 +6,8 @@
   --sidebar-bg: #0b1220;
 }
 
+html { scroll-behavior: smooth; }
+
 body { @apply bg-white text-gray-900; }
 
 .sidebar {
