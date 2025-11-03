@@ -48,12 +48,44 @@ export default function StylesSettingsPage() {
     return Array.from(set).sort((a,b)=>a.localeCompare(b));
   }, [styleSeasons]);
   const [seasonFilter, setSeasonFilter] = useState<string>('');
+  // Load seasons table for nicer labels and search (Name + Year)
+  const { data: seasonsAll } = useSWR('seasons:list', async () => {
+    const { data, error } = await supabase.from('seasons').select('id, name, year').order('year', { ascending: false }).order('name');
+    if (error) throw new Error(error.message);
+    return (data ?? []) as Array<{ id: string; name: string | null; year: number | null }>;
+  });
+  const seasonLabels = useMemo(() => {
+    const out: string[] = [];
+    for (const s of (seasonsAll ?? [])) {
+      const nm = (s.name || '').toUpperCase().trim();
+      const yr = s.year || undefined;
+      if (nm && yr) out.push(`${nm} ${yr}`);
+    }
+    // Merge in labels discovered via style_seasons that might not be in seasons table
+    for (const lbl of seasonOptions) if (!out.includes(lbl.toUpperCase())) out.push(lbl.toUpperCase());
+    return out.sort((a,b)=>a.localeCompare(b));
+  }, [seasonsAll, seasonOptions]);
+  const [seasonQuery, setSeasonQuery] = useState('');
+  const filteredSeasonLabels = useMemo(() => {
+    const q = seasonQuery.trim().toUpperCase();
+    return q ? seasonLabels.filter((l) => l.includes(q)) : seasonLabels;
+  }, [seasonLabels, seasonQuery]);
   const filteredStyles = useMemo(() => {
     if (!styles) return [] as { id: string; style_no: string; style_name: string | null; scrape_enabled: boolean | null; updated_at: string }[];
     if (!seasonFilter) return styles;
     return styles.filter((s) => {
       const arr = styleSeasons?.get(s.style_no) || [];
-      return arr.includes(seasonFilter);
+      // Match either exact stored label or normalized NAME YEAR form
+      const nameYear = seasonFilter.toUpperCase();
+      const yyForm = (() => {
+        const m = nameYear.match(/(\d{4})\s+(.+)/);
+        if (!m) return null;
+        const year = Number(m[1]);
+        const yy = String(year % 100).padStart(2, '0');
+        return `${yy} ${m[2]}`.toUpperCase();
+      })();
+      const set = new Set(arr.map((x: string) => x.toUpperCase()));
+      return set.has(nameYear) || (yyForm ? set.has(yyForm) : false);
     });
   }, [styles, styleSeasons, seasonFilter]);
   async function toggleStyleForUser(styleNo: string) {
@@ -99,10 +131,34 @@ export default function StylesSettingsPage() {
         <div className="flex items-center justify-between">
           <div className="text-sm font-medium">Your list for stock updates</div>
           <div className="flex items-center gap-2">
-            <select className="text-xs border rounded px-2 py-1" value={seasonFilter} onChange={(e)=>setSeasonFilter(e.target.value)}>
-              <option value="">All seasons</option>
-              {seasonOptions.map((opt)=> (<option key={opt} value={opt}>{opt}</option>))}
-            </select>
+            <div className="relative">
+              <input
+                className="text-xs border rounded px-2 py-1 pr-7 w-56"
+                placeholder={seasonFilter ? seasonFilter : 'Filter by season'}
+                value={seasonQuery}
+                onChange={(e)=>setSeasonQuery(e.target.value)}
+                onFocus={(e)=>{ /* open dropdown by focusing; no-op here */ }}
+              />
+              {seasonFilter && (
+                <button
+                  className="absolute right-1 top-1/2 -translate-y-1/2 text-[10px] text-gray-500 hover:text-black"
+                  onClick={()=>{ setSeasonFilter(''); setSeasonQuery(''); }}
+                  title="Clear filter"
+                >✕</button>
+              )}
+              {/* dropdown */}
+              {filteredSeasonLabels.length > 0 && seasonQuery.trim().length > 0 && (
+                <div className="absolute z-10 mt-1 w-56 max-h-56 overflow-auto rounded border bg-white shadow">
+                  {filteredSeasonLabels.map((lbl) => (
+                    <button
+                      key={lbl}
+                      className="block w-full text-left text-xs px-2 py-1 hover:bg-gray-50"
+                      onClick={()=>{ setSeasonFilter(lbl); setSeasonQuery(''); }}
+                    >{lbl}</button>
+                  ))}
+                </div>
+              )}
+            </div>
             <button className="text-xs px-2 py-1 border rounded bg-slate-900 text-white hover:bg-slate-800" onClick={addAllFiltered}>Add all</button>
           </div>
         </div>
