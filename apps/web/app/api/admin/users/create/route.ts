@@ -1,5 +1,5 @@
 export const runtime = 'nodejs';
-import { NextResponse } from 'next/server';
+import { NextResponse } from 'next/server'; // admin create user
 import { createClient } from '@supabase/supabase-js';
 
 export async function POST(request: Request) {
