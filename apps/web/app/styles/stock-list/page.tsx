@@ -45,38 +45,19 @@ export default function StockListPage() {
     return m;
   }, [styleRows]);
 
-  // Load style_colors for the visible styles
-  const styleIds = React.useMemo(() => (styleRows ?? []).map((r: any) => r.id as string).filter(Boolean), [styleRows]);
-  const { data: colorRows, mutate: mutateColors } = useSWR(styleIds.length ? ['style_colors:byStyleIds', styleIds.join(',')] : null, async () => {
-    const { data, error } = await supabase
-      .from('style_colors')
-      .select('id, style_id, color, scrape_enabled')
-      .in('style_id', styleIds);
-    if (error) throw new Error(error.message);
-    // Build map: style_id -> colorLower -> row
-    const map = new Map<string, Map<string, { id: string; scrape_enabled: boolean | null }>>();
-    for (const r of (data ?? []) as any[]) {
-      const sid = String(r.style_id || '');
-      const ckey = String(r.color || '').trim().toLowerCase();
-      if (!map.has(sid)) map.set(sid, new Map());
-      map.get(sid)!.set(ckey, { id: r.id as string, scrape_enabled: (r.scrape_enabled as boolean | null) ?? null });
-    }
-    return map;
-  }, { refreshInterval: 0 });
-
-  async function toggleColorScrape(styleNo: string, color: string, next: boolean) {
-    const styleId = styleMetaByNo[styleNo]?.id || null;
-    if (!styleId) return;
-    const styleMap = colorRows?.get(styleId) || new Map();
-    const key = (color || '').trim().toLowerCase();
-    const existing = styleMap.get(key) as { id: string } | undefined;
-    if (existing?.id) {
-      await supabase.from('style_colors').update({ scrape_enabled: next }).eq('id', existing.id);
-    } else {
-      await supabase.from('style_colors').insert({ style_id: styleId, color, scrape_enabled: next });
-    }
-    await mutateColors();
-  }
+  // Per-user selection for Default view
+  const { data: selectionMap } = useSWR('app-settings:styles-user-selection', async () => {
+    const { data } = await supabase.from('app_settings').select('value').eq('key', 'styles_user_selection').maybeSingle();
+    return ((data?.value as any) || {}) as Record<string, string[]>;
+  });
+  const [currentUserId, setCurrentUserId] = React.useState<string | null>(null);
+  React.useEffect(() => { (async () => { const { data: { session } } = await supabase.auth.getSession(); setCurrentUserId(session?.user?.id ?? null); })(); }, []);
+  const userSelected = React.useMemo(() => {
+    if (!currentUserId) return new Set<string>();
+    const arr = selectionMap?.[currentUserId] || [];
+    return new Set<string>(arr);
+  }, [selectionMap, currentUserId]);
+  const [view, setView] = React.useState<'default' | 'all'>('default');
 
   type Group = {
     styleNo: string;
@@ -147,8 +128,11 @@ export default function StockListPage() {
     const out = Array.from(map.entries()).map(([styleNo, list]) => ({ styleNo, colors: list.sort((a, b) => a.color.localeCompare(b.color)) }));
     // Sort styles numerically-then-lexicographically
     out.sort((a, b) => a.styleNo.localeCompare(b.styleNo));
-    return out as Array<{ styleNo: string; colors: Group[] }>;
-  }, [groups]);
+    const filtered = (view === 'default' && userSelected.size > 0)
+      ? out.filter((row) => userSelected.has(row.styleNo))
+      : out;
+    return filtered as Array<{ styleNo: string; colors: Group[] }>;
+  }, [groups, view, userSelected]);
 
   const [openSold, setOpenSold] = React.useState<Record<string, boolean>>({});
   const [openPurchase, setOpenPurchase] = React.useState<Record<string, boolean>>({});
@@ -158,6 +142,17 @@ export default function StockListPage() {
       <div>
         <div className="text-xs text-gray-500">Styles</div>
         <h1 className="text-xl font-semibold">Stock List</h1>
+      </div>
+
+      <div className="flex items-center gap-2">
+        <button
+          className={(view==='default' ? 'bg-slate-900 text-white ' : 'bg-white text-slate-900 ') + 'text-xs px-2 py-1 border rounded'}
+          onClick={() => setView('default')}
+        >Default</button>
+        <button
+          className={(view==='all' ? 'bg-slate-900 text-white ' : 'bg-white text-slate-900 ') + 'text-xs px-2 py-1 border rounded'}
+          onClick={() => setView('all')}
+        >All</button>
       </div>
 
       {groupedByStyle.map(({ styleNo, colors }) => {
@@ -187,25 +182,10 @@ export default function StockListPage() {
                   const soldTotal = sum(g.soldSum);
                   const purchaseTotal = sum(g.purchaseSum);
                   const availableTotal = sum(g.available);
-                  const styleId = styleMetaByNo[g.styleNo]?.id || null;
-                  const cMap = styleId ? (colorRows?.get(styleId) || new Map()) : new Map();
-                  const cKey = (g.color || '').trim().toLowerCase();
-                  const enabled = styleId ? ((cMap.get(cKey)?.scrape_enabled ?? true) !== false) : true;
                   return (
                     <div key={key} className="grid grid-cols-[0.5fr_1fr] items-start gap-3">
                       {/* Color label + toggle */}
-                      <div className="text-sm font-semibold flex items-center gap-2">
-                        <span>{g.color}</span>
-                        <label className="inline-flex items-center gap-1 text-[11px] font-normal">
-                          <input
-                            type="checkbox"
-                            checked={enabled}
-                            onChange={(e) => toggleColorScrape(g.styleNo, g.color, e.target.checked)}
-                            className="h-3 w-3 accent-slate-900 rounded"
-                          />
-                          <span>Scrape</span>
-                        </label>
-                      </div>
+                      <div className="text-sm font-semibold flex items-center gap-2"><span>{g.color}</span></div>
                       {/* Sizes table */}
                       <div className="overflow-auto border rounded">
                         <table className="min-w-full text-xs">

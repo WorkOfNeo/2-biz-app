@@ -22,49 +22,28 @@ export default function StylesSettingsPage() {
     }
     return map;
   }, { refreshInterval: 0 });
-  const { data: selected } = useSWR('app-settings:styles-daily-selection', async () => {
-    const { data } = await supabase.from('app_settings').select('value').eq('key', 'styles_daily_selection').maybeSingle();
-    return ((data?.value as any)?.styleNos as string[] | undefined) ?? [];
+  // Per-user selection map: { [user_id]: string[] }
+  const { data: selectionMap, mutate: mutateSelection } = useSWR('app-settings:styles-user-selection', async () => {
+    const { data } = await supabase.from('app_settings').select('id, value').eq('key', 'styles_user_selection').maybeSingle();
+    return { id: data?.id ?? null, value: ((data?.value as any) || {}) as Record<string, string[]> };
   });
-  const [local, setLocal] = useState<string[] | null>(null);
-  const current = (local ?? selected ?? []) as string[];
-  const allNos = useMemo(() => new Set((styles ?? []).map(s => s.style_no)), [styles]);
-  const allSelected = current.length > 0 && current.length === allNos.size;
-
-  function toggleOne(no: string) {
-    setLocal((prev) => {
-      const arr = prev ? [...prev] : [...(selected ?? [])];
-      const idx = arr.indexOf(no);
-      if (idx >= 0) arr.splice(idx, 1); else arr.push(no);
-      return arr;
-    });
-  }
-
-  function toggleAll() {
-    setLocal((prev) => {
-      if (allSelected) return [];
-      return Array.from(allNos);
-    });
-  }
-
-  async function save() {
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) throw new Error('Not signed in');
-      const body = { key: 'styles_daily_selection', value: { styleNos: current } };
-      // upsert into app_settings
-      const { data: existing } = await supabase.from('app_settings').select('id').eq('key', 'styles_daily_selection').maybeSingle();
-      if (existing?.id) {
-        await supabase.from('app_settings').update({ value: body.value }).eq('id', existing.id as string);
-      } else {
-        await supabase.from('app_settings').insert(body as any);
-      }
-      // eslint-disable-next-line no-console
-      console.log('[styles-settings] saved', current.length);
-    } catch (e) {
-      // eslint-disable-next-line no-console
-      console.error('[styles-settings] save error', e);
-    }
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  useState(() => { (async () => { const { data: { session } } = await supabase.auth.getSession(); setCurrentUserId(session?.user?.id ?? null); })(); });
+  const selectedForUser = useMemo(() => {
+    if (!currentUserId) return new Set<string>();
+    const arr = selectionMap?.value?.[currentUserId] || [];
+    return new Set<string>(arr);
+  }, [selectionMap, currentUserId]);
+  async function toggleStyleForUser(styleNo: string) {
+    if (!currentUserId) return;
+    const map = { ...(selectionMap?.value || {}) } as Record<string, string[]>;
+    const list = new Set<string>(map[currentUserId] || []);
+    if (list.has(styleNo)) list.delete(styleNo); else list.add(styleNo);
+    map[currentUserId] = Array.from(list);
+    const existsId = selectionMap?.id || null;
+    if (existsId) await supabase.from('app_settings').update({ value: map }).eq('id', existsId as any);
+    else await supabase.from('app_settings').insert({ key: 'styles_user_selection', value: map } as any);
+    await mutateSelection();
   }
 
   return (
@@ -76,58 +55,31 @@ export default function StylesSettingsPage() {
 
       <div className="rounded-md border bg-white p-3">
         <div className="flex items-center justify-between">
-          <div className="text-sm font-medium">Daily update selection</div>
-          <div className="flex items-center gap-2">
-            <button className="text-xs px-2 py-1 border rounded hover:bg-gray-50" onClick={toggleAll}>{allSelected ? 'Unselect all' : 'Select all'}</button>
-            <button className="text-xs px-2 py-1 border rounded bg-slate-900 text-white hover:bg-slate-800" onClick={save}>Save</button>
-          </div>
+          <div className="text-sm font-medium">Your list for stock updates</div>
         </div>
         <div className="mt-3 max-h-96 overflow-auto border rounded">
           <table className="min-w-full text-xs">
             <thead className="bg-gray-50">
               <tr>
-                <th className="p-2 text-left border-b">Select</th>
+                <th className="p-2 text-left border-b">Action</th>
                 <th className="p-2 text-left border-b">Style No.</th>
                 <th className="p-2 text-left border-b">Style Name</th>
-                <th className="p-2 text-left border-b">Scrape</th>
                 <th className="p-2 text-left border-b">Last Updated</th>
               </tr>
             </thead>
             <tbody>
               {(styles ?? []).map((s) => {
-                const checked = current.includes(s.style_no);
+                const added = selectedForUser.has(s.style_no);
                 return (
-                  <tr
-                    key={s.style_no}
-                    onClick={() => toggleOne(s.style_no)}
-                    className={(checked ? 'bg-slate-50 ' : '') + 'hover:bg-slate-50 cursor-pointer transition-colors'}
-                  >
+                  <tr key={s.style_no} className={(added ? 'bg-slate-50 ' : '') + 'hover:bg-slate-50 transition-colors'}>
                     <td className="p-2 border-b align-middle">
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={() => toggleOne(s.style_no)}
-                        onClick={(e) => e.stopPropagation()}
-                        className="h-4 w-4 accent-slate-900 rounded"
-                      />
+                      <button
+                        className={(added ? 'bg-slate-300 text-gray-800 ' : 'bg-slate-900 text-white ') + 'text-xs px-2 py-1 rounded border'}
+                        onClick={async ()=>{ await toggleStyleForUser(s.style_no); }}
+                      >{added ? 'Added' : 'Add to list'}</button>
                     </td>
-                    <td className={(checked ? 'border-l-4 border-l-slate-900 ' : '') + 'p-2 border-b font-medium'}>{s.style_no}</td>
+                    <td className={(added ? 'border-l-4 border-l-slate-900 ' : '') + 'p-2 border-b font-medium'}>{s.style_no}</td>
                     <td className="p-2 border-b text-gray-700">{s.style_name ?? '—'}</td>
-                    <td className="p-2 border-b">
-                      <label className="inline-flex items-center gap-2" onClick={(e)=>e.stopPropagation()}>
-                        <input
-                          type="checkbox"
-                          checked={s.scrape_enabled !== false}
-                          onChange={async (e) => {
-                            try {
-                              await supabase.from('styles').update({ scrape_enabled: e.target.checked }).eq('id', s.id);
-                            } catch {}
-                          }}
-                          className="h-4 w-4 accent-slate-900 rounded"
-                        />
-                        <span>Enabled</span>
-                      </label>
-                    </td>
                     <td className="p-2 border-b text-gray-500">{s.updated_at ? new Date(s.updated_at).toLocaleString() : '—'}</td>
                   </tr>
                 );
@@ -159,7 +111,6 @@ export default function StylesSettingsPage() {
                         <thead className="bg-gray-50">
                           <tr>
                             <th className="p-2 text-left border-b">Color</th>
-                            <th className="p-2 text-left border-b">Scrape</th>
                             <th className="p-2 text-left border-b">Last Updated</th>
                           </tr>
                         </thead>
@@ -167,19 +118,6 @@ export default function StylesSettingsPage() {
                           {list.map((c) => (
                             <tr key={c.id}>
                               <td className="p-2 border-b font-medium">{c.color}</td>
-                              <td className="p-2 border-b">
-                                <input
-                                  type="checkbox"
-                                  checked={c.scrape_enabled !== false}
-                                  onChange={async (e) => {
-                                    try {
-                                      await supabase.from('style_colors').update({ scrape_enabled: e.target.checked }).eq('id', c.id);
-                                      await mutateColors();
-                                    } catch {}
-                                  }}
-                                  className="h-4 w-4 accent-slate-900 rounded"
-                                />
-                              </td>
                               <td className="p-2 border-b text-gray-500">{c.updated_at ? new Date(c.updated_at).toLocaleString() : '—'}</td>
                             </tr>
                           ))}

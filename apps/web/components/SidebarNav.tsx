@@ -43,7 +43,7 @@ export function SidebarNav() {
         <div className="mt-4 mb-1 text-xs uppercase tracking-wider text-slate-400">Styles</div>
         <div className="ml-2 space-y-1">
           <NavLink href="/styles" label="Styles" />
-          {has('admin') && <NavLink href="/styles/settings" label="Settings" />}
+          <NavLink href="/styles/settings" label="Settings" />
           <NavLink href="/styles/stock-list" label="Stock List" />
           {has('admin') && <NavLink href="/styles/statistics" label="Statistics" />}
         </div>
