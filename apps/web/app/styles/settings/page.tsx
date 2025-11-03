@@ -58,7 +58,7 @@ export default function StylesSettingsPage() {
     if (!arr || arr.length === 0) return '—';
     const first = String(arr[0] || '').trim();
     const m = first.match(/^(\d{2,4})\s+(.+)$/);
-    const name = (m ? m[2] : first).toString();
+    const name = (m?.[2] ?? first).toString();
     const extra = arr.length > 1 ? ` +${arr.length - 1}` : '';
     return `${name}${extra}`;
   }
