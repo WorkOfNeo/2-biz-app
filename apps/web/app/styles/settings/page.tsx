@@ -53,12 +53,32 @@ export default function StylesSettingsPage() {
     for (const r of (data ?? []) as any[]) map.set(r.style_no as string, Array.isArray(r.seasons) ? (r.seasons as string[]) : []);
     return map;
   });
+  // Load seasons table for id -> label mapping
+  const { data: seasonsAll } = useSWR('seasons:map', async () => {
+    const { data, error } = await supabase.from('seasons').select('id, name, year');
+    if (error) throw new Error(error.message);
+    return (data ?? []) as Array<{ id: string; name: string | null; year: number | null }>;
+  });
+  const seasonsById = useMemo(() => {
+    const m = new Map<string, { name: string; year: number | null }>();
+    for (const s of (seasonsAll ?? [])) {
+      m.set(s.id, { name: (s.name || '').toUpperCase(), year: s.year ?? null });
+    }
+    return m;
+  }, [seasonsAll]);
   function formatSeasonsFor(styleNo: string): string {
     const arr = styleSeasons?.get(styleNo) || [];
     if (!arr || arr.length === 0) return '—';
-    const first = String(arr[0] || '').trim();
-    const m = first.match(/^(\d{2,4})\s+(.+)$/);
-    const name = (m?.[2] ?? first).toString();
+    const firstRaw = String(arr[0] || '').trim();
+    // Prefer seasons table mapping when value is an id present in seasonsById
+    let name = firstRaw;
+    const byId = seasonsById.get(firstRaw);
+    if (byId) {
+      name = byId.name || firstRaw;
+    } else {
+      const m = firstRaw.match(/^(\d{2,4})\s+(.+)$/);
+      name = (m?.[2] ?? firstRaw).toString();
+    }
     const extra = arr.length > 1 ? ` +${arr.length - 1}` : '';
     return `${name}${extra}`;
   }
