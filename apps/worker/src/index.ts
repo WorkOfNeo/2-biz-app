@@ -444,6 +444,7 @@ async function runJob(job: JobRow) {
       } catch {}
       const extracted = await page!.$$eval('.statAndStockBox', (boxes, allowed: Record<string, boolean>) => {
         function text(el: Element | null | undefined): string { return ((el as HTMLElement | null)?.textContent || '').replace(/\s+/g, ' ').trim(); }
+        function normalizeLabel(label: string): string { return (label || '').replace(/\s+/g, ' ').trim().toUpperCase(); }
         function numbersFromRow(tds: HTMLElement[]): number[] {
           const arr: number[] = [];
           for (let i = 1; i < tds.length - 1; i++) {
@@ -513,45 +514,38 @@ async function runJob(job: JobRow) {
               if (/PO Available/i.test(label)) { out.push({ color, sizes: sizeLabels, section: 'PO Available', row_label: 'PO Available', values: numbersFromRow(tds), po_link: null }); continue; }
               if (/^Corrected$/i.test(label)) { out.push({ color, sizes: sizeLabels, section: 'Corrected', row_label: 'Corrected', values: numbersFromRow(tds), po_link: null }); continue; }
             }
-            // Purchase block rows (both main and sub) with rules:
-            // - Skip sum/aggregate lines like NOOS (exact) and Total PO (Run + Ship)
-            // - If a non-dedicated sub-row is immediately followed by a dedicated sub-row (Stock/Pre Dedicated), skip the non-dedicated row
-            // - Carry over the PO link from the heading row to dedicated rows if missing
-            // - De-duplicate purchase entries by (row_label + po_link)
-            if (inPurchase && (cls.includes('stylecolor-expanded--main') || cls.includes('stylecolor-expanded--sub'))) {
-              const isSumRow = /^NOOS$/i.test(label) || /^Total\s+PO/i.test(label);
+            // Purchase block rows rules:
+            // - Skip sum lines (NOOS, Total PO (Run + Ship))
+            // - Do not save .stylecolor-expanded--main (titles); only .stylecolor-expanded--sub
+            // - Capture PO link from main row and propagate to sub rows
+            // - Skip non-dedicated sub when followed by a dedicated sub
+            // - De-duplicate by normalized (row_label + po_link)
+            if (inPurchase) {
+              const isSumRow = /^NOOS$/i.test(label) || /^Total\s+PO\s*\(/i.test(label);
               if (isSumRow) { continue; }
-              const nextEl = (rows[r + 1] as HTMLTableRowElement | undefined) || undefined;
-              const nextCls = nextEl ? (nextEl.className || '') : '';
-              const nextLabel = nextEl ? text((Array.from(nextEl.querySelectorAll('td')) as HTMLElement[])[0] || null) : '';
-              const isDedicatedLabel = /(Stock\s+Dedicated|Pre\s+Dedicated)/i.test(label);
-              const nextIsDedicatedLabel = /(Stock\s+Dedicated|Pre\s+Dedicated)/i.test(nextLabel);
-              // Detect heading rows with a PO link
-              const headingLinkA = rowEl.querySelector('a[href*="purchase_orders.php"]') as HTMLAnchorElement | null;
-              const headingLink = headingLinkA ? (headingLinkA.getAttribute('href') || null) : null;
-              if (headingLink) {
-                lastPurchaseHeading = { label: label || 'Row', link: headingLink };
-              }
-              // Skip non-dedicated sub row if the immediately following row is a dedicated sub row
-              if (!isDedicatedLabel && cls.includes('stylecolor-expanded--sub') && nextEl && nextCls.includes('stylecolor-expanded--sub') && nextIsDedicatedLabel) {
-                // retain heading context (label/link) for the dedicated rows
+              if (cls.includes('stylecolor-expanded--main')) {
+                const headingLinkA = rowEl.querySelector('a[href*="purchase_orders.php"]') as HTMLAnchorElement | null;
+                const headingLink = headingLinkA ? (headingLinkA.getAttribute('href') || null) : null;
+                if (headingLink) { lastPurchaseHeading = { label: label || 'Row', link: headingLink }; }
                 continue;
               }
-              // Build base row
-              let po_link: string | null = headingLink;
-              if (!po_link) {
+              if (cls.includes('stylecolor-expanded--sub')) {
+                const nextEl = (rows[r + 1] as HTMLTableRowElement | undefined) || undefined;
+                const nextCls = nextEl ? (nextEl.className || '') : '';
+                const nextLabel = nextEl ? text((Array.from(nextEl.querySelectorAll('td')) as HTMLElement[])[0] || null) : '';
+                const isDedicatedLabel = /(Stock\s+Dedicated|Pre\s+Dedicated)/i.test(label);
+                const nextIsDedicatedLabel = /(Stock\s+Dedicated|Pre\s+Dedicated)/i.test(nextLabel);
+                if (!isDedicatedLabel && nextEl && nextCls.includes('stylecolor-expanded--sub') && nextIsDedicatedLabel) { continue; }
+                let po_link: string | null = null;
                 const poA = rowEl.querySelector('a[href*="purchase_orders.php"]') as HTMLAnchorElement | null;
                 po_link = poA ? (poA.getAttribute('href') || null) : null;
+                if (!po_link && lastPurchaseHeading) po_link = lastPurchaseHeading.link;
+                const key = normalizeLabel(label || 'Row') + '|' + String(po_link || '');
+                if (seenPurchase.has(key)) { continue; }
+                seenPurchase.add(key);
+                out.push({ color, sizes: sizeLabels, section: 'Purchase (Running + Shipped)', row_label: label || 'Row', values: numbersFromRow(tds), po_link });
+                continue;
               }
-              // If this is a dedicated row and missing link, use last heading's link
-              if (isDedicatedLabel && !po_link && lastPurchaseHeading) {
-                po_link = lastPurchaseHeading.link;
-              }
-              const key = (label || 'Row') + '|' + String(po_link || '');
-              if (seenPurchase.has(key)) { continue; }
-              seenPurchase.add(key);
-              out.push({ color, sizes: sizeLabels, section: 'Purchase (Running + Shipped)', row_label: label || 'Row', values: numbersFromRow(tds), po_link });
-              continue;
             }
           }
         }
