@@ -163,7 +163,7 @@ function RoleForm({ users, onSaved, onAddUser }: { users: Array<{ user_id: strin
       <label className="text-sm">
         <div className="font-medium">Role</div>
         <select className="mt-1 border rounded px-2 py-1 text-sm" value={role} onChange={(e)=>setRole(e.target.value)}>
-          {['admin','manager','sales','viewer'].map((r)=> (<option key={r} value={r}>{r}</option>))}
+          {['admin','viewer'].map((r)=> (<option key={r} value={r}>{r}</option>))}
         </select>
       </label>
       <button disabled={saving || (mode==='new' ? !newUid.trim() : !userId.trim())} className="rounded border px-3 py-1.5 text-sm bg-slate-900 text-white">Add</button>
@@ -183,7 +183,7 @@ function AddRoleInline({ userId, onSaved }: { userId: string; onSaved: () => voi
   return (
     <div className="flex items-center gap-2">
       <select className="border rounded px-2 py-1 text-sm" value={role} onChange={(e)=>setRole(e.target.value)}>
-        {['admin','manager','sales','viewer'].map((r)=> (<option key={r} value={r}>{r}</option>))}
+        {['admin','viewer'].map((r)=> (<option key={r} value={r}>{r}</option>))}
       </select>
       <button
         disabled={saving}
@@ -213,7 +213,7 @@ function AddRoleInline({ userId, onSaved }: { userId: string; onSaved: () => voi
 
 function RolePageMatrix({ pages, value, onSave }: { pages: string[]; value: Record<string, string[]>; onSave: (next: Record<string, string[]>) => Promise<void> }) {
   const React = require('react') as typeof import('react');
-  const roles: string[] = ['admin','manager','sales','viewer'];
+  const roles: string[] = ['admin','viewer'];
   const [map, setMap] = React.useState<Record<string, Set<string>>>(() => {
     const out: Record<string, Set<string>> = {};
     for (const r of roles) {

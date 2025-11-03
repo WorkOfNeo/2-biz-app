@@ -29,6 +29,15 @@ export async function middleware(req: NextRequest) {
     return NextResponse.redirect(signinUrl);
   }
 
+  // Enforce admin-only access to /admin routes
+  try {
+    const { data } = await supabase.from('user_roles').select('role');
+    const roles = new Set<string>((data || []).map((r: any) => String(r.role || '')));
+    if (pathname.startsWith('/admin') && !roles.has('admin')) {
+      return NextResponse.redirect(new URL('/', req.url));
+    }
+  } catch {}
+
   return res;
 }
 
