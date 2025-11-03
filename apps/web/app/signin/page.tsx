@@ -28,7 +28,11 @@ function InnerSignIn() {
   }, []);
 
   return (
-    <div className="min-h-screen grid place-items-center bg-gray-50 p-4">
+    <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50 p-4">
+      <div className="mb-6 flex items-center justify-center">
+        {/* Logo placeholder */}
+        <img src="/favicon.ico" alt="Logo" className="h-12 w-12" />
+      </div>
       <div className="w-full max-w-sm rounded-lg border bg-white p-6 shadow-sm">
         <h1 className="text-lg font-semibold mb-4">Sign in</h1>
         {error && <div className="mb-3 rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
