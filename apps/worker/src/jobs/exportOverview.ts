@@ -433,9 +433,9 @@ export async function exportOverview(ctx: Ctx) {
         const r2 = c2 ? ((rates as any)[cur2] ?? 1) : 1;
         const s1Local2 = row2 ? (r2 ? row2.s1Price / r2 : row2.s1Price) : 0;
         const s2Local2 = row2 ? (r2 ? row2.s2Price / r2 : row2.s2Price) : 0;
-        return React.createElement(PdfPage, { size: 'A4', orientation: 'landscape', style: styles.page },
-          React.createElement(View, { style: { flexDirection: 'row', gap: 24 } },
-            React.createElement(View, { style: { width: '50%' as any } },
+        return React.createElement(PdfPage, { size: 'A4', style: styles.page },
+          React.createElement(View, { style: { flexDirection: 'column', gap: 24 } },
+            React.createElement(View, { style: { width: '100%' as any } },
               React.createElement(Text, { style: styles.h1 }, `Countries · ${c1}`),
               React.createElement(View, { style: styles.section },
                 React.createElement(View, { style: styles.box },
@@ -451,7 +451,7 @@ export async function exportOverview(ctx: Ctx) {
                 )
               )
             ),
-            c2 ? React.createElement(View, { style: { width: '50%' as any } },
+            c2 ? React.createElement(View, { style: { width: '100%' as any } },
               React.createElement(Text, { style: styles.h1 }, `Countries · ${c2}`),
               React.createElement(View, { style: styles.section },
                 React.createElement(View, { style: styles.box },
