@@ -112,6 +112,8 @@ function RoleForm({ users, onSaved, onAddUser }: { users: Array<{ user_id: strin
   const [newName, setNewName] = React.useState('');
   const [role, setRole] = React.useState('viewer');
   const [saving, setSaving] = React.useState(false);
+  const [msg, setMsg] = React.useState<string | null>(null);
+  const [err, setErr] = React.useState<string | null>(null);
   return (
     <form
       className="flex items-end gap-2"
@@ -119,6 +121,8 @@ function RoleForm({ users, onSaved, onAddUser }: { users: Array<{ user_id: strin
         e.preventDefault();
         try {
           setSaving(true);
+          setMsg(null);
+          setErr(null);
           let targetUid = userId.trim();
           if (mode === 'new') {
             if (!newUid.trim()) return;
@@ -126,12 +130,17 @@ function RoleForm({ users, onSaved, onAddUser }: { users: Array<{ user_id: strin
             targetUid = newUid.trim();
           }
           if (!targetUid) return;
-          const { error } = await supabase.from('user_roles').insert({ user_id: targetUid, role });
-          if (error) throw error;
+          const res = await fetch('/api/admin/users/roles/add', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: targetUid, role }) });
+          if (!res.ok) {
+            const txt = await res.text();
+            throw new Error(txt || 'Failed to add role');
+          }
           setNewUid(''); setNewName('');
           onSaved();
+          setMsg('Role added');
         } catch (e) {
-          // no-op
+          console.error('Add role failed', e);
+          setErr((e as any)?.message || 'Failed to add role');
         } finally { setSaving(false); }
       }}
     >
@@ -158,6 +167,8 @@ function RoleForm({ users, onSaved, onAddUser }: { users: Array<{ user_id: strin
         </select>
       </label>
       <button disabled={saving || (mode==='new' ? !newUid.trim() : !userId.trim())} className="rounded border px-3 py-1.5 text-sm bg-slate-900 text-white">Add</button>
+      {msg && <div className="text-green-700 text-xs ml-2">{msg}</div>}
+      {err && <div className="text-red-600 text-xs ml-2" title={err}>Error</div>}
     </form>
   );
 }
@@ -167,6 +178,8 @@ function AddRoleInline({ userId, onSaved }: { userId: string; onSaved: () => voi
   const React = require('react') as typeof import('react');
   const [role, setRole] = React.useState('viewer');
   const [saving, setSaving] = React.useState(false);
+  const [msg, setMsg] = React.useState<string | null>(null);
+  const [err, setErr] = React.useState<string | null>(null);
   return (
     <div className="flex items-center gap-2">
       <select className="border rounded px-2 py-1 text-sm" value={role} onChange={(e)=>setRole(e.target.value)}>
@@ -176,9 +189,24 @@ function AddRoleInline({ userId, onSaved }: { userId: string; onSaved: () => voi
         disabled={saving}
         className="rounded border px-2 py-1 text-sm"
         onClick={async ()=>{
-          try { setSaving(true); await supabase.from('user_roles').insert({ user_id: userId, role }); onSaved(); } finally { setSaving(false); }
+          try {
+            setSaving(true);
+            setMsg(null); setErr(null);
+            const res = await fetch('/api/admin/users/roles/add', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: userId, role }) });
+            if (!res.ok) {
+              const txt = await res.text();
+              throw new Error(txt || 'Failed to add role');
+            }
+            onSaved();
+            setMsg('Role added');
+          } catch (e) {
+            console.error('Add role failed', e);
+            setErr((e as any)?.message || 'Failed to add role');
+          } finally { setSaving(false); }
         }}
       >Add</button>
+      {msg && <div className="text-green-700 text-xs">{msg}</div>}
+      {err && <div className="text-red-600 text-xs" title={err}>Error</div>}
     </div>
   );
 }
