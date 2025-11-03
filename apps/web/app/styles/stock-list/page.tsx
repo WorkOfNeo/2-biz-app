@@ -44,6 +44,7 @@ export default function StockListPage() {
     }
     return m;
   }, [styleRows]);
+  const styleIds = React.useMemo(() => (styleRows ?? []).map((r: any) => r.id as string).filter(Boolean), [styleRows]);
 
   // Per-user selection for Default view
   const { data: selectionMap } = useSWR('app-settings:styles-user-selection', async () => {
