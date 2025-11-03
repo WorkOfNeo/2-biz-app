@@ -4,18 +4,12 @@ import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 
 export default function UsersAdminPage() {
   const supabase = createClientComponentClient();
-  const { data: users } = useSWR('users:list', async () => {
-    // We cannot list auth users from the client; show role assignments grouped by user
-    const { data, error } = await supabase.from('user_roles').select('user_id, role').order('user_id');
-    if (error) throw new Error(error.message);
-    const map = new Map<string, string[]>();
-    for (const r of (data ?? []) as any[]) {
-      const arr = map.get(r.user_id) || [];
-      arr.push(r.role);
-      map.set(r.user_id, arr);
-    }
-    return Array.from(map.entries()).map(([user_id, roles]) => ({ user_id, roles }));
+  const { data, mutate } = useSWR('admin:users', async () => {
+    const res = await fetch('/api/admin/users/list');
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
   });
+  const users = data?.users as { user_id: string; name: string; email: string; roles: string[] }[] | undefined;
   const React = require('react') as typeof import('react');
   const [open, setOpen] = React.useState(false);
   const [name, setName] = React.useState('');
@@ -23,6 +17,7 @@ export default function UsersAdminPage() {
   const [password, setPassword] = React.useState('');
   const [role, setRole] = React.useState('viewer');
   const [creating, setCreating] = React.useState(false);
+  const [saving, setSaving] = React.useState<string | null>(null);
 
   return (
     <div className="space-y-4">
@@ -76,14 +71,60 @@ export default function UsersAdminPage() {
           <thead className="bg-gray-50">
             <tr>
               <th className="p-2 text-left border-b">User ID</th>
+              <th className="p-2 text-left border-b">Name</th>
+              <th className="p-2 text-left border-b">Email</th>
               <th className="p-2 text-left border-b">Roles</th>
+              <th className="p-2 text-left border-b">Actions</th>
             </tr>
           </thead>
           <tbody>
             {(users ?? []).map((u) => (
               <tr key={u.user_id}>
-                <td className="p-2 border-b font-mono text-xs">{u.user_id}</td>
-                <td className="p-2 border-b">{u.roles.join(', ')}</td>
+                <td className="p-2 border-b font-mono text-[11px]">{u.user_id}</td>
+                <td className="p-2 border-b">
+                  <InlineEditable
+                    value={u.name || ''}
+                    placeholder="Name"
+                    onSave={async (val)=>{
+                      setSaving(u.user_id);
+                      await fetch('/api/admin/users/update', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: u.user_id, name: val }) });
+                      setSaving(null);
+                      mutate();
+                    }}
+                  />
+                </td>
+                <td className="p-2 border-b">
+                  <InlineEditable
+                    value={u.email || ''}
+                    placeholder="email@example.com"
+                    onSave={async (val)=>{
+                      setSaving(u.user_id);
+                      await fetch('/api/admin/users/update', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: u.user_id, email: val }) });
+                      setSaving(null);
+                      mutate();
+                    }}
+                  />
+                </td>
+                <td className="p-2 border-b">
+                  <div className="flex flex-wrap gap-1">
+                    {u.roles.map((r)=> (
+                      <span key={r} className="inline-flex items-center gap-1 rounded bg-slate-100 px-2 py-0.5">
+                        <span>{r}</span>
+                        <button
+                          className="text-red-600 hover:underline"
+                          title="Remove role"
+                          onClick={async ()=>{
+                            await fetch('/api/admin/users/roles/remove', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: u.user_id, role: r }) });
+                            mutate();
+                          }}
+                        >×</button>
+                      </span>
+                    ))}
+                  </div>
+                </td>
+                <td className="p-2 border-b">
+                  <AddRole userId={u.user_id} onAdded={()=>mutate()} />
+                </td>
               </tr>
             ))}
           </tbody>
@@ -93,4 +134,51 @@ export default function UsersAdminPage() {
   );
 }
 
+
+function InlineEditable({ value, onSave, placeholder }:{ value: string; onSave: (v:string)=>Promise<void>|void; placeholder?: string }){
+  const React = require('react') as typeof import('react');
+  const [val, setVal] = React.useState(value);
+  const [editing, setEditing] = React.useState(false);
+  React.useEffect(()=>{ setVal(value); }, [value]);
+  return (
+    <div className="flex items-center gap-2">
+      {editing ? (
+        <>
+          <input className="border rounded px-2 py-1 text-sm" value={val} placeholder={placeholder} onChange={(e)=>setVal(e.target.value)} />
+          <button className="text-xs rounded border px-2 py-1 bg-slate-900 text-white" onClick={async ()=>{ await onSave(val); setEditing(false); }}>Save</button>
+          <button className="text-xs underline" onClick={()=>{ setVal(value); setEditing(false); }}>Cancel</button>
+        </>
+      ) : (
+        <>
+          <span>{value || <span className="text-gray-400">{placeholder || '—'}</span>}</span>
+          <button className="text-xs underline" onClick={()=>setEditing(true)}>Edit</button>
+        </>
+      )}
+    </div>
+  );
+}
+
+function AddRole({ userId, onAdded }:{ userId: string; onAdded: ()=>void }){
+  const React = require('react') as typeof import('react');
+  const [r, setR] = React.useState('viewer');
+  const [busy, setBusy] = React.useState(false);
+  return (
+    <form
+      className="flex items-center gap-2"
+      onSubmit={async (e)=>{
+        e.preventDefault();
+        try {
+          setBusy(true);
+          await fetch('/api/admin/users/roles/add', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: userId, role: r }) });
+          onAdded();
+        } finally { setBusy(false); }
+      }}
+    >
+      <select className="border rounded px-2 py-1 text-sm" value={r} onChange={(e)=>setR(e.target.value)}>
+        {['admin','manager','sales','viewer'].map((x)=> (<option key={x} value={x}>{x}</option>))}
+      </select>
+      <button disabled={busy} className="text-xs rounded border px-2 py-1 bg-slate-900 text-white disabled:opacity-50">Add role</button>
+    </form>
+  );
+}
 
