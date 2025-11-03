@@ -28,7 +28,7 @@ export default function StylesSettingsPage() {
     return { id: data?.id ?? null, value: ((data?.value as any) || {}) as Record<string, string[]> };
   });
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
-  useState(() => { (async () => { const { data: { session } } = await supabase.auth.getSession(); setCurrentUserId(session?.user?.id ?? null); })(); });
+  (require('react') as typeof import('react')).useEffect(() => { (async () => { const { data: { session } } = await supabase.auth.getSession(); setCurrentUserId(session?.user?.id ?? null); })(); }, []);
   const selectedForUser = useMemo(() => {
     if (!currentUserId) return new Set<string>();
     const arr = selectionMap?.value?.[currentUserId] || [];

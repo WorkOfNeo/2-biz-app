@@ -58,6 +58,7 @@ export default function StockListPage() {
     return new Set<string>(arr);
   }, [selectionMap, currentUserId]);
   const [view, setView] = React.useState<'default' | 'all'>('default');
+  const selectionLoading = selectionMap === undefined || currentUserId === null;
 
   type Group = {
     styleNo: string;
@@ -128,11 +129,11 @@ export default function StockListPage() {
     const out = Array.from(map.entries()).map(([styleNo, list]) => ({ styleNo, colors: list.sort((a, b) => a.color.localeCompare(b.color)) }));
     // Sort styles numerically-then-lexicographically
     out.sort((a, b) => a.styleNo.localeCompare(b.styleNo));
-    const filtered = (view === 'default' && userSelected.size > 0)
-      ? out.filter((row) => userSelected.has(row.styleNo))
+    const filtered = (view === 'default')
+      ? (selectionLoading ? [] : out.filter((row) => userSelected.has(row.styleNo)))
       : out;
     return filtered as Array<{ styleNo: string; colors: Group[] }>;
-  }, [groups, view, userSelected]);
+  }, [groups, view, userSelected, selectionLoading]);
 
   const [openSold, setOpenSold] = React.useState<Record<string, boolean>>({});
   const [openPurchase, setOpenPurchase] = React.useState<Record<string, boolean>>({});
@@ -154,6 +155,9 @@ export default function StockListPage() {
           onClick={() => setView('all')}
         >All</button>
       </div>
+      {view==='default' && selectionLoading && (
+        <div className="text-xs text-gray-500">Loading your selection…</div>
+      )}
 
       {groupedByStyle.map(({ styleNo, colors }) => {
         const meta = styleMetaByNo[styleNo] || { name: null, supplier: null, image: null };
