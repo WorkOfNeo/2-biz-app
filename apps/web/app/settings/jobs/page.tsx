@@ -163,7 +163,10 @@ export default function JobsOverviewPage() {
                 <button disabled={enq!==null} onClick={() => enqueue('scrape_styles')} className="rounded border px-2 py-1 text-xs hover:bg-gray-50 disabled:opacity-50">Run Scrape Styles</button>
               )}
               {it.type === 'update_style_stock' && (
-                <button disabled={enq!==null} onClick={() => enqueue('update_style_stock')} className="rounded border px-2 py-1 text-xs hover:bg-gray-50 disabled:opacity-50">Run Update Stock</button>
+                <>
+                  <button disabled={enq!==null} onClick={() => enqueue('update_style_stock')} className="rounded border px-2 py-1 text-xs hover:bg-gray-50 disabled:opacity-50">Run Update Stock (Selected)</button>
+                  <button disabled={enq!==null} onClick={() => enqueue('update_style_stock', { mode: 'all' })} className="rounded border px-2 py-1 text-xs hover:bg-gray-50 disabled:opacity-50">Run Update Stock (All)</button>
+                </>
               )}
               {it.type === 'scrape_customers' && (
                 <button disabled={enq!==null} onClick={() => enqueue('scrape_customers')} className="rounded border px-2 py-1 text-xs hover:bg-gray-50 disabled:opacity-50">Run Scrape Customers</button>

@@ -231,25 +231,48 @@ async function runJob(job: JobRow) {
   if (job.type === 'update_style_stock') {
     await ensureNotCancelled(job.id);
     await log(job.id, 'info', 'STEP:style_stock_begin');
-    // Expect payload.styleNos or derive from app_settings.styles_user_selection (union per-user),
-    // falling back to legacy app_settings.styles_daily_selection
+    // Expect payload.styleNos or derive from:
+    // - payload.mode === 'all' → all styles in DB
+    // - else union from app_settings.styles_user_selection
+    // Fallback: legacy app_settings.styles_daily_selection
     let styleNos: string[] = Array.isArray(job.payload?.styleNos) ? (job.payload?.styleNos as string[]) : [];
     if (styleNos.length === 0) {
       try {
-        // New per-user selection map: { [user_id]: string[] }
-        const { data: sel } = await supabase.from('app_settings').select('value').eq('key', 'styles_user_selection').maybeSingle();
-        const map = ((sel?.value as any) || {}) as Record<string, string[]>;
-        const set = new Set<string>();
-        for (const arr of Object.values(map)) {
-          for (const no of (arr || [])) if (no && typeof no === 'string') set.add(no);
-        }
-        styleNos = Array.from(set);
-        if (styleNos.length === 0) {
-          // Legacy fallback
-          const { data } = await supabase.from('app_settings').select('value').eq('key', 'styles_daily_selection').maybeSingle();
-          styleNos = ((data?.value as any)?.styleNos as string[] | undefined) ?? [];
+        if ((job.payload as any)?.mode === 'all') {
+          const { data: rows } = await supabase.from('styles').select('style_no').limit(100000);
+          styleNos = ((rows ?? []) as any[]).map((r) => String(r.style_no || '')).filter(Boolean);
+        } else {
+          // New per-user selection map: { [user_id]: string[] }
+          const { data: sel } = await supabase.from('app_settings').select('value').eq('key', 'styles_user_selection').maybeSingle();
+          const map = ((sel?.value as any) || {}) as Record<string, string[]>;
+          const set = new Set<string>();
+          for (const arr of Object.values(map)) {
+            for (const no of (arr || [])) if (no && typeof no === 'string') set.add(no);
+          }
+          styleNos = Array.from(set);
+          if (styleNos.length === 0) {
+            // Legacy fallback
+            const { data } = await supabase.from('app_settings').select('value').eq('key', 'styles_daily_selection').maybeSingle();
+            styleNos = ((data?.value as any)?.styleNos as string[] | undefined) ?? [];
+          }
         }
       } catch {}
+    }
+    // Fan-out: split into chunks of ~30 and enqueue follow-up jobs for the remainder
+    const BATCH_SIZE = Math.max(1, Number(process.env.STOCK_BATCH_SIZE || '30') || 30);
+    if (styleNos.length > BATCH_SIZE) {
+      const rest = styleNos.slice(BATCH_SIZE);
+      const chunks: string[][] = [];
+      for (let i = 0; i < rest.length; i += BATCH_SIZE) chunks.push(rest.slice(i, i + BATCH_SIZE));
+      for (const chunk of chunks) {
+        try {
+          await supabase
+            .from('jobs')
+            .insert({ type: 'update_style_stock', payload: { styleNos: chunk, requestedBy: (job.payload as any)?.requestedBy, mode: (job.payload as any)?.mode }, status: 'queued', max_attempts: 3 });
+        } catch {}
+      }
+      await log(job.id, 'info', 'STEP:style_stock_fanout', { batchSize: BATCH_SIZE, total: styleNos.length, enqueued: rest.length });
+      styleNos = styleNos.slice(0, BATCH_SIZE);
     }
     if (styleNos.length === 0) {
       await log(job.id, 'info', 'STEP:style_stock_no_selection');
