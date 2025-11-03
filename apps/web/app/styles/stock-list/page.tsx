@@ -179,10 +179,10 @@ export default function StockListPage() {
         <div className="text-xs text-gray-500">Loading your selection…</div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-[240px_1fr] gap-4 items-start">
+      <div className="grid grid-cols-1 lg:grid-cols-[180px_1fr] gap-4 items-start">
         {/* Left: selected styles by supplier */}
         <aside className="hidden lg:block sticky top-4 self-start">
-          <div className="rounded-md border bg-white p-2 max-h-[70vh] overflow-auto">
+          <div className="bg-[#f7f7f7] p-2 max-h-[70vh] overflow-auto">
             <div className="text-xs font-semibold text-gray-700 px-1 pb-1">Your styles</div>
             {selectedSidebar.length === 0 ? (
               <div className="text-[11px] text-gray-500 px-1 py-2">No styles selected.</div>
@@ -217,7 +217,7 @@ export default function StockListPage() {
       {groupedByStyle.map(({ styleNo, colors }) => {
         const meta = styleMetaByNo[styleNo] || { name: null, supplier: null, image: null };
         return (
-          <div key={styleNo} id={`style-${styleNo}`} className="rounded-md border bg-white p-3">
+          <div key={styleNo} id={`style-${styleNo}`} className="bg-white p-3">
             <div className="grid grid-cols-[1fr_0.5fr_1fr] gap-3">
               {/* Left: sticky style info */}
               <div className="sticky top-2 self-start">
@@ -242,11 +242,11 @@ export default function StockListPage() {
                   const purchaseTotal = sum(g.purchaseSum);
                   const availableTotal = sum(g.available);
                   return (
-                    <div key={key} className="grid grid-cols-[0.5fr_1fr] items-start gap-3">
-                      {/* Color label + toggle */}
-                      <div className="text-sm font-semibold flex items-center gap-2"><span>{g.color}</span></div>
+                    <div key={key} className="space-y-2">
+                      {/* Color heading above table */}
+                      <div className="text-sm font-semibold text-black">{g.color}</div>
                       {/* Sizes table */}
-                      <div className="overflow-auto border rounded">
+                      <div className="overflow-auto">
                         <table className="min-w-full text-xs">
                           <thead className="bg-gray-50">
                             <tr>
@@ -316,7 +316,7 @@ export default function StockListPage() {
                           </tfoot>
                         </table>
                       </div>
-                      <div className="col-span-2 text-[10px] text-gray-500 mt-1">Scraped: {new Date(g.scrapedAt).toLocaleString()}</div>
+                      {/* Scraped timestamp removed per request */}
                     </div>
                   );
                 })}
