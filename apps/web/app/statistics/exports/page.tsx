@@ -96,6 +96,12 @@ export default function StatisticsExportsPage() {
               break;
             }
           }
+          // Also check job status as a fallback to clear the spinner
+          const { data: jobRow } = await supabase.from('jobs').select('status').eq('id', jobId).maybeSingle();
+          if ((jobRow as any)?.status === 'succeeded' || (jobRow as any)?.status === 'failed' || (jobRow as any)?.status === 'cancelled') {
+            setRunning(false); setJobId(null); setProgress(null); setJobDone(true);
+            setTimeout(() => setJobDone(false), 3000);
+          }
         } catch {}
       }, 1500);
       return () => { if (timer) clearInterval(timer); clearInterval(t); };
@@ -145,6 +151,59 @@ export default function StatisticsExportsPage() {
     if (!res.ok) throw new Error(await res.text());
     const js = await res.json();
     setJobId(js.jobId);
+  }
+
+  async function createJob(body: any) {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) throw new Error('Not signed in');
+    const token = session.access_token;
+    const res = await fetch('/api/enqueue', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(body) });
+    if (!res.ok) throw new Error(await res.text());
+    const js = await res.json();
+    return js.jobId as string;
+  }
+
+  async function waitForJob(jobId: string) {
+    // Poll jobs table until done
+    for (let i = 0; i < 120; i++) { // up to ~3 minutes
+      try {
+        const { data } = await supabase.from('jobs').select('status').eq('id', jobId).maybeSingle();
+        const st = (data as any)?.status as string | undefined;
+        if (st === 'succeeded' || st === 'failed' || st === 'cancelled') return st;
+      } catch {}
+      await new Promise(r => setTimeout(r, 1500));
+    }
+    return 'timeout';
+  }
+
+  async function enqueueAllExportsSequential() {
+    if (running || jobId) return;
+    try {
+      setRunning(true);
+      setProgress(null);
+      // 1) General per salesperson (React PDF)
+      let id = await createJob({ type: 'export_overview', payload: { mode: 'general_salesmen_react_pdf' } });
+      setJobId(id);
+      await waitForJob(id);
+      // 2) Overview PDF
+      id = await createJob({ type: 'export_overview', payload: { mode: 'overview_react_pdf' } });
+      setJobId(id);
+      await waitForJob(id);
+      // 3) Countries PDF
+      id = await createJob({ type: 'export_overview', payload: { mode: 'countries_react_pdf' } });
+      setJobId(id);
+      await waitForJob(id);
+      // 4) Top 10 Styles PDF
+      id = await createJob({ type: 'export_top_styles', payload: {} });
+      setJobId(id);
+      await waitForJob(id);
+      setJobId(null);
+      setRunning(false);
+      setJobDone(true);
+      setTimeout(() => setJobDone(false), 4000);
+    } catch (e) {
+      setRunning(false);
+    }
   }
 
   function toggleSelect(exportId: string, filePath: string) {
@@ -283,6 +342,13 @@ export default function StatisticsExportsPage() {
             disabled={running}
           >
             Export Countries (PDF)
+          </button>
+          <button
+            className="relative rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-60"
+            onClick={enqueueAllExportsSequential}
+            disabled={running}
+          >
+            Run All Exports
           </button>
           <button
             className="relative rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-60"
