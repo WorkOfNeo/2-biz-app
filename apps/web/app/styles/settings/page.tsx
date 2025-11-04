@@ -352,7 +352,7 @@ function StyleListsEditor({ styles }: { styles: { id: string; style_no: string; 
                 className="text-[11px] underline disabled:text-gray-400"
                 onClick={clearList}
                 disabled={!active || listItems.length === 0}
-              >Remove all</button>
+              >Remove all styles</button>
             </div>
             <div className="space-y-1 max-h-64 overflow-auto">
               {listItems.length === 0 && <div className="text-[11px] text-gray-500">No styles yet.</div>}
