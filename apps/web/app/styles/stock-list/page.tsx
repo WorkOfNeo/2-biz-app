@@ -124,19 +124,39 @@ export default function StockListPage() {
 
   // Load visibility flags for colors for styles shown
   const { data: colorVisibility } = useSWR(styleIds.length ? ['style_colors:visible', styleIds.join(',')] : null, async () => {
-    const { data, error } = await supabase
-      .from('style_colors')
-      .select('style_id, color, visible')
-      .in('style_id', styleIds);
-    if (error) throw new Error(error.message);
-    const map = new Map<string, Map<string, boolean>>();
-    for (const r of (data ?? []) as any[]) {
-      const sid = String(r.style_id || '');
-      const ckey = String(r.color || '').trim().toLowerCase();
-      if (!map.has(sid)) map.set(sid, new Map());
-      map.get(sid)!.set(ckey, (r.visible as boolean | null) !== false);
+    async function loadWithVisible(): Promise<Map<string, Map<string, boolean>>> {
+      const { data, error } = await supabase
+        .from('style_colors')
+        .select('style_id, color, visible')
+        .in('style_id', styleIds);
+      if (error) throw error;
+      const map = new Map<string, Map<string, boolean>>();
+      for (const r of (data ?? []) as any[]) {
+        const sid = String(r.style_id || '');
+        const ckey = String(r.color || '').trim().toLowerCase();
+        if (!map.has(sid)) map.set(sid, new Map());
+        map.get(sid)!.set(ckey, (r.visible as boolean | null) !== false);
+      }
+      return map;
     }
-    return map;
+    try {
+      return await loadWithVisible();
+    } catch (e: any) {
+      // Fallback for older DBs without the visible column
+      if (e?.code !== '42703') throw e;
+      const { data } = await supabase
+        .from('style_colors')
+        .select('style_id, color')
+        .in('style_id', styleIds);
+      const map = new Map<string, Map<string, boolean>>();
+      for (const r of (data ?? []) as any[]) {
+        const sid = String(r.style_id || '');
+        const ckey = String(r.color || '').trim().toLowerCase();
+        if (!map.has(sid)) map.set(sid, new Map());
+        map.get(sid)!.set(ckey, true);
+      }
+      return map;
+    }
   }, { refreshInterval: 0 });
 
   // Group merged rows by style, then list colors within

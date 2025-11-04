@@ -19,13 +19,24 @@ export default function StyleDetailPage({ params }: { params: { styleNo: string 
 
   const { data: colors } = useSWR(['style:colors', styleNo, meta?.id], async () => {
     if (!meta?.id) return [] as Array<{ id: string; color: string; visible: boolean | null; updated_at: string | null }>;
-    const { data, error } = await supabase
-      .from('style_colors')
-      .select('id, color, visible, updated_at')
-      .eq('style_id', meta.id)
-      .order('color');
-    if (error) throw new Error(error.message);
-    return (data ?? []) as Array<{ id: string; color: string; visible: boolean | null; updated_at: string | null }>;
+    try {
+      const { data, error } = await supabase
+        .from('style_colors')
+        .select('id, color, visible, updated_at')
+        .eq('style_id', meta.id)
+        .order('color');
+      if (error) throw error as any;
+      return (data ?? []) as Array<{ id: string; color: string; visible: boolean | null; updated_at: string | null }>;
+    } catch (e: any) {
+      if (e?.code !== '42703') throw new Error(e?.message || String(e));
+      // Fallback if column `visible` does not exist yet
+      const { data } = await supabase
+        .from('style_colors')
+        .select('id, color, updated_at')
+        .eq('style_id', meta.id)
+        .order('color');
+      return ((data ?? []) as any[]).map((r) => ({ ...r, visible: null })) as Array<{ id: string; color: string; visible: boolean | null; updated_at: string | null }>;
+    }
   });
   const { has } = useRoles();
 
@@ -77,7 +88,11 @@ export default function StyleDetailPage({ params }: { params: { styleNo: string 
                     onChange={async (e) => {
                       try {
                         await supabase.from('style_colors').update({ visible: e.target.checked }).eq('id', c.id);
-                      } catch {}
+                      } catch (err: any) {
+                        if (err?.code === '42703') {
+                          alert('Visibility field not available yet. Please run the database migration for style_colors.visible');
+                        }
+                      }
                     }}
                   />
                   <span>Visible on Stock List</span>

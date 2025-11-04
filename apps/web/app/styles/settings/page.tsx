@@ -13,6 +13,19 @@ export default function StylesSettingsPage() {
     if (error) throw new Error(error.message);
     return data as { id: string; style_no: string; style_name: string | null; scrape_enabled: boolean | null; updated_at: string }[];
   });
+  const { data: styleSeasons } = useSWR('style_seasons:all', async () => {
+    const { data, error } = await supabase.from('style_seasons').select('style_no, seasons').limit(5000);
+    if (error) throw new Error(error.message);
+    const byStyle = new Map<string, string[]>();
+    const labels = new Set<string>();
+    for (const r of (data ?? []) as any[]) {
+      const arr = Array.isArray(r.seasons) ? (r.seasons as string[]) : [];
+      byStyle.set(r.style_no, arr);
+      for (const s of arr) labels.add(String(s));
+    }
+    return { byStyle, labels: Array.from(labels).sort() } as { byStyle: Map<string, string[]>; labels: string[] };
+  }, { refreshInterval: 0 });
+  const [seasonFilter, setSeasonFilter] = useState<string>('');
   const { data: colorsByStyle, mutate: mutateColors } = useSWR('style_colors:all', async () => {
     const { data, error } = await supabase.from('style_colors').select('id, style_id, color, scrape_enabled, updated_at').order('color').limit(5000);
     if (error) throw new Error(error.message);
@@ -41,9 +54,16 @@ export default function StylesSettingsPage() {
   const filteredStyles = useMemo(() => {
     if (!styles) return [] as { id: string; style_no: string; style_name: string | null; scrape_enabled: boolean | null; updated_at: string }[];
     const q = searchQuery.trim().toLowerCase();
-    if (!q) return styles;
-    return styles.filter((s) => (s.style_name || '').toLowerCase().includes(q) || (s.style_no || '').toLowerCase().includes(q));
-  }, [styles, searchQuery]);
+    let base = styles;
+    if (seasonFilter) {
+      base = base.filter((s) => {
+        const arr = styleSeasons?.byStyle.get(s.style_no) || [];
+        return arr.includes(seasonFilter);
+      });
+    }
+    if (!q) return base;
+    return base.filter((s) => (s.style_name || '').toLowerCase().includes(q) || (s.style_no || '').toLowerCase().includes(q));
+  }, [styles, searchQuery, seasonFilter, styleSeasons?.labels.length]);
 
   // (Seasons column removed)
   async function toggleStyleForUser(styleNo: string) {
@@ -95,6 +115,12 @@ export default function StylesSettingsPage() {
               value={searchQuery}
               onChange={(e)=>setSearchQuery(e.target.value)}
             />
+            <select className="text-xs border rounded px-2 py-1" value={seasonFilter} onChange={(e)=>setSeasonFilter(e.target.value)}>
+              <option value="">All seasons</option>
+              {(styleSeasons?.labels || []).map((label) => (
+                <option key={label} value={label}>{label}</option>
+              ))}
+            </select>
             <button className="text-xs px-2 py-1 border rounded bg-slate-900 text-white hover:bg-slate-800" onClick={addAllFiltered}>Add all</button>
           </div>
         </div>
