@@ -226,7 +226,8 @@ function StyleListsEditor({ styles }: { styles: { id: string; style_no: string; 
   React.useEffect(() => {
     if (!active && data) {
       const names = Object.keys(data.lists || {});
-      if (names.length > 0) setActive(names[0]);
+      const first = (names.length > 0 ? names[0] : '') as string;
+      if (first) setActive(first);
     }
   }, [data, active]);
   const [newList, setNewList] = React.useState('');
