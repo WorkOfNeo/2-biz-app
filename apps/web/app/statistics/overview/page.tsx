@@ -1,5 +1,5 @@
 'use client';
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import useSWR from 'swr';
 import { supabase } from '../../../lib/supabaseClient';
 import Link from 'next/link';
@@ -36,14 +36,28 @@ export default function OverviewPage() {
     if (error) throw new Error(error.message);
     return data as { id: string; key: string; value: { s1?: string; s2?: string } } | null;
   });
-  const s1 = saved?.value?.s1 ?? '';
-  const s2 = saved?.value?.s2 ?? '';
+  const [s1, setS1] = useState<string>('');
+  const [s2, setS2] = useState<string>('');
 
   const { data: seasons } = useSWR('seasons-all', async () => {
-    const { data, error } = await supabase.from('seasons').select('id, name, year').order('created_at', { ascending: false });
+    const { data, error } = await supabase.from('seasons').select('id, name, year, is_current').order('created_at', { ascending: false });
     if (error) throw new Error(error.message);
     return (data ?? []) as { id: string; name: string; year: number | null }[];
   });
+  useEffect(() => {
+    if (saved?.value) {
+      if (saved.value.s1) setS1(saved.value.s1);
+      if (saved.value.s2) setS2(saved.value.s2);
+    }
+    if ((!saved?.value?.s1 || !saved?.value?.s2) && (seasons ?? []).length) {
+      const list = (seasons ?? []) as any[];
+      const current = list.find((x) => x.is_current);
+      const first = list[0];
+      const second = list[1] || list.find((x) => x.id !== (current?.id || first?.id));
+      if (!saved?.value?.s1) setS1((current?.id || first?.id) ?? '');
+      if (!saved?.value?.s2) setS2((second?.id) ?? '');
+    }
+  }, [saved?.id, seasons?.length]);
   function getSeasonLabel(seasonId: string | undefined) {
     if (!seasonId) return '';
     const s = (seasons ?? []).find((x) => x.id === seasonId);
@@ -247,6 +261,30 @@ export default function OverviewPage() {
               }
             >{c}</button>
           ))}
+          <div className="ml-2 flex items-center gap-2">
+            <label className="text-xs text-gray-600">Season 1</label>
+            <select
+              className="rounded border px-2 py-1 text-sm"
+              value={s1}
+              onChange={(e) => setS1(e.target.value)}
+            >
+              <option value="">Select…</option>
+              {(seasons ?? []).map((s:any) => (
+                <option key={s.id} value={s.id}>{s.name}{s.year ? ' ' + s.year : ''}</option>
+              ))}
+            </select>
+            <label className="text-xs text-gray-600">Season 2</label>
+            <select
+              className="rounded border px-2 py-1 text-sm"
+              value={s2}
+              onChange={(e) => setS2(e.target.value)}
+            >
+              <option value="">Select…</option>
+              {(seasons ?? []).map((s:any) => (
+                <option key={s.id} value={s.id}>{s.name}{s.year ? ' ' + s.year : ''}</option>
+              ))}
+            </select>
+          </div>
           {/* Print preview removed */}
           {/* Export PDF removed */}
         </div>

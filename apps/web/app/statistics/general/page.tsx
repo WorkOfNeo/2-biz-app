@@ -64,7 +64,16 @@ export default function StatisticsGeneralPage() {
       setS1(saved.value.s1 ?? '');
       setS2(saved.value.s2 ?? '');
     }
-  }, [saved?.id]);
+    // Fallback to current season if defaults are missing
+    if ((!saved?.value?.s1 || !saved?.value?.s2) && (seasons ?? []).length) {
+      const list = (seasons ?? []) as any[];
+      const current = list.find((x) => x.is_current);
+      const first = list[0];
+      const second = list[1] || list.find((x) => x.id !== (current?.id || first?.id));
+      if (!saved?.value?.s1) setS1((current?.id || first?.id) ?? '');
+      if (!saved?.value?.s2) setS2((second?.id) ?? '');
+    }
+  }, [saved?.id, seasons?.length]);
   useEffect(() => {
     if (s1 || s2) setShowSave(true);
   }, [s1, s2]);
@@ -598,6 +607,22 @@ export default function StatisticsGeneralPage() {
 
 
       <div className="space-y-4">
+        <div className="flex items-center justify-end gap-2">
+          <label className="text-xs text-gray-600">Season 1</label>
+          <select className="rounded border px-2 py-1 text-sm" value={s1} onChange={(e) => setS1(e.target.value)}>
+            <option value="">Select…</option>
+            {(seasons ?? []).map((s:any) => (
+              <option key={s.id} value={s.id}>{s.name}{s.year ? ' ' + s.year : ''}</option>
+            ))}
+          </select>
+          <label className="text-xs text-gray-600">Season 2</label>
+          <select className="rounded border px-2 py-1 text-sm" value={s2} onChange={(e) => setS2(e.target.value)}>
+            <option value="">Select…</option>
+            {(seasons ?? []).map((s:any) => (
+              <option key={s.id} value={s.id}>{s.name}{s.year ? ' ' + s.year : ''}</option>
+            ))}
+          </select>
+        </div>
         {/* Toast removed per request */}
         <div className="flex flex-wrap w-full gap-2">
           {(((salespersons ?? []).map((sp) => sp.name)) as string[]).map((person) => {
