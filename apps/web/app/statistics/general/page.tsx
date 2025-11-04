@@ -471,6 +471,52 @@ export default function StatisticsGeneralPage() {
                   className="block w-full px-3 py-2 text-left hover:bg-gray-50"
                   onClick={async () => {
                     try {
+                      const [XLSX, { default: saveAs }] = await Promise.all([
+                        import('xlsx'),
+                        import('file-saver')
+                      ]);
+                      const s1Label = getSeasonLabel(s1) || 'Season 1';
+                      const s2Label = getSeasonLabel(s2) || 'Season 2';
+                      const visibleRows = (rows ?? []).filter(r => !isHidden(r.account_no));
+                      const header = [
+                        'Salesperson', 'Customer', 'City',
+                        `${s1Label} Qty`, `${s1Label} Price`,
+                        `${s2Label} Qty`, `${s2Label} Price`,
+                        'Dev Qty', 'Dev Price', 'Currency'
+                      ];
+                      const data = visibleRows.map((row) => {
+                        const currency = row.salespersonId ? (spCurrencyById[row.salespersonId] ?? 'DKK') : 'DKK';
+                        const devQty = row.s1Qty - row.s2Qty;
+                        const devPrice = row.s1Price - row.s2Price;
+                        return [
+                          row.salespersonName,
+                          row.customer,
+                          row.city,
+                          row.s1Qty,
+                          Math.round(row.s1Price),
+                          row.s2Qty,
+                          Math.round(row.s2Price),
+                          devQty,
+                          Math.round(devPrice),
+                          currency
+                        ];
+                      });
+                      const wb = XLSX.utils.book_new();
+                      const ws = XLSX.utils.aoa_to_sheet([header, ...data]);
+                      XLSX.utils.book_append_sheet(wb, ws, 'General');
+                      const filename = `general_${s1Label.replace(/\s+/g,'_')}_vs_${s2Label.replace(/\s+/g,'_')}.xlsx`;
+                      const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+                      const blob = new Blob([wbout], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+                      saveAs(blob, filename);
+                    } catch (e) {
+                      console.error('xlsx export failed', e);
+                    }
+                  }}
+                >Export XLSX (All)</button>
+                <button
+                  className="block w-full px-3 py-2 text-left hover:bg-gray-50"
+                  onClick={async () => {
+                    try {
                       const { default: JSZip } = await import('jszip');
                       const { jsPDF } = await import('jspdf');
                       const { default: autoTable } = await import('jspdf-autotable');
