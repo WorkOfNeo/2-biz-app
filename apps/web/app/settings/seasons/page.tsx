@@ -24,6 +24,14 @@ export default function SeasonsSettingsPage() {
   const [s2, setS2] = useState<string>('');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState<string>('');
+  const [notice, setNotice] = useState<string | null>(null);
+  const [savingCompare, setSavingCompare] = useState(false);
+  const [settingCurrentId, setSettingCurrentId] = useState<string | null>(null);
+
+  function showNotice(msg: string) {
+    setNotice(msg);
+    setTimeout(() => setNotice(null), 2000);
+  }
 
   useEffect(() => {
     if (savedCompare?.value) {
@@ -73,6 +81,9 @@ export default function SeasonsSettingsPage() {
           disabled={enqueuing}
         >UPDATE SEASONS</button>
       </div>
+      {notice && (
+        <div className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700">{notice}</div>
+      )}
       {enqueuing && <div className="rounded-md border p-3"><ProgressBar value={progress} /></div>}
       {lastJobId && <div className="text-xs text-gray-500">Last enqueued job: {lastJobId}</div>}
 
@@ -101,10 +112,11 @@ export default function SeasonsSettingsPage() {
           </div>
           <button
             className="ml-auto inline-flex items-center rounded-md bg-slate-900 text-white px-3 py-1.5 text-sm hover:bg-slate-800 disabled:opacity-50"
-            disabled={!s1 && !s2}
+            disabled={(!s1 && !s2) || savingCompare}
             onClick={async () => {
               const value = { s1, s2 };
               try {
+                setSavingCompare(true);
                 if (savedCompare) {
                   const { error } = await supabase.from('app_settings').update({ value }).eq('id', savedCompare.id);
                   if (error) throw new Error(error.message);
@@ -113,11 +125,14 @@ export default function SeasonsSettingsPage() {
                   if (error) throw new Error(error.message);
                 }
                 await mutateCompare();
+                showNotice('Saved comparison');
               } catch (err: any) {
                 alert(err?.message || 'Failed to save');
+              } finally {
+                setSavingCompare(false);
               }
             }}
-          >Save</button>
+          >{savingCompare ? 'Saving…' : 'Save'}</button>
         </div>
       </div>
       <div className="border rounded-md p-4 space-y-2">
@@ -135,6 +150,7 @@ export default function SeasonsSettingsPage() {
                 if (error) throw new Error(error.message);
                 setName(''); setYear('');
                 mutate();
+                showNotice('Season added');
               } finally {
                 setSaving(false);
               }
@@ -207,7 +223,7 @@ export default function SeasonsSettingsPage() {
                     onChange={async (e) => {
                       const val = e.target.value || null;
                       const { error } = await supabase.from('seasons').update({ display_currency: val }).eq('id', s.id);
-                      if (!error) mutate();
+                      if (!error) { mutate(); showNotice('Display currency updated'); }
                     }}
                   >
                     <option value="">(default)</option>
@@ -219,15 +235,20 @@ export default function SeasonsSettingsPage() {
                     className={"rounded px-2 py-1 text-xs " + ((s as any).is_current ? 'bg-green-600 text-white' : 'border')}
                     onClick={async () => {
                       try {
+                        setSettingCurrentId(s.id);
                         await supabase.from('seasons').update({ is_current: false }).neq('id', s.id);
                         const { error } = await supabase.from('seasons').update({ is_current: true }).eq('id', s.id);
                         if (error) throw error;
                         mutate();
+                        showNotice('Current season updated');
                       } catch (e: any) {
                         alert(e?.message || 'Failed to set current');
+                      } finally {
+                        setSettingCurrentId(null);
                       }
                     }}
-                  >{(s as any).is_current ? 'Current' : 'Set current'}</button>
+                    disabled={settingCurrentId === s.id}
+                  >{(s as any).is_current ? 'Current' : (settingCurrentId === s.id ? 'Setting…' : 'Set current')}</button>
                 </td>
                 <td className="p-2 border-b">{new Date(s.created_at).toLocaleString()}</td>
                 <td className="p-2 border-b">
@@ -236,7 +257,7 @@ export default function SeasonsSettingsPage() {
                     onClick={async () => {
                       const next = !((s as any).hidden);
                       const { error } = await supabase.from('seasons').update({ hidden: next }).eq('id', s.id);
-                      if (!error) mutate();
+                      if (!error) { mutate(); showNotice(next ? 'Season hidden' : 'Season unhidden'); }
                     }}
                   >{(s as any).hidden ? 'Hidden' : 'Hide'}</button>
                 </td>
@@ -253,6 +274,7 @@ export default function SeasonsSettingsPage() {
                       const { error } = await supabase.from('seasons').delete().eq('id', s.id);
                       if (error) { alert(error.message); return; }
                       mutate();
+                      showNotice('Season deleted');
                     }}
                   >Delete</button>
                 </td>
