@@ -208,7 +208,8 @@ export default function StockListPage() {
   React.useEffect(() => {
     if (has('salesman') && styleLists && !activeList) {
       const names = Object.keys(styleLists);
-      if (names.length) setActiveList(names[0]);
+      const first = (names.length > 0 ? names[0] : '') as string;
+      if (first) setActiveList(first);
     }
   }, [styleLists, activeList, has]);
 
