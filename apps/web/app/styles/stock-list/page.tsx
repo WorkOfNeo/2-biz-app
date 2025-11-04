@@ -315,13 +315,26 @@ export default function StockListPage() {
 
         {/* Right: main content */}
         <div className="space-y-4">
-      {groupedByStyle
-        .filter(({ styleNo }) => {
+      {(() => {
+        const filtered = groupedByStyle.filter(({ styleNo }) => {
           if (!has('salesman')) return true;
           const list = (styleLists?.[activeList] || []) as string[];
           return list.includes(styleNo);
-        })
-        .map(({ styleNo, colors }) => {
+        });
+        if (has('salesman')) {
+          const list = (styleLists?.[activeList] || []) as string[];
+          if ((list?.length || 0) > 0 && filtered.length === 0) {
+            return (
+              <div className="text-sm text-gray-600">No stock data yet for styles in the selected list. Please ask an admin to run Update Stock for your styles.</div>
+            );
+          }
+          if ((list?.length || 0) === 0) {
+            return (
+              <div className="text-sm text-gray-600">This list is empty. Ask an admin to add styles under Styles › Settings › Style Lists.</div>
+            );
+          }
+        }
+        return filtered.map(({ styleNo, colors }) => {
         const meta = styleMetaByNo[styleNo] || { name: null, supplier: null, image: null };
         return (
           <div key={styleNo} id={`style-${styleNo}`} className="bg-white p-3">
@@ -426,7 +439,8 @@ export default function StockListPage() {
                       {/* Scraped timestamp removed per request */}
                     </div>
                   );
-                })}
+        });
+      })()}
               </div>
             </div>
           </div>
