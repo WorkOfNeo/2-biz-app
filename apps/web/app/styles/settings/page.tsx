@@ -258,11 +258,32 @@ function StyleListsEditor({ styles }: { styles: { id: string; style_no: string; 
   }, [data, active]);
   const [newList, setNewList] = React.useState('');
   const [query, setQuery] = React.useState('');
+  // Load style seasons to enable season filtering in the lists editor
+  const { data: styleSeasons } = useSWR('style_seasons:for-lists', async () => {
+    const { data, error } = await supabase.from('style_seasons').select('style_no, seasons').limit(5000);
+    if (error) throw new Error(error.message);
+    const byStyle = new Map<string, string[]>();
+    const labels = new Set<string>();
+    for (const r of (data ?? []) as any[]) {
+      const arr = Array.isArray(r.seasons) ? (r.seasons as string[]) : [];
+      byStyle.set(r.style_no, arr);
+      for (const s of arr) labels.add(String(s));
+    }
+    return { byStyle, labels: Array.from(labels).sort() } as { byStyle: Map<string, string[]>; labels: string[] };
+  }, { refreshInterval: 0 });
+  const [seasonFilter, setSeasonFilter] = React.useState<string>('');
   const filteredStyles = React.useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return styles;
-    return styles.filter((s) => (s.style_name || '').toLowerCase().includes(q) || (s.style_no || '').toLowerCase().includes(q));
-  }, [styles, query]);
+    let base = styles;
+    if (seasonFilter) {
+      base = base.filter((s) => {
+        const arr = styleSeasons?.byStyle.get(s.style_no) || [];
+        return arr.includes(seasonFilter);
+      });
+    }
+    if (!q) return base;
+    return base.filter((s) => (s.style_name || '').toLowerCase().includes(q) || (s.style_no || '').toLowerCase().includes(q));
+  }, [styles, query, seasonFilter, styleSeasons?.labels.length]);
   async function save(next: Record<string, string[]>) {
     const existsId = data?.id || null;
     const payload = { key: 'style_lists', value: { lists: next } } as any;
@@ -335,6 +356,12 @@ function StyleListsEditor({ styles }: { styles: { id: string; style_no: string; 
               <div className="text-xs font-medium">All styles</div>
               <div className="flex items-center gap-2">
                 <input className="text-xs border rounded px-2 py-1" placeholder="Search styles" value={query} onChange={(e)=>setQuery(e.target.value)} />
+                <select className="text-xs border rounded px-2 py-1" value={seasonFilter} onChange={(e)=>setSeasonFilter(e.target.value)}>
+                  <option value="">All seasons</option>
+                  {(styleSeasons?.labels || []).map((label) => (
+                    <option key={label} value={label}>{label}</option>
+                  ))}
+                </select>
                 <button className="text-xs px-2 py-1 border rounded bg-slate-900 text-white" onClick={addAllFilteredToList} disabled={!active}>Add all</button>
               </div>
             </div>
