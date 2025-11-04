@@ -314,6 +314,12 @@ function StyleListsEditor({ styles }: { styles: { id: string; style_no: string; 
     next[active] = Array.from(list);
     save(next);
   }
+  function clearList() {
+    if (!active) return;
+    const next = { ...(data?.lists || {}) } as Record<string, string[]>;
+    next[active] = [];
+    save(next);
+  }
   function addAllFilteredToList() {
     if (!active) return;
     const next = { ...(data?.lists || {}) } as Record<string, string[]>;
@@ -340,7 +346,14 @@ function StyleListsEditor({ styles }: { styles: { id: string; style_no: string; 
       {active && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div className="rounded border p-2">
-            <div className="text-xs font-medium mb-1">In “{active}”</div>
+            <div className="flex items-center justify-between mb-1">
+              <div className="text-xs font-medium">In “{active}”</div>
+              <button
+                className="text-[11px] underline disabled:text-gray-400"
+                onClick={clearList}
+                disabled={!active || listItems.length === 0}
+              >Remove all</button>
+            </div>
             <div className="space-y-1 max-h-64 overflow-auto">
               {listItems.length === 0 && <div className="text-[11px] text-gray-500">No styles yet.</div>}
               {listItems.map((no) => (
