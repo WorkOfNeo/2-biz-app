@@ -3,11 +3,9 @@ import { useMemo, useState } from 'react';
 import useSWR from 'swr';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { useRoles } from '../../../lib/supabaseClient';
-import { useRoles } from '../../../lib/supabaseClient';
 
 export default function StylesSettingsPage() {
   const supabase = createClientComponentClient();
-  const { has } = useRoles();
   const { has } = useRoles();
   const [runLoading, setRunLoading] = useState(false);
   const { data: styles } = useSWR('styles:all', async () => {
