@@ -334,6 +334,20 @@ export default function StockListPage() {
             );
           }
         }
+        if (!has('salesman') && filtered.length === 0) {
+          const hasSelection = userSelected.size > 0;
+          return (
+            <div className="text-sm text-gray-600">
+              {view === 'default' ? (
+                hasSelection
+                  ? 'No stock data found for your selected styles. Run Update Stock (Selected) and refresh.'
+                  : 'You have no styles in your selection. Add styles under Styles › Settings, then run Update Stock.'
+              ) : (
+                'No scraped stock data available yet. Run Update Stock (All) and refresh.'
+              )}
+            </div>
+          );
+        }
         return filtered.map(({ styleNo, colors }) => {
         const meta = styleMetaByNo[styleNo] || { name: null, supplier: null, image: null };
         return (
