@@ -1008,7 +1008,28 @@ async function runJob(job: JobRow) {
         const nameStr = (m[2] ?? '').trim();
         return { yy: Number(yyStr), name: nameStr };
       }
-      const out: { spyId: string; label: string; parsed: { yy: number; name: string } | null }[] = [];
+      function normDate(raw: string): string | null {
+        const t = (raw || '').trim();
+        if (!t) return null;
+        // Accept formats like dd.mm.yyyy, dd/mm/yyyy, yyyy-mm-dd
+        const m1 = t.match(/^(\d{1,2})[\.\/-](\d{1,2})[\.\/-](\d{2,4})$/);
+        if (m1) {
+          const d = String(m1[1]).padStart(2, '0');
+          const m = String(m1[2]).padStart(2, '0');
+          let y = String(m1[3]);
+          if (y.length === 2) y = '20' + y;
+          return `${y}-${m}-${d}`;
+        }
+        const m2 = t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+        if (m2) {
+          const y = m2[1];
+          const m = String(m2[2]).padStart(2, '0');
+          const d = String(m2[3]).padStart(2, '0');
+          return `${y}-${m}-${d}`;
+        }
+        return null;
+      }
+      const out: { spyId: string; label: string; parsed: { yy: number; name: string } | null; start?: string | null; end?: string | null }[] = [];
       for (const tr of Array.from(trs)) {
         const tds = Array.from(tr.querySelectorAll('td')) as HTMLElement[];
         const a = tds[1]?.querySelector('a[href*="season_id="]') as HTMLAnchorElement | null;
@@ -1017,7 +1038,9 @@ async function runJob(job: JobRow) {
         const m = href.match(/season_id=(\d+)/);
         const spyId: string = (m?.[1] ?? '') + '';
         const label = (a.textContent || '').trim();
-        out.push({ spyId, label, parsed: parseSeason(label) });
+        const startRaw = (tds[2]?.textContent || '').trim();
+        const endRaw = (tds[3]?.textContent || '').trim();
+        out.push({ spyId, label, parsed: parseSeason(label), start: normDate(startRaw), end: normDate(endRaw) });
       }
       return out;
     });
@@ -1041,8 +1064,14 @@ async function runJob(job: JobRow) {
           existingId = (byName?.id as string | undefined) || null;
         }
 
+        const start_date = (r as any).start || null;
+        const end_date = (r as any).end || null;
+
         if (!existingId) {
-          const { error: insErr } = await supabase.from('seasons').insert({ name: displayName, source_name: sourceName, year, spy_season_id: spyIdNum });
+          const insertRow: Record<string, any> = { name: displayName, source_name: sourceName, year, spy_season_id: spyIdNum };
+          if (start_date) insertRow.start_date = start_date;
+          if (end_date) insertRow.end_date = end_date;
+          const { error: insErr } = await supabase.from('seasons').insert(insertRow);
           if (insErr) throw insErr;
           upserted++;
         } else {
@@ -1050,6 +1079,8 @@ async function runJob(job: JobRow) {
           const updates: Record<string, any> = {};
           if (spyIdNum) updates.spy_season_id = spyIdNum;
           updates.source_name = sourceName;
+          if (start_date) updates.start_date = start_date;
+          if (end_date) updates.end_date = end_date;
           await supabase.from('seasons').update(updates).eq('id', existingId);
         }
       } catch (e: any) {
