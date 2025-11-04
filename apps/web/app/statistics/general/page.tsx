@@ -38,6 +38,14 @@ export default function StatisticsGeneralPage() {
     }
     return { byId, byName } as { byId: Record<string, string>; byName: Record<string, string> };
   }, { refreshInterval: 0 });
+  // Full customers list to allow showing baseline rows even when no stats exist for a season
+  const { data: allCustomers } = useSWR('general:customers', async () => {
+    const { data, error } = await supabase
+      .from('customers')
+      .select('customer_id, company, city, salesperson_id');
+    if (error) throw new Error(error.message);
+    return (data ?? []) as Array<{ customer_id: string; company: string | null; city: string | null; salesperson_id: string | null }>;
+  });
   // Currency rates (from Misc settings) – 1 unit equals how many DKK
   const { data: currencyRatesRow } = useSWR('app-settings:currency-rates', async () => {
     const { data, error } = await supabase.from('app_settings').select('*').eq('key', 'currency_rates').maybeSingle();
@@ -303,6 +311,26 @@ export default function StatisticsGeneralPage() {
       console.log('[stats] fetched raw rows', statsData.length, 'invoices', invoicesData.length);
 
       const map = new Map<string, RowOut>();
+      // Seed baseline rows from customers so empty seasons still show the full customer list
+      for (const c of (allCustomers ?? [])) {
+        if (selectedSalespersonId && c.salesperson_id !== selectedSalespersonId) continue;
+        const key: string = c.customer_id || `${c.company ?? ''}:${c.city ?? ''}`;
+        if (!key) continue;
+        if (!map.has(key)) {
+          const spId = c.salesperson_id;
+          map.set(key, {
+            account_no: c.customer_id || key,
+            customer: c.company ?? '-',
+            city: (c.city && c.city !== '-') ? c.city : (c.customer_id ? (customerIndex?.byId?.[c.customer_id] ?? '-') : (c.company ? (customerIndex?.byName?.[c.company] ?? '-') : '-')),
+            s1Qty: 0,
+            s1Price: 0,
+            s2Qty: 0,
+            s2Price: 0,
+            salespersonId: spId ?? null,
+            salespersonName: spId ? (spNameById[spId] ?? 'Unknown') : '—'
+          });
+        }
+      }
       // Aggregate TopSeller (sales_stats)
       for (const r of statsData as any[]) {
         const key: string = r.account_no ?? `${r.customer_name ?? ''}:${r.city ?? ''}`;
