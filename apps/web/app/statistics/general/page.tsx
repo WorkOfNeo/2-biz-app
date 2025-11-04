@@ -465,8 +465,6 @@ export default function StatisticsGeneralPage() {
             <summary className="list-none inline-flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-sm hover:bg-slate-50"><Menu className="h-4 w-4" /></summary>
             <div className="absolute right-0 z-10 mt-2 w-56 rounded-md border bg-white shadow">
               <div className="py-1 text-sm">
-                <button className="block w-full px-3 py-2 text-left hover:bg-gray-50">Export Data</button>
-                <button className="block w-full px-3 py-2 text-left hover:bg-gray-50">Print Report</button>
                 <button
                   className="block w-full px-3 py-2 text-left hover:bg-gray-50"
                   onClick={async () => {
@@ -591,11 +589,7 @@ export default function StatisticsGeneralPage() {
                     }
                   }}
                 >Export PDF (ZIP)</button>
-                <Link className="block px-3 py-2 hover:bg-gray-50" href="/statistics/general/import">Import Statistic</Link>
-                <Link className="block px-3 py-2 hover:bg-gray-50" href={'/statistics/general/last-runs' as any}>Last Runs</Link>
-                <Link className="block px-3 py-2 hover:bg-gray-50" href="/settings/seasons">Season Settings</Link>
                 <button className="block w-full px-3 py-2 text-left hover:bg-gray-50" onClick={() => { setNullByInputText(''); setNullByInputResult(null); setNullByInputOpen(true); }}>Null Customers by Input</button>
-                <button className="block w-full px-3 py-2 text-left hover:bg-gray-50" onClick={handleUpdateStatistic}>Update Statistic</button>
               </div>
             </div>
           </details>
