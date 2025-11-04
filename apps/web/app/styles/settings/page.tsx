@@ -224,7 +224,10 @@ function StyleListsEditor({ styles }: { styles: { id: string; style_no: string; 
   });
   const [active, setActive] = React.useState<string>('');
   React.useEffect(() => {
-    if (!active && data && Object.keys(data.lists).length) setActive(Object.keys(data.lists)[0]);
+    if (!active && data) {
+      const names = Object.keys(data.lists || {});
+      if (names.length > 0) setActive(names[0]);
+    }
   }, [data, active]);
   const [newList, setNewList] = React.useState('');
   const [query, setQuery] = React.useState('');
