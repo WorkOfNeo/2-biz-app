@@ -477,19 +477,37 @@ export default function StatisticsGeneralPage() {
                       ]);
                       const s1Label = getSeasonLabel(s1) || 'Season 1';
                       const s2Label = getSeasonLabel(s2) || 'Season 2';
-                      const visibleRows = (rows ?? []).filter(r => !isHidden(r.account_no));
+                      // Re-query ALL rows across all salespersons to avoid active-person filtering
+                      const statsRes = await supabase
+                        .from('sales_stats')
+                        .select('account_no, customer_name, city, qty, price, season_id, salesperson_id')
+                        .in('season_id', [s1, s2])
+                        .limit(200000);
+                      if (statsRes.error) throw new Error(statsRes.error.message);
+                      const statsData = statsRes.data ?? [];
+                      const mapAll = new Map<string, { account_no: string; customer: string; city: string; s1Qty: number; s1Price: number; s2Qty: number; s2Price: number; salespersonId: string | null }>();
+                      for (const r of statsData as any[]) {
+                        const key: string = r.account_no ?? `${r.customer_name ?? ''}:${r.city ?? ''}`;
+                        const base = mapAll.get(key) || { account_no: r.account_no ?? '', customer: r.customer_name ?? '', city: r.city ?? '', s1Qty: 0, s1Price: 0, s2Qty: 0, s2Price: 0, salespersonId: r.salesperson_id ?? null };
+                        if (r.season_id === s1) { base.s1Qty += Number(r.qty||0); base.s1Price += Number(r.price||0); }
+                        else if (r.season_id === s2) { base.s2Qty += Number(r.qty||0); base.s2Price += Number(r.price||0); }
+                        if (!base.salespersonId && r.salesperson_id) base.salespersonId = r.salesperson_id;
+                        mapAll.set(key, base);
+                      }
+                      const allRows = Array.from(mapAll.values());
                       const header = [
                         'Salesperson', 'Customer', 'City',
                         `${s1Label} Qty`, `${s1Label} Price`,
                         `${s2Label} Qty`, `${s2Label} Price`,
                         'Dev Qty', 'Dev Price', 'Currency'
                       ];
-                      const data = visibleRows.map((row) => {
+                      const data = allRows.map((row) => {
+                        const salespersonName = row.salespersonId ? (spNameById[row.salespersonId] || 'Unknown') : 'Unknown';
                         const currency = row.salespersonId ? (spCurrencyById[row.salespersonId] ?? 'DKK') : 'DKK';
                         const devQty = row.s1Qty - row.s2Qty;
                         const devPrice = row.s1Price - row.s2Price;
                         return [
-                          row.salespersonName,
+                          salespersonName,
                           row.customer,
                           row.city,
                           row.s1Qty,
