@@ -40,6 +40,15 @@ export async function POST(request: Request) {
       if (id) await admin.from('app_settings').update({ value: next }).eq('id', id as any);
       else await admin.from('app_settings').insert({ key: 'user_profiles', value: next } as any);
     } catch {}
+    // Upsert user email mapping into app_settings.user_emails for UI listing
+    try {
+      const { data: em } = await admin.from('app_settings').select('id, value').eq('key', 'user_emails').maybeSingle();
+      const id = (em as any)?.id as string | null;
+      const value = ((em as any)?.value as Record<string, string> | undefined) || {};
+      const next = { ...value, [uid]: email } as Record<string, string>;
+      if (id) await admin.from('app_settings').update({ value: next }).eq('id', id as any);
+      else await admin.from('app_settings').insert({ key: 'user_emails', value: next } as any);
+    } catch {}
     return NextResponse.json({ ok: true, user_id: uid });
   } catch (e: any) {
     return NextResponse.json({ error: e?.message || 'Server error' }, { status: 500 });

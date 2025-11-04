@@ -37,6 +37,7 @@ export default function UsersAdminPage() {
                 const res = await fetch('/api/admin/users/create', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, email, password, role }) });
                 if (!res.ok) throw new Error(await res.text());
                 setName(''); setEmail(''); setPassword(''); setRole('viewer'); setOpen(false);
+                try { await mutate(); } catch {}
               } catch (e) {
                 // no-op
               } finally { setCreating(false); }
@@ -57,7 +58,7 @@ export default function UsersAdminPage() {
             <label className="text-sm">
               <div className="font-medium">Role</div>
               <select className="mt-1 w-full border rounded px-2 py-1 text-sm" value={role} onChange={(e)=>setRole(e.target.value)}>
-                {['admin','viewer'].map((r)=> (<option key={r} value={r}>{r}</option>))}
+                {['admin','viewer','salesman'].map((r)=> (<option key={r} value={r}>{r}</option>))}
               </select>
             </label>
             <div className="flex items-end">
@@ -175,7 +176,7 @@ function AddRole({ userId, onAdded }:{ userId: string; onAdded: ()=>void }){
       }}
     >
       <select className="border rounded px-2 py-1 text-sm" value={r} onChange={(e)=>setR(e.target.value)}>
-        {['admin','viewer'].map((x)=> (<option key={x} value={x}>{x}</option>))}
+        {['admin','viewer','salesman'].map((x)=> (<option key={x} value={x}>{x}</option>))}
       </select>
       <button disabled={busy} className="text-xs rounded border px-2 py-1 bg-slate-900 text-white disabled:opacity-50">Add role</button>
     </form>

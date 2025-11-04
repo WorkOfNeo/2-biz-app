@@ -26,11 +26,28 @@ export async function GET() {
       const { data: prof } = await admin.from('app_settings').select('value').eq('key', 'user_profiles').maybeSingle();
       profiles = ((prof as any)?.value as Record<string, string> | undefined) || {};
     } catch {}
-    // Emails
+    // Emails from app_settings fallback; enrich from auth admin when possible
     let emails: Record<string, string> = {};
     try {
       const { data: em } = await admin.from('app_settings').select('value').eq('key', 'user_emails').maybeSingle();
       emails = ((em as any)?.value as Record<string, string> | undefined) || {};
+    } catch {}
+    try {
+      // Fetch auth users and map ids to emails
+      const auth = (admin as any).auth?.admin;
+      if (auth?.listUsers) {
+        let page = 1; const perPage = 200; let done = false;
+        const idSet = new Set<string>(Array.from(roleMap.keys()));
+        while (!done) {
+          const res = await auth.listUsers({ page, perPage });
+          const users = (res?.data?.users || []) as any[];
+          for (const u of users) {
+            const id = u.id as string; const email = u.email as string | null;
+            if (id && email && idSet.has(id)) emails[id] = email;
+          }
+          done = !users || users.length < perPage; page++;
+        }
+      }
     } catch {}
     const users = Array.from(roleMap.keys()).map((uid) => ({
       user_id: uid,
