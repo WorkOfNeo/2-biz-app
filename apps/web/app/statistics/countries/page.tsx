@@ -112,12 +112,6 @@ export default function CountriesPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-lg font-semibold tracking-tight text-slate-700">Countries</h1>
-        <a
-          className="rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50"
-          href="/statistics/countries/print"
-          target="_blank"
-          rel="noreferrer"
-        >Export PDF</a>
       </div>
       <div ref={containerRef} className="space-y-6">
       {(countries).map((c) => {

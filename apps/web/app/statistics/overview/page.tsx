@@ -247,25 +247,8 @@ export default function OverviewPage() {
               }
             >{c}</button>
           ))}
-          <Link className="rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50" href={{ pathname: '/statistics/overview/print', query: { country, s1, s2 } }}>Print preview</Link>
-          <button
-            className="rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50"
-            onClick={async () => {
-              try {
-                // enqueue export_overview job with country and current season ids
-                const { data: { session } } = await supabase.auth.getSession();
-                if (!session) throw new Error('Not signed in');
-                const token = session.access_token;
-                const body = { type: 'export_overview', payload: { country, s1, s2 } };
-                const res = await fetch('/api/enqueue', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(body) });
-                if (!res.ok) throw new Error(await res.text());
-                try { if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('job-started', { detail: { label: 'Export overview — job started' } })); } catch {}
-              } catch (e) {
-                console.error('export failed', e);
-                alert('Failed to enqueue export');
-              }
-            }}
-          >Export PDF</button>
+          {/* Print preview removed */}
+          {/* Export PDF removed */}
         </div>
       </div>
 

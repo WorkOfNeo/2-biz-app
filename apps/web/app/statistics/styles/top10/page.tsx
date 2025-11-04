@@ -23,87 +23,13 @@ export default function Top10StylesPage() {
     for (const r of (data ?? []) as any[]) map.set(r.style_no, r.supplier ?? null);
     return map;
   });
-  const [running, setRunning] = React.useState(false);
-  const [jobId, setJobId] = React.useState<string | null>(null);
-  const [pct, setPct] = React.useState(0);
-  const [showProgress, setShowProgress] = React.useState(false);
-  React.useEffect(() => {
-    if (!jobId) return;
-    setShowProgress(true);
-    setPct(5);
-    const stepMap: Record<string, number> = {
-      'STEP:topstyles_begin_v3': 5,
-      'STEP:topstyles_nav_ok': 10,
-      'STEP:topstyles_group_set_attempt': 20,
-      'STEP:topstyles_header_ok': 40,
-      'STEP:topstyles_rows_extracted': 60,
-      'STEP:topstyles_rows_parsed': 70,
-      'STEP:topstyles_aggregate': 80,
-      'STEP:topstyles_upsert_result': 90,
-      'STEP:topstyles_saved': 100
-    };
-    const timer = setInterval(async () => {
-      try {
-        const { data: logs } = await supabase
-          .from('job_logs')
-          .select('msg, ts')
-          .eq('job_id', jobId)
-          .order('ts', { ascending: false })
-          .limit(50);
-        let next = pct;
-        for (const l of (logs ?? []) as any[]) {
-          const m = (l.msg || '') as string;
-          if (stepMap[m] !== undefined) { next = Math.max(next, stepMap[m]); break; }
-          if (m === 'Job succeeded') { next = 100; break; }
-        }
-        if (next !== pct) setPct(next);
-        if (next >= 100) {
-          clearInterval(timer);
-          setTimeout(() => { setShowProgress(false); setJobId(null); setRunning(false); }, 800);
-          mutate();
-        }
-      } catch {}
-    }, 1200);
-    return () => clearInterval(timer);
-  }, [jobId]);
-  async function runScrape() {
-    if (running || jobId) return;
-    try {
-      setRunning(true);
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) { alert('Not signed in'); return; }
-      const token = session.access_token;
-      const res = await fetch('/api/enqueue', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ type: 'scrape_top_styles', payload: { requestedBy: session.user.email } })
-      });
-      if (!res.ok) throw new Error(await res.text());
-      const js = await res.json();
-      setJobId(js.jobId);
-    } catch (e: any) {
-      alert(e?.message || 'Failed to enqueue');
-    } finally {
-      // running will be cleared when job finishes
-    }
-  }
+  // Removed run-scrape controls; page now only displays data
   return (
     <div className="space-y-4">
       <div className="text-xs text-gray-500">Statistics</div>
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">Top 10 Styles</h1>
-        <button
-          className="rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-50"
-          onClick={runScrape}
-          disabled={running || !!jobId}
-        >{running || jobId ? 'Running…' : 'Run scrape'}</button>
       </div>
-      {showProgress && (
-        <div className="flex items-center gap-2">
-          <div className="w-64"><ProgressBar value={pct} /></div>
-          <div className="text-xs text-gray-600">{pct}%</div>
-        </div>
-      )}
       <div className="flex items-center gap-2">
         <label className="text-sm text-gray-600">Season</label>
         <select

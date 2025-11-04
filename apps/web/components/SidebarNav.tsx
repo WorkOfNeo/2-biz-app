@@ -37,6 +37,7 @@ export function SidebarNav() {
           {!has('salesman') && <NavLink href="/statistics/styles/top10" label="Top 10 Styles" />}
           {!has('salesman') && has('admin') && <NavLink href="/statistics/vendors/top10" label="Top 10 Vendors" />}
           {!has('salesman') && has('admin') && <NavLink href="/statistics/exports" label="Exports" />}
+          {!has('salesman') && <NavLink href="/statistics/downloads" label="Downloads" />}
         </div>
       </div>
       <div>
