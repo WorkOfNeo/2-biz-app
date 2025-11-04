@@ -28,8 +28,7 @@ export default function StyleDetailPage({ params }: { params: { styleNo: string 
       if (error) throw error as any;
       return (data ?? []) as Array<{ id: string; color: string; visible: boolean | null; updated_at: string | null }>;
     } catch (e: any) {
-      if (e?.code !== '42703') throw new Error(e?.message || String(e));
-      // Fallback if column `visible` does not exist yet
+      // Fallback if column `visible` does not exist yet or any error occurs
       const { data } = await supabase
         .from('style_colors')
         .select('id, color, updated_at')

@@ -156,8 +156,7 @@ export default function StockListPage() {
     try {
       return await loadWithVisible();
     } catch (e: any) {
-      // Fallback for older DBs without the visible column
-      if (e?.code !== '42703') throw e;
+      // Fallback if column is missing or any error occurs
       const rows = await fetchChunks<{ style_id: string; color: string }>('style_id, color');
       const map = new Map<string, Map<string, boolean>>();
       for (const r of rows) {
