@@ -293,6 +293,14 @@ function StyleListsEditor({ styles }: { styles: { id: string; style_no: string; 
     next[active] = Array.from(list);
     save(next);
   }
+  function addAllFilteredToList() {
+    if (!active) return;
+    const next = { ...(data?.lists || {}) } as Record<string, string[]>;
+    const list = new Set(next[active] || []);
+    for (const s of filteredStyles) list.add(s.style_no);
+    next[active] = Array.from(list);
+    save(next);
+  }
   const listItems = (data?.lists?.[active] || []) as string[];
   return (
     <div className="space-y-3">
@@ -325,7 +333,10 @@ function StyleListsEditor({ styles }: { styles: { id: string; style_no: string; 
           <div className="rounded border p-2">
             <div className="flex items-center justify-between">
               <div className="text-xs font-medium">All styles</div>
-              <input className="text-xs border rounded px-2 py-1" placeholder="Search styles" value={query} onChange={(e)=>setQuery(e.target.value)} />
+              <div className="flex items-center gap-2">
+                <input className="text-xs border rounded px-2 py-1" placeholder="Search styles" value={query} onChange={(e)=>setQuery(e.target.value)} />
+                <button className="text-xs px-2 py-1 border rounded bg-slate-900 text-white" onClick={addAllFilteredToList} disabled={!active}>Add all</button>
+              </div>
             </div>
             <div className="mt-1 max-h-64 overflow-auto space-y-1">
               {filteredStyles.map((s) => (
