@@ -124,14 +124,28 @@ export default function StockListPage() {
 
   // Load visibility flags for colors for styles shown
   const { data: colorVisibility } = useSWR(styleIds.length ? ['style_colors:visible', styleIds.join(',')] : null, async () => {
+    // Chunk large IN lists to avoid long URLs (400 Bad Request)
+    async function fetchChunks<T extends { style_id: string; color: string; visible?: boolean | null }>(
+      selectCols: string
+    ): Promise<T[]> {
+      const ids = styleIds.slice();
+      const out: T[] = [];
+      const chunkSize = 50;
+      for (let i = 0; i < ids.length; i += chunkSize) {
+        const chunk = ids.slice(i, i + chunkSize);
+        const { data, error } = await supabase
+          .from('style_colors')
+          .select(selectCols)
+          .in('style_id', chunk);
+        if (error) throw error as any;
+        out.push(...(((data ?? []) as unknown) as T[]));
+      }
+      return out;
+    }
     async function loadWithVisible(): Promise<Map<string, Map<string, boolean>>> {
-      const { data, error } = await supabase
-        .from('style_colors')
-        .select('style_id, color, visible')
-        .in('style_id', styleIds);
-      if (error) throw error;
+      const rows = await fetchChunks<{ style_id: string; color: string; visible: boolean | null }>('style_id, color, visible');
       const map = new Map<string, Map<string, boolean>>();
-      for (const r of (data ?? []) as any[]) {
+      for (const r of rows) {
         const sid = String(r.style_id || '');
         const ckey = String(r.color || '').trim().toLowerCase();
         if (!map.has(sid)) map.set(sid, new Map());
@@ -144,12 +158,9 @@ export default function StockListPage() {
     } catch (e: any) {
       // Fallback for older DBs without the visible column
       if (e?.code !== '42703') throw e;
-      const { data } = await supabase
-        .from('style_colors')
-        .select('style_id, color')
-        .in('style_id', styleIds);
+      const rows = await fetchChunks<{ style_id: string; color: string }>('style_id, color');
       const map = new Map<string, Map<string, boolean>>();
-      for (const r of (data ?? []) as any[]) {
+      for (const r of rows) {
         const sid = String(r.style_id || '');
         const ckey = String(r.color || '').trim().toLowerCase();
         if (!map.has(sid)) map.set(sid, new Map());
