@@ -33,6 +33,16 @@ export async function middleware(req: NextRequest) {
   try {
     const { data } = await supabase.from('user_roles').select('role');
     const roles = new Set<string>((data || []).map((r: any) => String(r.role || '')));
+
+    // Redirect root depending on role
+    if (pathname === '/') {
+      if (roles.has('salesman')) {
+        return NextResponse.redirect(new URL('/styles/stock-list', req.url));
+      } else {
+        return NextResponse.redirect(new URL('/statistics/overview', req.url));
+      }
+    }
+
     if (pathname.startsWith('/admin') && !roles.has('admin')) {
       return NextResponse.redirect(new URL('/', req.url));
     }

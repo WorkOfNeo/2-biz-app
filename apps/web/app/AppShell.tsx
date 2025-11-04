@@ -1,11 +1,14 @@
 "use client";
 import { usePathname } from 'next/navigation';
 import { SidebarNav } from '../components/SidebarNav';
+import { useRoles } from '../lib/supabaseClient';
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const isAuth = pathname === '/signin';
-  if (isAuth) {
+  const { has } = useRoles();
+  const hideSidebar = isAuth || has('salesman');
+  if (hideSidebar) {
     return <main className="min-h-screen">{children}</main>;
   }
   return (
