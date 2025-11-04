@@ -216,7 +216,6 @@ export async function updateStyleStock(ctx: Ctx) {
             let po_link: string | null = null;
             const poA = rowEl.querySelector('a[href*="purchase_orders.php"]') as HTMLAnchorElement | null;
             if (poA) po_link = poA.getAttribute('href') || null;
-            if (!po_link && lastPurchaseHeading) po_link = lastPurchaseHeading.link;
             const key = (label || 'Row') + '|' + String(po_link || '');
             if (!(seenPurchase as any).has?.(key)) {
               (seenPurchase as any).add?.(key);
