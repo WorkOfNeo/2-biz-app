@@ -282,8 +282,18 @@ async function runJob(job: JobRow) {
     }
     // Fetch style hrefs from styles table
     const { data: styles } = await supabase.from('styles').select('id, style_no, link_href, scrape_enabled').in('style_no', styleNos);
+    const totalStyles = (styles ?? []).length;
+    let processedStyles = 0;
+    const startedAt = Date.now();
+    const maxDurationMs = Math.max(0, Number((job.payload as any)?.maxDurationMs || process.env.STOCK_MAX_MS || 0) || 0);
     let totalRows = 0;
     for (const s of (styles ?? []) as any[]) {
+      processedStyles++;
+      await log(job.id, 'info', 'STEP:update_style_stock_progress', { index: processedStyles, total: totalStyles, style_no: s.style_no });
+      if (maxDurationMs > 0 && (Date.now() - startedAt) > maxDurationMs) {
+        await log(job.id, 'info', 'STEP:style_stock_timeout', { processed: processedStyles, total: totalStyles, ms: Date.now() - startedAt });
+        break;
+      }
       await ensureNotCancelled(job.id);
       const href = (s.link_href || '').toString();
       if (!href) continue;
@@ -934,6 +944,7 @@ async function runJob(job: JobRow) {
         try { await supabase.from('exports').insert({ kind: 'general_salesmen_zip', title: 'General · Salesmen', path, public_url: publicUrl, meta: { files: filesList, all: { path: allPath, publicUrl: allUrl } }, job_id: job.id }); } catch {}
         await saveResult(job.id, 'export_general_salesmen_zip', { file: { path, publicUrl } });
         await setJobSucceeded(job.id);
+        await log(job.id, 'info', 'STEP:complete');
         return;
       }
       // Export Countries PDF via print route (no sidebar) when requested
