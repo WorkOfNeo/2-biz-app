@@ -44,7 +44,7 @@ export function SidebarNav() {
         <div className="mt-4 mb-1 text-xs uppercase tracking-wider text-slate-400">Styles</div>
         <div className="ml-2 space-y-1">
           {!has('salesman') && <NavLink href="/styles" label="Styles" />}
-          {!has('salesman') && <NavLink href="/styles/settings" label="Settings" />}
+          {!has('salesman') && has('admin') && <NavLink href="/styles/settings" label="Settings" />}
           <NavLink href="/styles/stock-list" label="Stock List" />
           {!has('salesman') && has('admin') && <NavLink href="/styles/statistics" label="Statistics" />}
           {!has('salesman') && has('admin') && <NavLink href="/styles/scraper" label="Stock Scraper" />}

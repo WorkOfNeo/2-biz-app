@@ -7,6 +7,15 @@ import { useRoles } from '../../../lib/supabaseClient';
 export default function StylesSettingsPage() {
   const supabase = createClientComponentClient();
   const { has } = useRoles();
+  if (!has('admin')) {
+    return (
+      <div className="space-y-2">
+        <div className="text-xs text-gray-500">Styles</div>
+        <h1 className="text-xl font-semibold">Settings</h1>
+        <div className="rounded-md border bg-white p-3 text-sm text-gray-600">Not authorized.</div>
+      </div>
+    );
+  }
   const [runLoading, setRunLoading] = useState(false);
   const { data: styles } = useSWR('styles:all', async () => {
     const { data, error } = await supabase.from('styles').select('id, style_no, style_name, scrape_enabled, updated_at').order('style_no').limit(1000);
@@ -107,7 +116,7 @@ export default function StylesSettingsPage() {
 
       <div className="rounded-md border bg-white p-3">
         <div className="flex items-center justify-between">
-          <div className="text-sm font-medium">Your list for stock updates</div>
+          <div className="text-sm font-medium">Often Scraped Styles</div>
           <div className="flex items-center gap-2">
             <input
               className="text-xs border rounded px-2 py-1 w-56"
