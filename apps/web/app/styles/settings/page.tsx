@@ -7,22 +7,14 @@ import { useRoles } from '../../../lib/supabaseClient';
 export default function StylesSettingsPage() {
   const supabase = createClientComponentClient();
   const { has } = useRoles();
-  if (!has('admin')) {
-    return (
-      <div className="space-y-2">
-        <div className="text-xs text-gray-500">Styles</div>
-        <h1 className="text-xl font-semibold">Settings</h1>
-        <div className="rounded-md border bg-white p-3 text-sm text-gray-600">Not authorized.</div>
-      </div>
-    );
-  }
+  const isAdmin = has('admin');
   const [runLoading, setRunLoading] = useState(false);
-  const { data: styles } = useSWR('styles:all', async () => {
+  const { data: styles } = useSWR(isAdmin ? 'styles:all' : null, async () => {
     const { data, error } = await supabase.from('styles').select('id, style_no, style_name, scrape_enabled, updated_at').order('style_no').limit(1000);
     if (error) throw new Error(error.message);
     return data as { id: string; style_no: string; style_name: string | null; scrape_enabled: boolean | null; updated_at: string }[];
   });
-  const { data: styleSeasons } = useSWR('style_seasons:all', async () => {
+  const { data: styleSeasons } = useSWR(isAdmin ? 'style_seasons:all' : null, async () => {
     const { data, error } = await supabase.from('style_seasons').select('style_no, seasons').limit(5000);
     if (error) throw new Error(error.message);
     const byStyle = new Map<string, string[]>();
@@ -35,7 +27,7 @@ export default function StylesSettingsPage() {
     return { byStyle, labels: Array.from(labels).sort() } as { byStyle: Map<string, string[]>; labels: string[] };
   }, { refreshInterval: 0 });
   const [seasonFilter, setSeasonFilter] = useState<string>('');
-  const { data: colorsByStyle, mutate: mutateColors } = useSWR('style_colors:all', async () => {
+  const { data: colorsByStyle, mutate: mutateColors } = useSWR(isAdmin ? 'style_colors:all' : null, async () => {
     const { data, error } = await supabase.from('style_colors').select('id, style_id, color, scrape_enabled, updated_at').order('color').limit(5000);
     if (error) throw new Error(error.message);
     const map = new Map<string, Array<{ id: string; color: string; scrape_enabled: boolean | null; updated_at: string }>>();
@@ -47,7 +39,7 @@ export default function StylesSettingsPage() {
     return map;
   }, { refreshInterval: 0 });
   // Per-user selection map: { [user_id]: string[] }
-  const { data: selectionMap, mutate: mutateSelection } = useSWR('app-settings:styles-user-selection', async () => {
+  const { data: selectionMap, mutate: mutateSelection } = useSWR(isAdmin ? 'app-settings:styles-user-selection' : null, async () => {
     const { data } = await supabase.from('app_settings').select('id, value').eq('key', 'styles_user_selection').maybeSingle();
     return { id: data?.id ?? null, value: ((data?.value as any) || {}) as Record<string, string[]> };
   });
@@ -114,6 +106,11 @@ export default function StylesSettingsPage() {
         <h1 className="text-xl font-semibold">Settings</h1>
       </div>
 
+      {!isAdmin && (
+        <div className="rounded-md border bg-white p-3 text-sm text-gray-600">Not authorized.</div>
+      )}
+
+      {isAdmin && (
       <div className="rounded-md border bg-white p-3">
         <div className="flex items-center justify-between">
           <div className="text-sm font-medium">Often Scraped Styles</div>
@@ -167,16 +164,18 @@ export default function StylesSettingsPage() {
           </div>
         )}
       </div>
+      )}
 
       {/* Colors per style removed */}
 
-      {has('admin') && (
+      {isAdmin && (
       <div className="rounded-md border bg-white p-3">
         <div className="text-sm font-medium">Style Lists (for Salesman tabs)</div>
         <StyleListsEditor styles={styles ?? []} />
       </div>
       )}
 
+      {isAdmin && (
       <div className="rounded-md border bg-white p-3">
         <div className="flex items-center justify-between">
           <div className="text-sm font-medium">Runs</div>
@@ -209,7 +208,9 @@ export default function StylesSettingsPage() {
         </div>
         <div className="mt-2 text-xs text-gray-600">Runs use the selection above.</div>
       </div>
+      )}
 
+      {isAdmin && (
       <div className="rounded-md border bg-white p-3">
         <div className="flex items-center justify-between">
           <div className="text-sm font-medium">Deep Scrape</div>
@@ -242,6 +243,7 @@ export default function StylesSettingsPage() {
         </div>
         <div className="mt-2 text-xs text-gray-600">Opens each style and reads materials season per color.</div>
       </div>
+      )}
     </div>
   );
 }
