@@ -26,6 +26,17 @@ export default function StylesSettingsPage() {
     }
     return { byStyle, labels: Array.from(labels).sort() } as { byStyle: Map<string, string[]>; labels: string[] };
   }, { refreshInterval: 0 });
+  const { data: seasonsMap } = useSWR(isAdmin ? 'seasons:map' : null, async () => {
+    const { data, error } = await supabase.from('seasons').select('id, name, year').limit(5000);
+    if (error) throw new Error(error.message);
+    const m = new Map<string, string>();
+    for (const r of (data ?? []) as any[]) {
+      const n = (r.name as string | null) || '';
+      const y = (r.year as number | null) || null;
+      m.set(r.id as string, y ? `${n} ${y}` : n);
+    }
+    return m as Map<string, string>;
+  }, { refreshInterval: 0 });
   const [seasonFilter, setSeasonFilter] = useState<string>('');
   const { data: colorsByStyle, mutate: mutateColors } = useSWR(isAdmin ? 'style_colors:all' : null, async () => {
     const { data, error } = await supabase.from('style_colors').select('id, style_id, color, scrape_enabled, updated_at').order('color').limit(5000);
@@ -124,7 +135,7 @@ export default function StylesSettingsPage() {
             <select className="text-xs border rounded px-2 py-1" value={seasonFilter} onChange={(e)=>setSeasonFilter(e.target.value)}>
               <option value="">All seasons</option>
               {(styleSeasons?.labels || []).map((label) => (
-                <option key={label} value={label}>{label}</option>
+                <option key={label} value={label}>{seasonsMap?.get(label) ? `${label} — ${seasonsMap.get(label)}` : label}</option>
               ))}
             </select>
             <button className="text-xs px-2 py-1 border rounded bg-slate-900 text-white hover:bg-slate-800" onClick={addAllFiltered}>Add all</button>
@@ -282,6 +293,17 @@ function StyleListsEditor({ styles }: { styles: { id: string; style_no: string; 
     }
     return { byStyle, labels: Array.from(labels).sort() } as { byStyle: Map<string, string[]>; labels: string[] };
   }, { refreshInterval: 0 });
+  const { data: seasonsMap } = useSWR('seasons:map-for-lists', async () => {
+    const { data, error } = await supabase.from('seasons').select('id, name, year').limit(5000);
+    if (error) throw new Error(error.message);
+    const m = new Map<string, string>();
+    for (const r of (data ?? []) as any[]) {
+      const n = (r.name as string | null) || '';
+      const y = (r.year as number | null) || null;
+      m.set(r.id as string, y ? `${n} ${y}` : n);
+    }
+    return m as Map<string, string>;
+  }, { refreshInterval: 0 });
   const [seasonFilter, setSeasonFilter] = React.useState<string>('');
   const filteredStyles = React.useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -388,7 +410,7 @@ function StyleListsEditor({ styles }: { styles: { id: string; style_no: string; 
                 <select className="text-xs border rounded px-2 py-1" value={seasonFilter} onChange={(e)=>setSeasonFilter(e.target.value)}>
                   <option value="">All seasons</option>
                   {(styleSeasons?.labels || []).map((label) => (
-                    <option key={label} value={label}>{label}</option>
+                    <option key={label} value={label}>{seasonsMap?.get(label) ? `${label} — ${seasonsMap.get(label)}` : label}</option>
                   ))}
                 </select>
                 <button className="text-xs px-2 py-1 border rounded bg-slate-900 text-white" onClick={addAllFilteredToList} disabled={!active}>Add all</button>
