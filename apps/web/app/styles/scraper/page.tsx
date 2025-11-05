@@ -86,6 +86,17 @@ export default function StockScraperPage() {
     return { total, running: runningCount, queued: queuedCount, currentIdx, batchTotal };
   }, { refreshInterval: 3000 });
 
+  const { data: recent } = useSWR('stock-scraper:recent', async () => {
+    const { data, error } = await supabase
+      .from('jobs')
+      .select('id, status, created_at, started_at, finished_at, payload')
+      .eq('type', 'update_style_stock')
+      .order('created_at', { ascending: false })
+      .limit(20);
+    if (error) throw new Error(error.message);
+    return (data ?? []) as Array<Job>;
+  }, { refreshInterval: 10000 });
+
   async function stopJob() {
     if (!jobId) return;
     const { data: { session } } = await supabase.auth.getSession();
@@ -180,6 +191,26 @@ export default function StockScraperPage() {
           </div>
         </section>
       )}
+
+      <section className="rounded-md border p-4">
+        <h2 className="mb-2 text-lg font-semibold">Recent Update Style Stock runs</h2>
+        {recent && recent.length > 0 ? (
+          <div className="divide-y">
+            {recent.map((j) => (
+              <div key={j.id} className="py-2">
+                <div className="flex items-center justify-between text-sm">
+                  <div className="font-mono text-xs">{j.id}</div>
+                  <div className="text-xs text-gray-600">{j.status}</div>
+                </div>
+                <div className="text-xs text-gray-600">Started: {j.started_at ? new Date(j.started_at).toLocaleString() : '—'}{j.finished_at ? ` • Duration: ${formatMs(new Date(j.finished_at).getTime() - new Date(j.started_at || j.created_at).getTime())}` : ''}</div>
+                <JobStylesList jobId={j.id} />
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="text-sm text-gray-500">No runs yet.</div>
+        )}
+      </section>
     </div>
   );
 }
@@ -201,6 +232,41 @@ function LatestRun({ jobId, finishedAt }: { jobId: string; finishedAt: string | 
       <div className="text-sm">Finished: {finishedAt ? new Date(finishedAt).toLocaleString() : '—'}</div>
       <div className="text-sm">Rows upserted: {rows}</div>
       <div className="text-xs text-gray-500">Summary: {data?.summary || '—'}</div>
+    </div>
+  );
+}
+
+function JobStylesList({ jobId }: { jobId: string }) {
+  const { data } = useSWR(`stock-scraper:styles:${jobId}`, async () => {
+    const { data, error } = await supabase
+      .from('job_logs')
+      .select('msg, data, ts')
+      .eq('job_id', jobId)
+      .order('ts', { ascending: true })
+      .limit(2000);
+    if (error) throw new Error(error.message);
+    const out: Array<{ style_no: string; style_name?: string | null }> = [];
+    const seen = new Set<string>();
+    for (const r of (data ?? []) as any[]) {
+      if (r.msg === 'STEP:style_stock_style_done' && r.data?.style_no) {
+        const key = String(r.data.style_no);
+        if (!seen.has(key)) { seen.add(key); out.push({ style_no: r.data.style_no, style_name: r.data.style_name ?? null }); }
+      }
+    }
+    return out;
+  }, { refreshInterval: 10000 });
+  if (!data) return <div className="text-xs text-gray-500">Loading styles…</div>;
+  if (data.length === 0) return <div className="text-xs text-gray-500">No styles parsed yet.</div>;
+  return (
+    <div className="mt-1">
+      <div className="text-xs text-gray-600 mb-1">Touched styles: {data.length}</div>
+      <div className="max-h-40 overflow-auto rounded border bg-white">
+        <ul className="divide-y text-xs">
+          {data.map((s, i) => (
+            <li key={i} className="px-2 py-1">{s.style_no}{s.style_name ? ` · ${s.style_name}` : ''}</li>
+          ))}
+        </ul>
+      </div>
     </div>
   );
 }
