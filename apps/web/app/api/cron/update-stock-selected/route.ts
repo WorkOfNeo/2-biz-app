@@ -16,7 +16,9 @@ async function handle(req: Request) {
     type: 'update_style_stock',
     payload: { requestedBy: 'cron', mode: 'selected' },
     status: 'queued' as const,
-    max_attempts: 3
+    max_attempts: 3,
+    queue: 'stock',
+    priority: 200
   };
   const { data: job, error } = await supabase.from('jobs').insert(insertBody).select('id').single();
   if (error) {

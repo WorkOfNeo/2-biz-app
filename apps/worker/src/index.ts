@@ -19,6 +19,7 @@ const SPY_BASE_URL = process.env.SPY_BASE_URL!;
 const SPY_USERNAME = process.env.SPY_USERNAME!;
 const SPY_PASSWORD = process.env.SPY_PASSWORD!;
 const TIMEZONE = process.env.TIMEZONE || 'Europe/Copenhagen';
+const JOB_QUEUE = process.env.JOB_QUEUE || null;
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY || !BROWSERLESS_WS || !SPY_BASE_URL || !SPY_USERNAME || !SPY_PASSWORD) {
   // eslint-disable-next-line no-console
@@ -49,7 +50,8 @@ async function leaseNextJob(): Promise<Nullable<JobRow>> {
   const leaseUntil = new Date(now.getTime() + 60_000);
   const { data, error } = await supabase.rpc('lease_next_job', {
     p_now: now.toISOString(),
-    p_lease_until: leaseUntil.toISOString()
+    p_lease_until: leaseUntil.toISOString(),
+    p_queue: JOB_QUEUE
   });
   if (error) {
     // eslint-disable-next-line no-console
@@ -272,7 +274,7 @@ async function runJob(job: JobRow) {
         try {
           await supabase
             .from('jobs')
-            .insert({ type: 'update_style_stock', payload: { styleNos: chunk, requestedBy: (job.payload as any)?.requestedBy, mode: (job.payload as any)?.mode, rootId, batchIndex: (currentBatchIndex + 1 + i), batchTotal }, status: 'queued', max_attempts: 3 });
+            .insert({ type: 'update_style_stock', payload: { styleNos: chunk, requestedBy: (job.payload as any)?.requestedBy, mode: (job.payload as any)?.mode, rootId, batchIndex: (currentBatchIndex + 1 + i), batchTotal }, status: 'queued', max_attempts: 3, queue: ((job as any)?.queue || 'default'), priority: ((job as any)?.priority ?? 100) });
         } catch {}
       }
       await log(job.id, 'info', 'STEP:style_stock_fanout', { batchSize: BATCH_SIZE, total: styleNos.length, enqueued: rest.length, rootId, batchIndex: currentBatchIndex, batchTotal });
