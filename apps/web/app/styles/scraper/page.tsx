@@ -204,6 +204,7 @@ export default function StockScraperPage() {
                 </div>
                 <div className="text-xs text-gray-600">Started: {j.started_at ? new Date(j.started_at).toLocaleString() : '—'}{j.finished_at ? ` • Duration: ${formatMs(new Date(j.finished_at).getTime() - new Date(j.started_at || j.created_at).getTime())}` : ''}</div>
                 <JobStylesList jobId={j.id} />
+                <JobChangesList jobId={j.id} />
               </div>
             ))}
           </div>
@@ -266,6 +267,58 @@ function JobStylesList({ jobId }: { jobId: string }) {
             <li key={i} className="px-2 py-1">{s.style_no}{s.style_name ? ` · ${s.style_name}` : ''}</li>
           ))}
         </ul>
+      </div>
+    </div>
+  );
+}
+
+function JobChangesList({ jobId }: { jobId: string }) {
+  const { data } = useSWR(`stock-scraper:changes:${jobId}`, async () => {
+    const { data, error } = await supabase
+      .from('job_logs')
+      .select('msg, data, ts')
+      .eq('job_id', jobId)
+      .eq('msg', 'STEP:style_stock_changes')
+      .order('ts', { ascending: true })
+      .limit(500);
+    if (error) throw new Error(error.message);
+    const rows: Array<{ style_no: string; style_name?: string | null; sample?: any[]; count?: number; ts: string }> = [];
+    for (const r of (data ?? []) as any[]) {
+      rows.push({ style_no: r.data?.style_no, style_name: r.data?.style_name ?? null, sample: r.data?.sample ?? [], count: r.data?.count ?? 0, ts: r.ts });
+    }
+    return rows;
+  }, { refreshInterval: 10000 });
+  if (!data || data.length === 0) return null;
+  return (
+    <div className="mt-2">
+      <div className="text-xs font-medium mb-1">Changes</div>
+      <div className="max-h-60 overflow-auto rounded border bg-white">
+        <table className="min-w-full text-xs">
+          <thead className="bg-gray-50">
+            <tr>
+              <th className="p-1 text-left border-b">Style</th>
+              <th className="p-1 text-left border-b">Color</th>
+              <th className="p-1 text-left border-b">Section</th>
+              <th className="p-1 text-left border-b">Row</th>
+              <th className="p-1 text-left border-b">Size</th>
+              <th className="p-1 text-right border-b">From</th>
+              <th className="p-1 text-right border-b">To</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.flatMap((d) => (d.sample || []).map((c, i) => (
+              <tr key={`${d.style_no}-${i}`}>
+                <td className="p-1 border-b whitespace-nowrap">{d.style_name || d.style_no}</td>
+                <td className="p-1 border-b whitespace-nowrap">{c.color}</td>
+                <td className="p-1 border-b whitespace-nowrap">{c.section}</td>
+                <td className="p-1 border-b whitespace-nowrap">{c.row_label}</td>
+                <td className="p-1 border-b whitespace-nowrap">{c.size}</td>
+                <td className="p-1 border-b text-right">{c.from}</td>
+                <td className="p-1 border-b text-right">{c.to}</td>
+              </tr>
+            )))}
+          </tbody>
+        </table>
       </div>
     </div>
   );

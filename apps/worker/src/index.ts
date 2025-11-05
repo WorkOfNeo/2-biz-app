@@ -227,7 +227,7 @@ async function runJob(job: JobRow) {
   }
   if (job.type === 'scrape_customers') {
     await scrapeCustomers({ job, page: page!, log, saveResult, setJobFailedOrRequeue, setJobSucceeded, ensureNotCancelled, supabase, SPY_BASE_URL, findFirst });
-    return;
+      return;
   }
 
   if (job.type === 'update_style_stock') {
@@ -254,8 +254,8 @@ async function runJob(job: JobRow) {
           styleNos = Array.from(set);
           if (styleNos.length === 0) {
             // Legacy fallback
-            const { data } = await supabase.from('app_settings').select('value').eq('key', 'styles_daily_selection').maybeSingle();
-            styleNos = ((data?.value as any)?.styleNos as string[] | undefined) ?? [];
+        const { data } = await supabase.from('app_settings').select('value').eq('key', 'styles_daily_selection').maybeSingle();
+        styleNos = ((data?.value as any)?.styleNos as string[] | undefined) ?? [];
           }
         }
       } catch {}
@@ -436,7 +436,7 @@ async function runJob(job: JobRow) {
       // Discover ALL color headers (unfiltered) and ensure style_colors is updated before parsing
       try {
         const allColors: string[] = await page!.$$eval('.statAndStockBox', (boxes) => {
-          function text(el: Element | null | undefined): string { return ((el as HTMLElement | null)?.textContent || '').replace(/\s+/g, ' ').trim(); }
+        function text(el: Element | null | undefined): string { return ((el as HTMLElement | null)?.textContent || '').replace(/\s+/g, ' ').trim(); }
           const found: string[] = [];
           for (const box of Array.from(boxes) as HTMLElement[]) {
             const details = box.querySelector('.statAndStockDetails') as HTMLElement | null;
@@ -560,14 +560,14 @@ async function runJob(job: JobRow) {
                 const nextIsDedicatedLabel = /(Stock\s+Dedicated|Pre\s+Dedicated)/i.test(nextLabel);
                 if (!isDedicatedLabel && nextEl && nextCls.includes('stylecolor-expanded--sub') && nextIsDedicatedLabel) { continue; }
                 let po_link: string | null = null;
-                const poA = rowEl.querySelector('a[href*="purchase_orders.php"]') as HTMLAnchorElement | null;
+              const poA = rowEl.querySelector('a[href*="purchase_orders.php"]') as HTMLAnchorElement | null;
                 po_link = poA ? (poA.getAttribute('href') || null) : null;
                 if (!po_link && lastPurchaseHeading) po_link = lastPurchaseHeading.link;
                 const key = normalizeLabel(label || 'Row') + '|' + String(po_link || '');
                 if (seenPurchase.has(key)) { continue; }
                 seenPurchase.add(key);
                 out.push({ color, sizes: sizeLabels, section: 'Purchase (Running + Shipped)', row_label: label || 'Row', values: numbersFromRow(tds), po_link });
-                continue;
+              continue;
               }
             }
           }
@@ -624,17 +624,49 @@ async function runJob(job: JobRow) {
           }
         }
       } catch {}
+      // Compute diffs vs existing before bulk upsert for overview logs
+      let diffEntries: Array<{ color: string; section: string; row_label: string; size: string; from: number; to: number }> = [];
+        try {
+          const { data: existingRows } = await supabase
+            .from('style_stock')
+          .select('color, section, row_label, sizes, values')
+            .eq('style_no', s.style_no)
+          .limit(20000);
+        const existingMap = new Map<string, { sizes: string[]; values: number[] }>();
+        for (const r of (existingRows ?? []) as any[]) {
+          const key = `${String(r.color||'')}|${String(r.section||'')}|${String(r.row_label||'')}`;
+          existingMap.set(key, { sizes: (r.sizes as string[]|undefined) ?? [], values: (r.values as number[]|undefined) ?? [] });
+        }
+        for (const row of extracted) {
+          const key = `${row.color}|${row.section}|${row.row_label||''}`;
+          const prev = existingMap.get(key);
+          if (!prev) continue;
+          const prevVals = Array.isArray(prev.values) ? prev.values : [];
+          const sizes = Array.isArray(row.sizes) ? row.sizes : (prev.sizes || []);
+          const newVals = Array.isArray(row.values) ? row.values : [];
+          const len = Math.min(newVals.length, prevVals.length, sizes.length);
+          for (let i = 0; i < len; i++) {
+            const a = Number(prevVals[i] ?? 0);
+            const b = Number(newVals[i] ?? 0);
+            if (a !== b) {
+              diffEntries.push({ color: row.color, section: row.section, row_label: row.row_label || '', size: String(sizes[i] ?? String(i)), from: a, to: b });
+              if (diffEntries.length >= 50) break; // limit per style
+            }
+          }
+          if (diffEntries.length >= 50) break;
+        }
+      } catch {}
       // Bulk upsert extracted rows to reduce roundtrips
       const scrapeTs = new Date().toISOString();
       const payload = extracted.map((row: any) => ({
-        style_no: s.style_no,
-        color: row.color,
-        sizes: row.sizes,
-        section: row.section,
-        row_label: row.row_label || '',
-        values: row.values,
-        po_link: row.po_link,
-        scraped_at: scrapeTs
+            style_no: s.style_no,
+            color: row.color,
+            sizes: row.sizes,
+            section: row.section,
+            row_label: row.row_label || '',
+            values: row.values,
+            po_link: row.po_link,
+            scraped_at: scrapeTs
       }));
       // Deduplicate by conflict key to avoid ON CONFLICT affecting the same row twice
       const dedupMap = new Map<string, any>();
@@ -652,6 +684,9 @@ async function runJob(job: JobRow) {
       }
       const styleMs = Date.now() - styleStart;
       await log(job.id, 'info', 'STEP:style_stock_style_done', { style_no: s.style_no, style_name: styleName, rows: deduped.length, ms: styleMs });
+      if (diffEntries && diffEntries.length) {
+        try { await log(job.id, 'info', 'STEP:style_stock_changes', { style_no: s.style_no, style_name: styleName, count: diffEntries.length, sample: diffEntries.slice(0, 25) }); } catch {}
+      }
       await log(job.id, 'info', 'STEP:style_stock_rows', { style_no: s.style_no, rows: extracted.length });
     }
     await saveResult(job.id, 'Style stock scrape completed', { totalRows });
@@ -660,8 +695,8 @@ async function runJob(job: JobRow) {
   }
   if (job.type === 'deep_scrape_styles') {
     await deepScrapeStylesJob({ job, page: page!, log, saveResult, ensureNotCancelled, supabase, SPY_BASE_URL });
-    return;
-  }
+      return;
+    }
   if (job.type === 'scrape_statistics') {
     // Route: when explicitly requested (kind === 'per_size'), run per-size snapshot.
     // Otherwise, allow the deep/shallow statistics block below (toggled by payload.toggles.deep) to execute.
@@ -960,8 +995,8 @@ async function runJob(job: JobRow) {
         await saveResult(job.id, 'export_general_salesmen_zip', { file: { path, publicUrl } });
         await setJobSucceeded(job.id);
         await log(job.id, 'info', 'STEP:complete');
-        return;
-      }
+    return;
+  }
       // Export Countries PDF via print route (no sidebar) when requested
       if ((job.payload as any)?.mode === 'countries_pdf') {
         const ctx = await browser!.newContext({ viewport: { width: 1200, height: 1600 } });
@@ -1361,23 +1396,23 @@ async function runJob(job: JobRow) {
               upsertedRowsForLog.push({ account: accountNo, customer: customerName, qty, price, currency: currency || null, op: 'updated' });
             }
           } else {
-            const insertRow: any = {
-              season_id: targetSeasonId,
-              account_no: accountNo,
-              customer_id: customerUuid,
-              customer_name: customerName || null,
-              city: null,
-              salesperson_id: salespersonId,
-              salesperson_name: sp.name,
-              qty,
-              price,
-              currency: currency || null
-            };
+          const insertRow: any = {
+            season_id: targetSeasonId,
+            account_no: accountNo,
+            customer_id: customerUuid,
+            customer_name: customerName || null,
+            city: null,
+            salesperson_id: salespersonId,
+            salesperson_name: sp.name,
+            qty,
+            price,
+            currency: currency || null
+          };
             const { error: insErr } = await supabase.from('sales_stats').insert(insertRow);
             if (insErr) throw insErr;
             createdCount++;
-            upsertedForSp++;
-            if (upsertedRowsForLog.length < 10) {
+          upsertedForSp++;
+          if (upsertedRowsForLog.length < 10) {
               upsertedRowsForLog.push({ account: accountNo, customer: customerName, qty, price, currency: currency || null, op: 'created' });
             }
           }
@@ -1541,11 +1576,11 @@ async function runJob(job: JobRow) {
         const t0 = Date.now();
         const scraped = invoicedLines
           .map((inv) => {
-            const accountNo = (inv.matchedAccount || '').trim();
+          const accountNo = (inv.matchedAccount || '').trim();
             const invoiceNo = (inv.invoiceNo || '').trim();
-            const pick = inv.userCurrencyAmount || inv.customerCurrencyAmount;
+          const pick = inv.userCurrencyAmount || inv.customerCurrencyAmount;
             const qty = Number(inv.qty || 0) || 0;
-            const amount = Number(pick?.amount || 0) || 0;
+          const amount = Number(pick?.amount || 0) || 0;
             const currency = pick?.currency || null;
             if (!accountNo || !invoiceNo) return null;
             return { accountNo, invoiceNo, qty, amount, currency, customerName: inv.customerName || null, invoiceDate: inv.invoiceDate || null };
@@ -1555,7 +1590,7 @@ async function runJob(job: JobRow) {
 
         // Prefetch existing for season to avoid N queries
         const { data: existingAll, error: exErr } = await supabase
-          .from('sales_invoices')
+            .from('sales_invoices')
           .select('id, account_no, invoice_no, qty, amount, currency, manual_edited')
           .eq('season_id', targetSeasonId)
           .limit(100000);
@@ -1580,7 +1615,7 @@ async function runJob(job: JobRow) {
             const needsUpdate = existing.qty !== inv.qty || existing.amount !== inv.amount || (existing.currency || null) !== (inv.currency || null);
             if (needsUpdate) {
               toUpdate.push({ id: existing.id, values: { qty: inv.qty, amount: inv.amount, currency: inv.currency, customer_name: inv.customerName, invoice_date: inv.invoiceDate } });
-            } else {
+          } else {
               unchanged++;
             }
           } else {
@@ -1600,8 +1635,8 @@ async function runJob(job: JobRow) {
         // Bulk insert
         if (toInsert.length) {
           const { error: insErr } = await supabase.from('sales_invoices').insert(toInsert);
-          if (insErr) throw insErr;
-        }
+            if (insErr) throw insErr;
+          }
         // Apply updates (per-id)
         for (const u of toUpdate) {
           const { error: updErr } = await supabase.from('sales_invoices').update(u.values).eq('id', u.id);
