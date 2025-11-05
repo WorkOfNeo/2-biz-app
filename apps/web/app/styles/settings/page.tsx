@@ -338,6 +338,11 @@ function StyleListsEditor({ styles }: { styles: { id: string; style_no: string; 
     save(next);
   }
   const listItems = (data?.lists?.[active] || []) as string[];
+  const styleNoToName = React.useMemo(() => {
+    const m = new Map<string, string | null>();
+    for (const s of styles) m.set(s.style_no, s.style_name);
+    return m;
+  }, [styles]);
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2">
@@ -367,7 +372,7 @@ function StyleListsEditor({ styles }: { styles: { id: string; style_no: string; 
               {listItems.length === 0 && <div className="text-[11px] text-gray-500">No styles yet.</div>}
               {listItems.map((no) => (
                 <div key={no} className="flex items-center justify-between text-xs border rounded px-2 py-1">
-                  <span>{no}</span>
+                  <span>{no}{styleNoToName.get(no) ? ` — ${styleNoToName.get(no)}` : ''}</span>
                   <button className="underline" onClick={()=>removeFromList(no)}>Remove</button>
                 </div>
               ))}
