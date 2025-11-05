@@ -101,6 +101,24 @@ export default function StockScraperPage() {
     return `${mins}m ${secs}s ago`;
   }
 
+  function formatMs(ms?: number): string {
+    if (!ms || ms < 0) return '—';
+    const total = Math.floor(ms / 1000);
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = total % 60;
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${pad(h)}:${pad(m)}:${pad(s)}`;
+  }
+
+  async function enqueueAll() {
+    await fetch('/api/cron/update-stock-all', { method: 'POST' });
+  }
+
+  async function enqueueSelected() {
+    await fetch('/api/cron/update-stock-selected', { method: 'POST' });
+  }
+
   return (
     <div className="space-y-6">
       <div>
@@ -110,6 +128,10 @@ export default function StockScraperPage() {
 
       <section className="rounded-md border p-4">
         <h2 className="mb-2 text-lg font-semibold">Current run</h2>
+        <div className="mb-3 flex items-center gap-2">
+          <button onClick={enqueueAll} disabled={!!running} className="rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-60">Scrape all</button>
+          <button onClick={enqueueSelected} disabled={!!running} className="rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-60">Scrape selected</button>
+        </div>
         {running ? (
           <div className="space-y-2">
             <div className="text-sm text-gray-600">Job ID: <span className="font-mono">{running.id}</span></div>
@@ -152,7 +174,7 @@ export default function StockScraperPage() {
             {processed.map((p, i) => (
               <div key={i} className="flex items-center justify-between py-1 text-sm">
                 <div>{p.style_name || p.style_no}</div>
-                <div className="text-xs text-gray-600">{p.rows ?? 0} rows • {p.ms ? `${p.ms} ms` : '—'}</div>
+                <div className="text-xs text-gray-600">{p.rows ?? 0} rows • {formatMs(p.ms)}</div>
               </div>
             ))}
           </div>
