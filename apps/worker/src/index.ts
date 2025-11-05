@@ -260,20 +260,29 @@ async function runJob(job: JobRow) {
     }
     // Fan-out: split into chunks of ~30 and enqueue follow-up jobs for the remainder
     const BATCH_SIZE = Math.max(1, Number(process.env.STOCK_BATCH_SIZE || '30') || 30);
+    const rootId: string = ((job.payload as any)?.rootId as string) || job.id;
+    const currentBatchIndex: number = Number(((job.payload as any)?.batchIndex as number) || 1);
     if (styleNos.length > BATCH_SIZE) {
       const rest = styleNos.slice(BATCH_SIZE);
       const chunks: string[][] = [];
       for (let i = 0; i < rest.length; i += BATCH_SIZE) chunks.push(rest.slice(i, i + BATCH_SIZE));
-      for (const chunk of chunks) {
+      const batchTotal = 1 + chunks.length;
+      for (let i = 0; i < chunks.length; i++) {
+        const chunk = chunks[i];
         try {
           await supabase
             .from('jobs')
-            .insert({ type: 'update_style_stock', payload: { styleNos: chunk, requestedBy: (job.payload as any)?.requestedBy, mode: (job.payload as any)?.mode }, status: 'queued', max_attempts: 3 });
+            .insert({ type: 'update_style_stock', payload: { styleNos: chunk, requestedBy: (job.payload as any)?.requestedBy, mode: (job.payload as any)?.mode, rootId, batchIndex: (currentBatchIndex + 1 + i), batchTotal }, status: 'queued', max_attempts: 3 });
         } catch {}
       }
-      await log(job.id, 'info', 'STEP:style_stock_fanout', { batchSize: BATCH_SIZE, total: styleNos.length, enqueued: rest.length });
+      await log(job.id, 'info', 'STEP:style_stock_fanout', { batchSize: BATCH_SIZE, total: styleNos.length, enqueued: rest.length, rootId, batchIndex: currentBatchIndex, batchTotal });
       styleNos = styleNos.slice(0, BATCH_SIZE);
     }
+    // Log batch info for this job (even when <= BATCH_SIZE)
+    try {
+      const batchTotal = Math.ceil(Math.max(1, ((job.payload as any)?.totalCount as number) || styleNos.length) / BATCH_SIZE);
+      await log(job.id, 'info', 'STEP:style_stock_batches', { rootId, batchIndex: currentBatchIndex, batchTotal, batchSize: BATCH_SIZE });
+    } catch {}
     if (styleNos.length === 0) {
       await log(job.id, 'info', 'STEP:style_stock_no_selection');
       await saveResult(job.id, 'Style stock: no styles selected', { count: 0 });
@@ -281,7 +290,7 @@ async function runJob(job: JobRow) {
       return;
     }
     // Fetch style hrefs from styles table
-    const { data: styles } = await supabase.from('styles').select('id, style_no, link_href, scrape_enabled').in('style_no', styleNos);
+    const { data: styles } = await supabase.from('styles').select('id, style_no, style_name, link_href, scrape_enabled').in('style_no', styleNos);
     const totalStyles = (styles ?? []).length;
     let processedStyles = 0;
     const startedAt = Date.now();
@@ -289,12 +298,14 @@ async function runJob(job: JobRow) {
     let totalRows = 0;
     for (const s of (styles ?? []) as any[]) {
       processedStyles++;
-      await log(job.id, 'info', 'STEP:update_style_stock_progress', { index: processedStyles, total: totalStyles, style_no: s.style_no });
+      const styleName = (s as any)?.style_name || null;
+      await log(job.id, 'info', 'STEP:update_style_stock_progress', { index: processedStyles, total: totalStyles, style_no: s.style_no, style_name: styleName });
       if (maxDurationMs > 0 && (Date.now() - startedAt) > maxDurationMs) {
         await log(job.id, 'info', 'STEP:style_stock_timeout', { processed: processedStyles, total: totalStyles, ms: Date.now() - startedAt });
         break;
       }
       await ensureNotCancelled(job.id);
+      const styleStart = Date.now();
       const href = (s.link_href || '').toString();
       if (!href) continue;
       // Respect style-level scrape toggle when present
@@ -637,6 +648,8 @@ async function runJob(job: JobRow) {
         if (upErr) throw upErr;
         totalRows += deduped.length;
       }
+      const styleMs = Date.now() - styleStart;
+      await log(job.id, 'info', 'STEP:style_stock_style_done', { style_no: s.style_no, style_name: styleName, rows: deduped.length, ms: styleMs });
       await log(job.id, 'info', 'STEP:style_stock_rows', { style_no: s.style_no, rows: extracted.length });
     }
     await saveResult(job.id, 'Style stock scrape completed', { totalRows });
