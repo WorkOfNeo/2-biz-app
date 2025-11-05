@@ -39,7 +39,8 @@ export async function POST(req: Request) {
       auth: { persistSession: false, autoRefreshToken: false },
       global: { headers: auth ? { Authorization: auth } : {} }
     });
-    const insertBody = { type, payload, status: 'queued', max_attempts: 3 };
+    const isStock = type === 'update_style_stock';
+    const insertBody = { type, payload, status: 'queued', max_attempts: 3, queue: isStock ? 'stock' : 'default', priority: isStock ? 200 : 100 } as any;
     const { data, error } = await supabase.from('jobs').insert(insertBody).select('id').single();
     if (error) return new Response(JSON.stringify({ error: error.message }), { status: 500 });
     return new Response(JSON.stringify({ jobId: (data as any)?.id }), { status: 200, headers: { 'Content-Type': 'application/json' } });

@@ -214,12 +214,15 @@ app.post('/enqueue', async (c) => {
 
     const body = enqueueSchema.parse(await c.req.json<EnqueueRequestBody>());
 
+    const isStock = body.type === 'update_style_stock';
     const insertBody = {
       type: body.type,
       payload: body.payload as any,
       status: 'queued' as const,
-      max_attempts: 3
-    };
+      max_attempts: 3,
+      queue: isStock ? 'stock' : 'default',
+      priority: isStock ? 200 : 100
+    } as any;
     const { data, error } = await supabase.from('jobs').insert(insertBody).select('id, created_at').single();
     if (error) return c.json({ error: error.message }, 500);
 
@@ -273,7 +276,7 @@ app.post('/enqueue/update_style_stock_fanout', async (c) => {
     for (const b of batches) {
       const { data, error } = await supabase
         .from('jobs')
-        .insert({ type: 'update_style_stock', payload: { styleNos: b, requestedBy: email }, status: 'queued', max_attempts: 3 })
+        .insert({ type: 'update_style_stock', payload: { styleNos: b, requestedBy: email }, status: 'queued', max_attempts: 3, queue: 'stock', priority: 200 })
         .select('id')
         .single();
       if (error) return c.json({ error: error.message }, 500);

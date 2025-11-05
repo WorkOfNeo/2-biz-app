@@ -19,7 +19,7 @@ const SPY_BASE_URL = process.env.SPY_BASE_URL!;
 const SPY_USERNAME = process.env.SPY_USERNAME!;
 const SPY_PASSWORD = process.env.SPY_PASSWORD!;
 const TIMEZONE = process.env.TIMEZONE || 'Europe/Copenhagen';
-const JOB_QUEUE = process.env.JOB_QUEUE || null;
+const JOB_QUEUE = process.env.JOB_QUEUE || 'default';
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY || !BROWSERLESS_WS || !SPY_BASE_URL || !SPY_USERNAME || !SPY_PASSWORD) {
   // eslint-disable-next-line no-console
