@@ -24,6 +24,23 @@ export default function StockMovementsPage() {
   const [from, setFrom] = React.useState<string>(last7);
   const [to, setTo] = React.useState<string>(todayIso);
   const [styleNo, setStyleNo] = React.useState<string>('');
+  const [styleQuery, setStyleQuery] = React.useState<string>('');
+  const [comboOpen, setComboOpen] = React.useState<boolean>(false);
+  const { data: stylesList } = useSWR(isAdmin ? 'styles:list' : null, async () => {
+    const { data, error } = await supabase
+      .from('styles')
+      .select('style_no, style_name')
+      .order('style_no', { ascending: true })
+      .limit(5000);
+    if (error) throw new Error(error.message);
+    return (data ?? []) as Array<{ style_no: string; style_name: string | null }>;
+  }, { refreshInterval: 0 });
+  const filteredStyles = React.useMemo(() => {
+    const q = (styleQuery || '').toLowerCase().trim();
+    if (!stylesList) return [] as Array<{ style_no: string; style_name: string | null }>;
+    if (!q) return stylesList.slice(0, 50);
+    return stylesList.filter(s => (s.style_name || '').toLowerCase().includes(q)).slice(0, 50);
+  }, [stylesList, styleQuery]);
   const [color, setColor] = React.useState<string>('');
   const [size, setSize] = React.useState<string>('');
 
@@ -66,9 +83,38 @@ export default function StockMovementsPage() {
                 <label className="block text-xs text-gray-600 mb-1">To</label>
                 <input type="date" className="w-full border rounded px-2 py-1 text-sm" value={to} onChange={(e)=>setTo(e.target.value)} />
               </div>
-              <div>
-                <label className="block text-xs text-gray-600 mb-1">Style No</label>
-                <input className="w-full border rounded px-2 py-1 text-sm" placeholder="e.g. 1012317" value={styleNo} onChange={(e)=>setStyleNo(e.target.value)} />
+              <div className="relative">
+                <label className="block text-xs text-gray-600 mb-1">Style</label>
+                <div className="flex gap-2">
+                  <input
+                    className="w-full border rounded px-2 py-1 text-sm"
+                    placeholder="Search by style name"
+                    value={styleNo ? (stylesList?.find(s=>s.style_no===styleNo)?.style_name || '') : styleQuery}
+                    onChange={(e)=>{ setStyleQuery(e.target.value); setStyleNo(''); setComboOpen(true); }}
+                    onFocus={()=>setComboOpen(true)}
+                  />
+                  {styleNo && (
+                    <button className="text-xs border rounded px-2 py-1" onClick={()=>{ setStyleNo(''); setStyleQuery(''); }}>Clear</button>
+                  )}
+                </div>
+                {comboOpen && (
+                  <div className="absolute z-10 mt-1 max-h-60 w-full overflow-auto rounded border bg-white shadow">
+                    {filteredStyles.length === 0 && (
+                      <div className="px-2 py-1 text-xs text-gray-500">No matches</div>
+                    )}
+                    {filteredStyles.map((s, i) => (
+                      <button
+                        type="button"
+                        key={s.style_no + String(i)}
+                        className="block w-full text-left px-2 py-1 text-sm hover:bg-gray-50"
+                        onClick={()=>{ setStyleNo(s.style_no); setStyleQuery(''); setComboOpen(false); }}
+                      >
+                        <span className="font-medium">{s.style_name || '—'}</span>
+                        <span className="ml-2 text-xs text-gray-500">{s.style_no}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
               <div>
                 <label className="block text-xs text-gray-600 mb-1">Color</label>
