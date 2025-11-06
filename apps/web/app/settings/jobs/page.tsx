@@ -153,7 +153,7 @@ export default function JobsOverviewPage() {
               <div className="text-sm font-medium">{f.label}</div>
               {JOB_DESCRIPTIONS[f.type] && (
                 <Truncated
-                  text={JOB_DESCRIPTIONS[f.type]}
+                  text={JOB_DESCRIPTIONS[f.type] ?? ''}
                   expanded={!!expandFunc[f.type]}
                   onToggle={() => setExpandFunc((m) => ({ ...m, [f.type]: !m[f.type] }))}
                 />
@@ -189,7 +189,7 @@ export default function JobsOverviewPage() {
             </div>
             {JOB_DESCRIPTIONS[it.type] && (
               <Truncated
-                text={JOB_DESCRIPTIONS[it.type]}
+                text={JOB_DESCRIPTIONS[it.type] ?? ''}
                 expanded={!!expandCard[it.type]}
                 onToggle={() => setExpandCard((m) => ({ ...m, [it.type]: !m[it.type] }))}
               />
