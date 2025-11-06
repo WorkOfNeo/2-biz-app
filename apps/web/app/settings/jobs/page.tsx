@@ -7,6 +7,39 @@ import { supabase } from '../../../lib/supabaseClient';
 type JobRow = { id: string; type: string; status: string; finished_at: string | null; started_at: string | null; created_at: string };
 type JobResult = { job_id: string; summary?: string | null; data?: any; created_at: string };
 
+const JOB_DESCRIPTIONS: Record<string, string> = {
+  scrape_styles:
+    'Scrape Styles: Crawls SPY styles to discover and update styles (number, name, links) and pre-seeds color headers for later stock control.',
+  update_style_stock:
+    'Update Style Stock: Visits selected styles’ Stat & Stock, respects style/color scrape toggles and inactive flags, parses Stock/Sold/Purchase/Dedicated, bulk-upserts rows and runs in fan-out batches.',
+  scrape_customers:
+    'Scrape Customers: Imports customers from SPY (company, city, country, salesperson). Updates optional fields like phone, priority and links when available.',
+  scrape_statistics:
+    'Scrape Statistics: Deep mode processes per-salesperson totals and invoices for a season; Per-size snapshot captures size-level statistics used in dashboards.',
+  export_overview:
+    'Export Overview: Generates React-PDF exports (General per salesperson and combined ZIP), uploads to Supabase Storage and records entries in exports.',
+  scrape_top_styles:
+    'Scrape Top 10 Styles: Collects top-performing styles (and optionally color variants) and stores results for Top 10 dashboards.',
+  export_top_styles:
+    'Export Top 10 Styles: Builds PDF exports for Top styles based on stored results and uploads them to Storage.',
+};
+
+function Truncated({ text, expanded, onToggle }: { text: string; expanded: boolean; onToggle: () => void }) {
+  const max = 140;
+  const needs = text.length > max;
+  const shown = expanded || !needs ? text : text.slice(0, max) + '…';
+  return (
+    <div className="mt-1 text-[12px] text-gray-600">
+      <span>{shown}</span>
+      {needs && (
+        <button className="ml-1 underline text-blue-700" onClick={onToggle}>
+          {expanded ? 'View less' : 'View more'}
+        </button>
+      )}
+    </div>
+  );
+}
+
 async function fetchOverview() {
   // Fetch latest jobs (cap 200), then pick last per type and map results
   const { data: jobs } = await supabase
@@ -74,6 +107,8 @@ async function fetchOverview() {
 export default function JobsOverviewPage() {
   const { data, mutate } = useSWR('jobs:overview', fetchOverview, { refreshInterval: 10000 });
   const [enq, setEnq] = React.useState<string | null>(null);
+  const [expandFunc, setExpandFunc] = React.useState<Record<string, boolean>>({});
+  const [expandCard, setExpandCard] = React.useState<Record<string, boolean>>({});
 
   async function enqueue(type: string, payload: any = {}) {
     try {
@@ -116,6 +151,13 @@ export default function JobsOverviewPage() {
           ).map((f) => (
             <div key={f.type} className="rounded border p-2">
               <div className="text-sm font-medium">{f.label}</div>
+              {JOB_DESCRIPTIONS[f.type] && (
+                <Truncated
+                  text={JOB_DESCRIPTIONS[f.type]}
+                  expanded={!!expandFunc[f.type]}
+                  onToggle={() => setExpandFunc((m) => ({ ...m, [f.type]: !m[f.type] }))}
+                />
+              )}
               <div className="mt-2 flex flex-wrap gap-2">
                 {f.actions.map((a, i) => (
                   <button
@@ -145,6 +187,13 @@ export default function JobsOverviewPage() {
               </div>
               <div className="text-xs text-gray-600">{it.isRunning ? 'Running…' : (it.lastWhen ? new Date(it.lastWhen).toLocaleString() : '—')}</div>
             </div>
+            {JOB_DESCRIPTIONS[it.type] && (
+              <Truncated
+                text={JOB_DESCRIPTIONS[it.type]}
+                expanded={!!expandCard[it.type]}
+                onToggle={() => setExpandCard((m) => ({ ...m, [it.type]: !m[it.type] }))}
+              />
+            )}
             <div className="mt-1 text-xs text-gray-600">{it.summary || '—'}</div>
             <div className="mt-3 flex flex-wrap gap-2">
               {it.metrics.length ? it.metrics.map((m, i) => (
