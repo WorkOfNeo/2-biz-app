@@ -62,6 +62,30 @@ export default function StockMovementsPage() {
     return (data ?? []) as Movement[];
   }, { refreshInterval: 10000 });
 
+  // Map style_no -> style_name for display and grouping by day+style
+  const styleNameMap = React.useMemo(() => {
+    const m = new Map<string, string>();
+    (stylesList || []).forEach((s) => m.set(s.style_no, s.style_name || s.style_no));
+    return m;
+  }, [stylesList]);
+
+  const grouped = React.useMemo(() => {
+    const out: Array<{ day: string; style_no: string; items: Movement[] }> = [];
+    const map = new Map<string, { day: string; style_no: string; items: Movement[] }>();
+    for (const mv of (data ?? [])) {
+      const day = (mv.scraped_at || '').slice(0, 10);
+      const key = day + '|' + mv.style_no;
+      if (!map.has(key)) map.set(key, { day, style_no: mv.style_no, items: [] });
+      map.get(key)!.items.push(mv);
+    }
+    for (const g of map.values()) {
+      g.items.sort((a, b) => (a.color.localeCompare(b.color) || a.size.localeCompare(b.size)));
+      out.push(g);
+    }
+    out.sort((a, b) => (b.day.localeCompare(a.day) || (styleNameMap.get(a.style_no) || a.style_no).localeCompare(styleNameMap.get(b.style_no) || b.style_no)));
+    return out;
+  }, [data, styleNameMap]);
+
   return (
     <div className="space-y-4">
       <div>
@@ -127,40 +151,73 @@ export default function StockMovementsPage() {
             </div>
           </div>
 
-          <div className="rounded-md border bg-white overflow-auto">
-            <table className="min-w-full text-sm">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="p-2 text-left border-b">When</th>
-                  <th className="p-2 text-left border-b">Style</th>
-                  <th className="p-2 text-left border-b">Color</th>
-                  <th className="p-2 text-left border-b">Size</th>
-                  <th className="p-2 text-right border-b">Δ</th>
-                  <th className="p-2 text-right border-b">From → To</th>
-                </tr>
-              </thead>
-              <tbody>
-                {isLoading && (
-                  <tr><td className="p-2" colSpan={6}>Loading…</td></tr>
-                )}
-                {error && (
-                  <tr><td className="p-2 text-red-700" colSpan={6}>{String(error.message || error)}</td></tr>
-                )}
-                {!isLoading && !error && (data ?? []).length === 0 && (
-                  <tr><td className="p-2" colSpan={6}>No movements in range.</td></tr>
-                )}
-                {(data ?? []).map((m, i) => (
-                  <tr key={i}>
-                    <td className="p-2 border-b whitespace-nowrap">{new Date(m.scraped_at).toLocaleString()}</td>
-                    <td className="p-2 border-b whitespace-nowrap">{m.style_no}</td>
-                    <td className="p-2 border-b whitespace-nowrap">{m.color}</td>
-                    <td className="p-2 border-b whitespace-nowrap">{m.size}</td>
-                    <td className={`p-2 border-b text-right ${m.delta>0?'text-green-700':m.delta<0?'text-red-700':'text-gray-700'}`}>{m.delta>0?`+${m.delta}`:m.delta}</td>
-                    <td className="p-2 border-b text-right">{(m.prev_value ?? 0)} → {m.value}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="space-y-4">
+            {isLoading && <div className="text-sm text-gray-600">Loading…</div>}
+            {error && <div className="text-sm text-red-700">{String(error.message || error)}</div>}
+            {!isLoading && !error && grouped.length === 0 && <div className="text-sm">No movements in range.</div>}
+            {grouped.map((g, idx) => {
+              const sizeSet = new Set<string>();
+              for (const it of g.items) sizeSet.add(it.size);
+              const sizes = Array.from(sizeSet).sort((a,b)=> a.localeCompare(b));
+              const net: Record<string, number> = {};
+              sizes.forEach((s)=> net[s] = 0);
+              for (const it of g.items) net[it.size] = (net[it.size] || 0) + Number(it.delta || 0);
+              return (
+                <div key={g.day + g.style_no + String(idx)} className="rounded border bg-white overflow-auto">
+                  <div className="px-2 py-2 flex items-center justify-between bg-gray-50 border-b">
+                    <div className="text-sm font-semibold">{g.day} — {styleNameMap.get(g.style_no) || g.style_no}</div>
+                    <div className="text-xs text-gray-600">Changes per size</div>
+                  </div>
+                  <div className="px-2 py-2">
+                    <table className="min-w-full text-xs">
+                      <thead>
+                        <tr>
+                          <th className="p-1 text-left border-b">Size</th>
+                          {sizes.map((s) => (
+                            <th key={s} className="p-1 text-right border-b">{s}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td className="p-1 border-b text-left">Δ</td>
+                          {sizes.map((s) => {
+                            const d = net[s] || 0;
+                            return (
+                              <td key={s} className={`p-1 border-b text-right ${d>0?'text-green-700':d<0?'text-red-700':'text-gray-700'}`}>{d>0?`+${d}`:d}</td>
+                            );
+                          })}
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="px-2 pb-2">
+                    <table className="min-w-full text-xs">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="p-1 text-left border-b">Color</th>
+                          <th className="p-1 text-left border-b">Size</th>
+                          <th className="p-1 text-right border-b">Δ</th>
+                          <th className="p-1 text-right border-b">From → To</th>
+                          <th className="p-1 text-left border-b">Time</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {g.items.map((m, i) => (
+                          <tr key={i}>
+                            <td className="p-1 border-b whitespace-nowrap">{m.color}</td>
+                            <td className="p-1 border-b whitespace-nowrap">{m.size}</td>
+                            <td className={`p-1 border-b text-right ${m.delta>0?'text-green-700':m.delta<0?'text-red-700':'text-gray-700'}`}>{m.delta>0?`+${m.delta}`:m.delta}</td>
+                            <td className="p-1 border-b text-right">{(m.prev_value ?? 0)} → {m.value}</td>
+                            <td className="p-1 border-b whitespace-nowrap">{new Date(m.scraped_at).toLocaleTimeString()}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </>
       )}

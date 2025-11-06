@@ -69,19 +69,8 @@ export default function StockListPage() {
     return map;
   }, { refreshInterval: 0 });
 
-  // style_color_id -> seasons
-  const colorIds = React.useMemo(() => {
-    const out: string[] = [];
-    for (const r of (styleRows ?? []) as any[]) {
-      const sid = r.id as string;
-      const cmap = styleColors?.get(sid) || new Map<string, string>();
-      for (const g of groups.filter(gr => styleMetaByNo[gr.styleNo]?.id === sid)) {
-        const id = cmap.get((g.color || '').trim().toLowerCase());
-        if (id) out.push(id);
-      }
-    }
-    return Array.from(new Set(out));
-  }, [groups, styleRows, styleColors, styleMetaByNo]);
+  // style_color_id -> seasons (computed after groups is defined)
+  let colorIds: string[] = [];
 
   const { data: colorSeasons, mutate: mutateColorSeasons } = useSWR(colorIds.length ? ['style_color_seasons:byColorIds', colorIds.join(',')] : null, async () => {
     const { data, error } = await supabase
@@ -172,6 +161,20 @@ export default function StockListPage() {
     res.sort((a, b) => (a.styleNo.localeCompare(b.styleNo) || a.color.localeCompare(b.color)));
     return res;
   }, [data]);
+
+  // Now that groups are available, compute style_color_ids we need seasons for
+  colorIds = React.useMemo(() => {
+    const out: string[] = [];
+    for (const r of (styleRows ?? []) as any[]) {
+      const sid = r.id as string;
+      const cmap = styleColors?.get(sid) || new Map<string, string>();
+      for (const g of groups.filter((gr) => styleMetaByNo[gr.styleNo]?.id === sid)) {
+        const id = cmap.get((g.color || '').trim().toLowerCase());
+        if (id) out.push(id);
+      }
+    }
+    return Array.from(new Set(out));
+  }, [groups, styleRows, styleColors, styleMetaByNo]);
 
   // Load visibility flags for colors for styles shown
   const { data: colorVisibility } = useSWR(styleIds.length ? ['style_colors:visible', styleIds.join(',')] : null, async () => {
