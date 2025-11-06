@@ -636,6 +636,8 @@ async function runJob(job: JobRow) {
           }
         }
       } catch {}
+      // Timestamp for this style scrape batch
+      const scrapeTs = new Date().toISOString();
       // Compute diffs vs existing before bulk upsert for overview logs
       let diffEntries: Array<{ color: string; section: string; row_label: string; size: string; from: number; to: number }> = [];
       let stockMovements: Array<{ style_no: string; color: string; size: string; prev_value: number; value: number; delta: number; scraped_at: string; job_id: string }> = [];
@@ -674,7 +676,6 @@ async function runJob(job: JobRow) {
         }
       } catch {}
       // Bulk upsert extracted rows to reduce roundtrips
-      const scrapeTs = new Date().toISOString();
       const payload = extracted.map((row: any) => ({
             style_no: s.style_no,
             color: row.color,
