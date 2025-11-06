@@ -48,6 +48,7 @@ export function SidebarNav() {
           <NavLink href="/styles/stock-list" label="Stock List" />
           {!has('salesman') && has('admin') && <NavLink href="/styles/statistics" label="Statistics" />}
           {!has('salesman') && has('admin') && <NavLink href="/styles/scraper" label="Stock Scraper" />}
+          {!has('salesman') && has('admin') && <NavLink href="/styles/movements" label="Movements" />}
         </div>
       </div>
       <div>
