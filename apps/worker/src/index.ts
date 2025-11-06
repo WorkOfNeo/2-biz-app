@@ -1317,17 +1317,19 @@ async function runJob(job: JobRow) {
         await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
         await ensureNotCancelled(job.id);
 
-        // Wait for the single table and at least 1 row
-        const tableSel = 'table';
-        try {
-          await page.waitForSelector(tableSel, { timeout: 60_000 });
-          await page.waitForFunction(() => {
-            const t = document.querySelector('table');
-            if (!t) return false;
-            return !!t.querySelector('tbody tr');
-          }, {}, { timeout: 60_000 });
-        } catch (e) {
-          await log(job.id, 'error', 'STEP:salesperson_timeout', { name: sp.name });
+        // Wait briefly for the single table and at least 1 row; skip quickly if none
+        try { await page.waitForSelector('table', { timeout: 2000 }); } catch {}
+        let hasRows = false;
+        for (let attempt = 1; attempt <= 5; attempt++) {
+          await ensureNotCancelled(job.id);
+          try {
+            const cnt = await page.$$eval('table tbody tr', (trs) => trs.length);
+            if (cnt > 0) { hasRows = true; break; }
+          } catch {}
+          await page.waitForTimeout(1000);
+        }
+        if (!hasRows) {
+          await log(job.id, 'error', 'STEP:salesperson_timeout', { name: sp.name, reason: 'no_rows_after_5s' });
           continue; // skip to next salesperson instead of failing job
         }
 
@@ -1514,13 +1516,22 @@ async function runJob(job: JobRow) {
           } catch {}
         }
 
-        // Wait for the results table
-        await page!.waitForSelector('table.standardList tbody tr', { timeout: 60_000 });
-        await page!.waitForFunction(() => {
-          const tr = document.querySelector('table.standardList tbody tr');
-          return !!tr && (tr as HTMLElement).innerText.trim().length > 0;
-        }, {}, { timeout: 60_000 }).catch(() => {});
-        await log(job.id, 'info', 'STEP:invoiced_ready');
+        // Wait for the results table; skip gracefully if none within ~5s
+        {
+          let found = false;
+          for (let attempt = 1; attempt <= 5; attempt++) {
+            try {
+              const cnt = await page!.$$eval('table.standardList tbody tr', (trs) => trs.length);
+              if (cnt > 0) { found = true; break; }
+            } catch {}
+            await page!.waitForTimeout(1000);
+          }
+          if (!found) {
+            await log(job.id, 'error', 'STEP:invoiced_no_rows_skip');
+            return [];
+          }
+          await log(job.id, 'info', 'STEP:invoiced_ready');
+        }
 
         // Attempt to load all rows: scroll to bottom repeatedly until count stabilizes
         try {

@@ -12,9 +12,28 @@ async function handle(req: Request) {
     return new Response(JSON.stringify(debug ? { ...errRes, debug: true } : errRes), { status: 500 });
   }
   const supabase = createClient(url, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } });
+  // Dedupe: skip if a scrape_statistics job is already queued or running
+  {
+    const { data: existing, error: existErr } = await supabase
+      .from('jobs')
+      .select('id,status')
+      .in('status', ['queued','running'])
+      .eq('type', 'scrape_statistics')
+      .limit(1);
+    if (!existErr && existing && existing.length > 0) {
+      const res = { skipped: true, reason: 'already queued or running' };
+      return new Response(JSON.stringify(debug ? { ...res, debug: true } : res), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+  }
+  // Prefer configured season_compare.s1 if present
+  let seasonId: string | undefined = undefined;
+  try {
+    const { data: setting } = await supabase.from('app_settings').select('value').eq('key', 'season_compare').maybeSingle();
+    seasonId = (setting?.value as any)?.s1 as string | undefined;
+  } catch {}
   const insertBody = {
     type: 'scrape_statistics',
-    payload: { requestedBy: 'cron', toggles: { deep: true } },
+    payload: { requestedBy: 'cron', toggles: { deep: true }, ...(seasonId ? { seasonId } : {}) },
     status: 'queued' as const,
     max_attempts: 3
   };
