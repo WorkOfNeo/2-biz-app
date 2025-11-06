@@ -638,6 +638,7 @@ async function runJob(job: JobRow) {
       } catch {}
       // Compute diffs vs existing before bulk upsert for overview logs
       let diffEntries: Array<{ color: string; section: string; row_label: string; size: string; from: number; to: number }> = [];
+      let stockMovements: Array<{ style_no: string; color: string; size: string; prev_value: number; value: number; delta: number; scraped_at: string; job_id: string }> = [];
         try {
           const { data: existingRows } = await supabase
             .from('style_stock')
@@ -662,6 +663,10 @@ async function runJob(job: JobRow) {
             const b = Number(newVals[i] ?? 0);
             if (a !== b) {
               diffEntries.push({ color: row.color, section: row.section, row_label: row.row_label || '', size: String(sizes[i] ?? String(i)), from: a, to: b });
+              // Persist movements only for physical Stock section
+              if (row.section === 'Stock' && (row.row_label || 'Stock') === 'Stock') {
+                stockMovements.push({ style_no: s.style_no, color: row.color, size: String(sizes[i] ?? String(i)), prev_value: a, value: b, delta: (b - a), scraped_at: scrapeTs, job_id: job.id });
+              }
               if (diffEntries.length >= 50) break; // limit per style
             }
           }
@@ -698,6 +703,9 @@ async function runJob(job: JobRow) {
       await log(job.id, 'info', 'STEP:style_stock_style_done', { style_no: s.style_no, style_name: styleName, rows: deduped.length, ms: styleMs });
       if (diffEntries && diffEntries.length) {
         try { await log(job.id, 'info', 'STEP:style_stock_changes', { style_no: s.style_no, style_name: styleName, count: diffEntries.length, sample: diffEntries.slice(0, 25) }); } catch {}
+      }
+      if (stockMovements.length) {
+        try { await supabase.from('style_stock_movements').insert(stockMovements); } catch {}
       }
       await log(job.id, 'info', 'STEP:style_stock_rows', { style_no: s.style_no, rows: extracted.length });
     }
