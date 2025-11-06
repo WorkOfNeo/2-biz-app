@@ -25,18 +25,8 @@ export async function scrapeTopStyles(ctx: Ctx) {
     const beforeUrl = page.url();
     const beforeReady = await page.evaluate(() => document.readyState).catch(() => 'unknown');
     await log(job.id, 'info', 'STEP:topstyles_precheck', { initialUrl: beforeUrl, readyState: beforeReady });
-    // Ensure current season
+    // Determine season from page selection (fallback to current season if not found)
     let currentSeasonId: string | null = null;
-    try {
-      const { data } = await supabase.from('seasons').select('id').eq('is_current', true).maybeSingle();
-      currentSeasonId = (data?.id as string | undefined) || null;
-    } catch {}
-    if (!currentSeasonId) {
-      await log(job.id, 'error', 'STEP:topstyles_no_current_season');
-      await setJobFailedOrRequeue(job, 'No current season set');
-      return;
-    }
-    await log(job.id, 'info', 'STEP:topstyles_season', { season_id: currentSeasonId });
 
     // Navigate and login using existing authenticated browser (assumed)
     const webBase = 'https://2-biz.spysystem.dk/confident.php?mode=Topstyles';
@@ -59,6 +49,74 @@ export async function scrapeTopStyles(ctx: Ctx) {
     const frames = page.frames();
     const frameUrls = frames.map((f) => f.url());
     await log(job.id, 'info', 'STEP:topstyles_nav_ok', { url: webBase, readyState: ready, frames: frameUrls });
+
+    // Read selected season from the page's Season select
+    try {
+      const seasonInfo = await page.evaluate(() => {
+        const sel = document.querySelector('#s_season_id') as HTMLSelectElement | null;
+        if (!sel) return null;
+        const opt = sel.options[sel.selectedIndex] || null;
+        const value = (sel.value || (opt as HTMLOptionElement | null)?.value || '').trim();
+        const text = ((opt as HTMLOptionElement | null)?.textContent || '').trim();
+        return { value, text };
+      });
+      if (seasonInfo && seasonInfo.text) {
+        // Try to map to existing season by spy_season_id first (if value is set)
+        const spySeasonId = seasonInfo.value && seasonInfo.value !== '0' ? seasonInfo.value : null;
+        if (spySeasonId) {
+          try {
+            const { data: foundBySpy } = await supabase.from('seasons').select('id').eq('spy_season_id', Number(spySeasonId)).maybeSingle();
+            if (foundBySpy?.id) currentSeasonId = foundBySpy.id as string;
+          } catch {}
+        }
+        // Normalize label like "26 EARLY SPRING" → "EARLY SPRING 2026"
+        function normalizeSeasonLabel(label: string): { name: string; year: number } {
+          const parts = label.trim().split(/\s+/);
+          const yy = parts.shift() || '';
+          const year = 2000 + (parseInt(yy, 10) || 0);
+          let name = parts.join(' ').toUpperCase();
+          name = name.replace(/^BASIC\s*-\s*/i, '').trim();
+          return { name, year: isFinite(year) ? year : new Date().getFullYear() };
+        }
+        const { name, year } = normalizeSeasonLabel(seasonInfo.text);
+        const displayName = `${name} ${year}`;
+        if (!currentSeasonId) {
+          // Find or create by display name
+          try {
+            const { data: foundByName } = await supabase.from('seasons').select('id').ilike('name', displayName).maybeSingle();
+            if (foundByName?.id) {
+              currentSeasonId = foundByName.id as string;
+            } else {
+              const insValues: any = { name: displayName, year };
+              // Best-effort: include spy_season_id if column exists (ignore on error)
+              if (spySeasonId) insValues.spy_season_id = Number(spySeasonId);
+              try {
+                const { data: ins, error: insErr } = await supabase.from('seasons').insert(insValues).select('id').single();
+                if (!insErr) currentSeasonId = (ins as any)?.id as string;
+              } catch {
+                // Fallback: insert minimal fields
+                const { data: ins2 } = await supabase.from('seasons').insert({ name: displayName, year }).select('id').single();
+                currentSeasonId = (ins2 as any)?.id as string;
+              }
+            }
+          } catch {}
+        }
+        await log(job.id, 'info', 'STEP:topstyles_page_season', { label: seasonInfo.text, spy_season_id: spySeasonId, seasonName: displayName, seasonId: currentSeasonId });
+      }
+    } catch {}
+    // Final fallback: use current season from DB if page did not yield one
+    if (!currentSeasonId) {
+      try {
+        const { data } = await supabase.from('seasons').select('id').eq('is_current', true).maybeSingle();
+        currentSeasonId = (data?.id as string | undefined) || null;
+      } catch {}
+    }
+    if (!currentSeasonId) {
+      await log(job.id, 'error', 'STEP:topstyles_no_season_determined');
+      await setJobFailedOrRequeue(job, 'Season could not be determined for Top Styles');
+      return;
+    }
+    await log(job.id, 'info', 'STEP:topstyles_season', { season_id: currentSeasonId });
 
     // Helper: find a frame that contains a selector
     async function findFrameWith(selector: string) {
