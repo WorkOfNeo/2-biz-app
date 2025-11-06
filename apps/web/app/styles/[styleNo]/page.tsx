@@ -39,6 +39,26 @@ export default function StyleDetailPage({ params }: { params: { styleNo: string 
   });
   const { has } = useRoles();
 
+  const { data: colorSeasons } = useSWR(meta?.id ? ['style:color-seasons', meta.id] : null, async () => {
+    // Load style_colors ids for this style
+    const { data: sc, error: scErr } = await supabase.from('style_colors').select('id, color').eq('style_id', meta!.id).order('color');
+    if (scErr) throw scErr as any;
+    const ids = (sc ?? []).map((r: any) => r.id as string);
+    if (ids.length === 0) return { map: new Map<string, string[]>(), seasons: new Map<string, { name: string; year: number | null }>() };
+    const { data: links } = await supabase.from('style_color_seasons').select('style_color_id, season_id').in('style_color_id', ids).limit(100000);
+    const seasonIds = Array.from(new Set((links ?? []).map((r: any) => r.season_id as string))).filter(Boolean);
+    const { data: seas } = await supabase.from('seasons').select('id, name, year').in('id', seasonIds).limit(100000);
+    const map = new Map<string, string[]>();
+    for (const r of (links ?? []) as any[]) {
+      const arr = map.get(r.style_color_id) || [];
+      arr.push(r.season_id as string);
+      map.set(r.style_color_id, arr);
+    }
+    const sMap = new Map<string, { name: string; year: number | null }>();
+    for (const s of (seas ?? []) as any[]) sMap.set(s.id as string, { name: s.name as string, year: (s.year as number | null) ?? null });
+    return { map, seasons: sMap } as { map: Map<string, string[]>; seasons: Map<string, { name: string; year: number | null }> };
+  }, { refreshInterval: 0 });
+
   return (
     <div className="space-y-4">
       <div className="flex items-start gap-4">
@@ -76,9 +96,10 @@ export default function StyleDetailPage({ params }: { params: { styleNo: string 
         <div className="flex flex-col gap-2">
           {(colors ?? []).length === 0 && <div className="text-xs text-gray-500">No colors found yet.</div>}
           {(colors ?? []).map((c) => (
-            <div key={c.id} className="flex items-center justify-between rounded border px-2 py-1 text-sm bg-gray-50">
-              <div className="font-medium">{c.color}</div>
-              {has('admin') && (
+            <div key={c.id} className="rounded border px-2 py-1 text-sm bg-gray-50">
+              <div className="flex items-center justify-between">
+                <div className="font-medium">{c.color}</div>
+                {has('admin') && (
                 <label className="text-xs flex items-center gap-2">
                   <input
                     type="checkbox"
@@ -96,7 +117,18 @@ export default function StyleDetailPage({ params }: { params: { styleNo: string 
                   />
                   <span>Visible on Stock List</span>
                 </label>
-              )}
+                )}
+              </div>
+              <div className="mt-1 flex flex-wrap gap-1">
+                {(() => {
+                  const ids = colorSeasons?.map.get(c.id) || [];
+                  const labels = ids.map((id) => colorSeasons?.seasons.get(id)).filter(Boolean) as Array<{ name: string; year: number | null }>;
+                  if (labels.length === 0) return <span className="text-[11px] text-gray-500">No seasons yet.</span>;
+                  return labels.map((s, i) => (
+                    <span key={i} className="inline-flex items-center rounded border px-1.5 py-0.5 text-[11px]">{s.name}{s.year ? ` ${s.year}` : ''}</span>
+                  ));
+                })()}
+              </div>
             </div>
           ))}
         </div>
