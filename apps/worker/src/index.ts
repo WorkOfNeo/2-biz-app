@@ -440,8 +440,8 @@ async function runJob(job: JobRow) {
         } catch {}
         // If still no details, log and continue
         try {
-          const html = await captureHtmlSnippet(page, page!);
-          await log(job.id, 'error', 'STEP:style_stock_missing', { style_no: s.style_no, error: e?.message || String(e), html });
+        const html = await captureHtmlSnippet(page, page!);
+        await log(job.id, 'error', 'STEP:style_stock_missing', { style_no: s.style_no, error: e?.message || String(e), html });
         } catch {}
         continue;
       }
@@ -633,19 +633,19 @@ async function runJob(job: JobRow) {
             .map((c) => ({ style_id: styleId, color: c, sort_index: 0 }));
           if (toInsert.length) {
             await supabase.from('style_colors').insert(toInsert);
+            }
           }
-        }
-      } catch {}
+        } catch {}
       // Timestamp for this style scrape batch
       const scrapeTs = new Date().toISOString();
       // Compute diffs vs existing before bulk upsert for overview logs
       let diffEntries: Array<{ color: string; section: string; row_label: string; size: string; from: number; to: number }> = [];
-      let stockMovements: Array<{ style_no: string; color: string; size: string; prev_value: number; value: number; delta: number; scraped_at: string; job_id: string }> = [];
+      let stockMovements: Array<{ style_no: string; color: string; size: string; prev_value: number; value: number; delta: number; scraped_at: string; job_id: string; kind: string }> = [];
         try {
           const { data: existingRows } = await supabase
-            .from('style_stock')
+          .from('style_stock')
           .select('color, section, row_label, sizes, values')
-            .eq('style_no', s.style_no)
+          .eq('style_no', s.style_no)
           .limit(20000);
         const existingMap = new Map<string, { sizes: string[]; values: number[] }>();
         for (const r of (existingRows ?? []) as any[]) {
@@ -666,8 +666,12 @@ async function runJob(job: JobRow) {
             if (a !== b) {
               diffEntries.push({ color: row.color, section: row.section, row_label: row.row_label || '', size: String(sizes[i] ?? String(i)), from: a, to: b });
               // Persist movements only for physical Stock section
-              if (row.section === 'Stock' && (row.row_label || 'Stock') === 'Stock') {
-                stockMovements.push({ style_no: s.style_no, color: row.color, size: String(sizes[i] ?? String(i)), prev_value: a, value: b, delta: (b - a), scraped_at: scrapeTs, job_id: job.id });
+              if ((row.row_label || 'Stock') === 'Stock') {
+                if (row.section === 'Stock') {
+                  stockMovements.push({ style_no: s.style_no, color: row.color, size: String(sizes[i] ?? String(i)), prev_value: a, value: b, delta: (b - a), scraped_at: scrapeTs, job_id: job.id, kind: 'stock' });
+                } else if (row.section === 'Sold') {
+                  stockMovements.push({ style_no: s.style_no, color: row.color, size: String(sizes[i] ?? String(i)), prev_value: a, value: b, delta: (b - a), scraped_at: scrapeTs, job_id: job.id, kind: 'sold' });
+                }
               }
               if (diffEntries.length >= 50) break; // limit per style
             }

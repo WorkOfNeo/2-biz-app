@@ -12,6 +12,7 @@ type Movement = {
   value: number;
   delta: number;
   scraped_at: string;
+  kind?: 'stock' | 'sold';
 };
 
 export default function StockMovementsPage() {
@@ -43,15 +44,17 @@ export default function StockMovementsPage() {
   }, [stylesList, styleQuery]);
   const [color, setColor] = React.useState<string>('');
   const [size, setSize] = React.useState<string>('');
+  const [kind, setKind] = React.useState<'stock' | 'sold'>('stock');
 
-  const { data, error, isLoading } = useSWR(isAdmin ? ['movements', from, to, styleNo, color, size] : null, async () => {
+  const { data, error, isLoading } = useSWR(isAdmin ? ['movements', from, to, styleNo, color, size, kind] : null, async () => {
     const fromIso = from ? new Date(from + 'T00:00:00').toISOString() : new Date('1970-01-01').toISOString();
     const toIso = to ? new Date(to + 'T23:59:59').toISOString() : new Date().toISOString();
     let q = supabase
       .from('style_stock_movements')
-      .select('style_no,color,size,prev_value,value,delta,scraped_at')
+      .select('style_no,color,size,prev_value,value,delta,scraped_at,kind')
       .gte('scraped_at', fromIso)
       .lte('scraped_at', toIso)
+      .eq('kind', kind)
       .order('scraped_at', { ascending: false })
       .limit(2000);
     if (styleNo && styleNo.trim()) q = q.ilike('style_no', `%${styleNo.trim()}%`);
@@ -98,7 +101,7 @@ export default function StockMovementsPage() {
       {isAdmin && (
         <>
           <div className="rounded-md border bg-white p-3">
-            <div className="grid grid-cols-1 md:grid-cols-5 gap-2 items-end">
+            <div className="grid grid-cols-1 md:grid-cols-6 gap-2 items-end">
               <div>
                 <label className="block text-xs text-gray-600 mb-1">From</label>
                 <input type="date" className="w-full border rounded px-2 py-1 text-sm" value={from} onChange={(e)=>setFrom(e.target.value)} />
@@ -106,6 +109,13 @@ export default function StockMovementsPage() {
               <div>
                 <label className="block text-xs text-gray-600 mb-1">To</label>
                 <input type="date" className="w-full border rounded px-2 py-1 text-sm" value={to} onChange={(e)=>setTo(e.target.value)} />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Change type</label>
+                <select className="w-full border rounded px-2 py-1 text-sm" value={kind} onChange={(e)=>setKind(e.target.value as any)}>
+                  <option value="stock">Stock</option>
+                  <option value="sold">Sold</option>
+                </select>
               </div>
               <div className="relative">
                 <label className="block text-xs text-gray-600 mb-1">Style</label>
@@ -151,70 +161,63 @@ export default function StockMovementsPage() {
             </div>
           </div>
 
-          <div className="space-y-4">
+          <div className="space-y-5">
             {isLoading && <div className="text-sm text-gray-600">Loading…</div>}
             {error && <div className="text-sm text-red-700">{String(error.message || error)}</div>}
             {!isLoading && !error && grouped.length === 0 && <div className="text-sm">No movements in range.</div>}
             {grouped.map((g, idx) => {
-              const sizeSet = new Set<string>();
-              for (const it of g.items) sizeSet.add(it.size);
-              const sizes = Array.from(sizeSet).sort((a,b)=> a.localeCompare(b));
-              const net: Record<string, number> = {};
-              sizes.forEach((s)=> net[s] = 0);
-              for (const it of g.items) net[it.size] = (net[it.size] || 0) + Number(it.delta || 0);
+              // Build styles grouped by identical size sets
+              const bySizeKey = new Map<string, { sizes: string[]; styles: Array<{ style_no: string; deltas: Record<string, number> }> }>();
+              const styleToSizes = new Map<string, Set<string>>();
+              const styleToNet: Map<string, Record<string, number>> = new Map();
+              for (const it of g.items) {
+                if (!styleToSizes.has(it.style_no)) styleToSizes.set(it.style_no, new Set<string>());
+                styleToSizes.get(it.style_no)!.add(it.size);
+                const net = styleToNet.get(it.style_no) || {};
+                net[it.size] = (net[it.size] || 0) + Number(it.delta || 0);
+                styleToNet.set(it.style_no, net);
+              }
+              for (const [st, szSet] of styleToSizes.entries()) {
+                const sizes = Array.from(szSet).sort((a,b)=>a.localeCompare(b));
+                const key = sizes.join('|') || '-';
+                if (!bySizeKey.has(key)) bySizeKey.set(key, { sizes, styles: [] });
+                bySizeKey.get(key)!.styles.push({ style_no: st, deltas: styleToNet.get(st) || {} });
+              }
               return (
-                <div key={g.day + g.style_no + String(idx)} className="rounded border bg-white overflow-auto">
-                  <div className="px-2 py-2 flex items-center justify-between bg-gray-50 border-b">
-                    <div className="text-sm font-semibold">{g.day} — {styleNameMap.get(g.style_no) || g.style_no}</div>
-                    <div className="text-xs text-gray-600">Changes per size</div>
-                  </div>
-                  <div className="px-2 py-2">
-                    <table className="min-w-full text-xs">
-                      <thead>
-                        <tr>
-                          <th className="p-1 text-left border-b">Size</th>
-                          {sizes.map((s) => (
-                            <th key={s} className="p-1 text-right border-b">{s}</th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        <tr>
-                          <td className="p-1 border-b text-left">Δ</td>
-                          {sizes.map((s) => {
-                            const d = net[s] || 0;
-                            return (
-                              <td key={s} className={`p-1 border-b text-right ${d>0?'text-green-700':d<0?'text-red-700':'text-gray-700'}`}>{d>0?`+${d}`:d}</td>
-                            );
-                          })}
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
-                  <div className="px-2 pb-2">
-                    <table className="min-w-full text-xs">
-                      <thead className="bg-gray-50">
-                        <tr>
-                          <th className="p-1 text-left border-b">Color</th>
-                          <th className="p-1 text-left border-b">Size</th>
-                          <th className="p-1 text-right border-b">Δ</th>
-                          <th className="p-1 text-right border-b">From → To</th>
-                          <th className="p-1 text-left border-b">Time</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {g.items.map((m, i) => (
-                          <tr key={i}>
-                            <td className="p-1 border-b whitespace-nowrap">{m.color}</td>
-                            <td className="p-1 border-b whitespace-nowrap">{m.size}</td>
-                            <td className={`p-1 border-b text-right ${m.delta>0?'text-green-700':m.delta<0?'text-red-700':'text-gray-700'}`}>{m.delta>0?`+${m.delta}`:m.delta}</td>
-                            <td className="p-1 border-b text-right">{(m.prev_value ?? 0)} → {m.value}</td>
-                            <td className="p-1 border-b whitespace-nowrap">{new Date(m.scraped_at).toLocaleTimeString()}</td>
+                <div key={g.day + String(idx)} className="space-y-4">
+                  <div className="text-sm font-semibold">{g.day}</div>
+                  {Array.from(bySizeKey.values()).map((grp, gi) => (
+                    <div key={String(gi)} className="rounded border bg-white overflow-auto">
+                      <div className="px-2 py-2 flex items-center justify-between bg-gray-50 border-b">
+                        <div className="text-xs text-gray-600">Size set: {grp.sizes.join(', ') || '—'}</div>
+                      </div>
+                      <table className="min-w-full text-xs">
+                        <thead>
+                          <tr>
+                            <th className="p-1 text-left border-b">Style</th>
+                            {grp.sizes.map((s) => (
+                              <th key={s} className="p-1 text-right border-b">{s}</th>
+                            ))}
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                        </thead>
+                        <tbody>
+                          {grp.styles
+                            .sort((a,b)=> (styleNameMap.get(a.style_no)||a.style_no).localeCompare(styleNameMap.get(b.style_no)||b.style_no))
+                            .map((st, si) => (
+                            <tr key={st.style_no + String(si)}>
+                              <td className="p-1 border-b whitespace-nowrap">{styleNameMap.get(st.style_no) || st.style_no}</td>
+                              {grp.sizes.map((s) => {
+                                const d = Number(st.deltas[s] || 0);
+                                return (
+                                  <td key={s} className={`p-1 border-b text-right ${d>0?'text-green-700':d<0?'text-red-700':'text-gray-700'}`}>{Math.abs(d) || 0}</td>
+                                );
+                              })}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ))}
                 </div>
               );
             })}
