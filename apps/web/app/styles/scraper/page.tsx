@@ -86,6 +86,19 @@ export default function StockScraperPage() {
     return { total, running: runningCount, queued: queuedCount, currentIdx, batchTotal };
   }, { refreshInterval: 3000 });
 
+  const { data: related } = useSWR(rootId ? `stock-scraper:related:${rootId}` : null, async () => {
+    const { data, error } = await supabase
+      .from('jobs')
+      .select('id, status, created_at, payload')
+      .eq('type', 'update_style_stock')
+      .contains('payload', { rootId })
+      .order('created_at', { ascending: true })
+      .limit(200);
+    if (error) throw new Error(error.message);
+    return (data ?? []) as Array<{ id: string; status: string; created_at: string; payload: any }>;
+  }, { refreshInterval: 10000 });
+  const [showRelated, setShowRelated] = React.useState(false);
+
   const { data: recent } = useSWR('stock-scraper:recent', async () => {
     const { data, error } = await supabase
       .from('jobs')
@@ -160,6 +173,36 @@ export default function StockScraperPage() {
             {batches ? (
               <div className="text-xs text-gray-600">Batches running: {batches.running} (queued: {batches.queued}) — Batch {batches.currentIdx}/{batches.batchTotal}</div>
             ) : null}
+            {related && (
+              <div className="text-xs text-gray-600">
+                Related jobs: {related.length}{' '}
+                <button className="underline" onClick={()=>setShowRelated((v)=>!v)}>{showRelated ? 'Hide' : 'Show'}</button>
+              </div>
+            )}
+            {showRelated && related && related.length > 0 && (
+              <div className="max-h-40 overflow-auto rounded border bg-white">
+                <table className="min-w-full text-xs">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="p-1 text-left border-b">ID</th>
+                      <th className="p-1 text-left border-b">Status</th>
+                      <th className="p-1 text-left border-b">Batch</th>
+                      <th className="p-1 text-left border-b">Created</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {related.map((j)=> (
+                      <tr key={j.id}>
+                        <td className="p-1 border-b font-mono">{j.id}</td>
+                        <td className="p-1 border-b">{j.status}</td>
+                        <td className="p-1 border-b">{(j.payload?.batchIndex ?? 1)} / {(j.payload?.batchTotal ?? '?')}</td>
+                        <td className="p-1 border-b whitespace-nowrap">{new Date(j.created_at).toLocaleString()}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
             <div>
               <button onClick={stopJob} className="rounded-md border border-red-600 px-3 py-1.5 text-sm text-red-700 hover:bg-red-50">Stop job</button>
             </div>

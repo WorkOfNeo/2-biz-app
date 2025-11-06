@@ -414,23 +414,35 @@ async function runJob(job: JobRow) {
       } catch (e: any) {
         await log(job.id, 'error', 'STEP:style_stock_expand_error', { error: e?.message || String(e) });
       }
-      // Ensure statAndStockDetails present (increase timeout)
+      // Ensure statAndStockDetails present with fast exit when missing
       try {
-        await page!.waitForSelector('.statAndStockDetails', { timeout: 120_000, state: 'attached' as any });
+        await page!.waitForSelector('.statAndStockDetails', { timeout: 25_000, state: 'attached' as any });
       } catch (e: any) {
-        // Last resort: force reveal any hidden tables within boxes
+        let forced = 0;
         try {
-          const forced = await page!.evaluate(() => {
+          forced = await page!.evaluate(() => {
             let shown = 0;
             document.querySelectorAll('.statAndStockBox table[style*="display: none"]').forEach((t) => { (t as HTMLElement).style.display = 'table'; shown++; });
             return shown;
           });
-          await log(job.id, 'info', 'STEP:style_stock_force_show', { tablesShown: forced });
-          await page!.waitForTimeout(500);
-          await page!.waitForSelector('.statAndStockDetails', { timeout: 10_000, state: 'attached' as any });
         } catch {}
-        const html = await captureHtmlSnippet(page, page!);
-        await log(job.id, 'error', 'STEP:style_stock_missing', { style_no: s.style_no, error: e?.message || String(e), html });
+        try { await log(job.id, 'info', 'STEP:style_stock_force_show', { tablesShown: forced }); } catch {}
+        if (!forced) {
+          try {
+            const html = await captureHtmlSnippet(page, page!);
+            await log(job.id, 'info', 'STEP:style_stock_missing_skip', { style_no: s.style_no, html });
+          } catch {}
+          continue; // skip quickly when nothing to show
+        }
+        try {
+          await page!.waitForTimeout(300);
+          await page!.waitForSelector('.statAndStockDetails', { timeout: 5_000, state: 'attached' as any });
+        } catch {}
+        // If still no details, log and continue
+        try {
+          const html = await captureHtmlSnippet(page, page!);
+          await log(job.id, 'error', 'STEP:style_stock_missing', { style_no: s.style_no, error: e?.message || String(e), html });
+        } catch {}
         continue;
       }
       // Discover ALL color headers (unfiltered) and ensure style_colors is updated before parsing
