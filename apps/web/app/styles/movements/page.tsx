@@ -44,7 +44,7 @@ export default function StockMovementsPage() {
   }, [stylesList, styleQuery]);
   const [color, setColor] = React.useState<string>('');
   const [size, setSize] = React.useState<string>('');
-  const [kind, setKind] = React.useState<'stock' | 'sold'>('stock');
+  const [kind, setKind] = React.useState<'stock' | 'sold' | 'purchase'>('stock');
 
   const { data, error, isLoading } = useSWR(isAdmin ? ['movements', from, to, styleNo, color, size, kind] : null, async () => {
     const fromIso = from ? new Date(from + 'T00:00:00').toISOString() : new Date('1970-01-01').toISOString();
@@ -115,6 +115,7 @@ export default function StockMovementsPage() {
                 <select className="w-full border rounded px-2 py-1 text-sm" value={kind} onChange={(e)=>setKind(e.target.value as any)}>
                   <option value="stock">Stock</option>
                   <option value="sold">Sold</option>
+                  <option value="purchase">Purchase</option>
                 </select>
               </div>
               <div className="relative">

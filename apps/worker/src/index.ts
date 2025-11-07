@@ -666,12 +666,13 @@ async function runJob(job: JobRow) {
             if (a !== b) {
               diffEntries.push({ color: row.color, section: row.section, row_label: row.row_label || '', size: String(sizes[i] ?? String(i)), from: a, to: b });
               // Persist movements only for physical Stock section
-              if ((row.row_label || 'Stock') === 'Stock') {
-                if (row.section === 'Stock') {
-                  stockMovements.push({ style_no: s.style_no, color: row.color, size: String(sizes[i] ?? String(i)), prev_value: a, value: b, delta: (b - a), scraped_at: scrapeTs, job_id: job.id, kind: 'stock' });
-                } else if (row.section === 'Sold') {
-                  stockMovements.push({ style_no: s.style_no, color: row.color, size: String(sizes[i] ?? String(i)), prev_value: a, value: b, delta: (b - a), scraped_at: scrapeTs, job_id: job.id, kind: 'sold' });
-                }
+              // Record movement kinds by section
+              if (row.section === 'Stock') {
+                stockMovements.push({ style_no: s.style_no, color: row.color, size: String(sizes[i] ?? String(i)), prev_value: a, value: b, delta: (b - a), scraped_at: scrapeTs, job_id: job.id, kind: 'stock' });
+              } else if (row.section === 'Sold') {
+                stockMovements.push({ style_no: s.style_no, color: row.color, size: String(sizes[i] ?? String(i)), prev_value: a, value: b, delta: (b - a), scraped_at: scrapeTs, job_id: job.id, kind: 'sold' });
+              } else if (row.section === 'Purchase (Running + Shipped)') {
+                stockMovements.push({ style_no: s.style_no, color: row.color, size: String(sizes[i] ?? String(i)), prev_value: a, value: b, delta: (b - a), scraped_at: scrapeTs, job_id: job.id, kind: 'purchase' });
               }
               if (diffEntries.length >= 50) break; // limit per style
             }
@@ -1530,7 +1531,7 @@ async function runJob(job: JobRow) {
             await log(job.id, 'error', 'STEP:invoiced_no_rows_skip');
             return [];
           }
-          await log(job.id, 'info', 'STEP:invoiced_ready');
+        await log(job.id, 'info', 'STEP:invoiced_ready');
         }
 
         // Attempt to load all rows: scroll to bottom repeatedly until count stabilizes
