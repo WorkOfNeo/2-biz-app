@@ -10,6 +10,7 @@ import { exportOverview as exportOverviewJob } from './jobs/exportOverview.js';
 import { exportTopStyles as exportTopStylesJob } from './jobs/exportTopStyles.js';
 import { scrapeTopStyles as scrapeTopStylesJob } from './jobs/scrapeTopStyles.js';
 import { scrapeStatisticsPerSize } from './jobs/scrapeStatisticsPerSize.js';
+import { scrapePurchaseOrders as scrapePurchaseOrdersJob } from './jobs/scrapePurchaseOrders.js';
 // (imported with .js extension above)
 
 const SUPABASE_URL = process.env.SUPABASE_URL!;
@@ -754,6 +755,10 @@ async function runJob(job: JobRow) {
   }
   if ((job.type as any) === 'scrape_top_styles') {
     await scrapeTopStylesJob({ job, page: page!, log, saveResult, setJobFailedOrRequeue, setJobSucceeded, supabase });
+    return;
+  }
+  if ((job.type as any) === 'scrape_purchase_orders') {
+    await scrapePurchaseOrdersJob({ job, page: page!, log, saveResult, setJobFailedOrRequeue, setJobSucceeded, ensureNotCancelled, supabase });
     return;
   }
   /* LEGACY export_overview handler (disabled)

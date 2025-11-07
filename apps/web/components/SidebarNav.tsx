@@ -52,6 +52,14 @@ export function SidebarNav() {
         </div>
       </div>
       <div>
+        <div className="mt-4 mb-1 text-xs uppercase tracking-wider text-slate-400">Purchase</div>
+        <div className="ml-2 space-y-1">
+          {!has('salesman') && has('admin') && (
+            <NavLink href="/purchase/orders" label="Purchase Orders" />
+          )}
+        </div>
+      </div>
+      <div>
         <div className="mt-4 mb-1 text-xs uppercase tracking-wider text-slate-400">Settings</div>
         <div className="ml-2 space-y-1">
           {!has('salesman') && has('admin') && <NavLink href="/settings/seasons" label="SEASONS" />}
