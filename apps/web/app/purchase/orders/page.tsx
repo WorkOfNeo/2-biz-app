@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from 'react';
-import Link from 'next/link';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 
 type PoRow = {
@@ -97,7 +96,7 @@ export default function PurchaseOrdersPage() {
                 <td className="p-2 border-b">{r.status || '—'}</td>
                 <td className="p-2 border-b">
                   {r.po_link ? (
-                    <Link className="underline" href={r.po_link} target="_blank" rel="noreferrer">{r.po_no}</Link>
+                    <a className="underline" href={r.po_link} target="_blank" rel="noreferrer">{r.po_no}</a>
                   ) : r.po_no}
                 </td>
                 <td className="p-2 border-b">{r.supplier || '—'}</td>
