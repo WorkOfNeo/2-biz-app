@@ -94,7 +94,7 @@ export default function NielsensSalesPage() {
         const v: number[] = ensureNums(r.values, len);
         return acc.map((x, i) => x + (v[i] ?? 0));
       }, zero.slice());
-      const available = stockVals.map((v, i) => v - soldVals[i] + purchaseVals[i]);
+      const available = stockVals.map((v, i) => v - (soldVals[i] ?? 0) + (purchaseVals[i] ?? 0));
       map.set(key, { sizes, available });
     }
     return map;
