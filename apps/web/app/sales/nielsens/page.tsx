@@ -229,6 +229,37 @@ export default function NielsensSalesPage() {
     setRan(true);
   }
 
+  // Build per-shop summary after a run
+  const summaryByShop = React.useMemo(() => {
+    if (!ran || grouped.length === 0) return [] as Array<{
+      shop: string;
+      can: Array<{ article: string; color: string; qty: number }>;
+      cannot: Array<{ article: string; color: string; qty: number }>;
+    }>;
+    const out: Array<{ shop: string; can: Array<{ article: string; color: string; qty: number }>; cannot: Array<{ article: string; color: string; qty: number }> }> = [];
+    for (const g of grouped) {
+      const canMap = new Map<string, number>();
+      const cannotMap = new Map<string, number>();
+      for (const it of g.items) {
+        const key = `${it.Article}|||${it.Color}`;
+        const addTo = it.approved ? canMap : cannotMap;
+        addTo.set(key, (addTo.get(key) || 0) + (it.Qty || 0));
+      }
+      const can = Array.from(canMap.entries()).map(([k, qty]) => {
+        const [article, color] = k.split('|||');
+        return { article, color, qty };
+      }).sort((a,b) => a.article.localeCompare(b.article) || a.color.localeCompare(b.color));
+      const cannot = Array.from(cannotMap.entries()).map(([k, qty]) => {
+        const [article, color] = k.split('|||');
+        return { article, color, qty };
+      }).sort((a,b) => a.article.localeCompare(b.article) || a.color.localeCompare(b.color));
+      out.push({ shop: g.shop, can, cannot });
+    }
+    // sort shops alphabetically
+    out.sort((a, b) => a.shop.localeCompare(b.shop));
+    return out;
+  }, [grouped, ran]);
+
   return (
     <div className="space-y-4">
       <div>
@@ -257,6 +288,73 @@ export default function NielsensSalesPage() {
           {ran && <div className="text-xs text-gray-600">Calculated approvals based on current stock snapshot.</div>}
         </div>
       </div>
+
+      {ran && summaryByShop.length > 0 && (
+        <div className="rounded-md border bg-white p-3">
+          <div className="text-sm font-semibold mb-2">Summary by shop</div>
+          <div className="space-y-4">
+            {summaryByShop.map((s) => (
+              <div key={s.shop} className="rounded border p-2">
+                <div className="text-sm font-medium mb-2">{s.shop}</div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div>
+                    <div className="text-xs font-semibold text-green-700 mb-1">Can deliver</div>
+                    <div className="rounded border overflow-hidden">
+                      <table className="min-w-full text-xs">
+                        <thead className="bg-gray-50">
+                          <tr>
+                            <th className="p-2 text-left border-b">Article</th>
+                            <th className="p-2 text-left border-b">Color</th>
+                            <th className="p-2 text-right border-b">Qty</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {s.can.length === 0 && (
+                            <tr><td colSpan={3} className="p-2 text-gray-500">—</td></tr>
+                          )}
+                          {s.can.map((r, i) => (
+                            <tr key={i}>
+                              <td className="p-2 border-b">{r.article}</td>
+                              <td className="p-2 border-b">{r.color}</td>
+                              <td className="p-2 border-b text-right">{r.qty}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs font-semibold text-red-700 mb-1">Cannot deliver</div>
+                    <div className="rounded border overflow-hidden">
+                      <table className="min-w-full text-xs">
+                        <thead className="bg-gray-50">
+                          <tr>
+                            <th className="p-2 text-left border-b">Article</th>
+                            <th className="p-2 text-left border-b">Color</th>
+                            <th className="p-2 text-right border-b">Qty</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {s.cannot.length === 0 && (
+                            <tr><td colSpan={3} className="p-2 text-gray-500">—</td></tr>
+                          )}
+                          {s.cannot.map((r, i) => (
+                            <tr key={i}>
+                              <td className="p-2 border-b">{r.article}</td>
+                              <td className="p-2 border-b">{r.color}</td>
+                              <td className="p-2 border-b text-right">{r.qty}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {grouped.length > 0 && (
         <div className="rounded-md border bg-white overflow-hidden">
