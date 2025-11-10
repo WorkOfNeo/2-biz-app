@@ -250,35 +250,6 @@ export default function StockListPage() {
   const [openSold, setOpenSold] = React.useState<Record<string, boolean>>({});
   const [openPurchase, setOpenPurchase] = React.useState<Record<string, boolean>>({});
 
-  // Build left sidebar: selected styles grouped by supplier
-  const selectedSidebar = React.useMemo(() => {
-    const items: Array<{ supplier: string; styleNo: string; name: string | null }> = [];
-    for (const styleNo of Array.from(userSelected.values())) {
-      const meta = styleMetaByNo[styleNo];
-      if (!meta) continue;
-      items.push({ supplier: meta.supplier || '—', styleNo, name: meta.name });
-    }
-    // sort by supplier then style no
-    items.sort((a, b) => (a.supplier.localeCompare(b.supplier) || a.styleNo.localeCompare(b.styleNo)));
-    // group
-    const groups = new Map<string, Array<{ styleNo: string; name: string | null }>>();
-    for (const it of items) {
-      const arr = groups.get(it.supplier) || [];
-      arr.push({ styleNo: it.styleNo, name: it.name });
-      groups.set(it.supplier, arr);
-    }
-    return Array.from(groups.entries()).map(([supplier, list]) => ({ supplier, list }));
-  }, [userSelected, styleMetaByNo]);
-
-  // Sidebar colors per style (from current grouped data)
-  const colorsByStyleNoSidebar = React.useMemo(() => {
-    const m: Record<string, string[]> = {};
-    for (const row of groupedByStyle) {
-      m[row.styleNo] = row.colors.map((c) => c.color).sort((a, b) => a.localeCompare(b));
-    }
-    return m;
-  }, [groupedByStyle]);
-
   // Load style lists (visible to all)
   const { data: styleLists } = useSWR('app-settings:style-lists', async () => {
     const { data } = await supabase.from('app_settings').select('value').eq('key', 'style_lists').maybeSingle();
