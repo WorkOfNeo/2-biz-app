@@ -19,14 +19,25 @@ export default function StockListPage() {
   const supabase = createClientComponentClient();
   const { has } = useRoles();
   const { data } = useSWR('style_stock:list', async () => {
-    const { data, error } = await supabase
-      .from('style_stock')
-      .select('style_no, color, sizes, section, row_label, values, po_link, scraped_at')
-      .order('scraped_at', { ascending: false })
-      .limit(1000);
-    if (error) throw new Error(error.message);
-    return (data ?? []) as Row[];
-  }, { refreshInterval: 15000 });
+    const pageSize = 2000;
+    const cap = 50000; // avoid runaway
+    let from = 0;
+    const rows: any[] = [];
+    while (from < cap) {
+      const to = from + pageSize - 1;
+      const { data, error } = await supabase
+        .from('style_stock')
+        .select('style_no, color, sizes, section, row_label, values, po_link, scraped_at')
+        .order('scraped_at', { ascending: false })
+        .range(from, to);
+      if (error) throw new Error(error.message);
+      const batch = data ?? [];
+      rows.push(...batch);
+      if (batch.length < pageSize) break;
+      from += pageSize;
+    }
+    return rows as Row[];
+  }, { refreshInterval: 30000 });
 
   // Collect distinct style numbers from current data
   const styleNos = React.useMemo(() => Array.from(new Set((data ?? []).map((r) => r.style_no))), [data]);

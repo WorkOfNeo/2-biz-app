@@ -52,14 +52,26 @@ export default function NielsensSalesPage() {
   const supabase = createClientComponentClient();
   // Load stock snapshots
   const { data: stock } = useSWR<StockRow[]>('style_stock:latest', async () => {
-    const { data, error } = await supabase
-      .from('style_stock')
-      .select('style_no, color, sizes, section, row_label, values, scraped_at')
-      .order('scraped_at', { ascending: false })
-      .limit(5000);
-    if (error) throw new Error(error.message);
-    // Ensure arrays are typed properly
-    return (data ?? []).map((r: any) => ({
+    const pageSize = 2000;
+    const cap = 40000; // hard cap to avoid runaway
+    let from = 0;
+    const rows: any[] = [];
+    // Page through all rows in descending scraped_at order
+    // Supabase default max rows per request ~1000; range works for pagination
+    while (from < cap) {
+      const to = from + pageSize - 1;
+      const { data, error } = await supabase
+        .from('style_stock')
+        .select('style_no, color, sizes, section, row_label, values, scraped_at')
+        .order('scraped_at', { ascending: false })
+        .range(from, to);
+      if (error) throw new Error(error.message);
+      const batch = data ?? [];
+      rows.push(...batch);
+      if (batch.length < pageSize) break;
+      from += pageSize;
+    }
+    return rows.map((r: any) => ({
       ...r,
       sizes: Array.isArray(r.sizes) ? r.sizes : JSON.parse(String(r.sizes || '[]')),
       values: Array.isArray(r.values) ? r.values : JSON.parse(String(r.values || '[]'))
