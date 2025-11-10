@@ -172,7 +172,9 @@ export default function NielsensSalesPage() {
     // Build variant index per style for fuzzy color match
     const styleToVariants = new Map<string, Array<{ key: string; colorNorm: string; sizes: string[]; avail: number[] }>>();
     for (const [key, v] of inv.entries()) {
-      const [sty, col] = key.split('|');
+      const parts = key.split('|');
+      const sty = parts[0] || '';
+      const col = parts[1] || '';
       const list = styleToVariants.get(sty) || [];
       list.push({ key, colorNorm: normalizeColor(col), sizes: v.sizes, avail: v.avail });
       styleToVariants.set(sty, list);
