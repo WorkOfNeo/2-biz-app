@@ -38,6 +38,11 @@ function normalize(s: string | null | undefined): string {
   return String(s || '').trim().toLowerCase();
 }
 
+function normalizeColor(s: string | null | undefined): string {
+  // Remove non-alphanumeric to match e.g., "999 Black" vs "Black-999"
+  return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
 function toNumber(val: any): number {
   const n = Number(String(val || '').replace(/[^0-9.,-]/g, '').replace('.', '').replace(',', '.'));
   return Number.isFinite(n) ? n : 0;
@@ -164,17 +169,49 @@ export default function NielsensSalesPage() {
     for (const [k, v] of availability.entries()) {
       inv.set(k, { sizes: v.sizes.slice(), avail: v.available.slice() });
     }
+    // Build variant index per style for fuzzy color match
+    const styleToVariants = new Map<string, Array<{ key: string; colorNorm: string; sizes: string[]; avail: number[] }>>();
+    for (const [key, v] of inv.entries()) {
+      const [sty, col] = key.split('|');
+      const list = styleToVariants.get(sty) || [];
+      list.push({ key, colorNorm: normalizeColor(col), sizes: v.sizes, avail: v.avail });
+      styleToVariants.set(sty, list);
+    }
     // Evaluate rows sequentially with deductions
     const decided: Array<ExcelRow & { approved: boolean }> = rows.map((r) => {
       const key = `${normalize(r.Article)}|${normalize(r.Color)}`;
       const g = inv.get(key);
-      if (!g) return { ...r, approved: false };
-      const idx = g.sizes.findIndex((s) => normalize(s) === normalize(r.Size));
-      if (idx === -1) return { ...r, approved: false };
       const want = r.Qty || 0;
-      const have = g.avail[idx] ?? 0;
-      if (have >= want) {
-        g.avail[idx] = have - want; // deduct
+      const sizeNorm = normalize(r.Size);
+      // First try exact color match
+      if (g) {
+        const idx = g.sizes.findIndex((s) => normalize(s) === sizeNorm);
+        if (idx !== -1) {
+          const have = g.avail[idx] ?? 0;
+          if (have >= want) {
+            g.avail[idx] = have - want;
+            return { ...r, approved: true };
+          }
+        }
+      }
+      // Fuzzy color match: find any variant for this style where color contains request or vice versa
+      const styleKey = normalize(r.Article);
+      const variants = styleToVariants.get(styleKey) || [];
+      const reqColorNorm = normalizeColor(r.Color);
+      // score: 2 if variant includes request, 1 if request includes variant, 0 otherwise
+      let best: { v: { key: string; colorNorm: string; sizes: string[]; avail: number[] }; idx: number; have: number; score: number } | null = null;
+      for (const v of variants) {
+        const score = v.colorNorm.includes(reqColorNorm) ? 2 : (reqColorNorm.includes(v.colorNorm) && v.colorNorm.length > 0 ? 1 : 0);
+        if (score === 0) continue;
+        const idx = v.sizes.findIndex((s) => normalize(s) === sizeNorm);
+        if (idx === -1) continue;
+        const have = v.avail[idx] ?? 0;
+        if (!best || score > best.score || (score === best.score && have > best.have)) {
+          best = { v, idx, have, score };
+        }
+      }
+      if (best && best.have >= want) {
+        best.v.avail[best.idx] = best.have - want;
         return { ...r, approved: true };
       }
       return { ...r, approved: false };
