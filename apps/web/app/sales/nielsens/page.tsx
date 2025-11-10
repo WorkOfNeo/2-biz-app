@@ -320,6 +320,23 @@ export default function NielsensSalesPage() {
     return lines.join('\n').trim();
   }, [summaryByShop, ran, styleNameByNo]);
 
+  // Flattened overview rows (single table), marking undeliverable rows in red
+  const overviewRows = React.useMemo(() => {
+    if (!ran || summaryByShop.length === 0) return [] as Array<{ shop: string; article: string; color: string; size: string; qty: number; approved: boolean }>;
+    const rows: Array<{ shop: string; article: string; color: string; size: string; qty: number; approved: boolean }> = [];
+    for (const s of summaryByShop) {
+      for (const r of s.can) rows.push({ shop: s.shop, article: r.article, color: r.color, size: r.size, qty: r.qty, approved: true });
+      for (const r of s.cannot) rows.push({ shop: s.shop, article: r.article, color: r.color, size: r.size, qty: r.qty, approved: false });
+    }
+    rows.sort((a, b) =>
+      a.shop.localeCompare(b.shop) ||
+      a.article.localeCompare(b.article) ||
+      a.color.localeCompare(b.color) ||
+      a.size.localeCompare(b.size)
+    );
+    return rows;
+  }, [summaryByShop, ran]);
+
   return (
     <div className="space-y-4">
       <div>
@@ -351,7 +368,7 @@ export default function NielsensSalesPage() {
 
       {ran && summaryByShop.length > 0 && (
         <div className="rounded-md border bg-white p-3">
-          <div className="text-sm font-semibold mb-2">Summary by shop</div>
+          <div className="text-sm font-semibold mb-2">Summary</div>
           {/* Copyable message for NOT deliverable only */}
           {cannotMessage && (
             <div className="mb-3">
@@ -365,70 +382,32 @@ export default function NielsensSalesPage() {
               </div>
             </div>
           )}
-          <div className="space-y-4">
-            {summaryByShop.map((s) => (
-              <div key={s.shop} className="rounded border p-2">
-                <div className="text-sm font-medium mb-2">{s.shop}</div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <div>
-                    <div className="text-xs font-semibold text-green-700 mb-1">Can deliver</div>
-                    <div className="rounded border overflow-hidden">
-                      <table className="min-w-full text-xs">
-                        <thead className="bg-gray-50">
-                          <tr>
-                            <th className="p-2 text-left border-b">Article</th>
-                            <th className="p-2 text-left border-b">Color</th>
-                            <th className="p-2 text-left border-b">Size</th>
-                            <th className="p-2 text-right border-b">Qty</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {s.can.length === 0 && (
-                            <tr><td colSpan={3} className="p-2 text-gray-500">—</td></tr>
-                          )}
-                          {s.can.map((r, i) => (
-                            <tr key={i}>
-                              <td className="p-2 border-b">{r.article}{(() => { const nm = styleNameByNo.get(r.article) || ''; return nm ? ` · ${nm}` : ''; })()}</td>
-                              <td className="p-2 border-b">{r.color}</td>
-                              <td className="p-2 border-b">{r.size}</td>
-                              <td className="p-2 border-b text-right">{r.qty}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-xs font-semibold text-red-700 mb-1">Cannot deliver</div>
-                    <div className="rounded border overflow-hidden">
-                      <table className="min-w-full text-xs">
-                        <thead className="bg-gray-50">
-                          <tr>
-                            <th className="p-2 text-left border-b">Article</th>
-                            <th className="p-2 text-left border-b">Color</th>
-                            <th className="p-2 text-left border-b">Size</th>
-                            <th className="p-2 text-right border-b">Qty</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {s.cannot.length === 0 && (
-                            <tr><td colSpan={3} className="p-2 text-gray-500">—</td></tr>
-                          )}
-                          {s.cannot.map((r, i) => (
-                            <tr key={i}>
-                              <td className="p-2 border-b">{r.article}{(() => { const nm = styleNameByNo.get(r.article) || ''; return nm ? ` · ${nm}` : ''; })()}</td>
-                              <td className="p-2 border-b">{r.color}</td>
-                              <td className="p-2 border-b">{r.size}</td>
-                              <td className="p-2 border-b text-right">{r.qty}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            ))}
+          <div className="rounded border overflow-hidden">
+            <table className="min-w-full text-xs">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="p-2 text-left border-b">Shop</th>
+                  <th className="p-2 text-left border-b">Article</th>
+                  <th className="p-2 text-left border-b">Color</th>
+                  <th className="p-2 text-left border-b">Size</th>
+                  <th className="p-2 text-right border-b">Qty</th>
+                </tr>
+              </thead>
+              <tbody>
+                {overviewRows.length === 0 && (
+                  <tr><td colSpan={5} className="p-2 text-gray-500">—</td></tr>
+                )}
+                {overviewRows.map((r, i) => (
+                  <tr key={i} className={r.approved ? '' : 'bg-red-50'}>
+                    <td className="p-2 border-b">{r.shop}</td>
+                    <td className="p-2 border-b">{r.article}{(() => { const nm = styleNameByNo.get(r.article) || ''; return nm ? ` · ${nm}` : ''; })()}</td>
+                    <td className="p-2 border-b">{r.color}</td>
+                    <td className="p-2 border-b">{r.size}</td>
+                    <td className="p-2 border-b text-right">{r.qty}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </div>
       )}
