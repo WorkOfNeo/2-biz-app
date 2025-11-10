@@ -66,18 +66,17 @@ export default function StyleDetailPage({ params }: { params: { styleNo: string 
     const ok = window.confirm(`Permanently delete style ${meta.style_no} and all related data?\nThis cannot be undone.`);
     if (!ok) return;
     try {
-      // Best-effort cleanup order:
-      // 1) Movements by style_no (no FK)
-      await supabase.from('style_stock_movements').delete().eq('style_no', meta.style_no);
-      // 2) Fallback cleanup for legacy style_stock rows by style_no (some rows may miss FKs)
-      await supabase.from('style_stock').delete().eq('style_no', meta.style_no);
-      // 3) Delete style_colors for this style (cascades to style_color_seasons and style_stock via FKs)
-      if (meta.id) {
-        await supabase.from('style_colors').delete().eq('style_id', meta.id);
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error('Not signed in');
+      const res = await fetch('/api/styles/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ styleNo: meta.style_no })
+      });
+      if (!res.ok) {
+        const js = await res.json().catch(() => ({}));
+        throw new Error(js?.error || 'Delete failed');
       }
-      // 4) Finally delete the style itself (cascades to any FK-linked rows)
-      const { error: errStyle } = await supabase.from('styles').delete().eq('style_no', meta.style_no);
-      if (errStyle) throw errStyle;
       router.push('/styles');
     } catch (e: any) {
       alert(e?.message || 'Failed to delete style');
