@@ -105,7 +105,8 @@ export default function NielsensSalesPage() {
   }
 
   const [rows, setRows] = React.useState<ExcelRow[]>([]);
-  const [grouped, setGrouped] = React.useState<Array<{ shop: string; items: (ExcelRow & { available: boolean })[] }>>([]);
+  const [grouped, setGrouped] = React.useState<Array<{ shop: string; items: (ExcelRow & { approved: boolean })[] }>>([]);
+  const [ran, setRan] = React.useState(false);
 
   function parseWorkbook(fileName: string, wb: XLSX.WorkBook): ExcelRow[] {
     const out: ExcelRow[] = [];
@@ -154,28 +155,40 @@ export default function NielsensSalesPage() {
     setRows(all);
   }
 
-  // Compute availability per row and group by ShopName
-  React.useEffect(() => {
-    const items = rows.map((r) => {
+  // Clear results when new files are uploaded
+  React.useEffect(() => { setRan(false); setGrouped([]); }, [rows.length]);
+
+  function runAgainstStock() {
+    // Build working inventory snapshot so deductions persist across lines
+    const inv = new Map<string, { sizes: string[]; avail: number[] }>();
+    for (const [k, v] of availability.entries()) {
+      inv.set(k, { sizes: v.sizes.slice(), avail: v.available.slice() });
+    }
+    // Evaluate rows sequentially with deductions
+    const decided: Array<ExcelRow & { approved: boolean }> = rows.map((r) => {
       const key = `${normalize(r.Article)}|${normalize(r.Color)}`;
-      const g = availability.get(key);
-      if (!g) return { ...r, available: false };
+      const g = inv.get(key);
+      if (!g) return { ...r, approved: false };
       const idx = g.sizes.findIndex((s) => normalize(s) === normalize(r.Size));
-      if (idx === -1) return { ...r, available: false };
-      const ok = (g.available[idx] ?? 0) >= (r.Qty || 0);
-      return { ...r, available: ok };
+      if (idx === -1) return { ...r, approved: false };
+      const want = r.Qty || 0;
+      const have = g.avail[idx] ?? 0;
+      if (have >= want) {
+        g.avail[idx] = have - want; // deduct
+        return { ...r, approved: true };
+      }
+      return { ...r, approved: false };
     });
-    const map = new Map<string, (typeof items)[number][]>();
-    for (const it of items) {
+    // Group by ShopName
+    const map = new Map<string, (typeof decided)[number][]>();
+    for (const it of decided) {
       const arr = map.get(it.ShopName) || [];
       arr.push(it);
       map.set(it.ShopName, arr);
     }
     setGrouped(Array.from(map.entries()).map(([shop, list]) => ({ shop, items: list })));
-  }, [rows, availability]);
-
-  const total = rows.length;
-  const okCount = rows.filter(r => grouped.find(g => g.shop === r.ShopName)?.items.find(i => i === (r as any))?.available).length; // not used but kept for potential summary
+    setRan(true);
+  }
 
   return (
     <div className="space-y-4">
@@ -184,7 +197,7 @@ export default function NielsensSalesPage() {
         <h1 className="text-xl font-semibold">Nielsens — Availability Check</h1>
       </div>
 
-      <div className="rounded-md border bg-white p-4">
+      <div className="rounded-md border bg-white p-4 space-y-3">
         <div className="flex items-center gap-3">
           <input
             type="file"
@@ -193,6 +206,16 @@ export default function NielsensSalesPage() {
             onChange={(e) => onFilesSelected(e.currentTarget.files)}
           />
           <div className="text-xs text-gray-600">Upload up to 17 Excel files. Columns: ShopID, ShopName, EAN, Article(StyleNo), Style, Color, Size, Qty, Costprice, RRP</div>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            className={"text-xs px-3 py-1.5 border rounded bg-slate-900 text-white hover:bg-slate-800 " + ((rows.length === 0 || availability.size === 0) ? 'opacity-60 cursor-not-allowed' : '')}
+            disabled={rows.length === 0 || availability.size === 0}
+            onClick={runAgainstStock}
+          >
+            Run against stock
+          </button>
+          {ran && <div className="text-xs text-gray-600">Calculated approvals based on current stock snapshot.</div>}
         </div>
       </div>
 
@@ -206,20 +229,20 @@ export default function NielsensSalesPage() {
                 <th className="p-2 text-left border-b">Color</th>
                 <th className="p-2 text-left border-b">Size</th>
                 <th className="p-2 text-right border-b">Qty</th>
-                <th className="p-2 text-left border-b">Available</th>
+                <th className="p-2 text-left border-b">Approved</th>
                 <th className="p-2 text-left border-b">File</th>
               </tr>
             </thead>
             <tbody>
               {grouped.flatMap((g) => (
                 g.items.map((it, i) => (
-                  <tr key={`${g.shop}-${i}`} className={it.available ? 'bg-green-50' : ''}>
+                  <tr key={`${g.shop}-${i}`} className={it.approved ? 'bg-green-50' : ''}>
                     <td className="p-2 border-b">{g.shop}</td>
                     <td className="p-2 border-b">{it.Article}</td>
                     <td className="p-2 border-b">{it.Color}</td>
                     <td className="p-2 border-b">{it.Size}</td>
                     <td className="p-2 border-b text-right">{it.Qty}</td>
-                    <td className="p-2 border-b">{it.available ? 'Yes' : 'No'}</td>
+                    <td className="p-2 border-b">{it.approved ? 'Yes' : 'No'}</td>
                     <td className="p-2 border-b text-gray-500">{it._sourceFile || '—'}</td>
                   </tr>
                 ))
