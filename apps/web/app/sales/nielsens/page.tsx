@@ -125,6 +125,22 @@ export default function NielsensSalesPage() {
   const [grouped, setGrouped] = React.useState<Array<{ shop: string; items: (ExcelRow & { approved: boolean })[] }>>([]);
   const [ran, setRan] = React.useState(false);
 
+  // Load style names for the uploaded rows
+  const styleNos = React.useMemo(() => Array.from(new Set(rows.map(r => r.Article))).filter(Boolean), [rows]);
+  const { data: styleNameRows } = useSWR(styleNos.length ? ['nielsens:stylesByNo', styleNos.join(',')] : null, async () => {
+    const { data, error } = await supabase
+      .from('styles')
+      .select('style_no, style_name')
+      .in('style_no', styleNos);
+    if (error) throw new Error(error.message);
+    return (data ?? []) as Array<{ style_no: string; style_name: string | null }>;
+  }, { refreshInterval: 0 });
+  const styleNameByNo = React.useMemo(() => {
+    const m = new Map<string, string | null>();
+    for (const r of (styleNameRows ?? [])) m.set(r.style_no, r.style_name);
+    return m;
+  }, [styleNameRows]);
+
   function parseWorkbook(fileName: string, wb: XLSX.WorkBook): ExcelRow[] {
     const out: ExcelRow[] = [];
     const firstSheetName = wb.SheetNames?.[0];
@@ -245,15 +261,15 @@ export default function NielsensSalesPage() {
   const summaryByShop = React.useMemo(() => {
     if (!ran || grouped.length === 0) return [] as Array<{
       shop: string;
-      can: Array<{ article: string; color: string; qty: number }>;
-      cannot: Array<{ article: string; color: string; qty: number }>;
+      can: Array<{ article: string; color: string; size: string; qty: number }>;
+      cannot: Array<{ article: string; color: string; size: string; qty: number }>;
     }>;
-    const out: Array<{ shop: string; can: Array<{ article: string; color: string; qty: number }>; cannot: Array<{ article: string; color: string; qty: number }> }> = [];
+    const out: Array<{ shop: string; can: Array<{ article: string; color: string; size: string; qty: number }>; cannot: Array<{ article: string; color: string; size: string; qty: number }> }> = [];
     for (const g of grouped) {
-      const canMap = new Map<string, number>();
-      const cannotMap = new Map<string, number>();
+      const canMap = new Map<string, number>();     // key: article|||color|||size
+      const cannotMap = new Map<string, number>();  // key: article|||color|||size
       for (const it of g.items) {
-        const key = `${it.Article}|||${it.Color}`;
+        const key = `${it.Article}|||${it.Color}|||${it.Size}`;
         const addTo = it.approved ? canMap : cannotMap;
         addTo.set(key, (addTo.get(key) || 0) + (it.Qty || 0));
       }
@@ -261,20 +277,48 @@ export default function NielsensSalesPage() {
         const parts = k.split('|||');
         const article = parts[0] || '';
         const color = parts[1] || '';
-        return { article, color, qty };
-      }).sort((a,b) => (a.article || '').localeCompare(b.article || '') || (a.color || '').localeCompare(b.color || ''));
+        const size = parts[2] || '';
+        return { article, color, size, qty };
+      }).sort((a,b) =>
+        (a.article || '').localeCompare(b.article || '') ||
+        (a.color || '').localeCompare(b.color || '') ||
+        (a.size || '').localeCompare(b.size || '')
+      );
       const cannot = Array.from(cannotMap.entries()).map(([k, qty]) => {
         const parts = k.split('|||');
         const article = parts[0] || '';
         const color = parts[1] || '';
-        return { article, color, qty };
-      }).sort((a,b) => (a.article || '').localeCompare(b.article || '') || (a.color || '').localeCompare(b.color || ''));
+        const size = parts[2] || '';
+        return { article, color, size, qty };
+      }).sort((a,b) =>
+        (a.article || '').localeCompare(b.article || '') ||
+        (a.color || '').localeCompare(b.color || '') ||
+        (a.size || '').localeCompare(b.size || '')
+      );
       out.push({ shop: g.shop, can, cannot });
     }
     // sort shops alphabetically
     out.sort((a, b) => a.shop.localeCompare(b.shop));
     return out;
   }, [grouped, ran]);
+
+  // Build copyable message for NOT deliverable only
+  const cannotMessage = React.useMemo(() => {
+    if (!ran || summaryByShop.length === 0) return '';
+    const lines: string[] = [];
+    lines.push('Kan ikke levere:');
+    for (const s of summaryByShop) {
+      if (s.cannot.length === 0) continue;
+      lines.push(s.shop);
+      for (const r of s.cannot) {
+        const nm = styleNameByNo.get(r.article) || '';
+        const label = nm ? `${r.article} ${nm}` : r.article;
+        lines.push(`${label} + ${r.color} + ${r.size} + ${r.qty}`);
+      }
+      lines.push(''); // blank line between shops
+    }
+    return lines.join('\n').trim();
+  }, [summaryByShop, ran, styleNameByNo]);
 
   return (
     <div className="space-y-4">
@@ -308,6 +352,19 @@ export default function NielsensSalesPage() {
       {ran && summaryByShop.length > 0 && (
         <div className="rounded-md border bg-white p-3">
           <div className="text-sm font-semibold mb-2">Summary by shop</div>
+          {/* Copyable message for NOT deliverable only */}
+          {cannotMessage && (
+            <div className="mb-3">
+              <div className="text-xs font-medium mb-1">Message (Kan ikke levere)</div>
+              <div className="flex items-start gap-2">
+                <textarea readOnly value={cannotMessage} className="w-full h-28 border rounded p-2 text-xs font-mono" />
+                <button
+                  className="text-xs px-2 py-1 border rounded bg-white hover:bg-slate-50"
+                  onClick={() => { navigator.clipboard.writeText(cannotMessage).catch(()=>{}); }}
+                >Copy</button>
+              </div>
+            </div>
+          )}
           <div className="space-y-4">
             {summaryByShop.map((s) => (
               <div key={s.shop} className="rounded border p-2">
@@ -321,6 +378,7 @@ export default function NielsensSalesPage() {
                           <tr>
                             <th className="p-2 text-left border-b">Article</th>
                             <th className="p-2 text-left border-b">Color</th>
+                            <th className="p-2 text-left border-b">Size</th>
                             <th className="p-2 text-right border-b">Qty</th>
                           </tr>
                         </thead>
@@ -330,8 +388,9 @@ export default function NielsensSalesPage() {
                           )}
                           {s.can.map((r, i) => (
                             <tr key={i}>
-                              <td className="p-2 border-b">{r.article}</td>
+                              <td className="p-2 border-b">{r.article}{(() => { const nm = styleNameByNo.get(r.article) || ''; return nm ? ` · ${nm}` : ''; })()}</td>
                               <td className="p-2 border-b">{r.color}</td>
+                              <td className="p-2 border-b">{r.size}</td>
                               <td className="p-2 border-b text-right">{r.qty}</td>
                             </tr>
                           ))}
@@ -347,6 +406,7 @@ export default function NielsensSalesPage() {
                           <tr>
                             <th className="p-2 text-left border-b">Article</th>
                             <th className="p-2 text-left border-b">Color</th>
+                            <th className="p-2 text-left border-b">Size</th>
                             <th className="p-2 text-right border-b">Qty</th>
                           </tr>
                         </thead>
@@ -356,8 +416,9 @@ export default function NielsensSalesPage() {
                           )}
                           {s.cannot.map((r, i) => (
                             <tr key={i}>
-                              <td className="p-2 border-b">{r.article}</td>
+                              <td className="p-2 border-b">{r.article}{(() => { const nm = styleNameByNo.get(r.article) || ''; return nm ? ` · ${nm}` : ''; })()}</td>
                               <td className="p-2 border-b">{r.color}</td>
+                              <td className="p-2 border-b">{r.size}</td>
                               <td className="p-2 border-b text-right">{r.qty}</td>
                             </tr>
                           ))}
@@ -391,7 +452,9 @@ export default function NielsensSalesPage() {
                 g.items.map((it, i) => (
                   <tr key={`${g.shop}-${i}`} className={it.approved ? 'bg-green-50' : ''}>
                     <td className="p-2 border-b">{g.shop}</td>
-                    <td className="p-2 border-b">{it.Article}</td>
+                    <td className="p-2 border-b">
+                      {it.Article}{(() => { const nm = styleNameByNo.get(it.Article) || ''; return nm ? ` · ${nm}` : ''; })()}
+                    </td>
                     <td className="p-2 border-b">{it.Color}</td>
                     <td className="p-2 border-b">{it.Size}</td>
                     <td className="p-2 border-b text-right">{it.Qty}</td>
