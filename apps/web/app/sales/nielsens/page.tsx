@@ -87,12 +87,12 @@ export default function NielsensSalesPage() {
       const stockRow = latestRows.find(r => r.section === 'Stock');
       const stockVals = stockRow ? ensureNums(stockRow.values, len) : zero;
       const soldVals = latestRows.filter(r => r.section === 'Sold').reduce((acc, r) => {
-        const v = ensureNums(r.values, len);
-        return acc.map((x, i) => x + v[i]);
+        const v: number[] = ensureNums(r.values, len);
+        return acc.map((x, i) => x + (v[i] ?? 0));
       }, zero.slice());
       const purchaseVals = latestRows.filter(r => r.section === 'Purchase (Running + Shipped)').reduce((acc, r) => {
-        const v = ensureNums(r.values, len);
-        return acc.map((x, i) => x + v[i]);
+        const v: number[] = ensureNums(r.values, len);
+        return acc.map((x, i) => x + (v[i] ?? 0));
       }, zero.slice());
       const available = stockVals.map((v, i) => v - soldVals[i] + purchaseVals[i]);
       map.set(key, { sizes, available });
