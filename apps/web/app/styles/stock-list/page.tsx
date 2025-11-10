@@ -18,6 +18,7 @@ type Row = {
 export default function StockListPage() {
   const supabase = createClientComponentClient();
   const { has } = useRoles();
+  const [searchQuery, setSearchQuery] = React.useState<string>('');
   const { data } = useSWR('style_stock:list', async () => {
     const pageSize = 2000;
     const cap = 50000; // avoid runaway
@@ -99,20 +100,7 @@ export default function StockListPage() {
     return map as Map<string, Set<string>>;
   }, { refreshInterval: 0 });
 
-  // Per-user selection for Default view
-  const { data: selectionMap } = useSWR('app-settings:styles-user-selection', async () => {
-    const { data } = await supabase.from('app_settings').select('value').eq('key', 'styles_user_selection').maybeSingle();
-    return ((data?.value as any) || {}) as Record<string, string[]>;
-  });
-  const [currentUserId, setCurrentUserId] = React.useState<string | null>(null);
-  React.useEffect(() => { (async () => { const { data: { session } } = await supabase.auth.getSession(); setCurrentUserId(session?.user?.id ?? null); })(); }, []);
-  const userSelected = React.useMemo(() => {
-    if (!currentUserId) return new Set<string>();
-    const arr = selectionMap?.[currentUserId] || [];
-    return new Set<string>(arr);
-  }, [selectionMap, currentUserId]);
-  const [view, setView] = React.useState<'default' | 'all'>('default');
-  const selectionLoading = selectionMap === undefined || currentUserId === null;
+  // Removed per-user selection and view toggles
 
   type Group = {
     styleNo: string;
@@ -244,10 +232,8 @@ export default function StockListPage() {
     const out = Array.from(map.entries()).map(([styleNo, list]) => ({ styleNo, colors: list.sort((a, b) => a.color.localeCompare(b.color)) }));
     // Sort styles numerically-then-lexicographically
     out.sort((a, b) => a.styleNo.localeCompare(b.styleNo));
-    // Filter styles by Default view selection
-    let filtered = (view === 'default') ? (selectionLoading ? [] : out.filter((row) => userSelected.has(row.styleNo))) : out;
     // Filter colors by visibility (if defined); default visible
-    filtered = filtered.map((row) => {
+    const filtered = out.map((row) => {
       const sid = styleMetaByNo[row.styleNo]?.id || null;
       if (!sid) return row;
       const visMap = colorVisibility?.get(sid) || new Map<string, boolean>();
@@ -259,7 +245,7 @@ export default function StockListPage() {
       return { ...row, colors };
     });
     return filtered as Array<{ styleNo: string; colors: Group[] }>;
-  }, [groups, view, userSelected, selectionLoading, colorVisibility, styleMetaByNo]);
+  }, [groups, colorVisibility, styleMetaByNo]);
 
   const [openSold, setOpenSold] = React.useState<Record<string, boolean>>({});
   const [openPurchase, setOpenPurchase] = React.useState<Record<string, boolean>>({});
@@ -293,57 +279,44 @@ export default function StockListPage() {
     return m;
   }, [groupedByStyle]);
 
-  // Salesman: load style lists and use tabs
-  const { data: styleLists } = useSWR(has('salesman') ? 'app-settings:style-lists' : null, async () => {
+  // Load style lists (visible to all)
+  const { data: styleLists } = useSWR('app-settings:style-lists', async () => {
     const { data } = await supabase.from('app_settings').select('value').eq('key', 'style_lists').maybeSingle();
     const lists = (((data as any)?.value || {}) as { lists?: Record<string, string[]> }).lists || {};
     return lists as Record<string, string[]>;
   });
   const [activeList, setActiveList] = React.useState<string>('');
   React.useEffect(() => {
-    if (has('salesman') && styleLists && !activeList) {
-      const names = Object.keys(styleLists);
-      const first = (names.length > 0 ? names[0] : '') as string;
-      if (first) setActiveList(first);
+    if (styleLists && activeList === '') {
+      // default remains 'All' (empty denotes All)
     }
-  }, [styleLists, activeList, has]);
+  }, [styleLists, activeList]);
 
-  // Filter rows based on role/view/list
+  // Filter rows based on active Style List and search
   const filteredForView = React.useMemo(() => {
-    return groupedByStyle.filter(({ styleNo }) => {
-      if (!has('salesman')) return true;
-      const list = (styleLists?.[activeList] || []) as string[];
-      return list.includes(styleNo);
+    let base = groupedByStyle;
+    if (activeList && styleLists) {
+      const list = (styleLists[activeList] || []) as string[];
+      base = base.filter(({ styleNo }) => list.includes(styleNo));
+    }
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return base;
+    return base.filter(({ styleNo, colors }) => {
+      const name = styleMetaByNo[styleNo]?.name || '';
+      if (styleNo.toLowerCase().includes(q) || (name || '').toLowerCase().includes(q)) return true;
+      return colors.some((c) => (c.color || '').toLowerCase().includes(q));
     });
-  }, [groupedByStyle, has, styleLists, activeList]);
+  }, [groupedByStyle, activeList, styleLists, searchQuery, styleMetaByNo]);
 
   const emptyState: JSX.Element | null = React.useMemo(() => {
-    if (has('salesman')) {
-      const list = (styleLists?.[activeList] || []) as string[];
-      if ((list?.length || 0) === 0) {
-        return <div className="text-sm text-gray-600">This list is empty. Ask an admin to add styles under Styles › Settings › Style Lists.</div>;
-      }
-      if ((list?.length || 0) > 0 && filteredForView.length === 0) {
-        return <div className="text-sm text-gray-600">No stock data yet for styles in the selected list. Please ask an admin to run Update Stock for your styles.</div>;
-      }
-      return null;
+    if (activeList && filteredForView.length === 0) {
+      return <div className="text-sm text-gray-600">No stock data yet for styles in the selected list.</div>;
     }
     if (filteredForView.length === 0) {
-      const hasSelection = userSelected.size > 0;
-      return (
-        <div className="text-sm text-gray-600">
-          {view === 'default' ? (
-            hasSelection
-              ? 'No stock data found for your selected styles. Run Update Stock (Selected) and refresh.'
-              : 'You have no styles in your selection. Add styles under Styles › Settings, then run Update Stock.'
-          ) : (
-            'No scraped stock data available yet. Run Update Stock (All) and refresh.'
-          )}
-        </div>
-      );
+      return <div className="text-sm text-gray-600">No scraped stock data available yet.</div>;
     }
     return null;
-  }, [has, styleLists, activeList, filteredForView.length, userSelected.size, view]);
+  }, [activeList, filteredForView.length]);
 
   return (
     <div className="space-y-4">
@@ -352,68 +325,28 @@ export default function StockListPage() {
         <h1 className="text-xl font-semibold">Stock List</h1>
       </div>
 
-      {!has('salesman') ? (
-        <>
-          <div className="flex items-center gap-2">
-            <button
-              className={(view==='default' ? 'bg-slate-900 text-white ' : 'bg-white text-slate-900 ') + 'text-xs px-2 py-1 border rounded'}
-              onClick={() => setView('default')}
-            >Default</button>
-            <button
-              className={(view==='all' ? 'bg-slate-900 text-white ' : 'bg-white text-slate-900 ') + 'text-xs px-2 py-1 border rounded'}
-              onClick={() => setView('all')}
-            >All</button>
-          </div>
-          {view==='default' && selectionLoading && (
-            <div className="text-xs text-gray-500">Loading your selection…</div>
-          )}
-        </>
-      ) : (
+      <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2">
+          <button
+            className={(activeList===''?'bg-slate-900 text-white ':'bg-white text-slate-900 ') + 'text-xs px-2 py-1 border rounded'}
+            onClick={()=>setActiveList('')}
+          >All</button>
           {Object.keys(styleLists || {}).map((name) => (
             <button key={name} className={(activeList===name?'bg-slate-900 text-white ':'bg-white text-slate-900 ') + 'text-xs px-2 py-1 border rounded'} onClick={()=>setActiveList(name)}>{name}</button>
           ))}
         </div>
-      )}
+        <div>
+          <input
+            className="text-xs border rounded px-2 py-1 w-56"
+            placeholder="Search style no, name or color…"
+            value={searchQuery}
+            onChange={(e)=>setSearchQuery(e.target.value)}
+          />
+        </div>
+      </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-[180px_1fr] gap-4 items-start">
-        {/* Left: selected styles by supplier */}
-        {!has('salesman') && (
-        <aside className="hidden lg:block sticky top-4 self-start">
-          <div className="bg-[#f7f7f7] p-2 max-h-[70vh] overflow-auto">
-            <div className="text-xs font-semibold text-gray-700 px-1 pb-1">Your styles</div>
-            {selectedSidebar.length === 0 ? (
-              <div className="text-[11px] text-gray-500 px-1 py-2">No styles selected.</div>
-            ) : (
-              <div className="space-y-2">
-                {selectedSidebar.map((grp) => (
-                  <div key={grp.supplier}>
-                    <div className="text-[11px] font-medium text-gray-500 px-1 mb-1">{grp.supplier}</div>
-                    <ul className="space-y-0.5">
-                      {grp.list.map((it) => (
-                        <li key={it.styleNo} className="group">
-                          <a
-                            href={`#style-${it.styleNo}`}
-                            className="block text-xs px-2 py-1 rounded hover:bg-slate-50"
-                            title={it.name || it.styleNo}
-                          >
-                            <span className="text-[12px] text-black">{it.name || it.styleNo}</span>
-                          </a>
-                          <div className="pl-3 text-[11px] text-gray-600 max-h-0 opacity-0 translate-y-1 overflow-hidden transition-all duration-300 ease-out group-hover:max-h-40 group-hover:opacity-100 group-hover:translate-y-0">
-                            {(colorsByStyleNoSidebar[it.styleNo] || []).map((c) => (
-                              <a key={c} href={`#style-${it.styleNo}`} className="block py-0.5 hover:underline">{c}</a>
-                            ))}
-                          </div>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </aside>
-        )}
+        {/* Left sidebar removed */}
 
         {/* Right: main content */}
         <div className="space-y-4">

@@ -181,7 +181,7 @@ export default function StylesSettingsPage() {
 
       {isAdmin && (
       <div className="rounded-md border bg-white p-3">
-        <div className="text-sm font-medium">Style Lists (for Salesman tabs)</div>
+        <div className="text-sm font-medium">Style Lists</div>
         <StyleListsEditor styles={styles ?? []} />
       </div>
       )}
