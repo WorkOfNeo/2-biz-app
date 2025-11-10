@@ -306,14 +306,14 @@ export default function NielsensSalesPage() {
   const cannotMessage = React.useMemo(() => {
     if (!ran || summaryByShop.length === 0) return '';
     const lines: string[] = [];
-    lines.push('Kan ikke levere:');
+    lines.push('Vi kan desværre ikke levere:');
     for (const s of summaryByShop) {
       if (s.cannot.length === 0) continue;
       lines.push(s.shop);
       for (const r of s.cannot) {
         const nm = styleNameByNo.get(r.article) || '';
         const label = nm ? `${r.article} ${nm}` : r.article;
-        lines.push(`${label} + ${r.color} + ${r.size} + ${r.qty}`);
+        lines.push(`${label} - ${r.color} - ${r.size}, ${r.qty} stk`);
       }
       lines.push(''); // blank line between shops
     }
