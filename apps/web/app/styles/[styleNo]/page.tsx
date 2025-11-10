@@ -2,9 +2,11 @@
 import useSWR from 'swr';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { useRoles } from '../../../lib/supabaseClient';
+import { useRouter } from 'next/navigation';
 
 export default function StyleDetailPage({ params }: { params: { styleNo: string } }) {
   const supabase = createClientComponentClient();
+  const router = useRouter();
   const styleNo = decodeURIComponent(params.styleNo);
 
   const { data: meta, mutate: mutateMeta } = useSWR(['style:meta', styleNo], async () => {
@@ -59,36 +61,70 @@ export default function StyleDetailPage({ params }: { params: { styleNo: string 
     return { map, seasons: sMap } as { map: Map<string, string[]>; seasons: Map<string, { name: string; year: number | null }> };
   }, { refreshInterval: 0 });
 
+  async function onDelete() {
+    if (!meta?.style_no) return;
+    const ok = window.confirm(`Permanently delete style ${meta.style_no} and all related data?\nThis cannot be undone.`);
+    if (!ok) return;
+    try {
+      // Best-effort cleanup order:
+      // 1) Movements by style_no (no FK)
+      await supabase.from('style_stock_movements').delete().eq('style_no', meta.style_no);
+      // 2) Fallback cleanup for legacy style_stock rows by style_no (some rows may miss FKs)
+      await supabase.from('style_stock').delete().eq('style_no', meta.style_no);
+      // 3) Delete style_colors for this style (cascades to style_color_seasons and style_stock via FKs)
+      if (meta.id) {
+        await supabase.from('style_colors').delete().eq('style_id', meta.id);
+      }
+      // 4) Finally delete the style itself (cascades to any FK-linked rows)
+      const { error: errStyle } = await supabase.from('styles').delete().eq('style_no', meta.style_no);
+      if (errStyle) throw errStyle;
+      router.push('/styles');
+    } catch (e: any) {
+      alert(e?.message || 'Failed to delete style');
+    }
+  }
+
   return (
     <div className="space-y-4">
-      <div className="flex items-start gap-4">
-        {meta?.image_url && (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={meta.image_url} alt={meta.style_name ?? meta.style_no} className="h-24 w-24 object-cover rounded border" />
-        )}
-        <div>
-          <div className="text-xs text-gray-500">Style</div>
-          <h1 className="text-xl font-semibold">{styleNo}</h1>
-          <div className="text-sm text-gray-700">{meta?.style_name ?? '—'}</div>
-          {meta?.supplier && <div className="text-xs text-gray-500">Supplier: {meta.supplier}</div>}
-          {meta?.link_href && (() => {
-            const base = (process?.env?.NEXT_PUBLIC_SPY_BASE_URL || '').replace(/\/$/, '');
-            let abs = '' as string;
-            try {
-              // Only build absolute SPY URL; do not fall back to current site origin
-              const candidate = base ? new URL(meta.link_href as string, base).toString() : meta.link_href as string;
-              if (/^https?:\/\//i.test(candidate)) abs = candidate;
-            } catch {}
-            if (!abs) return null; // hide links if we cannot ensure SPY absolute URL
-            const statUrl = abs.replace(/#.*$/, '') + '#tab=statandstock';
-            return (
-              <div className="flex items-center gap-3 mt-1">
-                <a className="text-xs underline text-slate-700" href={abs} target="_blank" rel="noopener noreferrer">Open in 2-Biz</a>
-                <a className="text-xs underline text-slate-700" href={statUrl} target="_blank" rel="noopener noreferrer">Stat & Stock</a>
-              </div>
-            );
-          })()}
+      <div className="flex items-start justify-between">
+        <div className="flex items-start gap-4">
+          {meta?.image_url && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={meta.image_url} alt={meta.style_name ?? meta.style_no} className="h-24 w-24 object-cover rounded border" />
+          )}
+          <div>
+            <div className="text-xs text-gray-500">Style</div>
+            <h1 className="text-xl font-semibold">{styleNo}</h1>
+            <div className="text-sm text-gray-700">{meta?.style_name ?? '—'}</div>
+            {meta?.supplier && <div className="text-xs text-gray-500">Supplier: {meta.supplier}</div>}
+            {meta?.link_href && (() => {
+              const base = (process?.env?.NEXT_PUBLIC_SPY_BASE_URL || '').replace(/\/$/, '');
+              let abs = '' as string;
+              try {
+                // Only build absolute SPY URL; do not fall back to current site origin
+                const candidate = base ? new URL(meta.link_href as string, base).toString() : meta.link_href as string;
+                if (/^https?:\/\//i.test(candidate)) abs = candidate;
+              } catch {}
+              if (!abs) return null; // hide links if we cannot ensure SPY absolute URL
+              const statUrl = abs.replace(/#.*$/, '') + '#tab=statandstock';
+              return (
+                <div className="flex items-center gap-3 mt-1">
+                  <a className="text-xs underline text-slate-700" href={abs} target="_blank" rel="noopener noreferrer">Open in 2-Biz</a>
+                  <a className="text-xs underline text-slate-700" href={statUrl} target="_blank" rel="noopener noreferrer">Stat & Stock</a>
+                </div>
+              );
+            })()}
+          </div>
         </div>
+        {has('admin') && (
+          <button
+            className="text-xs px-3 py-1.5 rounded bg-red-600 text-white hover:bg-red-700"
+            onClick={onDelete}
+            title="Permanently delete this style"
+          >
+            Permanently Delete
+          </button>
+        )}
       </div>
 
       <div className="rounded-md border bg-white p-3">
