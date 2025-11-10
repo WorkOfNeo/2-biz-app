@@ -320,22 +320,9 @@ export default function NielsensSalesPage() {
     return lines.join('\n').trim();
   }, [summaryByShop, ran, styleNameByNo]);
 
-  // Flattened overview rows (single table), marking undeliverable rows in red
-  const overviewRows = React.useMemo(() => {
-    if (!ran || summaryByShop.length === 0) return [] as Array<{ shop: string; article: string; color: string; size: string; qty: number; approved: boolean }>;
-    const rows: Array<{ shop: string; article: string; color: string; size: string; qty: number; approved: boolean }> = [];
-    for (const s of summaryByShop) {
-      for (const r of s.can) rows.push({ shop: s.shop, article: r.article, color: r.color, size: r.size, qty: r.qty, approved: true });
-      for (const r of s.cannot) rows.push({ shop: s.shop, article: r.article, color: r.color, size: r.size, qty: r.qty, approved: false });
-    }
-    rows.sort((a, b) =>
-      a.shop.localeCompare(b.shop) ||
-      a.article.localeCompare(b.article) ||
-      a.color.localeCompare(b.color) ||
-      a.size.localeCompare(b.size)
-    );
-    return rows;
-  }, [summaryByShop, ran]);
+  // Toggle per shop
+  const [openShops, setOpenShops] = React.useState<Record<string, boolean>>({});
+  const toggleShop = (name: string) => setOpenShops((m) => ({ ...m, [name]: !m[name] }));
 
   return (
     <div className="space-y-4">
@@ -382,32 +369,65 @@ export default function NielsensSalesPage() {
               </div>
             </div>
           )}
-          <div className="rounded border overflow-hidden">
-            <table className="min-w-full text-xs">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="p-2 text-left border-b">Shop</th>
-                  <th className="p-2 text-left border-b">Article</th>
-                  <th className="p-2 text-left border-b">Color</th>
-                  <th className="p-2 text-left border-b">Size</th>
-                  <th className="p-2 text-right border-b">Qty</th>
-                </tr>
-              </thead>
-              <tbody>
-                {overviewRows.length === 0 && (
-                  <tr><td colSpan={5} className="p-2 text-gray-500">—</td></tr>
-                )}
-                {overviewRows.map((r, i) => (
-                  <tr key={i} className={r.approved ? '' : 'bg-red-50'}>
-                    <td className="p-2 border-b">{r.shop}</td>
-                    <td className="p-2 border-b">{r.article}{(() => { const nm = styleNameByNo.get(r.article) || ''; return nm ? ` · ${nm}` : ''; })()}</td>
-                    <td className="p-2 border-b">{r.color}</td>
-                    <td className="p-2 border-b">{r.size}</td>
-                    <td className="p-2 border-b text-right">{r.qty}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="space-y-3">
+            {summaryByShop.map((s) => {
+              const rows = [
+                ...s.can.map((r) => ({ ...r, approved: true })),
+                ...s.cannot.map((r) => ({ ...r, approved: false })),
+              ].sort((a, b) =>
+                a.article.localeCompare(b.article) ||
+                a.color.localeCompare(b.color) ||
+                a.size.localeCompare(b.size)
+              );
+              const sumYes = s.can.reduce((a, r) => a + (r.qty || 0), 0);
+              const sumNo = s.cannot.reduce((a, r) => a + (r.qty || 0), 0);
+              const open = openShops[s.shop] !== false; // default open
+              return (
+                <div key={s.shop} className="rounded border">
+                  <div className="flex items-center justify-between px-2 py-1 bg-gray-50">
+                    <div className="text-sm font-medium">{s.shop}</div>
+                    <button
+                      className="text-xs px-2 py-0.5 border rounded bg-white hover:bg-slate-50"
+                      onClick={() => toggleShop(s.shop)}
+                    >
+                      {open ? 'Close' : 'Open'}
+                    </button>
+                  </div>
+                  {open && (
+                    <div className="overflow-auto">
+                      <table className="min-w-full text-xs">
+                        <thead className="bg-gray-50">
+                          <tr>
+                            <th className="p-2 text-left border-b">Article</th>
+                            <th className="p-2 text-left border-b">Color</th>
+                            <th className="p-2 text-left border-b">Size</th>
+                            <th className="p-2 text-right border-b">Qty</th>
+                            <th className="p-2 text-left border-b">Approved</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {rows.length === 0 && <tr><td colSpan={5} className="p-2 text-gray-500">—</td></tr>}
+                          {rows.map((r, i) => (
+                            <tr key={i} className={r.approved ? '' : 'bg-red-50'}>
+                              <td className="p-2 border-b">{r.article}{(() => { const nm = styleNameByNo.get(r.article) || ''; return nm ? ` · ${nm}` : ''; })()}</td>
+                              <td className="p-2 border-b">{r.color}</td>
+                              <td className="p-2 border-b">{r.size}</td>
+                              <td className="p-2 border-b text-right">{r.qty}</td>
+                              <td className="p-2 border-b">{r.approved ? 'Yes' : 'No'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                        <tfoot>
+                          <tr className="bg-gray-50">
+                            <td className="p-2 text-sm font-medium" colSpan={5}>Kan levere: {sumYes} — Kan ikke: {sumNo}</td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
