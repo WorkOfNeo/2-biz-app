@@ -258,13 +258,17 @@ export default function NielsensSalesPage() {
         addTo.set(key, (addTo.get(key) || 0) + (it.Qty || 0));
       }
       const can = Array.from(canMap.entries()).map(([k, qty]) => {
-        const [article, color] = k.split('|||');
+        const parts = k.split('|||');
+        const article = parts[0] || '';
+        const color = parts[1] || '';
         return { article, color, qty };
-      }).sort((a,b) => a.article.localeCompare(b.article) || a.color.localeCompare(b.color));
+      }).sort((a,b) => (a.article || '').localeCompare(b.article || '') || (a.color || '').localeCompare(b.color || ''));
       const cannot = Array.from(cannotMap.entries()).map(([k, qty]) => {
-        const [article, color] = k.split('|||');
+        const parts = k.split('|||');
+        const article = parts[0] || '';
+        const color = parts[1] || '';
         return { article, color, qty };
-      }).sort((a,b) => a.article.localeCompare(b.article) || a.color.localeCompare(b.color));
+      }).sort((a,b) => (a.article || '').localeCompare(b.article || '') || (a.color || '').localeCompare(b.color || ''));
       out.push({ shop: g.shop, can, cannot });
     }
     // sort shops alphabetically
