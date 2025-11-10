@@ -60,6 +60,12 @@ export function SidebarNav() {
         </div>
       </div>
       <div>
+        <div className="mt-4 mb-1 text-xs uppercase tracking-wider text-slate-400">Sales</div>
+        <div className="ml-2 space-y-1">
+          {!has('salesman') && has('admin') && <NavLink href="/sales/nielsens" label="Nielsens" />}
+        </div>
+      </div>
+      <div>
         <div className="mt-4 mb-1 text-xs uppercase tracking-wider text-slate-400">Settings</div>
         <div className="ml-2 space-y-1">
           {!has('salesman') && has('admin') && <NavLink href="/settings/seasons" label="SEASONS" />}
