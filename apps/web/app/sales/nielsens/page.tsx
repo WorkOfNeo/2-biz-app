@@ -109,7 +109,9 @@ export default function NielsensSalesPage() {
 
   function parseWorkbook(fileName: string, wb: XLSX.WorkBook): ExcelRow[] {
     const out: ExcelRow[] = [];
-    const sheet = wb.Sheets[wb.SheetNames[0]];
+    const firstSheetName = wb.SheetNames?.[0];
+    if (!firstSheetName) return out;
+    const sheet = wb.Sheets[firstSheetName];
     if (!sheet) return out;
     const json = XLSX.utils.sheet_to_json(sheet, { defval: '' }) as any[];
     for (const r of json) {
