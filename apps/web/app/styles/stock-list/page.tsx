@@ -317,7 +317,7 @@ export default function StockListPage() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-[180px_1fr] gap-4 items-start">
-        {/* Left sidebar removed */}
+        <div></div>
 
         {/* Right: main content */}
         <div className="space-y-4">
