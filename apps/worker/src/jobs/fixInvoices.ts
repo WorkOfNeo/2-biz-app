@@ -91,6 +91,5 @@ export async function fixInvoices(ctx: Ctx) {
   await saveResult(job.id, 'Fix invoices completed', { scanned, updated, skipped, dryRun, samples });
   await log(job.id, 'info', 'STEP:complete', { scanned, updated, skipped, dryRun });
 }
-\n*** End Patch```}'''
-} 주세요}}It's invalid. Let's correct. However the tool apply_patch requires strict format. The previous attempt failed due to extraneous characters. Let's try again. We'll reissue properly. We'll avoid extraneous text. We'll write the add file with correct formatting. We'll proceed. Let's call apply_patch again. We'll ensure the patch contains proper headers and lines. We'll not include spurious characters. We'll try again. We'll craft the file content cleanly. We'll proceed. We'll ensure no backticks. Let's call apply_patch now.  Let's do it.}}
+
 
