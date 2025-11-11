@@ -324,36 +324,32 @@ export default function StockListPage() {
       {emptyState || filteredForView.map(({ styleNo, colors }) => {
         const meta = styleMetaByNo[styleNo] || { name: null, supplier: null, image: null };
         return (
-          <div key={styleNo} id={`style-${styleNo}`} className="bg-white p-3">
-            <div className="grid grid-cols-[1fr_0.5fr_1fr] gap-3">
-              {/* Left: sticky style info */}
-              <div className="sticky top-2 self-start">
-                <div className="text-xs text-gray-500">{styleNo}</div>
-                <div className="text-base font-semibold text-black">{meta.name ?? '—'}</div>
-                {meta.supplier && <div className="text-xs text-gray-500">{meta.supplier}</div>}
-                {meta.image && (
-                  <div className="mt-2 border rounded overflow-hidden w-full max-w-xs">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={meta.image} alt={meta.name ?? styleNo} className="block w-full h-auto object-cover" />
-                  </div>
-                )}
+          <div key={styleNo} id={`style-${styleNo}`} className="bg-white p-3 space-y-3">
+            {/* Style header */}
+            <div className="flex items-start gap-3">
+              <div className="shrink-0">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                {meta.image ? <img src={meta.image} alt={meta.name ?? styleNo} className="h-20 w-20 object-cover rounded border" /> : <div className="h-20 w-20 rounded border bg-gray-50" />}
               </div>
-
-              {/* Middle+Right: repeat per color */}
-              <div className="col-span-2 space-y-4">
-                {colors.map((g) => {
-                  const key = `${g.styleNo}:${g.color}`;
-                  const sum = (arr: number[]) => arr.reduce((a, b) => a + (Number(b) || 0), 0);
-                  const stockTotal = sum(g.stock);
-                  const soldTotal = sum(g.soldSum);
-                  const purchaseTotal = sum(g.purchaseSum);
-                  const availableTotal = sum(g.available);
-                  return (
-                    <div key={key} className="space-y-2">
-                      {/* Color heading above table */}
-                      <div className="text-sm font-semibold text-black">{g.color}</div>
-                      {/* Seasons chips and add control */}
-                      <div className="flex flex-wrap items-center gap-1">
+              <div className="min-w-0">
+                <div className="text-xs text-gray-500">{styleNo}</div>
+                <div className="text-base font-semibold text-black truncate">{meta.name ?? '—'}</div>
+                {meta.supplier && <div className="text-xs text-gray-500">{meta.supplier}</div>}
+              </div>
+            </div>
+            {/* Per-color tables: columns = Image | Color | Section | sizes... | Total */}
+            <div className="space-y-4">
+              {colors.map((g) => {
+                const key = `${g.styleNo}:${g.color}`;
+                const sum = (arr: number[]) => arr.reduce((a, b) => a + (Number(b) || 0), 0);
+                const stockTotal = sum(g.stock);
+                const soldTotal = sum(g.soldSum);
+                const purchaseTotal = sum(g.purchaseSum);
+                const availableTotal = sum(g.available);
+                return (
+                  <div key={key} className="space-y-1">
+                    {/* Seasons chips and add control */}
+                    <div className="flex flex-wrap items-center gap-1">
                         {(() => {
                           const sid = styleMetaByNo[g.styleNo]?.id || null;
                           const cmap = sid ? (styleColors?.get(sid) || new Map<string, string>()) : new Map<string, string>();
@@ -392,83 +388,79 @@ export default function StockListPage() {
                             </>
                           );
                         })()}
-                      </div>
-                      {/* Sizes table */}
-                      <div className="overflow-auto">
-                        <table className="min-w-full text-xs">
-                          <thead className="bg-gray-50">
-                            <tr>
-                              <th className="p-2 text-left border-b">Section</th>
-                              {g.sizes.map((s, i) => (
-                                <th key={i} className="p-2 text-right border-b">{s}</th>
-                              ))}
-                              <th className="p-2 text-right border-b">Total</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                        <tr>
-                          <td className="p-2 border-b">Stock</td>
-                          {g.stock.map((v, i) => (
-                            <td key={i} className="p-2 border-b text-right text-black">{v}</td>
-                          ))}
-                          <td className="p-2 border-b text-right font-medium text-black">{stockTotal}</td>
-                        </tr>
-                            <tr className="cursor-pointer hover:bg-gray-50" onClick={() => setOpenSold((m) => ({ ...m, [key]: !m[key] }))}>
-                              <td className="p-2 border-b">Sold (sum)</td>
-                              {g.soldSum.map((v, i) => (
-                                <td key={i} className="p-2 border-b text-right text-red-600">{v > 0 ? `-${v}` : v}</td>
-                              ))}
-                              <td className="p-2 border-b text-right font-medium text-red-700">{soldTotal > 0 ? `-${soldTotal}` : soldTotal}</td>
-                            </tr>
-                            {openSold[key] && g.soldRows.map((r, idx) => (
-                              <tr key={`sold-${idx}`} className="bg-gray-50">
-                                <td className="p-2 border-b pl-6">{r.row_label ?? 'Row'}</td>
-                              {g.soldSum.map((_, i) => (
-                              <td key={i} className="p-2 border-b text-right text-red-600">{(r.values[i] ?? 0) > 0 ? `-${r.values[i] ?? 0}` : (r.values[i] ?? 0)}</td>
-                                ))}
-                              <td className="p-2 border-b text-right text-red-700">{(() => { const val = sum((r.values as any[]) || []); return val > 0 ? `-${val}` : val; })()}</td>
-                              </tr>
-                            ))}
-                            <tr className="cursor-pointer hover:bg-gray-50" onClick={() => setOpenPurchase((m) => ({ ...m, [key]: !m[key] }))}>
-                              <td className="p-2 border-b">Purchase (sum)</td>
-                              {g.purchaseSum.map((v, i) => (
-                                <td key={i} className="p-2 border-b text-right text-green-700">{v}</td>
-                              ))}
-                              <td className="p-2 border-b text-right font-medium text-green-800">{purchaseTotal}</td>
-                            </tr>
-                            {openPurchase[key] && g.purchaseRows.map((r, idx) => (
-                              <tr key={`purchase-${idx}`} className="bg-gray-50">
-                                <td className="p-2 border-b pl-6">{r.row_label ?? 'Row'}</td>
-                              {g.purchaseSum.map((_, i) => (
-                              <td key={i} className="p-2 border-b text-right text-green-700">{r.values[i] ?? 0}</td>
-                                ))}
-                              <td className="p-2 border-b text-right text-green-800">{sum((r.values as any[]) || [])}</td>
-                              </tr>
-                            ))}
-                            <tr>
-                              <td className="p-2">Available</td>
-                              {g.available.map((v, i) => (
-                                <td key={i} className={"p-2 text-right font-semibold " + (v < 0 ? 'text-red-700' : (v > 0 ? 'text-green-800' : ''))}>{v}</td>
-                              ))}
-                              <td className={"p-2 text-right font-semibold " + (availableTotal < 0 ? 'text-red-700' : (availableTotal > 0 ? 'text-green-800' : ''))}>{availableTotal}</td>
-                            </tr>
-                          </tbody>
-                          <tfoot>
-                            <tr className="bg-gray-50">
-                              <td className="p-2 font-medium">Σ by size</td>
-                              {g.available.map((v, i) => (
-                                <td key={i} className={"p-2 text-right font-medium " + (v < 0 ? 'text-red-700' : (v > 0 ? 'text-green-800' : ''))}>{v}</td>
-                              ))}
-                              <td className={"p-2 text-right font-semibold " + (availableTotal < 0 ? 'text-red-700' : (availableTotal > 0 ? 'text-green-800' : ''))}>{availableTotal}</td>
-                            </tr>
-                          </tfoot>
-                        </table>
-                      </div>
-                      {/* Scraped timestamp removed per request */}
                     </div>
-                  );
-        })}
-              </div>
+                    {/* Sizes table with image + color columns */}
+                    <div className="overflow-auto">
+                      <table className="min-w-full text-xs">
+                        <thead className="bg-gray-50">
+                          <tr>
+                            <th className="p-2 text-left border-b">Image</th>
+                            <th className="p-2 text-left border-b">Color</th>
+                            <th className="p-2 text-left border-b">Section</th>
+                            {g.sizes.map((s, i) => (
+                              <th key={i} className="p-2 text-right border-b">{s}</th>
+                            ))}
+                            <th className="p-2 text-right border-b">Total</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr>
+                            <td className="p-2 border-b align-top" rowSpan={4}>
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              {meta.image ? <img src={meta.image} alt={meta.name ?? styleNo} className="h-14 w-14 object-cover rounded border" /> : <div className="h-14 w-14 rounded border bg-gray-50" />}
+                            </td>
+                            <td className="p-2 border-b align-top" rowSpan={4}>{g.color}</td>
+                            <td className="p-2 border-b">Stock</td>
+                            {g.stock.map((v, i) => (
+                              <td key={i} className="p-2 border-b text-right text-black">{v}</td>
+                            ))}
+                            <td className="p-2 border-b text-right font-medium text-black">{stockTotal}</td>
+                          </tr>
+                          <tr className="cursor-pointer hover:bg-gray-50" onClick={() => setOpenSold((m) => ({ ...m, [key]: !m[key] }))}>
+                            <td className="p-2 border-b">Sold (sum)</td>
+                            {g.soldSum.map((v, i) => (
+                              <td key={i} className="p-2 border-b text-right text-red-600">{v > 0 ? `-${v}` : v}</td>
+                            ))}
+                            <td className="p-2 border-b text-right font-medium text-red-700">{soldTotal > 0 ? `-${soldTotal}` : soldTotal}</td>
+                          </tr>
+                          {openSold[key] && g.soldRows.map((r, idx) => (
+                            <tr key={`sold-${idx}`} className="bg-gray-50">
+                              <td className="p-2 border-b">• {r.row_label ?? 'Row'}</td>
+                              {g.soldSum.map((_, i) => (
+                                <td key={i} className="p-2 border-b text-right text-red-600">{(r.values[i] ?? 0) > 0 ? `-${r.values[i] ?? 0}` : (r.values[i] ?? 0)}</td>
+                              ))}
+                              <td className="p-2 border-b text-right text-red-700">{(() => { const val = sum((r.values as any[]) || []); return val > 0 ? `-${val}` : val; })()}</td>
+                            </tr>
+                          ))}
+                          <tr className="cursor-pointer hover:bg-gray-50" onClick={() => setOpenPurchase((m) => ({ ...m, [key]: !m[key] }))}>
+                            <td className="p-2 border-b">Purchase (sum)</td>
+                            {g.purchaseSum.map((v, i) => (
+                              <td key={i} className="p-2 border-b text-right text-green-700">{v}</td>
+                            ))}
+                            <td className="p-2 border-b text-right font-medium text-green-800">{purchaseTotal}</td>
+                          </tr>
+                          {openPurchase[key] && g.purchaseRows.map((r, idx) => (
+                            <tr key={`purchase-${idx}`} className="bg-gray-50">
+                              <td className="p-2 border-b">• {r.row_label ?? 'Row'}</td>
+                              {g.purchaseSum.map((_, i) => (
+                                <td key={i} className="p-2 border-b text-right text-green-700">{r.values[i] ?? 0}</td>
+                              ))}
+                              <td className="p-2 border-b text-right text-green-800">{sum((r.values as any[]) || [])}</td>
+                            </tr>
+                          ))}
+                          <tr>
+                            <td className="p-2">Available</td>
+                            {g.available.map((v, i) => (
+                              <td key={i} className={"p-2 text-right font-semibold " + (v < 0 ? 'text-red-700' : (v > 0 ? 'text-green-800' : ''))}>{v}</td>
+                            ))}
+                            <td className={"p-2 text-right font-semibold " + (availableTotal < 0 ? 'text-red-700' : (availableTotal > 0 ? 'text-green-800' : ''))}>{availableTotal}</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
         );
