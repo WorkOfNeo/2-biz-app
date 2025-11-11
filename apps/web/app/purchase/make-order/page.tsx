@@ -283,7 +283,7 @@ export default function PurchaseMakeOrderPage() {
           let best = -1;
           for (let i = 0; i < res.length; i++) {
             if (!eligibleAdd[i]) continue;
-            const slack = (targetTotals[i] - (Number(stock[i]) || 0)) - res[i];
+                const slack = (Number(targetTotals[i] || 0) - Number(stock[i] || 0)) - Number(res[i] || 0);
             if (slack <= 0) continue;
             const score = Number(weights[i]) || 0;
             if (score > best) { best = score; picked = i; }
