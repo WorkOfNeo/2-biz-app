@@ -175,7 +175,7 @@ export default function PurchaseMakeOrderPage() {
         return acc.map((v, i) => v + (vals[i] ?? 0));
       }, zero.slice());
       const available = stock.map((v, i) => v - (soldSum[i] ?? 0) + (purchaseSum[i] ?? 0));
-      const [style_no, color] = key.split('|');
+      const [style_no, color] = key.split('|') as [string, string];
       out.push({ style_no, color, sizes, stock, available });
     }
     // Keep order same as selection
