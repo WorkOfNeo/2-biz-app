@@ -364,17 +364,29 @@ export default function PurchaseMakeOrderPage() {
                           </div>
                           {/* Column 3: Sizes & inputs (Stock only + inputs) */}
                           <div className="overflow-auto">
-                            <table className="min-w-full text-xs">
-                              <thead className="bg-gray-50">
+                            <table className="min-w-full text-xs table-fixed">
+                              <thead className="bg-gray-50 border-b">
                                 <tr>
-                                  {g.sizes.map((s, i) => (<th key={i} className="p-2 text-right">{s}</th>))}
-                                  <th className="p-2 text-right">Total</th>
+                                  {g.sizes.map((s, i) => (
+                                    <th
+                                      key={i}
+                                      className="p-2 text-right font-semibold text-slate-700 whitespace-nowrap"
+                                      style={{ width: 72 }}
+                                    >
+                                      {s}
+                                    </th>
+                                  ))}
+                                  <th className="p-2 text-right font-semibold text-slate-700" style={{ width: 84 }}>Total</th>
                                 </tr>
                               </thead>
                               <tbody>
                                 <tr>
-                                  {g.stock.map((v, i) => (<td key={i} className="p-2 text-right">{v}</td>))}
-                                  <td className="p-2 text-right font-medium">{sum(g.stock)}</td>
+                                  {g.stock.map((v, i) => (
+                                    <td key={i} className="p-2 text-right align-bottom font-mono tabular-nums text-slate-900">
+                                      {v}
+                                    </td>
+                                  ))}
+                                  <td className="p-2 text-right font-semibold font-mono tabular-nums text-slate-900">{sum(g.stock)}</td>
                                 </tr>
                                 <tr>
                                   {g.sizes.map((_, i) => (
@@ -382,14 +394,25 @@ export default function PurchaseMakeOrderPage() {
                                       <input
                                         type="number"
                                         inputMode="numeric"
-                                        className="w-20 rounded border px-2 py-1 text-right"
+                                        className="w-20 rounded border px-2 py-1 text-right font-mono tabular-nums"
                                         value={inputs[i] ?? 0}
                                         onChange={(e) => setInput(i, Number(e.target.value || 0))}
                                         min={0}
                                       />
                                     </td>
                                   ))}
-                                  <td className="p-2 text-right font-semibold">{sum(inputs)}</td>
+                                  <td className="p-2 text-right font-semibold font-mono tabular-nums">{sum(inputs)}</td>
+                                </tr>
+                                {/* Sum of stock + input */}
+                                <tr className="bg-slate-900 text-white">
+                                  {g.sizes.map((_, i) => (
+                                    <td key={i} className="p-2 text-right font-semibold font-mono tabular-nums">
+                                      {(g.stock[i] ?? 0) + (inputs[i] ?? 0)}
+                                    </td>
+                                  ))}
+                                  <td className="p-2 text-right font-semibold font-mono tabular-nums">
+                                    {sum(g.stock.map((v, i) => v + (inputs[i] ?? 0)))}
+                                  </td>
                                 </tr>
                               </tbody>
                             </table>
