@@ -171,6 +171,13 @@ export default function SeasonsSettingsPage() {
         </div>
       </div>
       {/* Visible seasons */}
+      {(seasons && !statsBySeason) && (
+        <div className="mb-2">
+          <div className="h-1 w-full rounded bg-slate-200 overflow-hidden">
+            <div className="h-full w-1/3 bg-slate-400 animate-pulse" />
+          </div>
+        </div>
+      )}
       <div className="overflow-auto border rounded-md">
         <table className="min-w-full text-sm">
           <thead className="bg-gray-50">
