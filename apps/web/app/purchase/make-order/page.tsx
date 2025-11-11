@@ -104,7 +104,7 @@ export default function PurchaseMakeOrderPage() {
     if (!started) return;
     const target = `/purchase/make-order/step/${step}`;
     if (pathname !== target) {
-      try { router.push(target); } catch {}
+      try { router.push(target as any); } catch {}
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step, started]);
