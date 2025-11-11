@@ -12,16 +12,17 @@ export default function SeasonsSettingsPage() {
     if (error) throw new Error(error.message);
     return data as { id: string; name: string; year: number | null; created_at: string }[];
   });
-  const { data: currentSeason } = useSWR('seasons:current', async () => {
-    const { data } = await supabase.from('seasons').select('id, name, year').eq('is_current', true).maybeSingle();
-    return (data as any) || null;
+  // Build a map of season_id -> stats count (presence) for all visible seasons
+  const { data: statsBySeason } = useSWR(seasons ? ['seasons:stats-map', (seasons ?? []).map((s: any) => s.id).join(',')] : null, async () => {
+    const ids = (seasons ?? []).map((s: any) => s.id) as string[];
+    const map = new Map<string, number>();
+    // Fetch counts sequentially (season count is typically small); using head for efficiency
+    for (const id of ids) {
+      const { count } = await supabase.from('sales_stats').select('id', { count: 'exact', head: true }).eq('season_id', id);
+      map.set(id, Number(count || 0));
+    }
+    return map;
   }, { refreshInterval: 0 });
-  const { data: statsCount } = useSWR(currentSeason ? ['season:statsCount', currentSeason.id] : null, async () => {
-    // Count statistics presence (sales_stats rows) for the current season
-    const { data, error } = await supabase.from('sales_stats').select('id', { count: 'exact', head: true }).eq('season_id', currentSeason.id);
-    if (error) return 0;
-    return (data as any)?.length ? (data as any).length : (error ? 0 : (supabase as any).headers?.get?.('content-range')) || 0;
-  });
   const { data: savedCompare, mutate: mutateCompare } = useSWR('app-settings:season-compare', async () => {
     const { data, error } = await supabase.from('app_settings').select('*').eq('key', 'season_compare').maybeSingle();
     if (error) throw new Error(error.message);
@@ -91,16 +92,7 @@ export default function SeasonsSettingsPage() {
           disabled={enqueuing}
         >UPDATE SEASONS</button>
       </div>
-      {currentSeason && (
-        <div className="rounded-md border p-3 bg-white">
-          <div className="text-sm text-gray-700">
-            Current season: <span className="font-semibold">{currentSeason.name}{currentSeason.year ? ` ${currentSeason.year}` : ''}</span>
-          </div>
-          <div className="text-xs text-gray-600 mt-1">
-            Statistics rows present: <span className={(Number(statsCount||0) > 0 ? 'text-green-700' : 'text-red-700') + ' font-semibold'}>{Number(statsCount||0)}</span>
-          </div>
-        </div>
-      )}
+      {/* per-season stats are shown in the table below */}
       {notice && (
         <div className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700">{notice}</div>
       )}
@@ -186,6 +178,7 @@ export default function SeasonsSettingsPage() {
               <th className="text-left p-2 border-b">Name</th>
               <th className="text-left p-2 border-b">Year</th>
               <th className="text-left p-2 border-b">Spy ID</th>
+              <th className="text-left p-2 border-b">Stats</th>
               <th className="text-left p-2 border-b">Display Currency</th>
               <th className="text-left p-2 border-b">Current</th>
               <th className="text-left p-2 border-b">Created</th>
@@ -236,6 +229,13 @@ export default function SeasonsSettingsPage() {
                 </td>
                 <td className="p-2 border-b">{s.year ?? '-'}</td>
                 <td className="p-2 border-b">{(s as any).spy_season_id ?? '—'}</td>
+                <td className="p-2 border-b">
+                  {(() => {
+                    const n = Number(statsBySeason?.get(s.id) || 0);
+                    const ok = n > 0;
+                    return <span className={(ok ? 'text-green-700' : 'text-red-700') + ' text-xs font-medium'}>{ok ? `${n} rows` : 'None'}</span>;
+                  })()}
+                </td>
                 <td className="p-2 border-b">
                   <select
                     className="rounded border px-2 py-1 text-sm"
