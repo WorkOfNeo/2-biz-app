@@ -242,7 +242,9 @@ export default function PurchaseMakeOrderPage() {
     let rem = total - base.reduce((a, b) => a + b, 0);
     const fracIdx = exact.map((x, i) => ({ i, f: x - Math.floor(x) })).sort((a, b) => b.f - a.f);
     for (let k = 0; k < fracIdx.length && rem > 0; k++) {
-      base[fracIdx[k].i] += 1;
+      const idx = fracIdx[k]?.i ?? -1;
+      if (idx < 0) break;
+      base[idx] = (Number(base[idx]) || 0) + 1;
       rem--;
     }
     return base;
