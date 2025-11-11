@@ -61,6 +61,7 @@ export default function RunsSettingsPage() {
   const [enqueuing, setEnqueuing] = useState(false);
   const [progress, setProgress] = useState(0);
   const [jobId, setJobId] = useState<string | null>(null);
+  const [fixing, setFixing] = useState(false);
 
   async function onTestRun() {
     try {
@@ -78,6 +79,26 @@ export default function RunsSettingsPage() {
     }
   }
 
+  async function onFixInvoices(dryRun: boolean) {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) throw new Error('Not signed in');
+    setFixing(true);
+    try {
+      const token = session.access_token;
+      const res = await fetch(`${ORCH_URL}/enqueue`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ type: 'fix_invoices', payload: { dryRun, requestedBy: session.user.email } })
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const js = await res.json();
+      setJobId(js.jobId);
+      await mutate();
+    } finally {
+      setFixing(false);
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -88,6 +109,16 @@ export default function RunsSettingsPage() {
             disabled={enqueuing}
             onClick={onTestRun}
           >Run test scrape</button>
+          <button
+            className="inline-flex items-center rounded-md bg-white text-slate-900 border px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-50"
+            disabled={fixing}
+            onClick={() => onFixInvoices(true)}
+          >Fix invoices (Dry run)</button>
+          <button
+            className="inline-flex items-center rounded-md bg-red-600 text-white px-3 py-1.5 text-sm hover:bg-red-700 disabled:opacity-50"
+            disabled={fixing}
+            onClick={() => onFixInvoices(false)}
+          >Fix invoices (Apply)</button>
         </div>
       </div>
 

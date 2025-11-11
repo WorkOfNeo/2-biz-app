@@ -10,6 +10,7 @@ import { exportOverview as exportOverviewJob } from './jobs/exportOverview.js';
 import { exportTopStyles as exportTopStylesJob } from './jobs/exportTopStyles.js';
 import { scrapeTopStyles as scrapeTopStylesJob } from './jobs/scrapeTopStyles.js';
 import { scrapeStatisticsPerSize } from './jobs/scrapeStatisticsPerSize.js';
+import { fixInvoices as fixInvoicesJob } from './jobs/fixInvoices.js';
 import { scrapePurchaseOrders as scrapePurchaseOrdersJob } from './jobs/scrapePurchaseOrders.js';
 // (imported with .js extension above)
 
@@ -755,6 +756,10 @@ async function runJob(job: JobRow) {
   }
   if ((job.type as any) === 'scrape_top_styles') {
     await scrapeTopStylesJob({ job, page: page!, log, saveResult, setJobFailedOrRequeue, setJobSucceeded, supabase });
+    return;
+  }
+  if ((job.type as any) === 'fix_invoices') {
+    await fixInvoicesJob({ job, log, saveResult, ensureNotCancelled, supabase });
     return;
   }
   if ((job.type as any) === 'scrape_purchase_orders') {

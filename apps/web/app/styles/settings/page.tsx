@@ -233,10 +233,14 @@ export default function StylesSettingsPage() {
               try {
                 const { data: { session } } = await supabase.auth.getSession();
                 if (!session) throw new Error('Not signed in');
+                // Resolve current season
+                const { data: current } = await supabase.from('seasons').select('id').eq('is_current', true).maybeSingle();
+                const seasonId = (current as any)?.id as string | undefined;
+                if (!seasonId) throw new Error('No current season set');
                 const res = await fetch('/api/enqueue', {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
-                  body: JSON.stringify({ type: 'deep_scrape_styles', payload: { requestedBy: session.user.email } })
+                  body: JSON.stringify({ type: 'deep_scrape_styles', payload: { requestedBy: session.user.email, seasonId } })
                 });
                 const js = await res.json().catch(() => ({}));
                 // eslint-disable-next-line no-console
