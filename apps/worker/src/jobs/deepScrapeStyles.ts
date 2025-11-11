@@ -21,6 +21,17 @@ export async function deepScrapeStyles(ctx: Ctx) {
     await log(job.id, 'error', 'STEP:season_missing_abort');
     throw new Error('seasonId is required for deep_scrape_styles to prevent cross-season data pollution');
   }
+  // Resolve SPY season id (numeric) for DOM selection
+  let spySeasonId: number | null = null;
+  try {
+    const { data: seasonRow } = await supabase.from('seasons').select('spy_season_id').eq('id', seasonId).maybeSingle();
+    const n = Number((seasonRow as any)?.spy_season_id || 0);
+    spySeasonId = Number.isFinite(n) && n > 0 ? n : null;
+  } catch {}
+  if (!spySeasonId) {
+    await log(job.id, 'error', 'STEP:season_spy_id_missing', { seasonId });
+    throw new Error('Selected season has no spy_season_id mapping; run seasons scrape to map SPY IDs');
+  }
   const { data: styles } = await supabase.from('styles').select('style_no, link_href');
   if (!styles || styles.length === 0) {
     await saveResult(job.id, 'Deep styles: no styles', { count: 0 });
@@ -43,15 +54,15 @@ export async function deepScrapeStyles(ctx: Ctx) {
         if (sels.length === 0) return false;
         let ok = false;
         for (const sel of sels) {
-          sel.value = targetSeasonId;
+          sel.value = String(targetSeasonId);
           sel.dispatchEvent(new Event('input', { bubbles: true }));
           sel.dispatchEvent(new Event('change', { bubbles: true }));
-          if (sel.value === targetSeasonId) ok = true;
+          if (sel.value === String(targetSeasonId)) ok = true;
         }
         return ok;
-      }, seasonId);
+      }, spySeasonId);
       if (!applied) {
-        await log(job.id, 'error', 'STEP:season_set_failed', { style_no: s.style_no, seasonId });
+        await log(job.id, 'error', 'STEP:season_set_failed', { style_no: s.style_no, seasonId, spySeasonId });
         throw new Error('Failed to set season on page');
       }
       // Allow any dependent network to settle after selection change
@@ -59,13 +70,13 @@ export async function deepScrapeStyles(ctx: Ctx) {
       // Verify again
       const verified = await page.evaluate((targetSeasonId) => {
         const sels = Array.from(document.querySelectorAll('select.season_id')) as HTMLSelectElement[];
-        return sels.some((sel) => sel.value === targetSeasonId);
-      }, seasonId);
+        return sels.some((sel) => sel.value === String(targetSeasonId));
+      }, spySeasonId);
       if (!verified) {
-        await log(job.id, 'error', 'STEP:season_verify_failed', { style_no: s.style_no, seasonId });
+        await log(job.id, 'error', 'STEP:season_verify_failed', { style_no: s.style_no, seasonId, spySeasonId });
         throw new Error('Season verify failed');
       }
-      await log(job.id, 'info', 'STEP:season_set_ok', { style_no: s.style_no, seasonId });
+      await log(job.id, 'info', 'STEP:season_set_ok', { style_no: s.style_no, seasonId, spySeasonId });
     } catch (e: any) {
       throw new Error(`Season selection failed for ${s.style_no}: ${e?.message || String(e)}`);
     }

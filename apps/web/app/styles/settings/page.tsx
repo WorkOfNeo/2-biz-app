@@ -234,9 +234,11 @@ export default function StylesSettingsPage() {
                 const { data: { session } } = await supabase.auth.getSession();
                 if (!session) throw new Error('Not signed in');
                 // Resolve current season
-                const { data: current } = await supabase.from('seasons').select('id').eq('is_current', true).maybeSingle();
+                const { data: current } = await supabase.from('seasons').select('id, spy_season_id').eq('is_current', true).maybeSingle();
                 const seasonId = (current as any)?.id as string | undefined;
+                const spySeasonId = Number((current as any)?.spy_season_id || 0) || null;
                 if (!seasonId) throw new Error('No current season set');
+                if (!spySeasonId) { alert('Current season has no SPY mapping yet. Please run Seasons scrape to map spy_season_id.'); return; }
                 const res = await fetch('/api/enqueue', {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
