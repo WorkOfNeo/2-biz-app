@@ -212,6 +212,11 @@ export default function PurchaseMakeOrderPage() {
   }, [stockRows, selections]);
   // Inputs per group
   const [inputsByKey, setInputsByKey] = React.useState<Record<string, number[]>>({});
+  // Compute Order UI state per color
+  const [computeOpen, setComputeOpen] = React.useState<Record<string, boolean>>({});
+  const [pressuresByKey, setPressuresByKey] = React.useState<Record<string, number[]>>({});
+  const [totalByKey, setTotalByKey] = React.useState<Record<string, number>>({});
+  const [collectedByKey, setCollectedByKey] = React.useState<Record<string, boolean>>({});
   // Load persisted inputs
   React.useEffect(() => {
     try {
@@ -225,6 +230,85 @@ export default function PurchaseMakeOrderPage() {
   React.useEffect(() => {
     try { localStorage.setItem(STORAGE_KEYS.inputs, JSON.stringify(inputsByKey)); } catch {}
   }, [inputsByKey, STORAGE_KEYS.inputs]);
+
+  // Helpers for Compute Order
+  function allocateByWeights(total: number, weights: number[]): number[] {
+    const n = weights.length || 0;
+    if (n === 0) return [];
+    const sumW = weights.reduce((a, b) => a + (Number(b) || 0), 0);
+    const normalized = sumW > 0 ? weights.map((w) => (Number(w) || 0) / sumW) : Array.from({ length: n }, () => 1 / n);
+    const exact = normalized.map((p) => p * total);
+    const base = exact.map((x) => Math.floor(x));
+    let rem = total - base.reduce((a, b) => a + b, 0);
+    const fracIdx = exact.map((x, i) => ({ i, f: x - Math.floor(x) })).sort((a, b) => b.f - a.f);
+    for (let k = 0; k < fracIdx.length && rem > 0; k++) {
+      base[fracIdx[k].i] += 1;
+      rem--;
+    }
+    return base;
+  }
+  function computeOrderForKey(key: string, stock: number[], sizesLen: number): number[] {
+    const weights = (() => {
+      const arr = (pressuresByKey[key] && pressuresByKey[key].length === sizesLen)
+        ? pressuresByKey[key]
+        : Array.from({ length: sizesLen }, () => 0);
+      const hasAny = arr.some((v) => (Number(v) || 0) > 0);
+      return hasAny ? arr.map((v) => Number(v) || 0) : Array.from({ length: sizesLen }, () => 1);
+    })();
+    const total = Math.max(0, Number(totalByKey[key] || 0) || 0);
+    const collected = Boolean(collectedByKey[key]);
+    if (!collected) {
+      // Distribute order total directly by weights
+      return allocateByWeights(total, weights);
+    }
+    // Collected: target totals = total with weights; order = max(0, target - stock), then rounding adjust to match desired order sum
+    const targetTotals = allocateByWeights(total, weights);
+    const baseOrder = targetTotals.map((t, i) => Math.max(0, t - (Number(stock[i]) || 0)));
+    const stockSum = stock.reduce((a, b) => a + (Number(b) || 0), 0);
+    const desiredOrderSum = Math.max(0, total - stockSum);
+    let curr = baseOrder.reduce((a, b) => a + b, 0);
+    if (curr === desiredOrderSum) return baseOrder;
+    const res = baseOrder.slice();
+    // Eligible indices where target > stock (room to add) or res[i] > 0 (room to remove)
+    const eligibleAdd = targetTotals.map((t, i) => t > (Number(stock[i]) || 0));
+    const eligibleSub = res.map((v) => v > 0);
+    // Adjust difference using weights as priority
+    const adjOrder = (diff: number) => {
+      if (diff > 0) {
+        // add 1 unit at a time to eligible indices until match
+        while (diff > 0) {
+          let picked = -1;
+          let best = -1;
+          for (let i = 0; i < res.length; i++) {
+            if (!eligibleAdd[i]) continue;
+            const slack = (targetTotals[i] - (Number(stock[i]) || 0)) - res[i];
+            if (slack <= 0) continue;
+            const score = Number(weights[i]) || 0;
+            if (score > best) { best = score; picked = i; }
+          }
+          if (picked < 0) break;
+          res[picked] += 1;
+          diff--;
+        }
+      } else if (diff < 0) {
+        while (diff < 0) {
+          let picked = -1;
+          let best = -1;
+          for (let i = 0; i < res.length; i++) {
+            if (!eligibleSub[i]) continue;
+            if (res[i] <= 0) continue;
+            const score = Number(weights[i]) || 0;
+            if (score > best) { best = score; picked = i; }
+          }
+          if (picked < 0) break;
+          res[picked] -= 1;
+          diff++;
+        }
+      }
+    };
+    adjOrder(desiredOrderSum - curr);
+    return res;
+  }
 
   return (
     <div className="p-4 space-y-4">
@@ -361,6 +445,23 @@ export default function PurchaseMakeOrderPage() {
                             <div className="text-sm text-slate-500">{g.style_no}</div>
                             <div className="text-sm">{meta.name || '—'}</div>
                             <div className="text-sm text-slate-600">Color: {g.color}</div>
+                            <div className="pt-1">
+                              {!computeOpen[key] ? (
+                                <button
+                                  className="text-xs underline"
+                                  onClick={() => setComputeOpen((m) => ({ ...m, [key]: true }))}
+                                >
+                                  Compute Order
+                                </button>
+                              ) : (
+                                <button
+                                  className="text-xs underline"
+                                  onClick={() => setComputeOpen((m) => ({ ...m, [key]: false }))}
+                                >
+                                  Cancel compute
+                                </button>
+                              )}
+                            </div>
                           </div>
                           {/* Column 3: Sizes & inputs (Stock only + inputs) */}
                           <div className="overflow-auto">
@@ -388,21 +489,107 @@ export default function PurchaseMakeOrderPage() {
                                   ))}
                                   <td className="p-2 text-right font-semibold font-mono tabular-nums text-slate-900">{sum(g.stock)}</td>
                                 </tr>
-                                <tr>
-                                  {g.sizes.map((_, i) => (
-                                    <td key={i} className="p-2">
-                                      <input
-                                        type="number"
-                                        inputMode="numeric"
-                                        className="w-20 rounded border px-2 py-1 text-right font-mono tabular-nums"
-                                        value={inputs[i] ?? 0}
-                                        onChange={(e) => setInput(i, Number(e.target.value || 0))}
-                                        min={0}
-                                      />
-                                    </td>
-                                  ))}
-                                  <td className="p-2 text-right font-semibold font-mono tabular-nums">{sum(inputs)}</td>
-                                </tr>
+                                {!computeOpen[key] ? (
+                                  <tr>
+                                    {g.sizes.map((_, i) => (
+                                      <td key={i} className="p-2">
+                                        <input
+                                          type="number"
+                                          inputMode="numeric"
+                                          className="w-20 rounded border px-2 py-1 text-right font-mono tabular-nums"
+                                          value={inputs[i] ?? 0}
+                                          onChange={(e) => setInput(i, Number(e.target.value || 0))}
+                                          min={0}
+                                        />
+                                      </td>
+                                    ))}
+                                    <td className="p-2 text-right font-semibold font-mono tabular-nums">{sum(inputs)}</td>
+                                  </tr>
+                                ) : (
+                                  <>
+                                    {/* Pressure inputs (% per size) */}
+                                    <tr>
+                                      {g.sizes.map((_, i) => (
+                                        <td key={i} className="p-2">
+                                          <div className="flex items-center justify-end gap-1">
+                                            <input
+                                              type="number"
+                                              inputMode="numeric"
+                                              className="w-16 rounded border px-2 py-1 text-right font-mono tabular-nums"
+                                              value={(pressuresByKey[key]?.[i] ?? 0)}
+                                              onChange={(e) => {
+                                                const v = Number(e.target.value || 0);
+                                                setPressuresByKey((m) => {
+                                                  const base = (m[key] && m[key].length === g.sizes.length) ? m[key].slice() : Array.from({ length: g.sizes.length }, () => 0);
+                                                  base[i] = v;
+                                                  return { ...m, [key]: base };
+                                                });
+                                              }}
+                                              min={0}
+                                            />
+                                            <span className="text-slate-600">%</span>
+                                          </div>
+                                        </td>
+                                      ))}
+                                      <td className="p-2 text-right text-slate-600 font-mono tabular-nums">
+                                        {(() => {
+                                          const arr = pressuresByKey[key] || [];
+                                          const s = arr.reduce((a, b) => a + (Number(b) || 0), 0);
+                                          return `${s || 0}%`;
+                                        })()}
+                                      </td>
+                                    </tr>
+                                    {/* Total and Collected controls */}
+                                    <tr>
+                                      {g.sizes.map((_, i) => (<td key={i} className="p-2" />))}
+                                      <td className="p-2 text-right">
+                                        <div className="flex items-center justify-end gap-2">
+                                          <label className="text-xs text-slate-600">Total</label>
+                                          <input
+                                            type="number"
+                                            inputMode="numeric"
+                                            className="w-24 rounded border px-2 py-1 text-right font-mono tabular-nums"
+                                            value={totalByKey[key] ?? 0}
+                                            onChange={(e) => setTotalByKey((m) => ({ ...m, [key]: Number(e.target.value || 0) }))}
+                                            min={0}
+                                          />
+                                          <label className="text-xs inline-flex items-center gap-1 text-slate-700">
+                                            <input
+                                              type="checkbox"
+                                              checked={Boolean(collectedByKey[key])}
+                                              onChange={(e) => setCollectedByKey((m) => ({ ...m, [key]: e.target.checked }))}
+                                            />
+                                            Collected
+                                          </label>
+                                        </div>
+                                      </td>
+                                    </tr>
+                                    {/* Apply/Cancel */}
+                                    <tr>
+                                      {g.sizes.map((_, i) => (<td key={i} className="p-2" />))}
+                                      <td className="p-2 text-right">
+                                        <div className="flex items-center justify-end gap-2">
+                                          <button
+                                            className="rounded border px-3 py-1 text-xs hover:bg-gray-50"
+                                            onClick={() => setComputeOpen((m) => ({ ...m, [key]: false }))}
+                                          >
+                                            Cancel
+                                          </button>
+                                          <button
+                                            className="rounded border px-3 py-1 text-xs bg-slate-900 text-white hover:opacity-90"
+                                            onClick={() => {
+                                              const next = computeOrderForKey(key, g.stock, g.sizes.length);
+                                              setInputsByKey((prev) => ({ ...prev, [key]: next }));
+                                              setComputeOpen((m) => ({ ...m, [key]: false }));
+                                            }}
+                                          >
+                                            Apply
+                                          </button>
+                                        </div>
+                                      </td>
+                                    </tr>
+                                  </>
+                                )}
                                 {/* Sum of stock + input */}
                                 <tr className="bg-slate-900 text-white">
                                   {g.sizes.map((_, i) => (
