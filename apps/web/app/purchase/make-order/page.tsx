@@ -2,6 +2,7 @@
 import React from 'react';
 import useSWR from 'swr';
 import { supabase } from '../../../lib/supabaseClient';
+import { usePathname, useRouter } from 'next/navigation';
 
 export default function PurchaseMakeOrderPage() {
   const STORAGE_KEYS = React.useMemo(() => ({
@@ -19,6 +20,8 @@ export default function PurchaseMakeOrderPage() {
   const [saving, setSaving] = React.useState(false);
   const [savedAt, setSavedAt] = React.useState<number | null>(null);
   const [returnPath, setReturnPath] = React.useState<string | null>(null);
+  const pathname = usePathname();
+  const router = useRouter();
 
   type Selection = { style_no: string; color: string };
   const [selections, setSelections] = React.useState<Selection[]>([]);
@@ -85,12 +88,36 @@ export default function PurchaseMakeOrderPage() {
     } catch {}
   }
 
+  // Sync step with URL slug /purchase/make-order/step/[n]
+  React.useEffect(() => {
+    try {
+      const m = pathname?.match(/\/purchase\/make-order\/step\/(\d+)/i);
+      if (m && m[1]) {
+        const n = Math.max(1, Math.min(2, Number(m[1]) || 1));
+        setStep(n);
+      }
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pathname]);
+  React.useEffect(() => {
+    // When step changes and process started, push slug URL for navigation
+    if (!started) return;
+    const target = `/purchase/make-order/step/${step}`;
+    if (pathname !== target) {
+      try { router.push(target); } catch {}
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, started]);
+
   // Step 1: choose Styles > Colors
   const [q, setQ] = React.useState('');
   const { data: styleList } = useSWR(started && step === 1 ? ['makeOrder:styles', q] : null, async () => {
     let query = supabase.from('styles').select('id, style_no, style_name, image_url').order('style_no', { ascending: true }).limit(200);
     const qq = q.trim();
-    if (qq) query = query.ilike('style_no', `%${qq}%`);
+    if (qq) {
+      // Search by style_no OR style_name
+      query = query.or(`style_no.ilike.%${qq}%,style_name.ilike.%${qq}%`);
+    }
     const { data, error } = await query;
     if (error) throw new Error(error.message);
     return (data ?? []) as Array<{ id: string; style_no: string; style_name: string | null; image_url: string | null }>;
@@ -290,74 +317,86 @@ export default function PurchaseMakeOrderPage() {
             <button className="text-sm underline" onClick={() => setStep(1)}>Back to step #1</button>
           </div>
           <div className="text-sm text-slate-600">
-            Review each selected style/color. Current stock is shown. Enter order quantities per size; results are summed below.
+            Review each selected style/color. Only Stock is shown. Enter order quantities per size.
           </div>
-          <div className="space-y-6">
-            {groups.map((g) => {
-              const key = `${g.style_no}|${g.color}`.toLowerCase();
-              const meta = metaRows?.get(g.style_no) || { name: null, image: null };
-              const inputs = (inputsByKey[key] && inputsByKey[key].length === g.sizes.length)
-                ? inputsByKey[key]
-                : Array.from({ length: g.sizes.length }, () => 0);
-              const setInput = (idx: number, val: number) => {
-                setInputsByKey((prev) => {
-                  const base = (prev[key] && prev[key].length === g.sizes.length) ? prev[key].slice() : Array.from({ length: g.sizes.length }, () => 0);
-                  base[idx] = val;
-                  return { ...prev, [key]: base };
-                });
-              };
+          <div className="space-y-8">
+            {Array.from(new Map(groups.map(g => [g.style_no, true])).keys()).map((styleNo) => {
+              const meta = metaRows?.get(styleNo) || { name: null, image: null };
+              const rows = groups.filter(g => g.style_no === styleNo);
               const sum = (arr: number[]) => arr.reduce((a, b) => a + (Number(b) || 0), 0);
               return (
-                <div key={key} className="space-y-2">
-                  <div className="flex items-start gap-3">
-                    <div className="shrink-0">
+                <div key={styleNo} className="space-y-3">
+                  <div className="grid grid-cols-1 md:grid-cols-[120px_1fr] gap-3">
+                    {/* Image (one per style) */}
+                    <div className="md:row-span-1">
                       {/* eslint-disable-next-line @next/next/no-img-element */}
-                      {meta.image ? <img src={meta.image} alt={g.style_no} className="h-16 w-16 object-cover rounded border" /> : <div className="h-16 w-16 rounded border bg-gray-50" />}
+                      {meta.image ? <img src={meta.image} alt={styleNo} className="h-24 w-24 object-cover rounded border" /> : <div className="h-24 w-24 rounded border bg-gray-50" />}
                     </div>
+                    {/* Number + Name */}
                     <div>
-                      <div className="text-sm text-slate-500">{g.style_no}</div>
+                      <div className="text-sm text-slate-500">{styleNo}</div>
                       <div className="text-base font-semibold">{meta.name || '—'}</div>
-                      <div className="text-sm text-slate-600">Color: {g.color}</div>
                     </div>
                   </div>
-                  <div className="overflow-auto">
-                    <table className="min-w-full text-xs">
-                      <thead className="bg-gray-50">
-                        <tr>
-                          <th className="p-2 text-left">Size</th>
-                          {g.sizes.map((s, i) => (<th key={i} className="p-2 text-right">{s}</th>))}
-                          <th className="p-2 text-right">Total</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        <tr>
-                          <td className="p-2">Stock</td>
-                          {g.stock.map((v, i) => (<td key={i} className="p-2 text-right">{v}</td>))}
-                          <td className="p-2 text-right font-medium">{sum(g.stock)}</td>
-                        </tr>
-                        <tr>
-                          <td className="p-2">Available</td>
-                          {g.available.map((v, i) => (<td key={i} className={"p-2 text-right " + (v < 0 ? 'text-red-700' : v > 0 ? 'text-green-700' : '')}>{v}</td>))}
-                          <td className={"p-2 text-right font-medium " + (sum(g.available) < 0 ? 'text-red-700' : sum(g.available) > 0 ? 'text-green-700' : '')}>{sum(g.available)}</td>
-                        </tr>
-                        <tr>
-                          <td className="p-2">Order input</td>
-                          {g.sizes.map((_, i) => (
-                            <td key={i} className="p-2">
-                              <input
-                                type="number"
-                                inputMode="numeric"
-                                className="w-20 rounded border px-2 py-1 text-right"
-                                value={inputs[i] ?? 0}
-                                onChange={(e) => setInput(i, Number(e.target.value || 0))}
-                                min={0}
-                              />
-                            </td>
-                          ))}
-                          <td className="p-2 text-right font-semibold">{sum(inputs)}</td>
-                        </tr>
-                      </tbody>
-                    </table>
+                  {/* Per-color rows: three columns layout */}
+                  <div className="space-y-4">
+                    {rows.map((g) => {
+                      const key = `${g.style_no}|${g.color}`.toLowerCase();
+                      const inputs = (inputsByKey[key] && inputsByKey[key].length === g.sizes.length)
+                        ? inputsByKey[key]
+                        : Array.from({ length: g.sizes.length }, () => 0);
+                      const setInput = (idx: number, val: number) => {
+                        setInputsByKey((prev) => {
+                          const base = (prev[key] && prev[key].length === g.sizes.length) ? prev[key].slice() : Array.from({ length: g.sizes.length }, () => 0);
+                          base[idx] = val;
+                          return { ...prev, [key]: base };
+                        });
+                      };
+                      return (
+                        <div key={key} className="grid grid-cols-1 md:grid-cols-[120px_1fr_2fr] gap-3">
+                          {/* Column 1: empty spacer to align under image */}
+                          <div className="hidden md:block" />
+                          {/* Column 2: Number + Name + Color */}
+                          <div className="space-y-0.5">
+                            <div className="text-sm text-slate-500">{g.style_no}</div>
+                            <div className="text-sm">{meta.name || '—'}</div>
+                            <div className="text-sm text-slate-600">Color: {g.color}</div>
+                          </div>
+                          {/* Column 3: Sizes & inputs (Stock only + inputs) */}
+                          <div className="overflow-auto">
+                            <table className="min-w-full text-xs">
+                              <thead className="bg-gray-50">
+                                <tr>
+                                  {g.sizes.map((s, i) => (<th key={i} className="p-2 text-right">{s}</th>))}
+                                  <th className="p-2 text-right">Total</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                <tr>
+                                  {g.stock.map((v, i) => (<td key={i} className="p-2 text-right">{v}</td>))}
+                                  <td className="p-2 text-right font-medium">{sum(g.stock)}</td>
+                                </tr>
+                                <tr>
+                                  {g.sizes.map((_, i) => (
+                                    <td key={i} className="p-2">
+                                      <input
+                                        type="number"
+                                        inputMode="numeric"
+                                        className="w-20 rounded border px-2 py-1 text-right"
+                                        value={inputs[i] ?? 0}
+                                        onChange={(e) => setInput(i, Number(e.target.value || 0))}
+                                        min={0}
+                                      />
+                                    </td>
+                                  ))}
+                                  <td className="p-2 text-right font-semibold">{sum(inputs)}</td>
+                                </tr>
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               );
