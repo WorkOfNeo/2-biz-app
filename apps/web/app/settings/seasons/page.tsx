@@ -12,6 +12,16 @@ export default function SeasonsSettingsPage() {
     if (error) throw new Error(error.message);
     return data as { id: string; name: string; year: number | null; created_at: string }[];
   });
+  const { data: currentSeason } = useSWR('seasons:current', async () => {
+    const { data } = await supabase.from('seasons').select('id, name, year').eq('is_current', true).maybeSingle();
+    return (data as any) || null;
+  }, { refreshInterval: 0 });
+  const { data: statsCount } = useSWR(currentSeason ? ['season:statsCount', currentSeason.id] : null, async () => {
+    // Count statistics presence (sales_stats rows) for the current season
+    const { data, error } = await supabase.from('sales_stats').select('id', { count: 'exact', head: true }).eq('season_id', currentSeason.id);
+    if (error) return 0;
+    return (data as any)?.length ? (data as any).length : (error ? 0 : (supabase as any).headers?.get?.('content-range')) || 0;
+  });
   const { data: savedCompare, mutate: mutateCompare } = useSWR('app-settings:season-compare', async () => {
     const { data, error } = await supabase.from('app_settings').select('*').eq('key', 'season_compare').maybeSingle();
     if (error) throw new Error(error.message);
@@ -81,6 +91,16 @@ export default function SeasonsSettingsPage() {
           disabled={enqueuing}
         >UPDATE SEASONS</button>
       </div>
+      {currentSeason && (
+        <div className="rounded-md border p-3 bg-white">
+          <div className="text-sm text-gray-700">
+            Current season: <span className="font-semibold">{currentSeason.name}{currentSeason.year ? ` ${currentSeason.year}` : ''}</span>
+          </div>
+          <div className="text-xs text-gray-600 mt-1">
+            Statistics rows present: <span className={(Number(statsCount||0) > 0 ? 'text-green-700' : 'text-red-700') + ' font-semibold'}>{Number(statsCount||0)}</span>
+          </div>
+        </div>
+      )}
       {notice && (
         <div className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700">{notice}</div>
       )}

@@ -22,6 +22,8 @@ const JOB_DESCRIPTIONS: Record<string, string> = {
     'Scrape Top 10 Styles: Collects top-performing styles (and optionally color variants) and stores results for Top 10 dashboards.',
   export_top_styles:
     'Export Top 10 Styles: Builds PDF exports for Top styles based on stored results and uploads them to Storage.',
+  fix_invoices:
+    'Fix Invoices: Reconciles season_id on invoices by matching invoice_date to season date ranges. Supports dry run and apply.'
 };
 
 function Truncated({ text, expanded, onToggle }: { text: string; expanded: boolean; onToggle: () => void }) {
@@ -146,7 +148,8 @@ export default function JobsOverviewPage() {
               { type: 'scrape_statistics', label: 'Scrape Statistics', actions: [{ label: 'Run Deep', payload: { toggles: { deep: true } } }, { label: 'Per-size Snapshot', payload: { kind: 'per_size' } }] },
               { type: 'export_overview', label: 'Export Overview', actions: [{ label: 'Run' }] },
               { type: 'scrape_top_styles', label: 'Scrape Top 10 Styles', actions: [{ label: 'Run' }] },
-              { type: 'export_top_styles', label: 'Export Top 10 Styles', actions: [{ label: 'Run' }] }
+              { type: 'export_top_styles', label: 'Export Top 10 Styles', actions: [{ label: 'Run' }] },
+              { type: 'fix_invoices', label: 'Fix Invoices', actions: [{ label: 'Dry run', payload: { dryRun: true } }, { label: 'Apply', payload: { dryRun: false } }] }
             ] as Array<{ type: string; label: string; actions: Array<{ label: string; payload?: any }> }>
           ).map((f) => (
             <div key={f.type} className="rounded border p-2">
