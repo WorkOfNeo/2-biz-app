@@ -110,6 +110,49 @@ export default function JobsOverviewPage() {
   const { data, mutate } = useSWR('jobs:overview', fetchOverview, { refreshInterval: 10000 });
   const [enq, setEnq] = React.useState<string | null>(null);
   const [expandDesc, setExpandDesc] = React.useState<Record<string, boolean>>({});
+  const [seqRunning, setSeqRunning] = React.useState(false);
+
+  async function createJob(body: any) {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) throw new Error('Not signed in');
+    const token = session.access_token;
+    const res = await fetch('/api/enqueue', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(body) });
+    if (!res.ok) throw new Error(await res.text());
+    const js = await res.json();
+    return js.jobId as string;
+  }
+  async function waitForJob(jobId: string) {
+    // Poll jobs table until done (up to ~3 minutes)
+    for (let i = 0; i < 120; i++) {
+      try {
+        const { data } = await supabase.from('jobs').select('status').eq('id', jobId).maybeSingle();
+        const st = (data as any)?.status as string | undefined;
+        if (st === 'succeeded' || st === 'failed' || st === 'cancelled') return st;
+      } catch {}
+      await new Promise(r => setTimeout(r, 1500));
+    }
+    return 'timeout';
+  }
+  async function runAllExportsSequential() {
+    if (seqRunning) return;
+    try {
+      setSeqRunning(true);
+      // 1) General per salesperson (React PDF)
+      let id = await createJob({ type: 'export_overview', payload: { mode: 'general_salesmen_react_pdf' } });
+      await waitForJob(id);
+      // 2) Overview PDF
+      id = await createJob({ type: 'export_overview', payload: { mode: 'overview_react_pdf' } });
+      await waitForJob(id);
+      // 3) Countries PDF
+      id = await createJob({ type: 'export_overview', payload: { mode: 'countries_react_pdf' } });
+      await waitForJob(id);
+      // 4) Top 10 Styles PDF
+      id = await createJob({ type: 'export_top_styles', payload: {} });
+      await waitForJob(id);
+    } finally {
+      setSeqRunning(false);
+    }
+  }
 
   async function enqueue(type: string, payload: any = {}) {
     try {
@@ -152,8 +195,11 @@ export default function JobsOverviewPage() {
             {
               title: 'Exports',
               items: [
-                { type: 'export_overview', label: 'Export Overview', actions: [{ label: 'Run', payload: {} }] },
-                { type: 'export_top_styles', label: 'Export Top 10 Styles', actions: [{ label: 'Run', payload: {} }] }
+                { type: 'export_overview', label: 'Export General per Salesperson', actions: [{ label: 'Run', payload: { mode: 'general_salesmen_react_pdf' } }] },
+                { type: 'export_overview', label: 'Export Overview', actions: [{ label: 'Run', payload: { mode: 'overview_react_pdf' } }] },
+                { type: 'export_overview', label: 'Export Countries', actions: [{ label: 'Run', payload: { mode: 'countries_react_pdf' } }] },
+                { type: 'export_top_styles', label: 'Export Top 10 Styles', actions: [{ label: 'Run', payload: {} }] },
+                { type: 'export_all', label: 'Export All', actions: [{ label: 'Run', payload: {} }] }
               ]
             }
           ].map((section) => (
@@ -175,14 +221,22 @@ export default function JobsOverviewPage() {
                         <div className="mt-1 text-[11px] text-gray-500 font-mono">{f.type}</div>
                       </div>
                       <div className="flex flex-wrap items-center gap-2">
-                        {f.actions.map((a, i) => (
+                        {f.type === 'export_all' ? (
                           <button
-                            key={i}
-                            disabled={enq!==null}
-                            onClick={() => enqueue(f.type, a.payload || {})}
+                            disabled={seqRunning}
+                            onClick={runAllExportsSequential}
                             className="rounded border px-2 py-1 text-xs hover:bg-gray-50 disabled:opacity-50"
-                          >{a.label}</button>
-                        ))}
+                          >Run</button>
+                        ) : (
+                          f.actions.map((a, i) => (
+                            <button
+                              key={i}
+                              disabled={enq!==null}
+                              onClick={() => enqueue(f.type, a.payload || {})}
+                              className="rounded border px-2 py-1 text-xs hover:bg-gray-50 disabled:opacity-50"
+                            >{a.label}</button>
+                          ))
+                        )}
                       </div>
                     </div>
                   </li>
