@@ -206,19 +206,20 @@ export default function StatisticsDashboardPage() {
   });
   const { data: stylesForTop } = useSWR(top10Current && top10Current.length ? ['styles:forTop10', top10Current.map(r=>r.style_no).join(',')] : null, async () => {
     const nos = (top10Current ?? []).map(r => r.style_no);
-    const { data, error } = await supabase.from('styles').select('style_no, dg').in('style_no', nos);
+    const { data, error } = await supabase.from('styles').select('style_no, dg, style_name').in('style_no', nos);
     if (error) throw new Error(error.message);
-    const map = new Map<string, string | null>();
-    for (const r of (data ?? []) as any[]) map.set(r.style_no, r.dg ?? null);
+    const map = new Map<string, { dg: string | null; name: string | null }>();
+    for (const r of (data ?? []) as any[]) map.set(r.style_no, { dg: r.dg ?? null, name: r.style_name ?? null });
     return map;
   });
   const missingDgList = React.useMemo(() => {
-    const out: string[] = [];
+    const out: Array<{ style_no: string; name: string | null }> = [];
     for (const r of (top10Current ?? [])) {
       const dgTop = (r as any).dg as string | null | undefined;
-      const dgStyle = stylesForTop?.get(r.style_no) ?? null;
+      const fromStyle = stylesForTop?.get(r.style_no);
+      const dgStyle = fromStyle?.dg ?? null;
       const val = (dgTop || dgStyle || '').toString().trim();
-      if (!val) out.push(r.style_no);
+      if (!val) out.push({ style_no: r.style_no, name: fromStyle?.name ?? null });
     }
     return out;
   }, [top10Current?.length, stylesForTop]);
@@ -325,7 +326,7 @@ export default function StatisticsDashboardPage() {
               <div>
                 <div className="font-medium mb-1">Missing DG in Top 10 (Current Season):</div>
                 <ul className="list-disc pl-5">
-                  {missingDgList.map((no) => (<li key={no}>{no}</li>))}
+                  {missingDgList.map((row) => (<li key={row.style_no}>{row.style_no}{row.name ? ` — ${row.name}` : ''}</li>))}
                 </ul>
               </div>
             ) : (
