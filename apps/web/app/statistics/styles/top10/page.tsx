@@ -182,14 +182,13 @@ export default function Top10StylesPage() {
             <tr>
               <th className="p-2 text-left">#</th>
               <th className="p-2 text-left">Image</th>
-              <th className="p-2 text-left">Style No</th>
               <th className="p-2 text-left">Style Name</th>
               <th className="p-2 text-left">Color</th>
-              <th className="p-2 text-left">Supplier</th>
-              <th className="p-2 text-left">DG</th>
               <th className="p-2 text-left">Type</th>
+              <th className="p-2 text-right">Sold</th>
+              <th className="p-2 text-left">DG</th>
               <th className="p-2 text-left">Quality</th>
-              <th className="p-2 text-right">Qty</th>
+              <th className="p-2 text-left">Supplier</th>
             </tr>
           </thead>
           <tbody>
@@ -198,10 +197,10 @@ export default function Top10StylesPage() {
                 
                 <td className="p-2">{i+1}</td>
                 <td className="p-2"><img src={r.image_url} alt="" className="h-10 w-10 object-cover rounded" /></td>
-                <td className="p-2">{r.style_no}</td>
                 <td className="p-2">{r.style_name}</td>
                 <td className="p-2">{r.color || '—'}</td>
-                <td className="p-2">{supplierMap?.get(r.style_no) || '—'}</td>
+                <td className="p-2">{r.type}</td>
+                <td className="p-2 text-right">{Number(r.qty || 0).toLocaleString('da-DK')}</td>
                 <td className="p-2">
                   <input
                     type="text"
@@ -218,9 +217,8 @@ export default function Top10StylesPage() {
                     }}
                   />
                 </td>
-                <td className="p-2">{r.type}</td>
                 <td className="p-2">{r.quality}</td>
-                <td className="p-2 text-right">{Number(r.qty || 0).toLocaleString('da-DK')}</td>
+                <td className="p-2">{supplierMap?.get(r.style_no) || '—'}</td>
               </tr>
             ))}
           </tbody>
