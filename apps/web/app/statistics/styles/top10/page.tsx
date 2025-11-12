@@ -51,13 +51,48 @@ export default function Top10StylesPage() {
   const { has } = useRoles();
   const [menuOpen, setMenuOpen] = React.useState(false);
   const [excludeModalOpen, setExcludeModalOpen] = React.useState(false);
-  const [exclInput, setExclInput] = React.useState('');
+  // Global exclusions edit state
+  const [exclSelected, setExclSelected] = React.useState<string[]>([]);
+  const [exclSearch, setExclSearch] = React.useState('');
+  const [exclSearching, setExclSearching] = React.useState(false);
+  const [exclResults, setExclResults] = React.useState<Array<{ style_no: string; style_name: string | null }>>([]);
   React.useEffect(() => {
     if (excludeModalOpen) {
-      const arr = (excludedGlobal?.list || []) as string[];
-      setExclInput(arr.join('\n'));
+      const arr = ((excludedGlobal?.list || []) as string[]).map(String);
+      setExclSelected(Array.from(new Set(arr)));
+      setExclSearch('');
+      setExclResults([]);
     }
   }, [excludeModalOpen, excludedGlobal?.id]);
+  // Search styles by style no or name
+  React.useEffect(() => {
+    let cancelled = false;
+    const q = (exclSearch || '').trim();
+    if (!excludeModalOpen) return;
+    if (!q) { setExclResults([]); return; }
+    (async () => {
+      setExclSearching(true);
+      try {
+        const { data, error } = await supabase
+          .from('styles')
+          .select('style_no, style_name')
+          .or(`style_no.ilike.%${q}%,style_name.ilike.%${q}%`)
+          .order('style_no', { ascending: true })
+          .limit(20);
+        if (!cancelled) setExclResults(((data ?? []) as any[]).map(r => ({ style_no: r.style_no, style_name: r.style_name ?? null })));
+      } finally {
+        if (!cancelled) setExclSearching(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [exclSearch, excludeModalOpen]);
+  // Names for selected exclusions
+  const { data: exclSelectedMeta } = useSWR(excludeModalOpen && (exclSelected?.length || 0) > 0 ? ['top-styles:excluded-meta', exclSelected.join(',')] : null, async () => {
+    const { data } = await supabase.from('styles').select('style_no, style_name').in('style_no', exclSelected);
+    const map = new Map<string, string | null>();
+    for (const r of (data ?? []) as any[]) map.set(r.style_no, r.style_name ?? null);
+    return map;
+  });
   const [saving, setSaving] = React.useState(false);
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
   // Initialize selection from exclusions when entering exclude mode or when exclusions change
@@ -207,23 +242,76 @@ export default function Top10StylesPage() {
             <div className="text-sm font-semibold">Exclude Styles (Global)</div>
             <button className="text-xs underline" onClick={() => setExcludeModalOpen(false)}>Close</button>
           </div>
-          <div className="mt-3 text-xs text-gray-600">Enter style numbers to exclude (one per line or comma-separated). Applies to all seasons.</div>
-          <textarea
-            className="mt-2 w-full h-40 rounded border p-2 text-sm font-mono"
-            value={exclInput}
-            onChange={(e) => setExclInput(e.target.value)}
-            placeholder="e.g. BR7225\nBR7120"
-          />
+          <div className="mt-3 text-xs text-gray-600">
+            Search and add styles to exclude globally (applies to all seasons).
+          </div>
+          <div className="mt-2">
+            <input
+              className="w-full rounded border px-2 py-1 text-sm"
+              placeholder="Search by style no or name…"
+              value={exclSearch}
+              onChange={(e) => setExclSearch(e.target.value)}
+            />
+            {exclSearch && (
+              <div className="mt-1 max-h-48 overflow-auto rounded border bg-white">
+                {exclSearching && <div className="p-2 text-xs text-gray-500">Searching…</div>}
+                {!exclSearching && exclResults.length === 0 && <div className="p-2 text-xs text-gray-500">No results</div>}
+                {!exclSearching && exclResults.map(r => {
+                  const already = exclSelected.includes(r.style_no);
+                  return (
+                    <div key={r.style_no} className="flex items-center justify-between px-2 py-1.5 text-sm hover:bg-gray-50">
+                      <div className="min-w-0">
+                        <div className="font-mono text-xs text-gray-700">{r.style_no}</div>
+                        <div className="text-xs text-gray-600 truncate">{r.style_name || '—'}</div>
+                      </div>
+                      <button
+                        className={"ml-2 rounded border px-2 py-0.5 text-xs " + (already ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-50')}
+                        disabled={already}
+                        onClick={() => setExclSelected(prev => Array.from(new Set([...prev, r.style_no])))}
+                      >
+                        {already ? 'Added' : 'Add'}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+          <div className="mt-3">
+            <div className="text-xs font-semibold text-gray-700 mb-1">Selected exclusions</div>
+            <div className="max-h-40 overflow-auto rounded border">
+              {exclSelected.length === 0 ? (
+                <div className="p-2 text-xs text-gray-500">None selected</div>
+              ) : (
+                <ul className="divide-y">
+                  {exclSelected.map(no => {
+                    const nm = exclSelectedMeta?.get(no) || null;
+                    return (
+                      <li key={no} className="flex items-center justify-between px-2 py-1.5">
+                        <div className="min-w-0">
+                          <div className="font-mono text-xs text-gray-700">{no}</div>
+                          <div className="text-xs text-gray-600 truncate">{nm || '—'}</div>
+                        </div>
+                        <button
+                          className="ml-2 rounded border px-2 py-0.5 text-xs hover:bg-gray-50"
+                          onClick={() => setExclSelected(prev => prev.filter(x => x !== no))}
+                        >
+                          Remove
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+          </div>
           <div className="mt-3 flex items-center justify-end gap-2">
             <button className="rounded border px-3 py-1 text-xs" onClick={() => setExcludeModalOpen(false)}>Cancel</button>
             <button
               className="rounded border px-3 py-1 text-xs bg-slate-900 text-white hover:opacity-90"
               onClick={async () => {
                 const key = 'top_styles_excluded_global';
-                const styleNos = Array.from(new Set((exclInput || '')
-                  .split(/[,\n]+/)
-                  .map(s => s.trim())
-                  .filter(Boolean)));
+                const styleNos = Array.from(new Set((exclSelected || []).map(s => String(s).trim()).filter(Boolean)));
                 try {
                   const { data: existing } = await supabase.from('app_settings').select('id').eq('key', key).maybeSingle();
                   if (existing?.id) {
