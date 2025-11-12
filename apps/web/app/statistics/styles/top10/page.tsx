@@ -25,12 +25,23 @@ export default function Top10StylesPage() {
     const list = (((data?.value as any)?.styleNos as string[] | undefined) ?? []).filter(Boolean);
     return new Set(list);
   });
+  // Global exclusions across all seasons
+  const { data: excludedGlobal, mutate: mutateExcludedGlobal } = useSWR('top-styles:excluded-global', async () => {
+    const key = 'top_styles_excluded_global';
+    const { data } = await supabase.from('app_settings').select('id, value').eq('key', key).maybeSingle();
+    const list = (((data?.value as any)?.styleNos as string[] | undefined) ?? []).filter(Boolean);
+    return { id: (data as any)?.id as string | null, list } as { id: string | null; list: string[] };
+  });
+  const excludedGlobalSet = React.useMemo(() => new Set((excludedGlobal?.list || []).map(s => String(s))), [excludedGlobal?.id, excludedGlobal?.list?.length]);
   const items = React.useMemo(() => {
     const list = (allItems ?? []) as Array<any>;
     const ex = excludedSet as Set<string> | undefined;
-    const filtered = ex ? list.filter((r) => !ex.has(r.style_no)) : list;
+    let filtered = ex ? list.filter((r) => !ex.has(r.style_no)) : list;
+    if (excludedGlobalSet && excludedGlobalSet.size > 0) {
+      filtered = filtered.filter((r) => !excludedGlobalSet.has(String(r.style_no)));
+    }
     return showAll ? filtered : filtered.slice(0, 10);
-  }, [allItems, excludedSet, showAll]);
+  }, [allItems, excludedSet, excludedGlobalSet, showAll]);
   const { data: supplierMap } = useSWR(items && items.length ? ['suppliers', items.map(i=>i.style_no).join(',')] : null, async () => {
     const { data } = await supabase.from('styles').select('style_no, supplier').in('style_no', (items ?? []).map((i:any)=>i.style_no));
     const map = new Map<string, string | null>();
@@ -39,17 +50,24 @@ export default function Top10StylesPage() {
   });
   const { has } = useRoles();
   const [menuOpen, setMenuOpen] = React.useState(false);
-  const [excludeMode, setExcludeMode] = React.useState(false);
+  const [excludeModalOpen, setExcludeModalOpen] = React.useState(false);
+  const [exclInput, setExclInput] = React.useState('');
+  React.useEffect(() => {
+    if (excludeModalOpen) {
+      const arr = (excludedGlobal?.list || []) as string[];
+      setExclInput(arr.join('\n'));
+    }
+  }, [excludeModalOpen, excludedGlobal?.id]);
   const [saving, setSaving] = React.useState(false);
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
   // Initialize selection from exclusions when entering exclude mode or when exclusions change
   React.useEffect(() => {
-    if (excludeMode) {
+    if (excludeModalOpen) {
       const base = new Set<string>();
       if (excludedSet && excludedSet instanceof Set) for (const s of excludedSet as Set<string>) base.add(s);
       setSelected(base);
     }
-  }, [excludeMode, excludedSet]);
+  }, [excludeModalOpen, excludedSet]);
   async function enqueueScrapeTopStyles() {
     try {
       const { data: { session } } = await supabase.auth.getSession();
@@ -76,7 +94,7 @@ export default function Top10StylesPage() {
       }
       await mutateExcluded();
       await mutate();
-      setExcludeMode(false);
+      setExcludeModalOpen(false);
     } finally {
       setSaving(false);
     }
@@ -103,10 +121,7 @@ export default function Top10StylesPage() {
                 >
                   Scrape Top 10
                 </button>
-                <button
-                  className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50"
-                  onClick={() => { setExcludeMode(true); setMenuOpen(false); }}
-                >
+                <button className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50" onClick={() => { setExcludeModalOpen(true); setMenuOpen(false); }}>
                   Exclude Styles
                 </button>
               </div>
@@ -130,7 +145,6 @@ export default function Top10StylesPage() {
         <table className="min-w-full text-sm">
           <thead className="bg-gray-50">
             <tr>
-              {excludeMode && <th className="p-2 text-left">Exclude</th>}
               <th className="p-2 text-left">#</th>
               <th className="p-2 text-left">Image</th>
               <th className="p-2 text-left">Style No</th>
@@ -146,19 +160,7 @@ export default function Top10StylesPage() {
           <tbody>
             {(items ?? []).map((r: any, i: number) => (
               <tr key={r.id} className="border-t">
-                {excludeMode && (
-                  <td className="p-2">
-                    <input
-                      type="checkbox"
-                      checked={selected.has(r.style_no)}
-                      onChange={(e) => {
-                        const next = new Set(selected);
-                        if (e.target.checked) next.add(r.style_no); else next.delete(r.style_no);
-                        setSelected(next);
-                      }}
-                    />
-                  </td>
-                )}
+                
                 <td className="p-2">{i+1}</td>
                 <td className="p-2"><img src={r.image_url} alt="" className="h-10 w-10 object-cover rounded" /></td>
                 <td className="p-2">{r.style_no}</td>
@@ -188,7 +190,7 @@ export default function Top10StylesPage() {
             ))}
           </tbody>
         </table>
-        {!excludeMode && (
+        {
           <div className="p-2">
             {!showAll && (items?.length ?? 0) >= 10 && (
               <button
@@ -197,27 +199,51 @@ export default function Top10StylesPage() {
               >View more</button>
             )}
           </div>
-        )}
-        {excludeMode && (
-          <div className="p-2 flex items-center justify-end gap-2">
-            <button
-              disabled={saving}
-              className="rounded border px-3 py-1 text-xs hover:bg-gray-50 disabled:opacity-50"
-              onClick={() => setExcludeMode(false)}
-            >
-              Cancel
-            </button>
-            <button
-              disabled={saving}
-              className="rounded border px-3 py-1 text-xs bg-gray-900 text-white hover:opacity-90 disabled:opacity-50"
-              onClick={saveExclusions}
-            >
-              {saving ? 'Saving…' : 'Save exclusions'}
-            </button>
-          </div>
-        )}
+        }
       </div>
     </div>
+    {/* Global Exclusions Modal */}
+    {excludeModalOpen && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+        <div className="w-full max-w-lg rounded-md bg-white p-4 shadow">
+          <div className="flex items-center justify-between">
+            <div className="text-sm font-semibold">Exclude Styles (Global)</div>
+            <button className="text-xs underline" onClick={() => setExcludeModalOpen(false)}>Close</button>
+          </div>
+          <div className="mt-3 text-xs text-gray-600">Enter style numbers to exclude (one per line or comma-separated). Applies to all seasons.</div>
+          <textarea
+            className="mt-2 w-full h-40 rounded border p-2 text-sm font-mono"
+            value={exclInput}
+            onChange={(e) => setExclInput(e.target.value)}
+            placeholder="e.g. BR7225\nBR7120"
+          />
+          <div className="mt-3 flex items-center justify-end gap-2">
+            <button className="rounded border px-3 py-1 text-xs" onClick={() => setExcludeModalOpen(false)}>Cancel</button>
+            <button
+              className="rounded border px-3 py-1 text-xs bg-slate-900 text-white hover:opacity-90"
+              onClick={async () => {
+                const key = 'top_styles_excluded_global';
+                const styleNos = Array.from(new Set((exclInput || '')
+                  .split(/[,\n]+/)
+                  .map(s => s.trim())
+                  .filter(Boolean)));
+                try {
+                  const { data: existing } = await supabase.from('app_settings').select('id').eq('key', key).maybeSingle();
+                  if (existing?.id) {
+                    await supabase.from('app_settings').update({ value: { styleNos } }).eq('id', (existing as any).id);
+                  } else {
+                    await supabase.from('app_settings').insert({ key, value: { styleNos } } as any);
+                  }
+                  await mutateExcludedGlobal();
+                  setExcludeModalOpen(false);
+                } catch {}
+              }}
+            >Save</button>
+          </div>
+        </div>
+      </div>
+    )}
+  </div>
   );
 }
 

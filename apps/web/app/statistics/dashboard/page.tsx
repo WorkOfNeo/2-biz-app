@@ -194,6 +194,35 @@ export default function StatisticsDashboardPage() {
     });
   }
 
+  // Errors: Missing DG for Top 10 (current season)
+  const { data: currentSeason } = useSWR('season:current', async () => {
+    const { data } = await supabase.from('seasons').select('id, name, year, is_current').eq('is_current', true).maybeSingle();
+    return (data as any) || null;
+  });
+  const { data: top10Current } = useSWR(currentSeason ? ['top10:current', currentSeason.id] : null, async () => {
+    const { data, error } = await supabase.from('top_styles').select('style_no, dg, qty').eq('season_id', currentSeason.id).order('qty', { ascending: false }).limit(10);
+    if (error) throw new Error(error.message);
+    return (data ?? []) as Array<{ style_no: string; dg?: string | null; qty: number }>;
+  });
+  const { data: stylesForTop } = useSWR(top10Current && top10Current.length ? ['styles:forTop10', top10Current.map(r=>r.style_no).join(',')] : null, async () => {
+    const nos = (top10Current ?? []).map(r => r.style_no);
+    const { data, error } = await supabase.from('styles').select('style_no, dg').in('style_no', nos);
+    if (error) throw new Error(error.message);
+    const map = new Map<string, string | null>();
+    for (const r of (data ?? []) as any[]) map.set(r.style_no, r.dg ?? null);
+    return map;
+  });
+  const missingDgList = React.useMemo(() => {
+    const out: string[] = [];
+    for (const r of (top10Current ?? [])) {
+      const dgTop = (r as any).dg as string | null | undefined;
+      const dgStyle = stylesForTop?.get(r.style_no) ?? null;
+      const val = (dgTop || dgStyle || '').toString().trim();
+      if (!val) out.push(r.style_no);
+    }
+    return out;
+  }, [top10Current?.length, stylesForTop]);
+
   return (
     <div className="space-y-6">
       <div className="text-xs text-gray-500">Statistics</div>
@@ -283,7 +312,28 @@ export default function StatisticsDashboardPage() {
           </div>
         </div>
       </div>
-      
+      {/* Info / Errors */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="rounded-md border p-3 space-y-2">
+          <div className="text-sm font-semibold">Info</div>
+          <div className="text-xs text-gray-600">—</div>
+        </div>
+        <div className="rounded-md border p-3 space-y-2">
+          <div className="text-sm font-semibold">Errors</div>
+          <div className="text-xs text-gray-700">
+            {(missingDgList && missingDgList.length > 0) ? (
+              <div>
+                <div className="font-medium mb-1">Missing DG in Top 10 (Current Season):</div>
+                <ul className="list-disc pl-5">
+                  {missingDgList.map((no) => (<li key={no}>{no}</li>))}
+                </ul>
+              </div>
+            ) : (
+              <div className="text-gray-500">No errors</div>
+            )}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
