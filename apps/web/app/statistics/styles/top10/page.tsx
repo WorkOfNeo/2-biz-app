@@ -199,7 +199,6 @@ export default function Top10StylesPage() {
           )}
         </div>
       </div>
-    </div>
     {/* Global Exclusions Modal */}
     {excludeModalOpen && (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
