@@ -46,15 +46,15 @@ export default function StockListPage() {
   const { data: styleRows } = useSWR(styleNos.length ? ['styles:byNo', styleNos.join(',')] : null, async () => {
     const { data: rows, error } = await supabase
       .from('styles')
-      .select('id, style_no, style_name, supplier, image_url')
+      .select('id, style_no, style_name, supplier, image_url, dg')
       .in('style_no', styleNos);
     if (error) throw new Error(error.message);
-    return rows as Array<{ id: string; style_no: string; style_name: string | null; supplier: string | null; image_url: string | null }>;
+    return rows as Array<{ id: string; style_no: string; style_name: string | null; supplier: string | null; image_url: string | null; dg?: string | null }>;
   }, { refreshInterval: 0 });
   const styleMetaByNo = React.useMemo(() => {
-    const m: Record<string, { id: string | null; name: string | null; supplier: string | null; image: string | null }> = {};
+    const m: Record<string, { id: string | null; name: string | null; supplier: string | null; image: string | null; dg?: string | null }> = {};
     for (const r of (styleRows ?? []) as any[]) {
-      m[r.style_no] = { id: r.id || null, name: r.style_name || null, supplier: r.supplier || null, image: r.image_url || null };
+      m[r.style_no] = { id: r.id || null, name: r.style_name || null, supplier: r.supplier || null, image: r.image_url || null, dg: (r as any).dg ?? null };
     }
     return m;
   }, [styleRows]);
@@ -335,6 +335,9 @@ export default function StockListPage() {
                 <div className="text-xs text-gray-500">{styleNo}</div>
                 <div className="text-base font-semibold text-black truncate">{meta.name ?? '—'}</div>
                 {meta.supplier && <div className="text-xs text-gray-500">{meta.supplier}</div>}
+                {styleMetaByNo[styleNo]?.dg && (
+                  <div className="text-[11px] text-gray-600">DG: <span className="font-medium">{styleMetaByNo[styleNo]?.dg}</span></div>
+                )}
               </div>
             </div>
             {/* Per-color tables: columns = Image | Color | Section | sizes... | Total */}

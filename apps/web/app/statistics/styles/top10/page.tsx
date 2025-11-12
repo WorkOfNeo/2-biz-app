@@ -175,6 +175,8 @@ export default function Top10StylesPage() {
                       try {
                         const val = e.target.value;
                         await supabase.from('top_styles').update({ dg: val || null }).eq('id', r.id);
+                        // Also persist DG on styles so general style cards show it
+                        await supabase.from('styles').update({ dg: val || null }).eq('style_no', r.style_no);
                       } catch {}
                     }}
                   />

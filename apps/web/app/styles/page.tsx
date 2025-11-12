@@ -66,7 +66,8 @@ export default function StylesPage() {
                 <th className="text-left p-2 border-b">Image</th>
                 <th className="text-left p-2 border-b">Style No.</th>
                 <th className="text-left p-2 border-b">Style Name</th>
-                <th className="text-left p-2 border-b">Supplier</th>
+              <th className="text-left p-2 border-b">Supplier</th>
+              <th className="text-left p-2 border-b">DG</th>
                 <th className="text-left p-2 border-b">Link</th>
               </tr>
             </thead>
@@ -77,6 +78,7 @@ export default function StylesPage() {
                   <td className="p-2 border-b underline text-slate-700">{r.style_no}</td>
                   <td className="p-2 border-b">{r.style_name ?? '—'}</td>
                   <td className="p-2 border-b">{r.supplier ?? '—'}</td>
+                  <td className="p-2 border-b">{(r as any).dg ?? '—'}</td>
                   <td className="p-2 border-b">{r.link_href ? <a className="underline" href={r.link_href} target="_blank" rel="noreferrer">Open</a> : '—'}</td>
                 </tr>
               ))}
