@@ -190,16 +190,14 @@ export default function Top10StylesPage() {
             ))}
           </tbody>
         </table>
-        {
-          <div className="p-2">
-            {!showAll && (items?.length ?? 0) >= 10 && (
-              <button
-                className="text-xs text-gray-600 hover:underline"
-                onClick={() => setShowAll(true)}
-              >View more</button>
-            )}
-          </div>
-        }
+        <div className="p-2">
+          {!showAll && (items?.length ?? 0) >= 10 && (
+            <button
+              className="text-xs text-gray-600 hover:underline"
+              onClick={() => setShowAll(true)}
+            >View more</button>
+          )}
+        </div>
       </div>
     </div>
     {/* Global Exclusions Modal */}
