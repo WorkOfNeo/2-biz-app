@@ -289,7 +289,7 @@ export default function PurchaseMakeOrderPage() {
             if (score > best) { best = score; picked = i; }
           }
           if (picked < 0) break;
-          res[picked] += 1;
+          res[picked] = (res[picked] ?? 0) + 1;
           diff--;
         }
       } else if (diff < 0) {
@@ -298,12 +298,12 @@ export default function PurchaseMakeOrderPage() {
           let best = -1;
           for (let i = 0; i < res.length; i++) {
             if (!eligibleSub[i]) continue;
-            if (res[i] <= 0) continue;
+            if ((res[i] ?? 0) <= 0) continue;
             const score = Number(weights[i]) || 0;
             if (score > best) { best = score; picked = i; }
           }
           if (picked < 0) break;
-          res[picked] -= 1;
+          res[picked] = Math.max(0, (res[picked] ?? 0) - 1);
           diff++;
         }
       }
