@@ -2,11 +2,12 @@
 import React from 'react';
 import useSWR from 'swr';
 import { supabase } from '../../../lib/supabaseClient';
-import { ChevronRight, ChevronDown } from 'lucide-react';
+import { ChevronRight, ChevronDown, MoreHorizontal } from 'lucide-react';
 
 type ExportRow = { id: string; kind: string; title: string | null; path: string; public_url: string | null; created_at: string };
 
 export default function StatisticsExportsPage() {
+  const [menuOpen, setMenuOpen] = React.useState(false);
   const { data } = useSWR('exports:all', async () => {
     const { data, error } = await supabase
       .from('exports')
@@ -336,41 +337,55 @@ export default function StatisticsExportsPage() {
           <div className="text-xs text-gray-500">Statistics</div>
           <h1 className="text-xl font-semibold">Exports</h1>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 relative">
           <button
-            className="relative rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-60"
-            onClick={enqueueGeneralReactPdf}
+            className="relative rounded-md border px-2 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-60 inline-flex items-center gap-1"
+            onClick={() => setMenuOpen((v) => !v)}
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
             disabled={running}
           >
-            Export General (React PDF · per salesperson)
+            <MoreHorizontal className="h-4 w-4" />
+            Actions
           </button>
-          <button
-            className="relative rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-60"
-            onClick={enqueueOverviewPdf}
-            disabled={running}
-          >
-            Export Overview (PDF)
-          </button>
-          <button
-            className="relative rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-60"
-            onClick={enqueueCountriesPdf}
-            disabled={running}
-          >
-            Export Countries (PDF)
-          </button>
+          {menuOpen && (
+            <div className="absolute right-[140px] top-full mt-1 w-64 rounded border bg-white shadow z-10">
+              <button
+                className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 disabled:opacity-60"
+                onClick={() => { enqueueGeneralReactPdf(); setMenuOpen(false); }}
+                disabled={running}
+              >
+                Export General (React PDF · per salesperson)
+              </button>
+              <button
+                className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 disabled:opacity-60"
+                onClick={() => { enqueueOverviewPdf(); setMenuOpen(false); }}
+                disabled={running}
+              >
+                Export Overview (PDF)
+              </button>
+              <button
+                className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 disabled:opacity-60"
+                onClick={() => { enqueueCountriesPdf(); setMenuOpen(false); }}
+                disabled={running}
+              >
+                Export Countries (PDF)
+              </button>
+              <button
+                className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 disabled:opacity-60"
+                onClick={() => { enqueueTopStylesPdf(); setMenuOpen(false); }}
+                disabled={running}
+              >
+                Export Top 10 Styles (PDF)
+              </button>
+            </div>
+          )}
           <button
             className="relative rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-60"
             onClick={enqueueAllExportsSequential}
             disabled={running}
           >
             Run All Exports
-          </button>
-          <button
-            className="relative rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-60"
-            onClick={enqueueTopStylesPdf}
-            disabled={running}
-          >
-            Export Top 10 Styles (PDF)
           </button>
           <div className="ml-2 min-w-[180px] text-xs text-gray-700 flex items-center gap-2">
             {running && (
