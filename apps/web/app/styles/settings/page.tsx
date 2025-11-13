@@ -342,9 +342,10 @@ function StyleListsEditor({ styles }: { styles: { id: string; style_no: string; 
   const { data, mutate } = useSWR('app-settings:style-lists', async () => {
     const { data } = await supabase.from('app_settings').select('id, value').eq('key', 'style_lists').maybeSingle();
     const id = (data as any)?.id as string | null;
-    const value = (((data as any)?.value || {}) as { lists?: Record<string, string[]> }) || {};
+    const value = (((data as any)?.value || {}) as { lists?: Record<string, string[]>; rules?: Record<string, { includeSeasonIds?: string[] }> }) || {};
     const lists = value.lists || {};
-    return { id, lists } as { id: string | null; lists: Record<string, string[]> };
+    const rules = value.rules || {};
+    return { id, lists, rules } as { id: string | null; lists: Record<string, string[]>; rules: Record<string, { includeSeasonIds?: string[] }> };
   });
   const [active, setActive] = React.useState<string>('');
   React.useEffect(() => {
@@ -381,6 +382,18 @@ function StyleListsEditor({ styles }: { styles: { id: string; style_no: string; 
     return m as Map<string, string>;
   }, { refreshInterval: 0 });
   const [seasonFilter, setSeasonFilter] = React.useState<string>('');
+  // Compute auto-included styles for the active list based on rules (seasons)
+  const autoIncludedForActive = React.useMemo(() => {
+    if (!data || !active) return new Set<string>();
+    const includeIds = (data.rules?.[active]?.includeSeasonIds || []) as string[];
+    if (!includeIds.length) return new Set<string>();
+    const included = new Set<string>();
+    for (const s of styles) {
+      const arr = styleSeasons?.byStyle.get(s.style_no) || [];
+      if (arr.some((id) => includeIds.includes(id))) included.add(s.style_no);
+    }
+    return included;
+  }, [data, active, styles, styleSeasons?.labels.length]);
   const filteredStyles = React.useMemo(() => {
     const q = query.trim().toLowerCase();
     let base = styles;
@@ -390,12 +403,22 @@ function StyleListsEditor({ styles }: { styles: { id: string; style_no: string; 
         return arr.includes(seasonFilter);
       });
     }
+    // Exclude styles already in active list (manual) or auto-included by rule
+    const excludeSet = new Set<string>([...(data?.lists?.[active] || []), ...Array.from(autoIncludedForActive)]);
+    base = base.filter((s) => !excludeSet.has(s.style_no));
     if (!q) return base;
     return base.filter((s) => (s.style_name || '').toLowerCase().includes(q) || (s.style_no || '').toLowerCase().includes(q));
-  }, [styles, query, seasonFilter, styleSeasons?.labels.length]);
+  }, [styles, query, seasonFilter, styleSeasons?.labels.length, data?.lists, active, autoIncludedForActive.size]);
   async function save(next: Record<string, string[]>) {
     const existsId = data?.id || null;
-    const payload = { key: 'style_lists', value: { lists: next } } as any;
+    const payload = { key: 'style_lists', value: { lists: next, rules: data?.rules || {} } } as any;
+    if (existsId) await supabase.from('app_settings').update({ value: payload.value }).eq('id', existsId as any);
+    else await supabase.from('app_settings').insert(payload);
+    await mutate();
+  }
+  async function saveRules(nextRules: Record<string, { includeSeasonIds?: string[] }>) {
+    const existsId = data?.id || null;
+    const payload = { key: 'style_lists', value: { lists: data?.lists || {}, rules: nextRules } } as any;
     if (existsId) await supabase.from('app_settings').update({ value: payload.value }).eq('id', existsId as any);
     else await supabase.from('app_settings').insert(payload);
     await mutate();
@@ -460,6 +483,34 @@ function StyleListsEditor({ styles }: { styles: { id: string; style_no: string; 
       {active && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div className="rounded border p-2">
+            {/* Rules editor for auto-including by seasons */}
+            <div className="mb-2">
+              <div className="text-[11px] font-medium mb-1">Auto-include seasons</div>
+              <div className="flex flex-wrap gap-2">
+                {(styleSeasons?.labels || []).map((sid) => {
+                  const rules = data?.rules || {};
+                  const include = new Set(rules[active]?.includeSeasonIds || []);
+                  const checked = include.has(sid);
+                  const label = seasonsMap?.get(sid) ? `${seasonsMap.get(sid)}` : sid;
+                  return (
+                    <label key={sid} className="inline-flex items-center gap-1 text-[11px] border rounded px-1.5 py-0.5">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={async (e) => {
+                          const next = { ...(data?.rules || {}) } as Record<string, { includeSeasonIds?: string[] }>;
+                          const set = new Set(next[active]?.includeSeasonIds || []);
+                          if (e.target.checked) set.add(sid); else set.delete(sid);
+                          next[active] = { includeSeasonIds: Array.from(set) };
+                          await saveRules(next);
+                        }}
+                      />
+                      <span>{label}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
             <div className="flex items-center justify-between mb-1">
               <div className="text-xs font-medium">In “{active}”</div>
               <button
