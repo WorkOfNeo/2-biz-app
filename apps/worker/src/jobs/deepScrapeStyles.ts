@@ -32,13 +32,15 @@ export async function deepScrapeStyles(ctx: Ctx) {
     await log(job.id, 'error', 'STEP:season_spy_id_missing', { seasonId });
     throw new Error('Selected season has no spy_season_id mapping; run seasons scrape to map SPY IDs');
   }
-  const { data: styles } = await supabase.from('styles').select('style_no, link_href');
+  // Load styles including internal id to map colors
+  const { data: styles } = await supabase.from('styles').select('id, style_no, link_href');
   if (!styles || styles.length === 0) {
     await saveResult(job.id, 'Deep styles: no styles', { count: 0 });
     await log(job.id, 'info', 'STEP:complete', { upserted: 0 });
     return;
   }
   let updated = 0;
+  let colorLinksInserted = 0;
   for (const s of styles as any[]) {
     await ensureNotCancelled(job.id);
     const href = (s.link_href || '').toString();
@@ -86,6 +88,7 @@ export async function deepScrapeStyles(ctx: Ctx) {
       await log(job.id, 'error', 'STEP:deep_styles_no_color_box', { style_no: s.style_no, error: e?.message || String(e) });
       continue;
     }
+    // Read the season selects present in materials tab
     const seasons = await page.$$eval('.colorDeliveryBox select.season_id', (sels) => {
       const out: string[] = [];
       for (const sel of Array.from(sels) as HTMLSelectElement[]) {
@@ -94,6 +97,33 @@ export async function deepScrapeStyles(ctx: Ctx) {
       }
       return out;
     });
+    // Also read the active/selected season (should match spySeasonId applied above)
+    const activeSpySeason: string | null = await page.$eval('.colorDeliveryBox .materials-bar select.season_id', (sel: any) => (sel?.value ?? null)).catch(() => null);
+    if (activeSpySeason && Number(activeSpySeason) !== spySeasonId) {
+      await log(job.id, 'error', 'STEP:deep_styles_selected_season_mismatch', { style_no: s.style_no, activeSpySeason, expected: spySeasonId });
+    }
+    // Read colors listed in materials table for this season
+    const colorNames: string[] = await page.$$eval('.colorDeliveryBox table.standardList tbody tr td:nth-child(4) span', (spans) =>
+      Array.from(spans).map((el) => (el?.textContent || '').trim()).filter(Boolean)
+    ).catch(() => []);
+    // Map UI color names to our style_colors ids
+    try {
+      const { data: styleColorRows } = await supabase.from('style_colors').select('id, color').eq('style_id', s.id as string).limit(1000);
+      const colorMap = new Map<string, string>();
+      for (const r of (styleColorRows ?? []) as any[]) colorMap.set(String(r.color || '').trim().toLowerCase(), String(r.id));
+      for (const cname of colorNames) {
+        const cid = colorMap.get(cname.toLowerCase());
+        if (!cid) continue;
+        // Link this style_color to the current app season
+        const { error: upErr } = await supabase.from('style_color_seasons').upsert(
+          { style_color_id: cid, season_id: seasonId },
+          { onConflict: 'style_color_id,season_id' as any }
+        );
+        if (!upErr) colorLinksInserted++;
+      }
+    } catch (e: any) {
+      await log(job.id, 'error', 'STEP:deep_styles_color_link_failed', { style_no: s.style_no, error: e?.message || String(e) });
+    }
     const uniq = Array.from(new Set(seasons));
     const { data: exist } = await supabase.from('style_seasons').select('id, seasons').eq('style_no', s.style_no).maybeSingle();
     const merged = Array.from(new Set([...(exist?.seasons as any[] || []), ...uniq]));
@@ -104,8 +134,8 @@ export async function deepScrapeStyles(ctx: Ctx) {
     }
     updated++;
   }
-  await saveResult(job.id, 'Deep styles completed', { updated });
-  await log(job.id, 'info', 'STEP:complete', { updated });
+  await saveResult(job.id, 'Deep styles completed', { updated, colorLinksInserted });
+  await log(job.id, 'info', 'STEP:complete', { updated, colorLinksInserted });
 }
 
 
