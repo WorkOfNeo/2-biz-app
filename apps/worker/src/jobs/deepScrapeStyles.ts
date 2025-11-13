@@ -126,7 +126,8 @@ export async function deepScrapeStyles(ctx: Ctx) {
         const { data: styleColorRows } = await supabase.from('style_colors').select('id, color').eq('style_id', s.id as string).limit(1000);
         const colorMap = new Map<string, string>();
         for (const r of (styleColorRows ?? []) as any[]) colorMap.set(String(r.color || '').trim().toLowerCase(), String(r.id));
-        // Upsert all links color->season for each box
+        // Build desired target pairs {style_color_id|season_id}
+        const targetPairs = new Set<string>();
         for (const box of boxes) {
           const appSeasonId = spyToApp.get(box.spySeasonId);
           if (!appSeasonId) continue;
@@ -134,13 +135,38 @@ export async function deepScrapeStyles(ctx: Ctx) {
           for (const cname of box.colors) {
             const cid = colorMap.get(cname.toLowerCase());
             if (!cid) continue;
-            const { error: upErr } = await supabase.from('style_color_seasons').upsert(
-              { style_color_id: cid, season_id: appSeasonId },
-              { onConflict: 'style_color_id,season_id' as any }
-            );
+            targetPairs.add(`${cid}|${appSeasonId}`);
+          }
+        }
+        // Fetch existing pairs for this style
+        const styleColorIds = Array.from(colorMap.values());
+        let existing: Array<{ style_color_id: string; season_id: string }> = [];
+        if (styleColorIds.length) {
+          const { data: existRows } = await supabase
+            .from('style_color_seasons')
+            .select('style_color_id, season_id')
+            .in('style_color_id', styleColorIds);
+          existing = (existRows ?? []) as any[];
+        }
+        const existingSet = new Set(existing.map((r) => `${r.style_color_id}|${r.season_id}`));
+        // Inserts (in target but not existing)
+        for (const pair of Array.from(targetPairs)) {
+          if (!existingSet.has(pair)) {
+            const [cid, sid] = pair.split('|');
+            const { error: upErr } = await supabase.from('style_color_seasons').insert({ style_color_id: cid, season_id: sid } as any);
             if (!upErr) {
               colorLinksInserted++;
-              try { await log(job.id, 'info', 'STEP:deep_styles_color_link', { style_no: s.style_no, color: cname, style_color_id: cid, season_id: appSeasonId, spySeasonId: box.spySeasonId }); } catch {}
+              try { await log(job.id, 'info', 'STEP:deep_styles_color_link', { style_no: s.style_no, style_color_id: cid, season_id: sid }); } catch {}
+            }
+          }
+        }
+        // Deletions (in existing but not target): remove seasons that are not shown in any materials box
+        for (const pair of Array.from(existingSet)) {
+          if (!targetPairs.has(pair)) {
+            const [cid, sid] = pair.split('|');
+            const { error: delErr } = await supabase.from('style_color_seasons').delete().eq('style_color_id', cid).eq('season_id', sid);
+            if (!delErr) {
+              try { await log(job.id, 'info', 'STEP:deep_styles_color_unlink', { style_no: s.style_no, style_color_id: cid, season_id: sid }); } catch {}
             }
           }
         }
