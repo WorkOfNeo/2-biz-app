@@ -101,7 +101,10 @@ export async function exportStockList(ctx: Ctx) {
       let maxSizeCount = 0;
       for (const r of out) maxSizeCount = Math.max(maxSizeCount, r.sizes.length);
       maxSizeCount = Math.max(8, maxSizeCount);
-      // Build PDF document: per style, image left, color/sections table right (sizes grid)
+      // Build PDF document:
+      // - Per style "block" with image/meta on the left
+      // - On the right: one compact "table" per color with its own header and spacing between tables
+      // - Each color table shows Section rows (Stock, Sold, Purchase, Available) with per-size columns and a Total
       const styles = StyleSheet.create({
         page: { padding: 16, fontSize: 9, color: '#0f172a' },
         h1: { fontSize: 14, marginBottom: 6 },
@@ -110,10 +113,13 @@ export async function exportStockList(ctx: Ctx) {
         left: { width: 84 },
         img: { width: 80, height: 80, objectFit: 'cover' as any },
         meta: { fontSize: 9, marginBottom: 4 },
+        // Color table container (adds spacing between colors)
+        colorTable: { marginBottom: 8 },
         tableHeader: { flexDirection: 'row', backgroundColor: '#f1f5f9', color: '#000', borderBottom: 0.5, borderColor: '#cbd5e1' },
         tableRow: { flexDirection: 'row', borderBottom: 0.5, borderColor: '#e2e8f0' },
-        th: { padding: 4, fontSize: 9, fontWeight: 700 as any },
-        cell: { padding: 4, fontSize: 9 },
+        // Make headers/cells a bit smaller so many sizes fit comfortably
+        th: { padding: 3, fontSize: 8, fontWeight: 700 as any },
+        cell: { padding: 3, fontSize: 8 },
         leftCell: { textAlign: 'left' as any },
         rightCell: { textAlign: 'right' as any },
         green: { color: '#16a34a' },
@@ -143,20 +149,14 @@ export async function exportStockList(ctx: Ctx) {
             meta.supplier ? React.createElement(Text, { style: styles.meta }, meta.supplier) : null,
           )
         );
-        // Dynamic widths for size columns area
+        // Column widths (percentages) - keep sizes compact
         const colorW = '22%';
         const sectionW = '14%';
-        const sizeW = `${Math.max(6, Math.floor((100 - 22 - 14 - 10) / maxSizeCount))}%`; // leave ~10% for Total
+        const sizeW = `${Math.max(4, Math.floor((100 - 22 - 14 - 10) / maxSizeCount))}%`; // leave ~10% for Total
         const totalW = '10%';
-        const headSizes: any[] = [];
-        for (let i = 0; i < maxSizeCount; i++) headSizes.push(Cell(colors[0]?.sizes?.[i] || '', sizeW, 'right', styles.th));
-        const tableHead = React.createElement(View, { style: styles.tableHeader },
-          Cell('Color', colorW, 'left', styles.th),
-          Cell('Section', sectionW, 'left', styles.th),
-          ...headSizes,
-          Cell('Total', totalW, 'right', styles.th)
-        );
-        const rows: any[] = [];
+
+        // For each color, render its own header + rows as an isolated "table" with bottom spacing
+        const colorTables: any[] = [];
         for (const c of colors) {
           const sizes = c.sizes || [];
           const pad = (arr: number[]) => Array.from({ length: maxSizeCount }, (_, i) => Number(arr?.[i] ?? 0) || 0);
@@ -165,6 +165,16 @@ export async function exportStockList(ctx: Ctx) {
           const purchaseArr = pad(c.purchaseArr);
           const availArr = pad(c.availableArr);
           const sum = (arr: number[]) => arr.reduce((a, b) => a + (Number(b) || 0), 0);
+          // Build color-specific table header (uses this color's size labels, padded with blanks)
+          const colorHeadSizes: any[] = [];
+          for (let i = 0; i < maxSizeCount; i++) colorHeadSizes.push(Cell(sizes[i] || '', sizeW, 'right', styles.th));
+          const tableHead = React.createElement(View, { style: styles.tableHeader },
+            Cell('Color', colorW, 'left', styles.th),
+            Cell('Section', sectionW, 'left', styles.th),
+            ...colorHeadSizes,
+            Cell('Total', totalW, 'right', styles.th)
+          );
+          const rows: any[] = [];
           // Stock row
           rows.push(React.createElement(View, { style: styles.tableRow, key: `${style_no}-${c.color}-stock` },
             Cell(c.color, colorW, 'left'),
@@ -210,8 +220,11 @@ export async function exportStockList(ctx: Ctx) {
             }),
             Cell(c.available ? fmt(c.available) : '', totalW, 'right', c.available < 0 ? styles.red : c.available > 0 ? styles.green : undefined)
           ));
+          // Push one color table (header + 4 rows) with spacing
+          colorTables.push(React.createElement(View, { style: styles.colorTable, key: `${style_no}-${c.color}` }, tableHead, ...rows));
         }
-        return React.createElement(View, { style: styles.block, key: style_no }, header, tableHead, ...rows);
+        // A style "block" now contains the left image/meta and a vertical stack of color tables on the right
+        return React.createElement(View, { style: styles.block, key: style_no }, header, ...colorTables);
       });
       const doc = React.createElement(Document, null, React.createElement(PdfPage, { size: 'A4', orientation: 'landscape', style: styles.page }, React.createElement(Text, { style: styles.h1 }, `Stock List · ${listName}`), ...blocks));
       let outPdf = await pdf(doc).toBuffer();
