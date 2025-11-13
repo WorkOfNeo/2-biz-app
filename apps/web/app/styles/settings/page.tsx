@@ -3,12 +3,17 @@ import { useMemo, useState } from 'react';
 import useSWR from 'swr';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { useRoles } from '../../../lib/supabaseClient';
+import { ProgressBar } from '../../../components/ProgressBar';
 
 export default function StylesSettingsPage() {
   const supabase = createClientComponentClient();
   const { has } = useRoles();
   const isAdmin = has('admin');
   const [runLoading, setRunLoading] = useState(false);
+  // Deep scrape progress
+  const [deepJobId, setDeepJobId] = useState<string | null>(null);
+  const [deepProgress, setDeepProgress] = useState<{ index: number; total: number } | null>(null);
+  const [deepDone, setDeepDone] = useState(false);
   const { data: styles } = useSWR(isAdmin ? 'styles:all' : null, async () => {
     const { data, error } = await supabase.from('styles').select('id, style_no, style_name, scrape_enabled, updated_at').order('style_no').limit(1000);
     if (error) throw new Error(error.message);
@@ -78,6 +83,39 @@ export default function StylesSettingsPage() {
   }, [styles, searchQuery, seasonFilter, styleSeasons?.labels.length]);
 
   // (Seasons column removed)
+  // Poll deep scrape job logs to show progress
+  (require('react') as typeof import('react')).useEffect(() => {
+    if (!deepJobId) return;
+    let timer: any;
+    const poll = async () => {
+      try {
+        const { data: logs } = await supabase
+          .from('job_logs')
+          .select('msg, data')
+          .eq('job_id', deepJobId)
+          .order('ts', { ascending: false })
+          .limit(50);
+        for (const l of (logs ?? []) as any[]) {
+          if (l.msg === 'STEP:deep_styles_progress' && l.data) {
+            setDeepProgress({ index: Number(l.data.index || 0), total: Number(l.data.total || 0) });
+            break;
+          }
+          if (l.msg === 'STEP:complete') {
+            setDeepDone(true);
+            break;
+          }
+        }
+        // Also check job status to stop when finished
+        const { data: jobRow } = await supabase.from('jobs').select('status').eq('id', deepJobId).maybeSingle();
+        const st = (jobRow as any)?.status as string | undefined;
+        if (st === 'succeeded' || st === 'failed' || st === 'cancelled') {
+          setDeepDone(true);
+        }
+      } catch {}
+    };
+    timer = setInterval(poll, 1200);
+    return () => { if (timer) clearInterval(timer); };
+  }, [deepJobId]);
   async function toggleStyleForUser(styleNo: string) {
     if (!currentUserId) return;
     const map = { ...(selectionMap?.value || {}) } as Record<string, string[]>;
@@ -245,6 +283,7 @@ export default function StylesSettingsPage() {
                   body: JSON.stringify({ type: 'deep_scrape_styles', payload: { requestedBy: session.user.email, seasonId } })
                 });
                 const js = await res.json().catch(() => ({}));
+                if (js?.jobId) { setDeepJobId(js.jobId as string); setDeepProgress({ index: 0, total: 0 }); setDeepDone(false); }
                 // eslint-disable-next-line no-console
                 console.log('[styles-settings] enqueue deep_scrape_styles', res.status, js);
                 try { if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('job-started', { detail: { label: 'Deep scrape styles — job started' } })); } catch {}
@@ -259,6 +298,16 @@ export default function StylesSettingsPage() {
           </button>
         </div>
         <div className="mt-2 text-xs text-gray-600">Opens each style and reads materials season per color.</div>
+        {deepJobId && (
+          <div className="mt-2 flex items-center gap-2">
+            <div className="w-56"><ProgressBar value={(() => {
+              const p = deepProgress;
+              if (!p || !p.total) return 5;
+              return Math.max(5, Math.min(99, Math.round((p.index / p.total) * 100)));
+            })()} /></div>
+            <div>{deepProgress ? `${Math.min(deepProgress.index, deepProgress.total)}/${deepProgress.total || '?'}` : ''}{deepDone ? ' Done' : ''}</div>
+          </div>
+        )}
       </div>
       )}
     </div>

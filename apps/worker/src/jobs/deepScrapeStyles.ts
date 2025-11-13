@@ -41,7 +41,11 @@ export async function deepScrapeStyles(ctx: Ctx) {
   }
   let updated = 0;
   let colorLinksInserted = 0;
+  const total = (styles as any[])?.length || 0;
+  let idx = 0;
   for (const s of styles as any[]) {
+    idx++;
+    try { await log(job.id, 'info', 'STEP:deep_styles_progress', { index: idx, total, style_no: s.style_no }); } catch {}
     await ensureNotCancelled(job.id);
     const href = (s.link_href || '').toString();
     if (!href) continue;
@@ -126,6 +130,7 @@ export async function deepScrapeStyles(ctx: Ctx) {
         for (const box of boxes) {
           const appSeasonId = spyToApp.get(box.spySeasonId);
           if (!appSeasonId) continue;
+          try { await log(job.id, 'info', 'STEP:deep_styles_box', { style_no: s.style_no, spySeasonId: box.spySeasonId, colors: box.colors.length, appSeasonId }); } catch {}
           for (const cname of box.colors) {
             const cid = colorMap.get(cname.toLowerCase());
             if (!cid) continue;
@@ -133,7 +138,10 @@ export async function deepScrapeStyles(ctx: Ctx) {
               { style_color_id: cid, season_id: appSeasonId },
               { onConflict: 'style_color_id,season_id' as any }
             );
-            if (!upErr) colorLinksInserted++;
+            if (!upErr) {
+              colorLinksInserted++;
+              try { await log(job.id, 'info', 'STEP:deep_styles_color_link', { style_no: s.style_no, color: cname, style_color_id: cid, season_id: appSeasonId, spySeasonId: box.spySeasonId }); } catch {}
+            }
           }
         }
       } catch (e: any) {
