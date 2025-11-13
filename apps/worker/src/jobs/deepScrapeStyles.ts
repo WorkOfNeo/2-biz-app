@@ -15,23 +15,6 @@ export async function deepScrapeStyles(ctx: Ctx) {
   const { job, page, log, saveResult, ensureNotCancelled, supabase, SPY_BASE_URL } = ctx;
   await ensureNotCancelled(job.id);
   await log(job.id, 'info', 'STEP:deep_styles_begin');
-  // Enforce seasonId presence and apply per page before scraping
-  const seasonId = (job.payload as any)?.seasonId as string | undefined;
-  if (!seasonId) {
-    await log(job.id, 'error', 'STEP:season_missing_abort');
-    throw new Error('seasonId is required for deep_scrape_styles to prevent cross-season data pollution');
-  }
-  // Resolve SPY season id (numeric) for DOM selection
-  let spySeasonId: number | null = null;
-  try {
-    const { data: seasonRow } = await supabase.from('seasons').select('spy_season_id').eq('id', seasonId).maybeSingle();
-    const n = Number((seasonRow as any)?.spy_season_id || 0);
-    spySeasonId = Number.isFinite(n) && n > 0 ? n : null;
-  } catch {}
-  if (!spySeasonId) {
-    await log(job.id, 'error', 'STEP:season_spy_id_missing', { seasonId });
-    throw new Error('Selected season has no spy_season_id mapping; run seasons scrape to map SPY IDs');
-  }
   // Load styles including internal id to map colors
   const { data: styles } = await supabase.from('styles').select('id, style_no, link_href');
   if (!styles || styles.length === 0) {
@@ -53,46 +36,14 @@ export async function deepScrapeStyles(ctx: Ctx) {
     const url = base + '#tab=materials';
     await log(job.id, 'info', 'STEP:deep_styles_nav', { style_no: s.style_no, url });
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
-    // Apply season selection; fail fast if cannot set
-    try {
-      const applied = await page.evaluate(async (targetSeasonId) => {
-        const sels = Array.from(document.querySelectorAll('select.season_id')) as HTMLSelectElement[];
-        if (sels.length === 0) return false;
-        let ok = false;
-        for (const sel of sels) {
-          sel.value = String(targetSeasonId);
-          sel.dispatchEvent(new Event('input', { bubbles: true }));
-          sel.dispatchEvent(new Event('change', { bubbles: true }));
-          if (sel.value === String(targetSeasonId)) ok = true;
-        }
-        return ok;
-      }, spySeasonId);
-      if (!applied) {
-        await log(job.id, 'error', 'STEP:season_set_failed', { style_no: s.style_no, seasonId, spySeasonId });
-        throw new Error('Failed to set season on page');
-      }
-      // Allow any dependent network to settle after selection change
-      try { await page.waitForLoadState?.('networkidle', { timeout: 10_000 } as any); } catch {}
-      // Verify again
-      const verified = await page.evaluate((targetSeasonId) => {
-        const sels = Array.from(document.querySelectorAll('select.season_id')) as HTMLSelectElement[];
-        return sels.some((sel) => sel.value === String(targetSeasonId));
-      }, spySeasonId);
-      if (!verified) {
-        await log(job.id, 'error', 'STEP:season_verify_failed', { style_no: s.style_no, seasonId, spySeasonId });
-        throw new Error('Season verify failed');
-      }
-      await log(job.id, 'info', 'STEP:season_set_ok', { style_no: s.style_no, seasonId, spySeasonId });
-    } catch (e: any) {
-      throw new Error(`Season selection failed for ${s.style_no}: ${e?.message || String(e)}`);
-    }
+    // We do NOT change the season selects – we read what is already on the page across all boxes
     try {
       await page.waitForSelector('.colorDeliveryBox', { timeout: 30_000 });
     } catch (e: any) {
       await log(job.id, 'error', 'STEP:deep_styles_no_color_box', { style_no: s.style_no, error: e?.message || String(e) });
       continue;
     }
-    // Read the season selects present in materials tab
+    // Read the season selects present in materials tab (unique spy season ids)
     const seasons = await page.$$eval('.colorDeliveryBox select.season_id', (sels) => {
       const out: string[] = [];
       for (const sel of Array.from(sels) as HTMLSelectElement[]) {

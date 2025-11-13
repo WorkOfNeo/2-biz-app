@@ -308,6 +308,27 @@ export default function StylesSettingsPage() {
             <div>{deepProgress ? `${Math.min(deepProgress.index, deepProgress.total)}/${deepProgress.total || '?'}` : ''}{deepDone ? ' Done' : ''}</div>
           </div>
         )}
+        <div className="mt-3">
+          <button
+            className="text-xs px-2 py-1 border rounded bg-white text-red-700 hover:bg-red-50"
+            onClick={async () => {
+              if (!confirm('Clear ALL seasons from style colors? This cannot be undone.')) return;
+              try {
+                const res = await fetch('/api/admin/clear-style-color-seasons?confirm=1', { method: 'POST' });
+                if (!res.ok) {
+                  const text = await res.text();
+                  alert('Failed to clear: ' + text);
+                  return;
+                }
+                alert('Cleared all style_color_seasons.');
+              } catch (e: any) {
+                alert('Error: ' + (e?.message || String(e)));
+              }
+            }}
+          >
+            Clear seasons (ALL)
+          </button>
+        </div>
       </div>
       )}
     </div>
