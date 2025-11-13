@@ -316,32 +316,32 @@ export default function StockListPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-[180px_1fr] gap-4 items-start sl-grid">
-        <div className="sl-left-rail"></div>
-
-        {/* Right: main content */}
-        <div className="space-y-4 sl-main">
+      {/* Main content */}
+      <div className="space-y-4 sl-main">
       {emptyState || filteredForView.map(({ styleNo, colors }) => {
         const meta = styleMetaByNo[styleNo] || { name: null, supplier: null, image: null };
         return (
           <div key={styleNo} id={`style-${styleNo}`} className="bg-white p-3 space-y-3 sl-style">
-            {/* Style header */}
-            <div className="flex items-start gap-3 sl-style-header">
-              <div className="shrink-0 sl-style-image">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                {meta.image ? <img src={meta.image} alt={meta.name ?? styleNo} className="h-20 w-20 object-cover rounded border" /> : <div className="h-20 w-20 rounded border bg-gray-50" />}
+            <div className="grid grid-cols-1 lg:grid-cols-[200px_1fr] gap-4 sl-style-grid">
+              {/* Left: style header */}
+              <div className="sl-style-left">
+                <div className="flex items-start gap-3 sl-style-header">
+                  <div className="shrink-0 sl-style-image">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    {meta.image ? <img src={meta.image} alt={meta.name ?? styleNo} className="h-20 w-20 object-cover rounded border" /> : <div className="h-20 w-20 rounded border bg-gray-50" />}
+                  </div>
+                  <div className="min-w-0 sl-style-meta">
+                    <div className="text-xs text-gray-500 sl-style-no">{styleNo}</div>
+                    <div className="text-base font-semibold text-black truncate sl-style-name">{meta.name ?? '—'}</div>
+                    {meta.supplier && <div className="text-xs text-gray-500 sl-style-supplier">{meta.supplier}</div>}
+                    {styleMetaByNo[styleNo]?.dg && (
+                      <div className="text-[11px] text-gray-600 sl-style-dg">DG: <span className="font-medium">{styleMetaByNo[styleNo]?.dg}</span></div>
+                    )}
+                  </div>
+                </div>
               </div>
-              <div className="min-w-0 sl-style-meta">
-                <div className="text-xs text-gray-500 sl-style-no">{styleNo}</div>
-                <div className="text-base font-semibold text-black truncate sl-style-name">{meta.name ?? '—'}</div>
-                {meta.supplier && <div className="text-xs text-gray-500 sl-style-supplier">{meta.supplier}</div>}
-                {styleMetaByNo[styleNo]?.dg && (
-                  <div className="text-[11px] text-gray-600 sl-style-dg">DG: <span className="font-medium">{styleMetaByNo[styleNo]?.dg}</span></div>
-                )}
-              </div>
-            </div>
-            {/* Per-color tables: columns = Color | Section | sizes... | Total */}
-            <div className="space-y-4 sl-color-sections">
+              {/* Right: per-color tables */}
+              <div className="space-y-4 sl-color-sections">
               {colors.map((g) => {
                 const key = `${g.styleNo}:${g.color}`;
                 const sum = (arr: number[]) => arr.reduce((a, b) => a + (Number(b) || 0), 0);
@@ -399,61 +399,61 @@ export default function StockListPage() {
                       <table className="min-w-full text-xs sl-table">
                         <thead className="bg-gray-50">
                           <tr>
-                            <th className="p-2 text-left border-b sl-th sl-th-color">Color</th>
+                            <th className="p-2 text-left border-b sl-th sl-th-color" style={{ width: 140 }}>Color</th>
                             <th className="p-2 text-left border-b whitespace-nowrap sl-th sl-th-section" style={{ width: 160 }}>Section</th>
                             {g.sizes.map((s, i) => (
-                              <th key={i} className="p-2 text-right border-b sl-th sl-th-size">{s}</th>
+                              <th key={i} className="p-2 text-right border-b sl-th sl-th-size" style={{ width: 64 }}>{s}</th>
                             ))}
-                            <th className="p-2 text-right border-b sl-th sl-th-total">Total</th>
+                            <th className="p-2 text-right border-b sl-th sl-th-total" style={{ width: 72 }}>Total</th>
                           </tr>
                         </thead>
                         <tbody>
                           <tr className="sl-row sl-row-stock">
-                            <td className="p-2 border-b align-top sl-cell sl-cell-color" rowSpan={4}>{g.color}</td>
+                            <td className="p-2 border-b align-top sl-cell sl-cell-color" rowSpan={4} style={{ width: 140 }}>{g.color}</td>
                             <td className="p-2 border-b whitespace-nowrap sl-cell sl-cell-section" style={{ width: 160 }}>Stock</td>
                             {g.stock.map((v, i) => (
-                              <td key={i} className="p-2 border-b text-right text-black sl-cell sl-cell-size">{v}</td>
+                              <td key={i} className="p-2 border-b text-right text-black sl-cell sl-cell-size" style={{ width: 64 }}>{v}</td>
                             ))}
-                            <td className="p-2 border-b text-right font-medium text-black sl-cell sl-cell-total">{stockTotal}</td>
+                            <td className="p-2 border-b text-right font-medium text-black sl-cell sl-cell-total" style={{ width: 72 }}>{stockTotal}</td>
                           </tr>
                           <tr className="cursor-pointer hover:bg-gray-50 sl-row sl-row-sold-sum" onClick={() => setOpenSold((m) => ({ ...m, [key]: !m[key] }))}>
                             <td className="p-2 border-b whitespace-nowrap sl-cell sl-cell-section" style={{ width: 160 }}>Sold (sum)</td>
                             {g.soldSum.map((v, i) => (
-                              <td key={i} className="p-2 border-b text-right text-red-600 sl-cell sl-cell-size">{v > 0 ? `-${v}` : v}</td>
+                              <td key={i} className="p-2 border-b text-right text-red-600 sl-cell sl-cell-size" style={{ width: 64 }}>{v > 0 ? `-${v}` : v}</td>
                             ))}
-                            <td className="p-2 border-b text-right font-medium text-red-700 sl-cell sl-cell-total">{soldTotal > 0 ? `-${soldTotal}` : soldTotal}</td>
+                            <td className="p-2 border-b text-right font-medium text-red-700 sl-cell sl-cell-total" style={{ width: 72 }}>{soldTotal > 0 ? `-${soldTotal}` : soldTotal}</td>
                           </tr>
                           {openSold[key] && g.soldRows.map((r, idx) => (
                             <tr key={`sold-${idx}`} className="bg-gray-50 sl-row sl-row-sold-detail">
                               <td className="p-2 border-b whitespace-nowrap sl-cell sl-cell-section" style={{ width: 160 }}>• {r.row_label ?? 'Row'}</td>
                               {g.soldSum.map((_, i) => (
-                                <td key={i} className="p-2 border-b text-right text-red-600 sl-cell sl-cell-size">{(r.values[i] ?? 0) > 0 ? `-${r.values[i] ?? 0}` : (r.values[i] ?? 0)}</td>
+                                <td key={i} className="p-2 border-b text-right text-red-600 sl-cell sl-cell-size" style={{ width: 64 }}>{(r.values[i] ?? 0) > 0 ? `-${r.values[i] ?? 0}` : (r.values[i] ?? 0)}</td>
                               ))}
-                              <td className="p-2 border-b text-right text-red-700 sl-cell sl-cell-total">{(() => { const val = sum((r.values as any[]) || []); return val > 0 ? `-${val}` : val; })()}</td>
+                              <td className="p-2 border-b text-right text-red-700 sl-cell sl-cell-total" style={{ width: 72 }}>{(() => { const val = sum((r.values as any[]) || []); return val > 0 ? `-${val}` : val; })()}</td>
                             </tr>
                           ))}
                           <tr className="cursor-pointer hover:bg-gray-50 sl-row sl-row-purchase-sum" onClick={() => setOpenPurchase((m) => ({ ...m, [key]: !m[key] }))}>
                             <td className="p-2 border-b whitespace-nowrap sl-cell sl-cell-section" style={{ width: 160 }}>Purchase (sum)</td>
                             {g.purchaseSum.map((v, i) => (
-                              <td key={i} className="p-2 border-b text-right text-green-700 sl-cell sl-cell-size">{v}</td>
+                              <td key={i} className="p-2 border-b text-right text-green-700 sl-cell sl-cell-size" style={{ width: 64 }}>{v}</td>
                             ))}
-                            <td className="p-2 border-b text-right font-medium text-green-800 sl-cell sl-cell-total">{purchaseTotal}</td>
+                            <td className="p-2 border-b text-right font-medium text-green-800 sl-cell sl-cell-total" style={{ width: 72 }}>{purchaseTotal}</td>
                           </tr>
                           {openPurchase[key] && g.purchaseRows.map((r, idx) => (
                             <tr key={`purchase-${idx}`} className="bg-gray-50 sl-row sl-row-purchase-detail">
                               <td className="p-2 border-b whitespace-nowrap sl-cell sl-cell-section" style={{ width: 160 }}>• {r.row_label ?? 'Row'}</td>
                               {g.purchaseSum.map((_, i) => (
-                                <td key={i} className="p-2 border-b text-right text-green-700 sl-cell sl-cell-size">{r.values[i] ?? 0}</td>
+                                <td key={i} className="p-2 border-b text-right text-green-700 sl-cell sl-cell-size" style={{ width: 64 }}>{r.values[i] ?? 0}</td>
                               ))}
-                              <td className="p-2 border-b text-right text-green-800 sl-cell sl-cell-total">{sum((r.values as any[]) || [])}</td>
+                              <td className="p-2 border-b text-right text-green-800 sl-cell sl-cell-total" style={{ width: 72 }}>{sum((r.values as any[]) || [])}</td>
                             </tr>
                           ))}
                           <tr className="sl-row sl-row-available">
                             <td className="p-2 whitespace-nowrap sl-cell sl-cell-section" style={{ width: 160 }}>Available</td>
                             {g.available.map((v, i) => (
-                              <td key={i} className={"p-2 text-right font-semibold sl-cell sl-cell-size " + (v < 0 ? 'text-red-700' : (v > 0 ? 'text-green-800' : '') )}>{v}</td>
+                              <td key={i} className={"p-2 text-right font-semibold sl-cell sl-cell-size " + (v < 0 ? 'text-red-700' : (v > 0 ? 'text-green-800' : '') )} style={{ width: 64 }}>{v}</td>
                             ))}
-                            <td className={"p-2 text-right font-semibold sl-cell sl-cell-total " + (availableTotal < 0 ? 'text-red-700' : (availableTotal > 0 ? 'text-green-800' : '') )}>{availableTotal}</td>
+                            <td className={"p-2 text-right font-semibold sl-cell sl-cell-total " + (availableTotal < 0 ? 'text-red-700' : (availableTotal > 0 ? 'text-green-800' : '') )} style={{ width: 72 }}>{availableTotal}</td>
                           </tr>
                         </tbody>
                       </table>
@@ -461,11 +461,11 @@ export default function StockListPage() {
                   </div>
                 );
               })}
+              </div>
             </div>
           </div>
         );
       })}
-        </div>
       </div>
     </div>
   );
