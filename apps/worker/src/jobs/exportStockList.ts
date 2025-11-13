@@ -122,6 +122,7 @@ export async function exportStockList(ctx: Ctx) {
         cell: { padding: 3, fontSize: 8 },
         leftCell: { textAlign: 'left' as any },
         rightCell: { textAlign: 'right' as any },
+        bold: { fontWeight: 700 as any },
         green: { color: '#16a34a' },
         red: { color: '#dc2626' }
       });
@@ -150,9 +151,10 @@ export async function exportStockList(ctx: Ctx) {
           )
         );
         // Column widths (percentages) - keep sizes compact
-        const colorW = '22%';
+        const imageW = '10%';
+        const colorW = '18%';
         const sectionW = '14%';
-        const sizeW = `${Math.max(4, Math.floor((100 - 22 - 14 - 10) / maxSizeCount))}%`; // leave ~10% for Total
+        const sizeW = `${Math.max(4, Math.floor((100 - 10 - 18 - 14 - 10) / maxSizeCount))}%`; // leave ~10% for Total
         const totalW = '10%';
 
         // For each color, render its own header + rows as an isolated "table" with bottom spacing
@@ -169,6 +171,7 @@ export async function exportStockList(ctx: Ctx) {
           const colorHeadSizes: any[] = [];
           for (let i = 0; i < maxSizeCount; i++) colorHeadSizes.push(Cell(sizes[i] || '', sizeW, 'right', styles.th));
           const tableHead = React.createElement(View, { style: styles.tableHeader },
+            Cell('Image', imageW, 'left', styles.th),
             Cell('Color', colorW, 'left', styles.th),
             Cell('Section', sectionW, 'left', styles.th),
             ...colorHeadSizes,
@@ -177,19 +180,24 @@ export async function exportStockList(ctx: Ctx) {
           const rows: any[] = [];
           // Stock row
           rows.push(React.createElement(View, { style: styles.tableRow, key: `${style_no}-${c.color}-stock` },
-            Cell(c.color, colorW, 'left'),
-            Cell('Stock', sectionW, 'left'),
+            // Image (only on first row for this color table)
+            React.createElement(View, { style: [{ width: imageW } as any] },
+              meta.image ? React.createElement(Image, { style: styles.img, src: meta.image }) : React.createElement(View, { style: [styles.img, { backgroundColor: '#f8fafc', border: 0.5, borderColor: '#e2e8f0' }] })
+            ),
+            Cell(c.color, colorW, 'left', styles.bold),
+            Cell('På lager', sectionW, 'left', styles.bold),
             ...Array.from({ length: maxSizeCount }, (_, i) => {
               const within = i < sizes.length;
               const v = stockArr[i] || 0;
-              return Cell(within ? String(v) : '', sizeW, 'right');
+              return Cell(within ? String(v) : '', sizeW, 'right', styles.bold);
             }),
-            Cell(fmt(sum(stockArr)), totalW, 'right')
+            Cell(fmt(sum(stockArr)), totalW, 'right', styles.bold)
           ));
           // Sold (sum)
           rows.push(React.createElement(View, { style: styles.tableRow, key: `${style_no}-${c.color}-sold` },
+            Cell('', imageW, 'left'),
             Cell('', colorW, 'left'),
-            Cell('Sold (sum)', sectionW, 'left'),
+            Cell('Solgt', sectionW, 'left'),
             ...Array.from({ length: maxSizeCount }, (_, i) => {
               const within = i < sizes.length;
               const v = soldArr[i] || 0;
@@ -199,8 +207,9 @@ export async function exportStockList(ctx: Ctx) {
           ));
           // Purchase (sum)
           rows.push(React.createElement(View, { style: styles.tableRow, key: `${style_no}-${c.color}-purchase` },
+            Cell('', imageW, 'left'),
             Cell('', colorW, 'left'),
-            Cell('Purchase (sum)', sectionW, 'left'),
+            Cell('Indkøb', sectionW, 'left'),
             ...Array.from({ length: maxSizeCount }, (_, i) => {
               const within = i < sizes.length;
               const v = purchaseArr[i] || 0;
@@ -210,15 +219,16 @@ export async function exportStockList(ctx: Ctx) {
           ));
           // Available
           rows.push(React.createElement(View, { style: styles.tableRow, key: `${style_no}-${c.color}-available` },
+            Cell('', imageW, 'left'),
             Cell('', colorW, 'left'),
-            Cell('Available', sectionW, 'left'),
+            Cell('Disponibel', sectionW, 'left', styles.bold),
             ...Array.from({ length: maxSizeCount }, (_, i) => {
               const within = i < sizes.length;
               const v = availArr[i] || 0;
               const style = v < 0 ? styles.red : v > 0 ? styles.green : undefined;
-              return Cell(within ? String(v) : '', sizeW, 'right', style);
+              return Cell(within ? String(v) : '', sizeW, 'right', [styles.bold, style].filter(Boolean));
             }),
-            Cell(c.available ? fmt(c.available) : '', totalW, 'right', c.available < 0 ? styles.red : c.available > 0 ? styles.green : undefined)
+            Cell(c.available ? fmt(c.available) : '', totalW, 'right', [styles.bold, (c.available < 0 ? styles.red : (c.available > 0 ? styles.green : undefined))].filter(Boolean))
           ));
           // Push one color table (header + 4 rows) with spacing
           colorTables.push(React.createElement(View, { style: styles.colorTable, key: `${style_no}-${c.color}` }, tableHead, ...rows));
