@@ -17,10 +17,12 @@ export async function exportStockList(ctx: Ctx) {
   const { job, log, saveResult, setJobFailedOrRequeue, setJobSucceeded, supabase } = ctx;
   try {
     await log(job.id, 'info', 'STEP:export_stock_list_begin', {});
-    // Load lists from app_settings
+    // Load lists + rules from app_settings
     const { data: setting } = await supabase.from('app_settings').select('value').eq('key', 'style_lists').maybeSingle();
-    const lists: Record<string, string[]> = (((setting?.value || {}) as any).lists || {}) as Record<string, string[]>;
-    const listEntries = Object.entries(lists).filter(([_, arr]) => Array.isArray(arr) && arr.length > 0);
+    const cfg = ((setting?.value || {}) as any) as { lists?: Record<string, string[]>; rules?: Record<string, { includeSeasonIds?: string[] }> };
+    const lists: Record<string, string[]> = (cfg.lists || {}) as Record<string, string[]>;
+    const rules: Record<string, { includeSeasonIds?: string[] }> = (cfg.rules || {}) as Record<string, { includeSeasonIds?: string[] }>;
+    const listEntries = Object.entries(lists);
     if (listEntries.length === 0) {
       await setJobFailedOrRequeue(job, 'No style lists found');
       return;
@@ -28,15 +30,32 @@ export async function exportStockList(ctx: Ctx) {
     let generated = 0;
     for (const [listName, styleNos] of listEntries) {
       await log(job.id, 'info', 'STEP:export_stock_list_list', { listName, count: styleNos.length });
+      // Expand rules: auto-include styles whose style_seasons overlap includeSeasonIds
+      let combined = new Set<string>(styleNos);
+      const includeIds = (rules?.[listName]?.includeSeasonIds || []) as string[];
+      if (includeIds.length) {
+        try {
+          const { data: ss } = await supabase.from('style_seasons').select('style_no, seasons').limit(100000);
+          for (const r of (ss ?? []) as any[]) {
+            const arr = Array.isArray(r.seasons) ? (r.seasons as string[]) : [];
+            if (arr.some((id) => includeIds.includes(id))) combined.add(String(r.style_no));
+          }
+        } catch {}
+      }
+      const finalStyleNos = Array.from(combined);
+      if (finalStyleNos.length === 0) {
+        await log(job.id, 'info', 'STEP:export_stock_list_skip_empty', { listName });
+        continue;
+      }
       // Fetch style meta
-      const { data: styleRows } = await supabase.from('styles').select('style_no, style_name, image_url, supplier').in('style_no', styleNos);
+      const { data: styleRows } = await supabase.from('styles').select('style_no, style_name, image_url, supplier').in('style_no', finalStyleNos);
       const metaByNo = new Map<string, { name: string | null; image: string | null; supplier: string | null }>();
       for (const r of (styleRows ?? []) as any[]) metaByNo.set(r.style_no, { name: r.style_name ?? null, image: r.image_url ?? null, supplier: r.supplier ?? null });
       // Fetch stock rows
       const { data: stockRows } = await supabase
         .from('style_stock')
         .select('style_no, color, sizes, section, row_label, values, scraped_at')
-        .in('style_no', styleNos)
+        .in('style_no', finalStyleNos)
         .order('scraped_at', { ascending: false })
         .limit(100000);
       type Row = { style_no: string; color: string; sizes: string[]; section: string; row_label: string | null; values: any; scraped_at: string };
@@ -132,7 +151,7 @@ export async function exportStockList(ctx: Ctx) {
         React.createElement(Text, { style: [{ width: w }, styles.cell, align === 'left' ? styles.leftCell : styles.rightCell, extra || {}] }, txt);
       const fmt = (n: number) => new Intl.NumberFormat('da-DK').format(Math.round(n));
       // Order styles as provided by the list
-      const stylesOrder = new Map<string, number>(); styleNos.forEach((no, idx) => stylesOrder.set(no, idx));
+      const stylesOrder = new Map<string, number>(); finalStyleNos.forEach((no, idx) => stylesOrder.set(no, idx));
       const grouped = new Map<string, Array<(typeof out)[number]>>();
       for (const r of out) {
         if (!grouped.has(r.style_no)) grouped.set(r.style_no, []);

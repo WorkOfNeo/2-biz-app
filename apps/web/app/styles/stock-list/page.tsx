@@ -268,7 +268,7 @@ export default function StockListPage() {
       // default remains 'All' (empty denotes All)
     }
   }, [styleLists, activeList]);
-  // Load style_seasons for auto-inclusion rules + virtual Aktiv
+  // Load style_seasons for auto-inclusion rules
   const { data: styleSeasonsAll } = useSWR('style_seasons:for-stock', async () => {
     const { data, error } = await supabase.from('style_seasons').select('style_no, seasons').limit(100000);
     if (error) throw new Error(error.message);
@@ -276,27 +276,11 @@ export default function StockListPage() {
     for (const r of (data ?? []) as any[]) map.set(r.style_no, Array.isArray(r.seasons) ? (r.seasons as string[]) : []);
     return map as Map<string, string[]>;
   }, { refreshInterval: 0 });
-  // Current season id for "Aktiv"
-  const { data: currentSeasonId } = useSWR('season:current-id', async () => {
-    const { data } = await supabase.from('seasons').select('id').eq('is_current', true).maybeSingle();
-    return ((data as any)?.id || null) as string | null;
-  }, { refreshInterval: 0 });
 
   // Filter rows based on active Style List and search
   const filteredForView = React.useMemo(() => {
     let base = groupedByStyle;
     if (activeList && styleLists) {
-      if (activeList === 'Aktiv') {
-        const cur = currentSeasonId || '';
-        if (cur) {
-          base = base.filter(({ styleNo }) => {
-            const arr = styleSeasonsAll?.get(styleNo) || [];
-            return arr.includes(cur);
-          });
-        } else {
-          base = [];
-        }
-      } else {
         const manual = (styleLists.lists?.[activeList] || []) as string[];
         const includeSeasons = (styleLists.rules?.[activeList]?.includeSeasonIds || []) as string[];
         const auto = new Set<string>();
@@ -308,7 +292,6 @@ export default function StockListPage() {
         }
         const allow = new Set<string>([...manual, ...Array.from(auto)]);
         base = base.filter(({ styleNo }) => allow.has(styleNo));
-      }
     }
     const q = searchQuery.trim().toLowerCase();
     if (!q) return base;
@@ -342,10 +325,6 @@ export default function StockListPage() {
             className={(activeList===''?'bg-slate-900 text-white ':'bg-white text-slate-900 ') + 'text-xs px-2 py-1 border rounded sl-list-chip sl-list-all'}
             onClick={()=>setActiveList('')}
           >All</button>
-          <button
-            className={(activeList==='Aktiv'?'bg-slate-900 text-white ':'bg-white text-slate-900 ') + 'text-xs px-2 py-1 border rounded sl-list-chip'}
-            onClick={()=>setActiveList('Aktiv')}
-          >Aktiv</button>
           {Object.keys(styleLists?.lists || {}).map((name) => (
             <button key={name} className={(activeList===name?'bg-slate-900 text-white ':'bg-white text-slate-900 ') + 'text-xs px-2 py-1 border rounded sl-list-chip'} onClick={()=>setActiveList(name)}>{name}</button>
           ))}
