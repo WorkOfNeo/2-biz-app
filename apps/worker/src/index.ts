@@ -8,6 +8,7 @@ import { updateStyleStock as updateStyleStockJob } from './jobs/updateStyleStock
 import { deepScrapeStyles as deepScrapeStylesJob } from './jobs/deepScrapeStyles.js';
 import { exportOverview as exportOverviewJob } from './jobs/exportOverview.js';
 import { exportTopStyles as exportTopStylesJob } from './jobs/exportTopStyles.js';
+import { exportStockList as exportStockListJob } from './jobs/exportStockList.js';
 import { scrapeTopStyles as scrapeTopStylesJob } from './jobs/scrapeTopStyles.js';
 import { scrapeStatisticsPerSize } from './jobs/scrapeStatisticsPerSize.js';
 import { fixInvoices as fixInvoicesJob } from './jobs/fixInvoices.js';
@@ -748,6 +749,10 @@ async function runJob(job: JobRow) {
   }
   if (job.type === 'export_overview') {
     await exportOverviewJob({ job, page: page!, log, saveResult, setJobFailedOrRequeue, setJobSucceeded, supabase });
+    return;
+  }
+  if ((job.type as any) === 'export_stock_list') {
+    await exportStockListJob({ job, page: page!, log, saveResult, setJobFailedOrRequeue, setJobSucceeded, supabase });
     return;
   }
   if ((job.type as any) === 'export_top_styles') {

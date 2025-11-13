@@ -378,6 +378,20 @@ export default function StatisticsExportsPage() {
               >
                 Export Top 10 Styles (PDF)
               </button>
+              <button
+                className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 disabled:opacity-60"
+                onClick={async () => {
+                  try {
+                    const { data: { session } } = await supabase.auth.getSession();
+                    if (!session) throw new Error('Not signed in');
+                    const token = session.access_token;
+                    await fetch('/api/enqueue', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ type: 'export_stock_list', payload: {} }) });
+                  } finally { setMenuOpen(false); }
+                }}
+                disabled={running}
+              >
+                Export Stock List (Lists)
+              </button>
             </div>
           )}
           <button
