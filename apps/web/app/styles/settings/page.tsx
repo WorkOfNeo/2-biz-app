@@ -432,6 +432,23 @@ function StyleListsEditor({ styles }: { styles: { id: string; style_no: string; 
     setActive(name);
     setNewList('');
   }
+  function deleteList() {
+    if (!active) return;
+    if (!confirm(`Delete list “${active}”?`)) return;
+    const nextLists = { ...(data?.lists || {}) } as Record<string, string[]>;
+    const nextRules = { ...(data?.rules || {}) } as Record<string, { includeSeasonIds?: string[] }>;
+    delete nextLists[active];
+    delete nextRules[active];
+    // Persist both lists and rules
+    (async () => {
+      const existsId = data?.id || null;
+      const payload = { key: 'style_lists', value: { lists: nextLists, rules: nextRules } } as any;
+      if (existsId) await supabase.from('app_settings').update({ value: payload.value }).eq('id', existsId as any);
+      else await supabase.from('app_settings').insert(payload);
+      await mutate();
+      setActive('');
+    })().catch(()=>{});
+  }
   function removeFromList(styleNo: string) {
     const next = { ...(data?.lists || {}) } as Record<string, string[]>;
     const list = new Set(next[active] || []);
@@ -518,6 +535,10 @@ function StyleListsEditor({ styles }: { styles: { id: string; style_no: string; 
                 onClick={clearList}
                 disabled={!active || listItems.length === 0}
               >Remove all styles</button>
+              <button
+                className="text-[11px] underline text-red-700"
+                onClick={deleteList}
+              >Delete list</button>
             </div>
             <div className="space-y-1 max-h-64 overflow-auto">
               {listItems.length === 0 && <div className="text-[11px] text-gray-500">No styles yet.</div>}
