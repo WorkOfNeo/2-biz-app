@@ -97,32 +97,48 @@ export async function deepScrapeStyles(ctx: Ctx) {
       }
       return out;
     });
-    // Also read the active/selected season (should match spySeasonId applied above)
-    const activeSpySeason: string | null = await page.$eval('.colorDeliveryBox .materials-bar select.season_id', (sel: any) => (sel?.value ?? null)).catch(() => null);
-    if (activeSpySeason && Number(activeSpySeason) !== spySeasonId) {
-      await log(job.id, 'error', 'STEP:deep_styles_selected_season_mismatch', { style_no: s.style_no, activeSpySeason, expected: spySeasonId });
-    }
-    // Read colors listed in materials table for this season
-    const colorNames: string[] = await page.$$eval('.colorDeliveryBox table.standardList tbody tr td:nth-child(4) span', (spans) =>
-      Array.from(spans).map((el) => (el?.textContent || '').trim()).filter(Boolean)
-    ).catch(() => []);
-    // Map UI color names to our style_colors ids
-    try {
-      const { data: styleColorRows } = await supabase.from('style_colors').select('id, color').eq('style_id', s.id as string).limit(1000);
-      const colorMap = new Map<string, string>();
-      for (const r of (styleColorRows ?? []) as any[]) colorMap.set(String(r.color || '').trim().toLowerCase(), String(r.id));
-      for (const cname of colorNames) {
-        const cid = colorMap.get(cname.toLowerCase());
-        if (!cid) continue;
-        // Link this style_color to the current app season
-        const { error: upErr } = await supabase.from('style_color_seasons').upsert(
-          { style_color_id: cid, season_id: seasonId },
-          { onConflict: 'style_color_id,season_id' as any }
-        );
-        if (!upErr) colorLinksInserted++;
+    // For each materials box: read the SELECTed SPY season and the colors listed in the table for that box.
+    const boxes: Array<{ spySeasonId: number; colors: string[] }> = await page.evaluate(() => {
+      const list: Array<{ spySeasonId: number; colors: string[] }> = [];
+      const boxes = Array.from(document.querySelectorAll('.colorDeliveryBox')) as HTMLElement[];
+      for (const box of boxes) {
+        const sel = box.querySelector('.materials-bar select.season_id') as HTMLSelectElement | null;
+        const val = sel?.value || sel?.selectedOptions?.[0]?.value || '';
+        const spySeasonId = Number(val || 0) || 0;
+        const spans = Array.from(box.querySelectorAll('table.standardList tbody tr td:nth-child(4) span')) as HTMLSpanElement[];
+        const colors = spans.map((el) => (el?.textContent || '').trim()).filter(Boolean);
+        if (spySeasonId > 0 && colors.length) list.push({ spySeasonId, colors });
       }
-    } catch (e: any) {
-      await log(job.id, 'error', 'STEP:deep_styles_color_link_failed', { style_no: s.style_no, error: e?.message || String(e) });
+      return list;
+    });
+    // Map SPY season ids from the page to our seasons.id
+    if (boxes.length) {
+      try {
+        const spyIds = Array.from(new Set(boxes.map((b) => b.spySeasonId)));
+        const { data: seasonRows } = await supabase.from('seasons').select('id, spy_season_id').in('spy_season_id', spyIds);
+        const spyToApp = new Map<number, string>();
+        for (const r of (seasonRows ?? []) as any[]) spyToApp.set(Number(r.spy_season_id), String(r.id));
+        // Map UI color names to our style_colors ids
+        const { data: styleColorRows } = await supabase.from('style_colors').select('id, color').eq('style_id', s.id as string).limit(1000);
+        const colorMap = new Map<string, string>();
+        for (const r of (styleColorRows ?? []) as any[]) colorMap.set(String(r.color || '').trim().toLowerCase(), String(r.id));
+        // Upsert all links color->season for each box
+        for (const box of boxes) {
+          const appSeasonId = spyToApp.get(box.spySeasonId);
+          if (!appSeasonId) continue;
+          for (const cname of box.colors) {
+            const cid = colorMap.get(cname.toLowerCase());
+            if (!cid) continue;
+            const { error: upErr } = await supabase.from('style_color_seasons').upsert(
+              { style_color_id: cid, season_id: appSeasonId },
+              { onConflict: 'style_color_id,season_id' as any }
+            );
+            if (!upErr) colorLinksInserted++;
+          }
+        }
+      } catch (e: any) {
+        await log(job.id, 'error', 'STEP:deep_styles_color_link_failed', { style_no: s.style_no, error: e?.message || String(e) });
+      }
     }
     const uniq = Array.from(new Set(seasons));
     const { data: exist } = await supabase.from('style_seasons').select('id, seasons').eq('style_no', s.style_no).maybeSingle();
