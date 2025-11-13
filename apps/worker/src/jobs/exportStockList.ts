@@ -35,11 +35,11 @@ export async function exportStockList(ctx: Ctx) {
       // Fetch stock rows
       const { data: stockRows } = await supabase
         .from('style_stock')
-        .select('style_no, color, section, row_label, values, scraped_at')
+        .select('style_no, color, sizes, section, row_label, values, scraped_at')
         .in('style_no', styleNos)
         .order('scraped_at', { ascending: false })
         .limit(100000);
-      type Row = { style_no: string; color: string; section: string; row_label: string | null; values: any; scraped_at: string };
+      type Row = { style_no: string; color: string; sizes: string[]; section: string; row_label: string | null; values: any; scraped_at: string };
       const ensureNums = (arr: any): number[] => {
         try { return Array.isArray(arr) ? (arr as any[]).map((x) => Number(x||0) || 0) : Array.from(JSON.parse(String(arr||'[]'))).map((x:any)=>Number(x||0)||0); } catch { return []; }
       };
@@ -65,8 +65,7 @@ export async function exportStockList(ctx: Ctx) {
           const stockRow = latestRows.find(r => r.section === 'Stock');
           const soldRows = latestRows.filter(r => r.section === 'Sold');
           const purchaseRows = latestRows.filter(r => r.section === 'Purchase (Running + Shipped)');
-          const sizes = (stockRow?.values ? (rows.find(r => r.section === 'Stock') as any)?.sizes : null)
-            || (latestRows[0] as any)?.sizes || [];
+          const sizes = (stockRow?.sizes && Array.isArray(stockRow.sizes)) ? (stockRow.sizes as string[]) : (Array.isArray((latestRows[0] as any)?.sizes) ? ((latestRows[0] as any)?.sizes as string[]) : []);
           const num = sizes.length || 0;
           const zero = Array.from({ length: num }, () => 0);
           const stockArr = stockRow ? ((): number[] => {
@@ -170,30 +169,44 @@ export async function exportStockList(ctx: Ctx) {
           rows.push(React.createElement(View, { style: styles.tableRow, key: `${style_no}-${c.color}-stock` },
             Cell(c.color, colorW, 'left'),
             Cell('Stock', sectionW, 'left'),
-            ...stockArr.map((v, i) => Cell(String(v || ''), sizeW, 'right')),
+            ...Array.from({ length: maxSizeCount }, (_, i) => {
+              const within = i < sizes.length;
+              const v = stockArr[i] || 0;
+              return Cell(within ? String(v) : '', sizeW, 'right');
+            }),
             Cell(fmt(sum(stockArr)), totalW, 'right')
           ));
           // Sold (sum)
           rows.push(React.createElement(View, { style: styles.tableRow, key: `${style_no}-${c.color}-sold` },
             Cell('', colorW, 'left'),
             Cell('Sold (sum)', sectionW, 'left'),
-            ...soldArr.map((v) => Cell(v ? `-${v}` : '', sizeW, 'right', v ? styles.red : undefined)),
+            ...Array.from({ length: maxSizeCount }, (_, i) => {
+              const within = i < sizes.length;
+              const v = soldArr[i] || 0;
+              return Cell(within ? (v > 0 ? `-${v}` : String(v)) : '', sizeW, 'right', v > 0 ? styles.red : undefined);
+            }),
             Cell(c.sold ? `-${fmt(Math.abs(c.sold))}` : '', totalW, 'right', c.sold ? styles.red : undefined)
           ));
           // Purchase (sum)
           rows.push(React.createElement(View, { style: styles.tableRow, key: `${style_no}-${c.color}-purchase` },
             Cell('', colorW, 'left'),
             Cell('Purchase (sum)', sectionW, 'left'),
-            ...purchaseArr.map((v) => Cell(v ? String(v) : '', sizeW, 'right', v ? styles.green : undefined)),
+            ...Array.from({ length: maxSizeCount }, (_, i) => {
+              const within = i < sizes.length;
+              const v = purchaseArr[i] || 0;
+              return Cell(within ? String(v) : '', sizeW, 'right', v > 0 ? styles.green : undefined);
+            }),
             Cell(c.purchase ? fmt(c.purchase) : '', totalW, 'right', c.purchase ? styles.green : undefined)
           ));
           // Available
           rows.push(React.createElement(View, { style: styles.tableRow, key: `${style_no}-${c.color}-available` },
             Cell('', colorW, 'left'),
             Cell('Available', sectionW, 'left'),
-            ...availArr.map((v) => {
+            ...Array.from({ length: maxSizeCount }, (_, i) => {
+              const within = i < sizes.length;
+              const v = availArr[i] || 0;
               const style = v < 0 ? styles.red : v > 0 ? styles.green : undefined;
-              return Cell(v ? String(v) : '', sizeW, 'right', style);
+              return Cell(within ? String(v) : '', sizeW, 'right', style);
             }),
             Cell(c.available ? fmt(c.available) : '', totalW, 'right', c.available < 0 ? styles.red : c.available > 0 ? styles.green : undefined)
           ));
