@@ -77,7 +77,7 @@ export async function exportStockList(ctx: Ctx) {
             const base = zero.slice();
             for (const r of soldRows) {
               const vals = ensureNums(r.values);
-              for (let i = 0; i < num; i++) base[i] += Number(vals[i] ?? 0) || 0;
+              for (let i = 0; i < num; i++) base[i] = (Number(base[i] ?? 0) + (Number(vals[i] ?? 0) || 0));
             }
             return base;
           })();
@@ -85,7 +85,7 @@ export async function exportStockList(ctx: Ctx) {
             const base = zero.slice();
             for (const r of purchaseRows) {
               const vals = ensureNums(r.values);
-              for (let i = 0; i < num; i++) base[i] += Number(vals[i] ?? 0) || 0;
+              for (let i = 0; i < num; i++) base[i] = (Number(base[i] ?? 0) + (Number(vals[i] ?? 0) || 0));
             }
             return base;
           })();
