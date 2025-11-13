@@ -43,7 +43,7 @@ export async function exportStockList(ctx: Ctx) {
       const ensureNums = (arr: any): number[] => {
         try { return Array.isArray(arr) ? (arr as any[]).map((x) => Number(x||0) || 0) : Array.from(JSON.parse(String(arr||'[]'))).map((x:any)=>Number(x||0)||0); } catch { return []; }
       };
-      // Group by style -> color, pick latest rows per (section,row_label), then compute totals
+      // Group by style -> color, pick latest rows per (section,row_label), then compute size arrays and totals
       const byStyle = new Map<string, Map<string, Row[]>>();
       for (const rr of (stockRows ?? []) as any[]) {
         const s = String(rr.style_no || ''); const c = String(rr.color || '');
@@ -52,7 +52,7 @@ export async function exportStockList(ctx: Ctx) {
         if (!byColor.has(c)) byColor.set(c, []);
         byColor.get(c)!.push(rr as Row);
       }
-      const out: Array<{ style_no: string; color: string; stock: number; sold: number; purchase: number; available: number }> = [];
+      const out: Array<{ style_no: string; color: string; sizes: string[]; stockArr: number[]; soldArr: number[]; purchaseArr: number[]; availableArr: number[]; stock: number; sold: number; purchase: number; available: number }> = [];
       for (const [style_no, byColor] of byStyle.entries()) {
         for (const [color, rows] of byColor.entries()) {
           const latestMap = new Map<string, Row>();
@@ -65,18 +65,44 @@ export async function exportStockList(ctx: Ctx) {
           const stockRow = latestRows.find(r => r.section === 'Stock');
           const soldRows = latestRows.filter(r => r.section === 'Sold');
           const purchaseRows = latestRows.filter(r => r.section === 'Purchase (Running + Shipped)');
-          const sumVals = (rrs: Row[]) => rrs.reduce((acc, r) => {
-            const vals = ensureNums(r.values);
-            return acc + vals.reduce((a, b) => a + (Number(b) || 0), 0);
-          }, 0);
-          const stock = stockRow ? ensureNums(stockRow.values).reduce((a,b)=>a+(Number(b)||0),0) : 0;
-          const sold = sumVals(soldRows);
-          const purchase = sumVals(purchaseRows);
-          const available = stock - sold + purchase;
-          out.push({ style_no, color, stock, sold, purchase, available });
+          const sizes = (stockRow?.values ? (rows.find(r => r.section === 'Stock') as any)?.sizes : null)
+            || (latestRows[0] as any)?.sizes || [];
+          const num = sizes.length || 0;
+          const zero = Array.from({ length: num }, () => 0);
+          const stockArr = stockRow ? ((): number[] => {
+            const arr = ensureNums(stockRow.values);
+            return Array.from({ length: num }, (_, i) => Number(arr[i] ?? 0) || 0);
+          })() : zero.slice();
+          const soldArr = ((): number[] => {
+            const base = zero.slice();
+            for (const r of soldRows) {
+              const vals = ensureNums(r.values);
+              for (let i = 0; i < num; i++) base[i] += Number(vals[i] ?? 0) || 0;
+            }
+            return base;
+          })();
+          const purchaseArr = ((): number[] => {
+            const base = zero.slice();
+            for (const r of purchaseRows) {
+              const vals = ensureNums(r.values);
+              for (let i = 0; i < num; i++) base[i] += Number(vals[i] ?? 0) || 0;
+            }
+            return base;
+          })();
+          const availableArr = stockArr.map((v, i) => v - (soldArr[i] ?? 0) + (purchaseArr[i] ?? 0));
+          const sum = (arr: number[]) => arr.reduce((a, b) => a + (Number(b) || 0), 0);
+          const stock = sum(stockArr);
+          const sold = sum(soldArr);
+          const purchase = sum(purchaseArr);
+          const available = sum(availableArr);
+          out.push({ style_no, color, sizes, stockArr, soldArr, purchaseArr, availableArr, stock, sold, purchase, available });
         }
       }
-      // Build PDF document: per style, image left, color/sections table right (totals only)
+      // Establish a stable number of size columns across all styles in the list (min 8)
+      let maxSizeCount = 0;
+      for (const r of out) maxSizeCount = Math.max(maxSizeCount, r.sizes.length);
+      maxSizeCount = Math.max(8, maxSizeCount);
+      // Build PDF document: per style, image left, color/sections table right (sizes grid)
       const styles = StyleSheet.create({
         page: { padding: 16, fontSize: 9, color: '#0f172a' },
         h1: { fontSize: 14, marginBottom: 6 },
@@ -91,15 +117,18 @@ export async function exportStockList(ctx: Ctx) {
         cell: { padding: 4, fontSize: 9 },
         leftCell: { textAlign: 'left' as any },
         rightCell: { textAlign: 'right' as any },
+        green: { color: '#16a34a' },
+        red: { color: '#dc2626' }
       });
       const Cell = (txt: string, w: string | number, align: 'left' | 'right' = 'left', extra?: any) =>
         React.createElement(Text, { style: [{ width: w }, styles.cell, align === 'left' ? styles.leftCell : styles.rightCell, extra || {}] }, txt);
+      const fmt = (n: number) => new Intl.NumberFormat('da-DK').format(Math.round(n));
       // Order styles as provided by the list
       const stylesOrder = new Map<string, number>(); styleNos.forEach((no, idx) => stylesOrder.set(no, idx));
-      const grouped = new Map<string, Array<{ color: string; stock: number; sold: number; purchase: number; available: number }>>();
+      const grouped = new Map<string, Array<(typeof out)[number]>>();
       for (const r of out) {
         if (!grouped.has(r.style_no)) grouped.set(r.style_no, []);
-        grouped.get(r.style_no)!.push({ color: r.color, stock: r.stock, sold: r.sold, purchase: r.purchase, available: r.available });
+        grouped.get(r.style_no)!.push(r);
       }
       const orderedStyles = Array.from(grouped.keys()).sort((a, b) => (stylesOrder.get(a)! - stylesOrder.get(b)!));
       const blocks = orderedStyles.map((style_no) => {
@@ -115,23 +144,63 @@ export async function exportStockList(ctx: Ctx) {
             meta.supplier ? React.createElement(Text, { style: styles.meta }, meta.supplier) : null,
           )
         );
+        // Dynamic widths for size columns area
+        const colorW = '22%';
+        const sectionW = '14%';
+        const sizeW = `${Math.max(6, Math.floor((100 - 22 - 14 - 10) / maxSizeCount))}%`; // leave ~10% for Total
+        const totalW = '10%';
+        const headSizes: any[] = [];
+        for (let i = 0; i < maxSizeCount; i++) headSizes.push(Cell(colors[0]?.sizes?.[i] || '', sizeW, 'right', styles.th));
         const tableHead = React.createElement(View, { style: styles.tableHeader },
-          Cell('Color', '34%', 'left', styles.th),
-          Cell('Stock', '16%', 'right', styles.th),
-          Cell('Sold', '16%', 'right', styles.th),
-          Cell('Purchase', '16%', 'right', styles.th),
-          Cell('Available', '18%', 'right', styles.th)
+          Cell('Color', colorW, 'left', styles.th),
+          Cell('Section', sectionW, 'left', styles.th),
+          ...headSizes,
+          Cell('Total', totalW, 'right', styles.th)
         );
-        const rows = colors.map((c, i) => React.createElement(View, { style: styles.tableRow, key: `${style_no}-${c.color}-${i}` },
-          Cell(c.color, '34%'),
-          Cell(new Intl.NumberFormat('da-DK').format(c.stock), '16%', 'right'),
-          Cell((c.sold ? '-' : '') + new Intl.NumberFormat('da-DK').format(Math.abs(c.sold)), '16%', 'right'),
-          Cell(new Intl.NumberFormat('da-DK').format(c.purchase), '16%', 'right'),
-          Cell(new Intl.NumberFormat('da-DK').format(c.available), '18%', 'right'),
-        ));
+        const rows: any[] = [];
+        for (const c of colors) {
+          const sizes = c.sizes || [];
+          const pad = (arr: number[]) => Array.from({ length: maxSizeCount }, (_, i) => Number(arr?.[i] ?? 0) || 0);
+          const stockArr = pad(c.stockArr);
+          const soldArr = pad(c.soldArr);
+          const purchaseArr = pad(c.purchaseArr);
+          const availArr = pad(c.availableArr);
+          const sum = (arr: number[]) => arr.reduce((a, b) => a + (Number(b) || 0), 0);
+          // Stock row
+          rows.push(React.createElement(View, { style: styles.tableRow, key: `${style_no}-${c.color}-stock` },
+            Cell(c.color, colorW, 'left'),
+            Cell('Stock', sectionW, 'left'),
+            ...stockArr.map((v, i) => Cell(String(v || ''), sizeW, 'right')),
+            Cell(fmt(sum(stockArr)), totalW, 'right')
+          ));
+          // Sold (sum)
+          rows.push(React.createElement(View, { style: styles.tableRow, key: `${style_no}-${c.color}-sold` },
+            Cell('', colorW, 'left'),
+            Cell('Sold (sum)', sectionW, 'left'),
+            ...soldArr.map((v) => Cell(v ? `-${v}` : '', sizeW, 'right', v ? styles.red : undefined)),
+            Cell(c.sold ? `-${fmt(Math.abs(c.sold))}` : '', totalW, 'right', c.sold ? styles.red : undefined)
+          ));
+          // Purchase (sum)
+          rows.push(React.createElement(View, { style: styles.tableRow, key: `${style_no}-${c.color}-purchase` },
+            Cell('', colorW, 'left'),
+            Cell('Purchase (sum)', sectionW, 'left'),
+            ...purchaseArr.map((v) => Cell(v ? String(v) : '', sizeW, 'right', v ? styles.green : undefined)),
+            Cell(c.purchase ? fmt(c.purchase) : '', totalW, 'right', c.purchase ? styles.green : undefined)
+          ));
+          // Available
+          rows.push(React.createElement(View, { style: styles.tableRow, key: `${style_no}-${c.color}-available` },
+            Cell('', colorW, 'left'),
+            Cell('Available', sectionW, 'left'),
+            ...availArr.map((v) => {
+              const style = v < 0 ? styles.red : v > 0 ? styles.green : undefined;
+              return Cell(v ? String(v) : '', sizeW, 'right', style);
+            }),
+            Cell(c.available ? fmt(c.available) : '', totalW, 'right', c.available < 0 ? styles.red : c.available > 0 ? styles.green : undefined)
+          ));
+        }
         return React.createElement(View, { style: styles.block, key: style_no }, header, tableHead, ...rows);
       });
-      const doc = React.createElement(Document, null, React.createElement(PdfPage, { size: 'A4', style: styles.page }, React.createElement(Text, { style: styles.h1 }, `Stock List · ${listName}`), ...blocks));
+      const doc = React.createElement(Document, null, React.createElement(PdfPage, { size: 'A4', orientation: 'landscape', style: styles.page }, React.createElement(Text, { style: styles.h1 }, `Stock List · ${listName}`), ...blocks));
       let outPdf = await pdf(doc).toBuffer();
       let buf = await ensureBuffer(outPdf);
       // Safety: if renderer produced an empty buffer, emit a tiny placeholder so we don't upload 0 bytes
