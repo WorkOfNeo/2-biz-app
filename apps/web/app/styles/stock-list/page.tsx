@@ -340,7 +340,7 @@ export default function StockListPage() {
                 )}
               </div>
             </div>
-            {/* Per-color tables: columns = Image | Color | Section | sizes... | Total */}
+            {/* Per-color tables: columns = Color | Section | sizes... | Total */}
             <div className="space-y-4">
               {colors.map((g) => {
                 const key = `${g.styleNo}:${g.color}`;
@@ -397,9 +397,8 @@ export default function StockListPage() {
                       <table className="min-w-full text-xs">
                         <thead className="bg-gray-50">
                           <tr>
-                            <th className="p-2 text-left border-b">Image</th>
                             <th className="p-2 text-left border-b">Color</th>
-                            <th className="p-2 text-left border-b">Section</th>
+                            <th className="p-2 text-left border-b whitespace-nowrap" style={{ width: 160 }}>Section</th>
                             {g.sizes.map((s, i) => (
                               <th key={i} className="p-2 text-right border-b">{s}</th>
                             ))}
@@ -408,19 +407,15 @@ export default function StockListPage() {
                         </thead>
                         <tbody>
                           <tr>
-                            <td className="p-2 border-b align-top" rowSpan={4}>
-                              {/* eslint-disable-next-line @next/next/no-img-element */}
-                              {meta.image ? <img src={meta.image} alt={meta.name ?? styleNo} className="h-14 w-14 object-cover rounded border" /> : <div className="h-14 w-14 rounded border bg-gray-50" />}
-                            </td>
                             <td className="p-2 border-b align-top" rowSpan={4}>{g.color}</td>
-                            <td className="p-2 border-b">Stock</td>
+                            <td className="p-2 border-b whitespace-nowrap" style={{ width: 160 }}>Stock</td>
                             {g.stock.map((v, i) => (
                               <td key={i} className="p-2 border-b text-right text-black">{v}</td>
                             ))}
                             <td className="p-2 border-b text-right font-medium text-black">{stockTotal}</td>
                           </tr>
                           <tr className="cursor-pointer hover:bg-gray-50" onClick={() => setOpenSold((m) => ({ ...m, [key]: !m[key] }))}>
-                            <td className="p-2 border-b">Sold (sum)</td>
+                            <td className="p-2 border-b whitespace-nowrap" style={{ width: 160 }}>Sold (sum)</td>
                             {g.soldSum.map((v, i) => (
                               <td key={i} className="p-2 border-b text-right text-red-600">{v > 0 ? `-${v}` : v}</td>
                             ))}
@@ -428,7 +423,7 @@ export default function StockListPage() {
                           </tr>
                           {openSold[key] && g.soldRows.map((r, idx) => (
                             <tr key={`sold-${idx}`} className="bg-gray-50">
-                              <td className="p-2 border-b">• {r.row_label ?? 'Row'}</td>
+                              <td className="p-2 border-b whitespace-nowrap" style={{ width: 160 }}>• {r.row_label ?? 'Row'}</td>
                               {g.soldSum.map((_, i) => (
                                 <td key={i} className="p-2 border-b text-right text-red-600">{(r.values[i] ?? 0) > 0 ? `-${r.values[i] ?? 0}` : (r.values[i] ?? 0)}</td>
                               ))}
@@ -436,7 +431,7 @@ export default function StockListPage() {
                             </tr>
                           ))}
                           <tr className="cursor-pointer hover:bg-gray-50" onClick={() => setOpenPurchase((m) => ({ ...m, [key]: !m[key] }))}>
-                            <td className="p-2 border-b">Purchase (sum)</td>
+                            <td className="p-2 border-b whitespace-nowrap" style={{ width: 160 }}>Purchase (sum)</td>
                             {g.purchaseSum.map((v, i) => (
                               <td key={i} className="p-2 border-b text-right text-green-700">{v}</td>
                             ))}
@@ -444,7 +439,7 @@ export default function StockListPage() {
                           </tr>
                           {openPurchase[key] && g.purchaseRows.map((r, idx) => (
                             <tr key={`purchase-${idx}`} className="bg-gray-50">
-                              <td className="p-2 border-b">• {r.row_label ?? 'Row'}</td>
+                              <td className="p-2 border-b whitespace-nowrap" style={{ width: 160 }}>• {r.row_label ?? 'Row'}</td>
                               {g.purchaseSum.map((_, i) => (
                                 <td key={i} className="p-2 border-b text-right text-green-700">{r.values[i] ?? 0}</td>
                               ))}
@@ -452,7 +447,7 @@ export default function StockListPage() {
                             </tr>
                           ))}
                           <tr>
-                            <td className="p-2">Available</td>
+                            <td className="p-2 whitespace-nowrap" style={{ width: 160 }}>Available</td>
                             {g.available.map((v, i) => (
                               <td key={i} className={"p-2 text-right font-semibold " + (v < 0 ? 'text-red-700' : (v > 0 ? 'text-green-800' : ''))}>{v}</td>
                             ))}
