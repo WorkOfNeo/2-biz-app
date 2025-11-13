@@ -290,25 +290,25 @@ export default function StockListPage() {
   }, [activeList, filteredForView.length]);
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 sl-root">
       <div>
-        <div className="text-xs text-gray-500">Styles</div>
-        <h1 className="text-xl font-semibold">Stock List</h1>
+        <div className="text-xs text-gray-500 sl-header-eyebrow">Styles</div>
+        <h1 className="text-xl font-semibold sl-header-title">Stock List</h1>
       </div>
 
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
+      <div className="flex items-center justify-between gap-3 sl-controls">
+        <div className="flex items-center gap-2 sl-lists">
           <button
-            className={(activeList===''?'bg-slate-900 text-white ':'bg-white text-slate-900 ') + 'text-xs px-2 py-1 border rounded'}
+            className={(activeList===''?'bg-slate-900 text-white ':'bg-white text-slate-900 ') + 'text-xs px-2 py-1 border rounded sl-list-chip sl-list-all'}
             onClick={()=>setActiveList('')}
           >All</button>
           {Object.keys(styleLists || {}).map((name) => (
-            <button key={name} className={(activeList===name?'bg-slate-900 text-white ':'bg-white text-slate-900 ') + 'text-xs px-2 py-1 border rounded'} onClick={()=>setActiveList(name)}>{name}</button>
+            <button key={name} className={(activeList===name?'bg-slate-900 text-white ':'bg-white text-slate-900 ') + 'text-xs px-2 py-1 border rounded sl-list-chip'} onClick={()=>setActiveList(name)}>{name}</button>
           ))}
         </div>
-        <div>
+        <div className="sl-search">
           <input
-            className="text-xs border rounded px-2 py-1 w-56"
+            className="text-xs border rounded px-2 py-1 w-56 sl-search-input"
             placeholder="Search style no, name or color…"
             value={searchQuery}
             onChange={(e)=>setSearchQuery(e.target.value)}
@@ -316,32 +316,32 @@ export default function StockListPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-[180px_1fr] gap-4 items-start">
-        <div></div>
+      <div className="grid grid-cols-1 lg:grid-cols-[180px_1fr] gap-4 items-start sl-grid">
+        <div className="sl-left-rail"></div>
 
         {/* Right: main content */}
-        <div className="space-y-4">
+        <div className="space-y-4 sl-main">
       {emptyState || filteredForView.map(({ styleNo, colors }) => {
         const meta = styleMetaByNo[styleNo] || { name: null, supplier: null, image: null };
         return (
-          <div key={styleNo} id={`style-${styleNo}`} className="bg-white p-3 space-y-3">
+          <div key={styleNo} id={`style-${styleNo}`} className="bg-white p-3 space-y-3 sl-style">
             {/* Style header */}
-            <div className="flex items-start gap-3">
-              <div className="shrink-0">
+            <div className="flex items-start gap-3 sl-style-header">
+              <div className="shrink-0 sl-style-image">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 {meta.image ? <img src={meta.image} alt={meta.name ?? styleNo} className="h-20 w-20 object-cover rounded border" /> : <div className="h-20 w-20 rounded border bg-gray-50" />}
               </div>
-              <div className="min-w-0">
-                <div className="text-xs text-gray-500">{styleNo}</div>
-                <div className="text-base font-semibold text-black truncate">{meta.name ?? '—'}</div>
-                {meta.supplier && <div className="text-xs text-gray-500">{meta.supplier}</div>}
+              <div className="min-w-0 sl-style-meta">
+                <div className="text-xs text-gray-500 sl-style-no">{styleNo}</div>
+                <div className="text-base font-semibold text-black truncate sl-style-name">{meta.name ?? '—'}</div>
+                {meta.supplier && <div className="text-xs text-gray-500 sl-style-supplier">{meta.supplier}</div>}
                 {styleMetaByNo[styleNo]?.dg && (
-                  <div className="text-[11px] text-gray-600">DG: <span className="font-medium">{styleMetaByNo[styleNo]?.dg}</span></div>
+                  <div className="text-[11px] text-gray-600 sl-style-dg">DG: <span className="font-medium">{styleMetaByNo[styleNo]?.dg}</span></div>
                 )}
               </div>
             </div>
             {/* Per-color tables: columns = Color | Section | sizes... | Total */}
-            <div className="space-y-4">
+            <div className="space-y-4 sl-color-sections">
               {colors.map((g) => {
                 const key = `${g.styleNo}:${g.color}`;
                 const sum = (arr: number[]) => arr.reduce((a, b) => a + (Number(b) || 0), 0);
@@ -350,9 +350,9 @@ export default function StockListPage() {
                 const purchaseTotal = sum(g.purchaseSum);
                 const availableTotal = sum(g.available);
                 return (
-                  <div key={key} className="space-y-1">
+                  <div key={key} className="space-y-1 sl-color-block">
                     {/* Seasons chips and add control */}
-                    <div className="flex flex-wrap items-center gap-1">
+                    <div className="flex flex-wrap items-center gap-1 sl-season-chips">
                         {(() => {
                           const sid = styleMetaByNo[g.styleNo]?.id || null;
                           const cmap = sid ? (styleColors?.get(sid) || new Map<string, string>()) : new Map<string, string>();
@@ -362,11 +362,11 @@ export default function StockListPage() {
                           return (
                             <>
                               {labels.map((s) => (
-                                <span key={s.id} className="inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[11px]">
+                                <span key={s.id} className="inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] sl-season-chip">
                                   <span>{s.name}{s.year ? ` ${s.year}` : ''}</span>
                                   {!has('salesman') && (
                                     <button
-                                      className="text-gray-500 hover:text-black"
+                                      className="text-gray-500 hover:text-black sl-season-remove"
                                       onClick={async () => {
                                         if (!scId) return;
                                         await supabase.from('style_color_seasons').delete().eq('style_color_id', scId).eq('season_id', s.id);
@@ -379,6 +379,8 @@ export default function StockListPage() {
                               ))}
                               {!has('salesman') && scId && (
                                 <SeasonAdder
+                                  // @ts-ignore
+                                  className="sl-season-adder"
                                   seasons={seasons || []}
                                   selected={set}
                                   onAdd={async (seasonId) => {
@@ -393,65 +395,65 @@ export default function StockListPage() {
                         })()}
                     </div>
                     {/* Sizes table with image + color columns */}
-                    <div className="overflow-auto">
-                      <table className="min-w-full text-xs">
+                    <div className="overflow-auto sl-table-wrap">
+                      <table className="min-w-full text-xs sl-table">
                         <thead className="bg-gray-50">
                           <tr>
-                            <th className="p-2 text-left border-b">Color</th>
-                            <th className="p-2 text-left border-b whitespace-nowrap" style={{ width: 160 }}>Section</th>
+                            <th className="p-2 text-left border-b sl-th sl-th-color">Color</th>
+                            <th className="p-2 text-left border-b whitespace-nowrap sl-th sl-th-section" style={{ width: 160 }}>Section</th>
                             {g.sizes.map((s, i) => (
-                              <th key={i} className="p-2 text-right border-b">{s}</th>
+                              <th key={i} className="p-2 text-right border-b sl-th sl-th-size">{s}</th>
                             ))}
-                            <th className="p-2 text-right border-b">Total</th>
+                            <th className="p-2 text-right border-b sl-th sl-th-total">Total</th>
                           </tr>
                         </thead>
                         <tbody>
-                          <tr>
-                            <td className="p-2 border-b align-top" rowSpan={4}>{g.color}</td>
-                            <td className="p-2 border-b whitespace-nowrap" style={{ width: 160 }}>Stock</td>
+                          <tr className="sl-row sl-row-stock">
+                            <td className="p-2 border-b align-top sl-cell sl-cell-color" rowSpan={4}>{g.color}</td>
+                            <td className="p-2 border-b whitespace-nowrap sl-cell sl-cell-section" style={{ width: 160 }}>Stock</td>
                             {g.stock.map((v, i) => (
-                              <td key={i} className="p-2 border-b text-right text-black">{v}</td>
+                              <td key={i} className="p-2 border-b text-right text-black sl-cell sl-cell-size">{v}</td>
                             ))}
-                            <td className="p-2 border-b text-right font-medium text-black">{stockTotal}</td>
+                            <td className="p-2 border-b text-right font-medium text-black sl-cell sl-cell-total">{stockTotal}</td>
                           </tr>
-                          <tr className="cursor-pointer hover:bg-gray-50" onClick={() => setOpenSold((m) => ({ ...m, [key]: !m[key] }))}>
-                            <td className="p-2 border-b whitespace-nowrap" style={{ width: 160 }}>Sold (sum)</td>
+                          <tr className="cursor-pointer hover:bg-gray-50 sl-row sl-row-sold-sum" onClick={() => setOpenSold((m) => ({ ...m, [key]: !m[key] }))}>
+                            <td className="p-2 border-b whitespace-nowrap sl-cell sl-cell-section" style={{ width: 160 }}>Sold (sum)</td>
                             {g.soldSum.map((v, i) => (
-                              <td key={i} className="p-2 border-b text-right text-red-600">{v > 0 ? `-${v}` : v}</td>
+                              <td key={i} className="p-2 border-b text-right text-red-600 sl-cell sl-cell-size">{v > 0 ? `-${v}` : v}</td>
                             ))}
-                            <td className="p-2 border-b text-right font-medium text-red-700">{soldTotal > 0 ? `-${soldTotal}` : soldTotal}</td>
+                            <td className="p-2 border-b text-right font-medium text-red-700 sl-cell sl-cell-total">{soldTotal > 0 ? `-${soldTotal}` : soldTotal}</td>
                           </tr>
                           {openSold[key] && g.soldRows.map((r, idx) => (
-                            <tr key={`sold-${idx}`} className="bg-gray-50">
-                              <td className="p-2 border-b whitespace-nowrap" style={{ width: 160 }}>• {r.row_label ?? 'Row'}</td>
+                            <tr key={`sold-${idx}`} className="bg-gray-50 sl-row sl-row-sold-detail">
+                              <td className="p-2 border-b whitespace-nowrap sl-cell sl-cell-section" style={{ width: 160 }}>• {r.row_label ?? 'Row'}</td>
                               {g.soldSum.map((_, i) => (
-                                <td key={i} className="p-2 border-b text-right text-red-600">{(r.values[i] ?? 0) > 0 ? `-${r.values[i] ?? 0}` : (r.values[i] ?? 0)}</td>
+                                <td key={i} className="p-2 border-b text-right text-red-600 sl-cell sl-cell-size">{(r.values[i] ?? 0) > 0 ? `-${r.values[i] ?? 0}` : (r.values[i] ?? 0)}</td>
                               ))}
-                              <td className="p-2 border-b text-right text-red-700">{(() => { const val = sum((r.values as any[]) || []); return val > 0 ? `-${val}` : val; })()}</td>
+                              <td className="p-2 border-b text-right text-red-700 sl-cell sl-cell-total">{(() => { const val = sum((r.values as any[]) || []); return val > 0 ? `-${val}` : val; })()}</td>
                             </tr>
                           ))}
-                          <tr className="cursor-pointer hover:bg-gray-50" onClick={() => setOpenPurchase((m) => ({ ...m, [key]: !m[key] }))}>
-                            <td className="p-2 border-b whitespace-nowrap" style={{ width: 160 }}>Purchase (sum)</td>
+                          <tr className="cursor-pointer hover:bg-gray-50 sl-row sl-row-purchase-sum" onClick={() => setOpenPurchase((m) => ({ ...m, [key]: !m[key] }))}>
+                            <td className="p-2 border-b whitespace-nowrap sl-cell sl-cell-section" style={{ width: 160 }}>Purchase (sum)</td>
                             {g.purchaseSum.map((v, i) => (
-                              <td key={i} className="p-2 border-b text-right text-green-700">{v}</td>
+                              <td key={i} className="p-2 border-b text-right text-green-700 sl-cell sl-cell-size">{v}</td>
                             ))}
-                            <td className="p-2 border-b text-right font-medium text-green-800">{purchaseTotal}</td>
+                            <td className="p-2 border-b text-right font-medium text-green-800 sl-cell sl-cell-total">{purchaseTotal}</td>
                           </tr>
                           {openPurchase[key] && g.purchaseRows.map((r, idx) => (
-                            <tr key={`purchase-${idx}`} className="bg-gray-50">
-                              <td className="p-2 border-b whitespace-nowrap" style={{ width: 160 }}>• {r.row_label ?? 'Row'}</td>
+                            <tr key={`purchase-${idx}`} className="bg-gray-50 sl-row sl-row-purchase-detail">
+                              <td className="p-2 border-b whitespace-nowrap sl-cell sl-cell-section" style={{ width: 160 }}>• {r.row_label ?? 'Row'}</td>
                               {g.purchaseSum.map((_, i) => (
-                                <td key={i} className="p-2 border-b text-right text-green-700">{r.values[i] ?? 0}</td>
+                                <td key={i} className="p-2 border-b text-right text-green-700 sl-cell sl-cell-size">{r.values[i] ?? 0}</td>
                               ))}
-                              <td className="p-2 border-b text-right text-green-800">{sum((r.values as any[]) || [])}</td>
+                              <td className="p-2 border-b text-right text-green-800 sl-cell sl-cell-total">{sum((r.values as any[]) || [])}</td>
                             </tr>
                           ))}
-                          <tr>
-                            <td className="p-2 whitespace-nowrap" style={{ width: 160 }}>Available</td>
+                          <tr className="sl-row sl-row-available">
+                            <td className="p-2 whitespace-nowrap sl-cell sl-cell-section" style={{ width: 160 }}>Available</td>
                             {g.available.map((v, i) => (
-                              <td key={i} className={"p-2 text-right font-semibold " + (v < 0 ? 'text-red-700' : (v > 0 ? 'text-green-800' : ''))}>{v}</td>
+                              <td key={i} className={"p-2 text-right font-semibold sl-cell sl-cell-size " + (v < 0 ? 'text-red-700' : (v > 0 ? 'text-green-800' : '') )}>{v}</td>
                             ))}
-                            <td className={"p-2 text-right font-semibold " + (availableTotal < 0 ? 'text-red-700' : (availableTotal > 0 ? 'text-green-800' : ''))}>{availableTotal}</td>
+                            <td className={"p-2 text-right font-semibold sl-cell sl-cell-total " + (availableTotal < 0 ? 'text-red-700' : (availableTotal > 0 ? 'text-green-800' : '') )}>{availableTotal}</td>
                           </tr>
                         </tbody>
                       </table>
@@ -479,15 +481,15 @@ function SeasonAdder({ seasons, selected, onAdd }: { seasons: Array<{ id: string
     return base.filter((s) => (s.name || '').toLowerCase().includes(qq) || String(s.year || '').includes(qq)).slice(0, 20);
   }, [seasons, selected, q]);
   return (
-    <div className="relative inline-block">
-      <button className="text-[11px] border rounded px-1.5 py-0.5" onClick={() => setOpen((v) => !v)}>+ Season</button>
+    <div className="relative inline-block sl-season-adder">
+      <button className="text-[11px] border rounded px-1.5 py-0.5 sl-season-adder-trigger" onClick={() => setOpen((v) => !v)}>+ Season</button>
       {open && (
-        <div className="absolute z-10 mt-1 w-56 rounded border bg-white shadow p-1">
-          <input className="w-full border rounded px-2 py-1 text-[12px] mb-1" placeholder="Search seasons" value={q} onChange={(e)=>setQ(e.target.value)} />
-          <div className="max-h-48 overflow-auto">
-            {list.length === 0 && <div className="px-2 py-1 text-[12px] text-gray-500">No matches</div>}
+        <div className="absolute z-10 mt-1 w-56 rounded border bg-white shadow p-1 sl-season-adder-popover">
+          <input className="w-full border rounded px-2 py-1 text-[12px] mb-1 sl-season-adder-search" placeholder="Search seasons" value={q} onChange={(e)=>setQ(e.target.value)} />
+          <div className="max-h-48 overflow-auto sl-season-adder-list">
+            {list.length === 0 && <div className="px-2 py-1 text-[12px] text-gray-500 sl-season-adder-empty">No matches</div>}
             {list.map((s) => (
-              <button key={s.id} className="block w-full text-left px-2 py-1 text-[12px] hover:bg-gray-50" onClick={()=>{ onAdd(s.id); setOpen(false); setQ(''); }}>
+              <button key={s.id} className="block w-full text-left px-2 py-1 text-[12px] hover:bg-gray-50 sl-season-adder-item" onClick={()=>{ onAdd(s.id); setOpen(false); setQ(''); }}>
                 {s.name}{s.year ? ` ${s.year}` : ''}
               </button>
             ))}
