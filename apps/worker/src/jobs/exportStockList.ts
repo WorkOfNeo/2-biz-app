@@ -132,8 +132,20 @@ export async function exportStockList(ctx: Ctx) {
         return React.createElement(View, { style: styles.block, key: style_no }, header, tableHead, ...rows);
       });
       const doc = React.createElement(Document, null, React.createElement(PdfPage, { size: 'A4', style: styles.page }, React.createElement(Text, { style: styles.h1 }, `Stock List · ${listName}`), ...blocks));
-      const outPdf = await pdf(doc).toBuffer();
-      const buf = await ensureBuffer(outPdf);
+      let outPdf = await pdf(doc).toBuffer();
+      let buf = await ensureBuffer(outPdf);
+      // Safety: if renderer produced an empty buffer, emit a tiny placeholder so we don't upload 0 bytes
+      if (!buf || buf.length === 0) {
+        await log(job.id, 'error', 'STEP:export_stock_list_empty_pdf', { listName });
+        const placeholder = React.createElement(Document, null,
+          React.createElement(PdfPage, { size: 'A4', style: { padding: 24 } as any },
+            React.createElement(Text, null, `Stock List · ${listName}`),
+            React.createElement(Text, null, 'No data available')
+          )
+        );
+        outPdf = await pdf(placeholder).toBuffer();
+        buf = await ensureBuffer(outPdf);
+      }
       const safeName = listName.replace(/[^a-z0-9_-]+/gi, '_');
       const path = `stock_list/${job.id}/${safeName}.pdf`;
       try {
@@ -156,6 +168,28 @@ async function ensureBuffer(data: any): Promise<Buffer> {
   if (Buffer.isBuffer(data)) return data as Buffer;
   if (data instanceof Uint8Array) return Buffer.from(data as Uint8Array);
   if (data instanceof ArrayBuffer) return Buffer.from(new Uint8Array(data as ArrayBuffer));
+  // Web ReadableStream
+  if (data && typeof (data as any).getReader === 'function') {
+    const reader = (data as any).getReader();
+    const chunks: Uint8Array[] = [];
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) chunks.push(value);
+    }
+    return Buffer.concat(chunks.map((u) => Buffer.from(u)));
+  }
+  // Node stream
+  if (data && typeof (data as any).on === 'function') {
+    const chunks: Buffer[] = [];
+    await new Promise<void>((resolve, reject) => {
+      (data as any).on('data', (c: any) => chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c)));
+      (data as any).on('end', () => resolve());
+      (data as any).on('error', (err: any) => reject(err));
+    });
+    return Buffer.concat(chunks);
+  }
+  if (typeof data === 'string') return Buffer.from(data as string);
   return Buffer.from([]);
 }
 
