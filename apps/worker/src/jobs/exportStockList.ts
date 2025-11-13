@@ -107,7 +107,8 @@ export async function exportStockList(ctx: Ctx) {
       // - Each color table shows Section rows (Stock, Sold, Purchase, Available) with per-size columns and a Total
       const styles = StyleSheet.create({
         page: { padding: 16, fontSize: 9, color: '#0f172a' },
-        h1: { fontSize: 14, marginBottom: 6 },
+        // Center title and add extra spacing before first style block
+        h1: { fontSize: 14, marginBottom: 20, textAlign: 'center' as any },
         block: { marginBottom: 10, borderBottom: 0.5, borderColor: '#e5e7eb', paddingBottom: 6 },
         row: { flexDirection: 'row', gap: 8 },
         left: { width: 84 },
@@ -115,8 +116,8 @@ export async function exportStockList(ctx: Ctx) {
         img: { width: 80, height: 80, objectFit: 'cover' as any },
         meta: { fontSize: 9, marginBottom: 4 },
         // Color table container (adds spacing between colors)
-        colorTable: { marginBottom: 8 },
-        tableHeader: { flexDirection: 'row', backgroundColor: '#f1f5f9', color: '#000', borderBottom: 0.5, borderColor: '#cbd5e1' },
+        colorTable: { marginBottom: 22 }, // increased spacing between colors (+14px)
+        tableHeader: { flexDirection: 'row', backgroundColor: '#f7f7f7', color: '#000', borderBottom: 0.5, borderColor: '#cbd5e1' },
         tableRow: { flexDirection: 'row', borderBottom: 0.5, borderColor: '#e2e8f0' },
         // Make headers/cells a bit smaller so many sizes fit comfortably
         th: { padding: 3, fontSize: 8, fontWeight: 700 as any },
@@ -173,7 +174,7 @@ export async function exportStockList(ctx: Ctx) {
           for (let i = 0; i < maxSizeCount; i++) colorHeadSizes.push(Cell(sizes[i] || '', sizeW, 'right', styles.th));
           const tableHead = React.createElement(View, { style: styles.tableHeader },
             Cell('Color', colorW, 'left', styles.th),
-            Cell('Section', sectionW, 'left', styles.th),
+            Cell('', sectionW, 'left', styles.th),
             ...colorHeadSizes,
             Cell('Total', totalW, 'right', styles.th)
           );
@@ -238,7 +239,19 @@ export async function exportStockList(ctx: Ctx) {
         const rightColumn = React.createElement(View, { style: { flex: 1 } }, ...colorTables);
         return React.createElement(View, { style: [styles.block, styles.row], key: style_no }, leftColumn, rightColumn);
       });
-      const doc = React.createElement(Document, null, React.createElement(PdfPage, { size: 'A4', orientation: 'portrait', style: styles.page }, React.createElement(Text, { style: styles.h1 }, `Stock List · ${listName}`), ...blocks));
+      // Compute list-level totals for footer summary
+      const totalsAll = ((): { stock: number; sold: number; purchase: number; available: number } => {
+        let s = 0, so = 0, p = 0, a = 0;
+        for (const r of out) { s += r.stock; so += r.sold; p += r.purchase; a += r.available; }
+        return { stock: s, sold: so, purchase: p, available: a };
+      })();
+      const footer = React.createElement(View, { style: { marginTop: 16 } as any },
+        React.createElement(Text, null, `På lager: ${fmt(totalsAll.stock)}`),
+        React.createElement(Text, null, `Solgt: ${fmt(Math.abs(totalsAll.sold))}`),
+        React.createElement(Text, null, `Indkøbt: ${fmt(totalsAll.purchase)}`),
+        React.createElement(Text, null, `Disponibel: ${fmt(totalsAll.available)}`)
+      );
+      const doc = React.createElement(Document, null, React.createElement(PdfPage, { size: 'A4', orientation: 'portrait', style: styles.page }, React.createElement(Text, { style: styles.h1 }, `Stock List · ${listName}`), ...blocks, footer));
       let outPdf = await pdf(doc).toBuffer();
       let buf = await ensureBuffer(outPdf);
       // Safety: if renderer produced an empty buffer, emit a tiny placeholder so we don't upload 0 bytes
