@@ -64,11 +64,13 @@ async function handle(req: Request) {
       const price = Number(r.price || 0) || 0;
       const spId = account_no ? (spByAccount.get(account_no) ?? null) : null;
       const currency = spId ? (currencyBySp.get(spId) || 'DKK') : 'DKK';
+      const nulledBool = typeof r.nulled === 'boolean' ? (r.nulled as boolean) : undefined;
+      const permBool = typeof r.perm === 'boolean' ? (r.perm as boolean) : undefined;
       const rawNull = String((r.nulled ?? '') as any).toLowerCase();
-      const isYes = rawNull === 'yes';
-      const isNo = rawNull === 'no';
-      const perm = String((r.perm ?? '') as any).toLowerCase() === 'perm' || rawNull === 'perm' || rawNull === 'permanent' || rawNull === 'permanently';
-      const nulled = isYes || perm; // ignore all other values; 'no' -> not nulled
+      const rawPerm = String((r.perm ?? '') as any).toLowerCase();
+      const isYes = rawNull === 'yes' || nulledBool === true;
+      const perm = permBool === true || rawPerm === 'perm' || rawNull === 'perm' || rawNull === 'permanent' || rawNull === 'permanently';
+      const nulled = isYes || perm; // ignore all other string values; 'no' -> not nulled
       if (nulled && account_no) nulledAccounts.add(account_no);
       if (perm && account_no) permAccounts.add(account_no);
       if (!qty && !price) { stats.skippedZeroValues++; continue; } // Skip empty contributions

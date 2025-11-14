@@ -1158,7 +1158,7 @@ export default function StatisticsGeneralPage() {
                         const { data: { session } } = await supabase.auth.getSession();
                         if (!session) throw new Error('Not signed in');
                         // Normalize rows according to mapping
-                        const rows = importRows.map((r) => {
+                        const rows = importRows.map((r, idx) => {
                           const account_no = mapAccount ? String(r[mapAccount] ?? '').trim() : '';
                           const customer_name = mapCustomer ? String(r[mapCustomer] ?? '').trim() : '';
                           const city = mapCity ? String(r[mapCity] ?? '').trim() : '';
@@ -1169,8 +1169,18 @@ export default function StatisticsGeneralPage() {
                           const isYes = rawNull === 'yes';
                           const isNo = rawNull === 'no';
                           const nulled = !!(isPerm || isYes); // ignore any other values
+                          if (idx < 10) { try { console.log('[import:map]', { idx, account_no, customer_name, city, qty, price, rawNull, nulled, perm: isPerm }); } catch {} }
                           return { account_no, customer_name, city, qty, price, nulled, perm: isPerm };
                         }).filter((x) => (x.qty || x.price));
+                        try {
+                          console.log('[import:summaryBeforeSend]', {
+                            total: importRows.length,
+                            mapped: rows.length,
+                            seasonId: importSeasonId,
+                            lookup: importLookup,
+                            sample: rows.slice(0, 5)
+                          });
+                        } catch {}
                         const res = await fetch('/api/statistics/import', {
                           method: 'POST',
                           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
@@ -1178,6 +1188,7 @@ export default function StatisticsGeneralPage() {
                         });
                         if (!res.ok) throw new Error(await res.text());
                         const js = await res.json();
+                        try { console.log('[import:result]', js); } catch {}
                         setImportResult(js);
                       } catch (e: any) {
                         alert(e?.message || 'Import failed');
