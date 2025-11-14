@@ -112,10 +112,21 @@ export default function CountriesPage() {
   });
   const countries = useMemo(() => ['Denmark', 'Norway', 'Sweden', 'Finland'], []);
   const countryCurrency: Record<string, string> = useMemo(() => ({ Denmark: 'DKK', Norway: 'NOK', Sweden: 'SEK', Finland: 'EUR' }), []);
+  // Season-specific currency rates
+  const { data: ratesS1 } = useSWR(s1 ? `season:${s1}:currency-rates` : null, async () => {
+    const key = `currency_rates:${s1}`;
+    const { data } = await supabase.from('app_settings').select('value').eq('key', key).maybeSingle();
+    return ((data?.value as any) || {}) as Record<string, number>;
+  });
+  const { data: ratesS2 } = useSWR(s2 ? `season:${s2}:currency-rates` : null, async () => {
+    const key = `currency_rates:${s2}`;
+    const { data } = await supabase.from('app_settings').select('value').eq('key', key).maybeSingle();
+    return ((data?.value as any) || {}) as Record<string, number>;
+  });
   const byCountry = useMemo(() => {
     const out: Record<string, { s1Qty: number; s2Qty: number; s1PriceDkk: number; s2PriceDkk: number }> = {};
     for (const c of countries) out[c] = { s1Qty: 0, s2Qty: 0, s1PriceDkk: 0, s2PriceDkk: 0 };
-    const rates = { DKK: 1, ...(currencyRatesRow ?? {}) } as Record<string, number>;
+    const baseRates = { DKK: 1, ...(currencyRatesRow ?? {}) } as Record<string, number>;
     const seasonalNulled = new Set(overrides?.nulled ?? []);
     const seasonalHidden = new Set(overrides?.hidden ?? []);
     // Build customer -> country map once and use it as a fallback for stats rows too
@@ -134,10 +145,12 @@ export default function CountriesPage() {
         if (closedCustomers?.setNulled.has(acc)) continue;
       }
       const bucket = out[ctry] || (out[ctry] = { s1Qty: 0, s2Qty: 0, s1PriceDkk: 0, s2PriceDkk: 0 });
-      const rate = rates[(String(r.currency || 'DKK').toUpperCase())] ?? 1;
-      const priceDkk = Number(r.price || 0) * rate;
-      if (r.season_id === s1) { bucket.s1Qty += Number(r.qty||0); bucket.s1PriceDkk += priceDkk; }
-      else if (r.season_id === s2) { bucket.s2Qty += Number(r.qty||0); bucket.s2PriceDkk += priceDkk; }
+      const cur = (String(r.currency || 'DKK').toUpperCase());
+      const rateS1 = { ...baseRates, ...(ratesS1 ?? {}) }[cur] ?? 1;
+      const rateS2 = { ...baseRates, ...(ratesS2 ?? {}) }[cur] ?? 1;
+      const price = Number(r.price || 0);
+      if (r.season_id === s1) { bucket.s1Qty += Number(r.qty||0); bucket.s1PriceDkk += price * rateS1; }
+      else if (r.season_id === s2) { bucket.s2Qty += Number(r.qty||0); bucket.s2PriceDkk += price * rateS2; }
     }
     // Add invoices mapped to country via customers
     for (const inv of (invoices ?? [])) {
@@ -152,14 +165,16 @@ export default function CountriesPage() {
       const ctry = String(customerCountryById.get(acc) || '').trim();
       if (!countries.includes(ctry)) continue;
       const bucket = out[ctry] || (out[ctry] = { s1Qty: 0, s2Qty: 0, s1PriceDkk: 0, s2PriceDkk: 0 });
-      const rate = rates[(String(inv.currency || 'DKK').toUpperCase())] ?? 1;
-      const amountDkk = Number(inv.amount || 0) * rate;
+      const cur = (String(inv.currency || 'DKK').toUpperCase());
+      const rateS1 = { ...baseRates, ...(ratesS1 ?? {}) }[cur] ?? 1;
+      const rateS2 = { ...baseRates, ...(ratesS2 ?? {}) }[cur] ?? 1;
+      const amount = Number(inv.amount || 0);
       const qty = Number(inv.qty || 0) || 0;
-      if (inv.season_id === s1) { bucket.s1Qty += qty; bucket.s1PriceDkk += amountDkk; }
-      else if (inv.season_id === s2) { bucket.s2Qty += qty; bucket.s2PriceDkk += amountDkk; }
+      if (inv.season_id === s1) { bucket.s1Qty += qty; bucket.s1PriceDkk += amount * rateS1; }
+      else if (inv.season_id === s2) { bucket.s2Qty += qty; bucket.s2PriceDkk += amount * rateS2; }
     }
     return out;
-  }, [stats, invoices, customers, s1, s2, currencyRatesRow, overrides?.nulled?.length, overrides?.hidden?.length, closedCustomers?.setClosed.size, closedCustomers?.setExcluded.size, closedCustomers?.setNulled.size]);
+  }, [stats, invoices, customers, s1, s2, currencyRatesRow, ratesS1, ratesS2, overrides?.nulled?.length, overrides?.hidden?.length, closedCustomers?.setClosed.size, closedCustomers?.setExcluded.size, closedCustomers?.setNulled.size]);
   function getSeasonLabel(seasonId: string | undefined) {
     if (!seasonId) return '';
     const s = (seasons ?? []).find((x) => x.id === seasonId);

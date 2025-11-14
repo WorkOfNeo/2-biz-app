@@ -46,11 +46,21 @@ export default function StatisticsGeneralPage() {
     if (error) throw new Error(error.message);
     return (data ?? []) as Array<{ customer_id: string; company: string | null; city: string | null; salesperson_id: string | null }>;
   });
-  // Currency rates (from Misc settings) – 1 unit equals how many DKK
+  // Global currency rates (fallback) and season-specific rates
   const { data: currencyRatesRow } = useSWR('app-settings:currency-rates', async () => {
     const { data, error } = await supabase.from('app_settings').select('*').eq('key', 'currency_rates').maybeSingle();
     if (error) throw new Error(error.message);
     return (data?.value as Record<string, number> | undefined) ?? {};
+  });
+  const { data: ratesS1 } = useSWR(s1 ? `season:${s1}:currency-rates` : null, async () => {
+    const key = `currency_rates:${s1}`;
+    const { data } = await supabase.from('app_settings').select('value').eq('key', key).maybeSingle();
+    return ((data?.value as any) || {}) as Record<string, number>;
+  });
+  const { data: ratesS2 } = useSWR(s2 ? `season:${s2}:currency-rates` : null, async () => {
+    const key = `currency_rates:${s2}`;
+    const { data } = await supabase.from('app_settings').select('value').eq('key', key).maybeSingle();
+    return ((data?.value as any) || {}) as Record<string, number>;
   });
   const [s1, setS1] = useState<string>('');
   const [s2, setS2] = useState<string>('');
@@ -787,13 +797,14 @@ export default function StatisticsGeneralPage() {
                   </tbody>
                   <tfoot>
                     {(() => {
-                      const rates = { DKK: 1, ...(currencyRatesRow ?? {}) } as Record<string, number>;
+                      const baseRates = { DKK: 1, ...(currencyRatesRow ?? {}) } as Record<string, number>;
                       const totals = items.reduce((a, r) => {
                         const cur = r.salespersonId ? (spCurrencyById[r.salespersonId] ?? 'DKK') : 'DKK';
-                        const rate = rates[cur] ?? 1;
+                        const rateS1 = { ...baseRates, ...(ratesS1 ?? {}) }[cur] ?? 1;
+                        const rateS2 = { ...baseRates, ...(ratesS2 ?? {}) }[cur] ?? 1;
                         a.s1Qty += r.s1Qty; a.s2Qty += r.s2Qty;
                         a.s1Local += r.s1Price; a.s2Local += r.s2Price;
-                        a.s1Dkk += r.s1Price * rate; a.s2Dkk += r.s2Price * rate;
+                        a.s1Dkk += r.s1Price * rateS1; a.s2Dkk += r.s2Price * rateS2;
                         return a;
                       }, { s1Qty: 0, s2Qty: 0, s1Local: 0, s2Local: 0, s1Dkk: 0, s2Dkk: 0 });
                       const devQty = totals.s1Qty - totals.s2Qty;
