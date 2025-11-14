@@ -654,16 +654,54 @@ function ListColorEditor({ listId, styleId }: { listId: string; styleId: string 
     for (const r of (data ?? []) as any[]) m.set(r.style_color_id as string, r.include !== false);
     return m as Map<string, boolean>;
   });
+  const total = (colors?.length || 0);
+  const includedCount = React.useMemo(() => {
+    if (!colors) return 0;
+    let n = 0;
+    for (const c of colors) {
+      const on = includes?.has(c.id) ? (includes.get(c.id) as boolean) : false;
+      if (on) n++;
+    }
+    return n;
+  }, [colors?.length, includes && Array.from((includes as Map<string, boolean>).entries()).map(([k,v])=>k+':'+String(v)).join(',')]);
+  async function setInclude(styleColorId: string, next: boolean) {
+    // optimistic update: clone map
+    await mutate((prev: any) => {
+      const m = new Map<string, boolean>(prev as Map<string, boolean> | undefined);
+      m.set(styleColorId, next);
+      return m;
+    }, false);
+    try {
+      await supabase.from('stock_list_colors').upsert({ list_id: listId, style_id: styleId, style_color_id: styleColorId, include: next } as any, { onConflict: 'list_id,style_color_id' as any });
+      await mutate();
+    } catch (err) {
+      // revert
+      await mutate();
+    }
+  }
   async function addAll() {
     if (!colors?.length) return;
-    const rows = colors.map((c) => ({ list_id: listId, style_id: styleId, style_color_id: c.id, include: true }));
-    await supabase.from('stock_list_colors').upsert(rows, { onConflict: 'list_id,style_color_id' as any });
-    await mutate();
+    // optimistic set all to true
+    await mutate((prev: any) => {
+      const m = new Map<string, boolean>(prev as Map<string, boolean> | undefined);
+      for (const c of colors) m.set(c.id, true);
+      return m;
+    }, false);
+    try {
+      const rows = colors.map((c) => ({ list_id: listId, style_id: styleId, style_color_id: c.id, include: true }));
+      await supabase.from('stock_list_colors').upsert(rows, { onConflict: 'list_id,style_color_id' as any });
+      await mutate();
+    } catch (e) {
+      await mutate();
+    }
   }
   return (
     <div className="flex flex-col gap-2">
-      <div>
-        <button className="text-[11px] underline" onClick={addAll}>Add all colors</button>
+      <div className="flex items-center justify-between">
+        <div className="text-[11px] text-gray-600">Included: <span className="font-medium text-black">{includedCount}</span> / {total}</div>
+        <div>
+          <button className="text-[11px] underline" onClick={addAll}>Add all colors</button>
+        </div>
       </div>
       <div className="flex flex-wrap gap-2">
         {(colors ?? []).map((c) => {
@@ -675,15 +713,7 @@ function ListColorEditor({ listId, styleId }: { listId: string; styleId: string 
                 checked={checked}
                 onChange={async (e) => {
                   const next = e.target.checked;
-                  // optimistic
-                  (includes as any)?.set?.(c.id, next);
-                  try {
-                    await supabase.from('stock_list_colors').upsert({ list_id: listId, style_id: styleId, style_color_id: c.id, include: next } as any, { onConflict: 'list_id,style_color_id' as any });
-                    await mutate();
-                  } catch (err: any) {
-                    alert(err?.message || 'Failed to update color include');
-                    try { await mutate(); } catch {}
-                  }
+                  await setInclude(c.id, next);
                 }}
               />
               <span className="text-[11px]">{c.color}</span>
