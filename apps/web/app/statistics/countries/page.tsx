@@ -295,19 +295,31 @@ export default function CountriesPage() {
                 <div className="text-sm text-gray-600">{getSeasonLabel(s1) || 'Season 1'} vs {getSeasonLabel(s2) || 'Season 2'}</div>
                 <div className="text-lg font-semibold">{row.s1Qty.toLocaleString('da-DK')} vs {row.s2Qty.toLocaleString('da-DK')}</div>
                 <Donut pct={qtyPct} label={`Stk`} />
-                <div className="text-sm font-semibold text-left mt-3">Per Salesperson</div>
-                <div className="overflow-auto rounded border">
+              </div>
+              <div className="space-y-3 text-center">
+                <div className="font-medium">Omsætning</div>
+                <div className="text-sm text-gray-600">{getSeasonLabel(s1) || 'Season 1'} vs {getSeasonLabel(s2) || 'Season 2'}</div>
+                <div className="text-lg font-semibold">{Math.round(s1Local).toLocaleString('da-DK')} {cur} vs {Math.round(s2Local).toLocaleString('da-DK')} {cur}</div>
+                <div className="text-sm text-gray-600">{Math.round(row.s1PriceDkk).toLocaleString('da-DK')} DKK vs {Math.round(row.s2PriceDkk).toLocaleString('da-DK')} DKK</div>
+                <Donut pct={pricePct} label={`Omsætning`} />
+              </div>
+            </div>
+            {/* Per-salesperson section (split into two, borderless tables, equal heights) */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 px-6 pb-6">
+              <div className="flex flex-col min-h-[280px]">
+                <div className="text-sm font-semibold text-left mb-2">Per Salesperson · Stk</div>
+                <div className="flex-1 overflow-auto">
                   <table className="min-w-full text-sm">
-                    <thead className="bg-gray-50">
+                    <thead>
                       <tr>
-                        <th className="p-2 text-left">Name</th>
-                        <th className="p-2 text-right">Qty S1</th>
-                        <th className="p-2 text-right">Qty S2</th>
+                        <th className="p-2 text-left font-semibold">Name</th>
+                        <th className="p-2 text-right font-semibold">Qty S1</th>
+                        <th className="p-2 text-right font-semibold">Qty S2</th>
                       </tr>
                     </thead>
                     <tbody>
                       {spRows.map((r) => (
-                        <tr key={r.id} className="border-t">
+                        <tr key={r.id}>
                           <td className="p-2 text-left">{r.name}</td>
                           <td className="p-2 text-right">{r.s1Qty.toLocaleString('da-DK')}</td>
                           <td className="p-2 text-right">{r.s2Qty.toLocaleString('da-DK')}</td>
@@ -320,25 +332,20 @@ export default function CountriesPage() {
                   </table>
                 </div>
               </div>
-              <div className="space-y-3 text-center">
-                <div className="font-medium">Omsætning</div>
-                <div className="text-sm text-gray-600">{getSeasonLabel(s1) || 'Season 1'} vs {getSeasonLabel(s2) || 'Season 2'}</div>
-                <div className="text-lg font-semibold">{Math.round(s1Local).toLocaleString('da-DK')} {cur} vs {Math.round(s2Local).toLocaleString('da-DK')} {cur}</div>
-                <div className="text-sm text-gray-600">{Math.round(row.s1PriceDkk).toLocaleString('da-DK')} DKK vs {Math.round(row.s2PriceDkk).toLocaleString('da-DK')} DKK</div>
-                <Donut pct={pricePct} label={`Omsætning`} />
-                <div className="text-sm font-semibold text-left mt-3">Per Salesperson</div>
-                <div className="overflow-auto rounded border">
+              <div className="flex flex-col min-h-[280px]">
+                <div className="text-sm font-semibold text-left mb-2">Per Salesperson · Omsætning (DKK)</div>
+                <div className="flex-1 overflow-auto">
                   <table className="min-w-full text-sm">
-                    <thead className="bg-gray-50">
+                    <thead>
                       <tr>
-                        <th className="p-2 text-left">Name</th>
-                        <th className="p-2 text-right">Price S1 (DKK)</th>
-                        <th className="p-2 text-right">Price S2 (DKK)</th>
+                        <th className="p-2 text-left font-semibold">Name</th>
+                        <th className="p-2 text-right font-semibold">Price S1</th>
+                        <th className="p-2 text-right font-semibold">Price S2</th>
                       </tr>
                     </thead>
                     <tbody>
                       {spRows.map((r) => (
-                        <tr key={r.id} className="border-t">
+                        <tr key={r.id}>
                           <td className="p-2 text-left">{r.name}</td>
                           <td className="p-2 text-right">{Math.round(r.s1PriceDkk).toLocaleString('da-DK')}</td>
                           <td className="p-2 text-right">{Math.round(r.s2PriceDkk).toLocaleString('da-DK')}</td>
