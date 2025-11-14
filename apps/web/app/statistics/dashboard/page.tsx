@@ -36,6 +36,7 @@ export default function StatisticsDashboardPage() {
   // Box #1 - Salesperson Statistics
   const [selected, setSelected] = React.useState<Record<string, boolean>>({});
   const [includeCountries, setIncludeCountries] = React.useState(true);
+  const [includeTop10Salesmen, setIncludeTop10Salesmen] = React.useState(false);
   const [sendingSp, setSendingSp] = React.useState(false);
   
 
@@ -85,7 +86,7 @@ export default function StatisticsDashboardPage() {
             attachments.push({ name: 'Countries.pdf', data: base64 });
           } catch {}
         }
-        if (top10Salesmen?.public_url) {
+        if (includeTop10Salesmen && top10Salesmen?.public_url) {
           try {
             const dataUrl = await fetchToDataUrl(top10Salesmen.public_url);
             const base64 = dataUrl.split(',')[1] || '';
@@ -313,6 +314,17 @@ export default function StatisticsDashboardPage() {
               <span className={"inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform " + (includeCountries ? 'translate-x-4' : 'translate-x-0')} />
             </button>
             <span>Include Countries</span>
+          </label>
+          <label className="flex items-center gap-2 text-sm">
+            <button
+              type="button"
+              onClick={() => setIncludeTop10Salesmen((v) => !v)}
+              className={"relative inline-flex h-5 w-9 items-center rounded-full transition-colors " + (includeTop10Salesmen ? 'bg-slate-900' : 'bg-slate-200')}
+              aria-pressed={includeTop10Salesmen}
+            >
+              <span className={"inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform " + (includeTop10Salesmen ? 'translate-x-4' : 'translate-x-0')} />
+            </button>
+            <span>Include Top 10 - Salesmen</span>
           </label>
           <div>
             <button className="rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-50" disabled={sendingSp} onClick={sendSalespersonEmails}>Send</button>
