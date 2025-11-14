@@ -44,24 +44,35 @@ export default function StylesSettingsPage() {
   }, { refreshInterval: 0 });
   const [seasonFilter, setSeasonFilter] = useState<string>('');
   const { data: colorsByStyle, mutate: mutateColors } = useSWR(isAdmin ? 'style_colors:all' : null, async () => {
-    async function loadWithVisible() {
-      const { data, error } = await supabase.from('style_colors').select('id, style_id, color, visible, scrape_enabled, updated_at').order('color').limit(5000);
-      if (error) throw error;
+    const pageSize = 1000;
+    async function loadPaged(selectCols: string) {
+      const all: any[] = [];
+      let from = 0;
+      while (true) {
+        const to = from + pageSize - 1;
+        const { data, error } = await supabase.from('style_colors').select(selectCols).order('color').range(from, to);
+        if (error) throw error;
+        const batch = (data ?? []) as any[];
+        all.push(...batch);
+        if (batch.length < pageSize) break;
+        from += pageSize;
+      }
+      return all;
+    }
+    try {
+      const rows = await loadPaged('id, style_id, color, visible, scrape_enabled, updated_at');
       const map = new Map<string, Array<{ id: string; color: string; visible: boolean | null; scrape_enabled: boolean | null; updated_at: string }>>();
-      for (const r of (data ?? []) as any[]) {
+      for (const r of rows) {
         const arr = map.get(r.style_id) || [];
         arr.push({ id: r.id, color: r.color, visible: (r.visible as boolean | null) ?? null, scrape_enabled: r.scrape_enabled, updated_at: r.updated_at });
         map.set(r.style_id, arr);
       }
       return map;
-    }
-    try {
-      return await loadWithVisible();
     } catch {
       // Fallback when 'visible' column not present; default to null
-      const { data } = await supabase.from('style_colors').select('id, style_id, color, scrape_enabled, updated_at').order('color').limit(5000);
+      const rows = await loadPaged('id, style_id, color, scrape_enabled, updated_at');
       const map = new Map<string, Array<{ id: string; color: string; visible: boolean | null; scrape_enabled: boolean | null; updated_at: string }>>();
-      for (const r of (data ?? []) as any[]) {
+      for (const r of rows) {
         const arr = map.get(r.style_id) || [];
         arr.push({ id: r.id, color: r.color, visible: null, scrape_enabled: r.scrape_enabled, updated_at: r.updated_at });
         map.set(r.style_id, arr);
