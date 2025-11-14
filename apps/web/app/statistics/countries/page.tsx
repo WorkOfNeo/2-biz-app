@@ -56,7 +56,7 @@ export default function CountriesPage() {
   const { data: stats } = useSWR(s1 && s2 ? ['countries:stats', s1, s2] : null, async () => {
     const { data, error } = await supabase
       .from('sales_stats')
-      .select('season_id, qty, price, currency, account_no, customer_id, customers(country)')
+      .select('season_id, qty, price, currency, account_no, customer_id, salesperson_id, customers(country)')
       .in('season_id', [s1, s2])
       .limit(200000);
     if (error) throw new Error(error.message);
@@ -90,9 +90,14 @@ export default function CountriesPage() {
   }, { refreshInterval: 0 });
   // Minimal customers map to resolve country for invoices
   const { data: customers } = useSWR('countries:customers', async () => {
-    const { data, error } = await supabase.from('customers').select('customer_id, country');
+    const { data, error } = await supabase.from('customers').select('customer_id, country, salesperson_id');
     if (error) throw new Error(error.message);
-    return (data ?? []) as { customer_id: string; country: string | null }[];
+    return (data ?? []) as { customer_id: string; country: string | null; salesperson_id: string | null }[];
+  });
+  const { data: salespersons } = useSWR('countries:salespersons', async () => {
+    const { data, error } = await supabase.from('salespersons').select('id, name');
+    if (error) throw new Error(error.message);
+    return (data ?? []) as { id: string; name: string }[];
   });
   // Fetch invoices
   const { data: invoices } = useSWR(s1 && s2 ? ['countries:invoices', s1, s2] : null, async () => {
@@ -175,6 +180,62 @@ export default function CountriesPage() {
     }
     return out;
   }, [stats, invoices, customers, s1, s2, currencyRatesRow, ratesS1, ratesS2, overrides?.nulled?.length, overrides?.hidden?.length, closedCustomers?.setClosed.size, closedCustomers?.setExcluded.size, closedCustomers?.setNulled.size]);
+  const byCountrySalespersons = useMemo(() => {
+    const out: Record<string, Map<string, { s1Qty: number; s1PriceDkk: number; s2Qty: number; s2PriceDkk: number }>> = {};
+    const baseRates = { DKK: 1, ...(currencyRatesRow ?? {}) } as Record<string, number>;
+    const seasonalNulled = new Set(overrides?.nulled ?? []);
+    const seasonalHidden = new Set(overrides?.hidden ?? []);
+    const customerCountryById = new Map<string, string | null>();
+    const customerSpById = new Map<string, string | null>();
+    for (const c of (customers ?? [])) { customerCountryById.set(c.customer_id, c.country ?? null); customerSpById.set(c.customer_id, c.salesperson_id ?? null); }
+    for (const r of (stats ?? []) as any[]) {
+      const acc = String(r.account_no || '');
+      const ctry = String((r.customers?.country ?? customerCountryById.get(acc) ?? '')).trim();
+      if (!countries.includes(ctry)) continue;
+      if (acc) {
+        if (seasonalHidden.has(acc)) continue;
+        if (seasonalNulled.has(acc)) continue;
+        if (closedCustomers?.setClosed.has(acc)) continue;
+        if (closedCustomers?.setExcluded.has(acc)) continue;
+        if (closedCustomers?.setNulled.has(acc)) continue;
+      }
+      const spId = (r.salesperson_id as string | null) ?? (customerSpById.get(acc) ?? null);
+      if (!spId) continue;
+      const cur = (String(r.currency || 'DKK').toUpperCase());
+      const rateS1 = { ...baseRates, ...(ratesS1 ?? {}) }[cur] ?? 1;
+      const rateS2 = { ...baseRates, ...(ratesS2 ?? {}) }[cur] ?? 1;
+      const price = Number(r.price || 0);
+      const m = (out[ctry] ||= new Map());
+      const row = m.get(spId) || { s1Qty: 0, s1PriceDkk: 0, s2Qty: 0, s2PriceDkk: 0 };
+      if (r.season_id === s1) { row.s1Qty += Number(r.qty||0); row.s1PriceDkk += price * rateS1; }
+      else if (r.season_id === s2) { row.s2Qty += Number(r.qty||0); row.s2PriceDkk += price * rateS2; }
+      m.set(spId, row);
+    }
+    for (const inv of (invoices ?? [])) {
+      const acc = inv.account_no ?? '';
+      if (!acc) continue;
+      if (seasonalHidden.has(acc)) continue;
+      if (seasonalNulled.has(acc)) continue;
+      if (closedCustomers?.setClosed.has(acc)) continue;
+      if (closedCustomers?.setExcluded.has(acc)) continue;
+      if (closedCustomers?.setNulled.has(acc)) continue;
+      const ctry = String(customerCountryById.get(acc) || '').trim();
+      if (!countries.includes(ctry)) continue;
+      const spId = customerSpById.get(acc) ?? null;
+      if (!spId) continue;
+      const cur = (String(inv.currency || 'DKK').toUpperCase());
+      const rateS1 = { ...baseRates, ...(ratesS1 ?? {}) }[cur] ?? 1;
+      const rateS2 = { ...baseRates, ...(ratesS2 ?? {}) }[cur] ?? 1;
+      const amount = Number(inv.amount || 0);
+      const qty = Number(inv.qty || 0) || 0;
+      const m = (out[ctry] ||= new Map());
+      const row = m.get(spId) || { s1Qty: 0, s1PriceDkk: 0, s2Qty: 0, s2PriceDkk: 0 };
+      if (inv.season_id === s1) { row.s1Qty += qty; row.s1PriceDkk += amount * rateS1; }
+      else if (inv.season_id === s2) { row.s2Qty += qty; row.s2PriceDkk += amount * rateS2; }
+      m.set(spId, row);
+    }
+    return out;
+  }, [stats, invoices, customers, s1, s2, currencyRatesRow, ratesS1, ratesS2, overrides?.nulled?.length, overrides?.hidden?.length, closedCustomers?.setClosed.size, closedCustomers?.setExcluded.size, closedCustomers?.setNulled.size]);
   function getSeasonLabel(seasonId: string | undefined) {
     if (!seasonId) return '';
     const s = (seasons ?? []).find((x) => x.id === seasonId);
@@ -220,6 +281,11 @@ export default function CountriesPage() {
         const r = rates[cur] ?? 1;
         const s1Local = row.s1PriceDkk / (r || 1);
         const s2Local = row.s2PriceDkk / (r || 1);
+        const spMap = byCountrySalespersons[c] || new Map<string, { s1Qty: number; s1PriceDkk: number; s2Qty: number; s2PriceDkk: number }>();
+        const spNameById = new Map((salespersons ?? []).map((x) => [x.id, x.name]));
+        const spRows = Array.from(spMap.entries()).map(([id, v]) => ({
+          id, name: spNameById.get(id) || '—', ...v
+        })).sort((a, b) => (b.s1PriceDkk + b.s2PriceDkk) - (a.s1PriceDkk + a.s2PriceDkk));
         return (
           <div key={c} className="rounded-lg border bg-white">
             <div className="border-b text-center bg-[#0f172a] text-white rounded-t-lg text-[2rem] leading-tight py-2">{c}</div>
@@ -236,6 +302,36 @@ export default function CountriesPage() {
                 <div className="text-lg font-semibold">{Math.round(s1Local).toLocaleString('da-DK')} {cur} vs {Math.round(s2Local).toLocaleString('da-DK')} {cur}</div>
                 <div className="text-sm text-gray-600">{Math.round(row.s1PriceDkk).toLocaleString('da-DK')} DKK vs {Math.round(row.s2PriceDkk).toLocaleString('da-DK')} DKK</div>
                 <Donut pct={pricePct} label={`Omsætning`} />
+              </div>
+            </div>
+            <div className="p-4">
+              <div className="text-sm font-semibold text-left mb-2">Per Salesperson</div>
+              <div className="overflow-auto rounded border">
+                <table className="min-w-full text-sm">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="p-2 text-left">Name</th>
+                      <th className="p-2 text-right">Qty S1</th>
+                      <th className="p-2 text-right">Price S1 (DKK)</th>
+                      <th className="p-2 text-right">Qty S2</th>
+                      <th className="p-2 text-right">Price S2 (DKK)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {spRows.map((r) => (
+                      <tr key={r.id} className="border-t">
+                        <td className="p-2 text-left">{r.name}</td>
+                        <td className="p-2 text-right">{r.s1Qty.toLocaleString('da-DK')}</td>
+                        <td className="p-2 text-right">{Math.round(r.s1PriceDkk).toLocaleString('da-DK')}</td>
+                        <td className="p-2 text-right">{r.s2Qty.toLocaleString('da-DK')}</td>
+                        <td className="p-2 text-right">{Math.round(r.s2PriceDkk).toLocaleString('da-DK')}</td>
+                      </tr>
+                    ))}
+                    {spRows.length === 0 && (
+                      <tr><td className="p-2 text-left text-xs text-gray-500" colSpan={5}>No data</td></tr>
+                    )}
+                  </tbody>
+                </table>
               </div>
             </div>
           </div>

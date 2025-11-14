@@ -346,13 +346,18 @@ export async function exportOverview(ctx: Ctx) {
       if (!s1 || !s2) throw new Error('Missing season compare (s1/s2)');
       const countries = ['Denmark', 'Norway', 'Sweden', 'Finland'];
       const { data: stats } = await supabase.from('sales_stats').select('season_id, qty, price, currency, account_no, customer_id, customers(country)').in('season_id', [s1, s2]).limit(200000);
-      const { data: customers } = await supabase.from('customers').select('customer_id, country');
+      const { data: customers } = await supabase.from('customers').select('customer_id, country, salesperson_id');
+      const { data: people } = await supabase.from('salespersons').select('id, name');
       const { data: invoices } = await supabase.from('sales_invoices').select('account_no, qty, amount, currency, season_id').in('season_id', [s1, s2]).limit(200000);
       let rates: Record<string, number> = { DKK: 1 };
       try { const { data: rateRow } = await supabase.from('app_settings').select('value').eq('key', 'currency_rates').maybeSingle(); rates = { DKK: 1, ...((rateRow?.value as any) ?? {}) } as Record<string, number>; } catch {}
       const customerCountryById = new Map<string, string | null>();
-      for (const c of (customers ?? []) as any[]) customerCountryById.set(c.customer_id, c.country ?? null);
+      const customerSpById = new Map<string, string | null>();
+      const spNameById = new Map<string, string>();
+      for (const p of (people ?? []) as any[]) spNameById.set(p.id as string, p.name as string);
+      for (const c of (customers ?? []) as any[]) { customerCountryById.set(c.customer_id, c.country ?? null); customerSpById.set(c.customer_id, c.salesperson_id ?? null); }
       const totals: Record<string, { s1Qty: number; s2Qty: number; s1Price: number; s2Price: number }> = {};
+      const perSp: Record<string, Map<string, { s1Qty: number; s1Price: number; s2Qty: number; s2Price: number }>> = {};
       for (const c of countries) totals[c] = { s1Qty: 0, s2Qty: 0, s1Price: 0, s2Price: 0 };
       for (const r of (stats ?? []) as any[]) {
         const ctry = String(r.customers?.country || '').trim();
@@ -363,6 +368,14 @@ export async function exportOverview(ctx: Ctx) {
         const priceDkk = Number(r.price || 0) * rate;
         if (r.season_id === s1) { bucket.s1Qty += Number(r.qty||0); bucket.s1Price += priceDkk; }
         else if (r.season_id === s2) { bucket.s2Qty += Number(r.qty||0); bucket.s2Price += priceDkk; }
+        const spId = (customerSpById.get(r.account_no) ?? null) as string | null;
+        if (spId) {
+          const m = (perSp[ctry] ||= new Map());
+          const row = m.get(spId) || { s1Qty: 0, s1Price: 0, s2Qty: 0, s2Price: 0 };
+          if (r.season_id === s1) { row.s1Qty += Number(r.qty||0); row.s1Price += priceDkk; }
+          else if (r.season_id === s2) { row.s2Qty += Number(r.qty||0); row.s2Price += priceDkk; }
+          m.set(spId, row);
+        }
       }
       for (const inv of (invoices ?? []) as any[]) {
         const acc = inv.account_no ?? '';
@@ -376,6 +389,14 @@ export async function exportOverview(ctx: Ctx) {
         const qty = Number(inv.qty || 0) || 0;
         if (inv.season_id === s1) { bucket.s1Qty += qty; bucket.s1Price += amountDkk; }
         else if (inv.season_id === s2) { bucket.s2Qty += qty; bucket.s2Price += amountDkk; }
+        const spId = (customerSpById.get(acc) ?? null) as string | null;
+        if (spId) {
+          const m = (perSp[ctry] ||= new Map());
+          const row = m.get(spId) || { s1Qty: 0, s1Price: 0, s2Qty: 0, s2Price: 0 };
+          if (inv.season_id === s1) { row.s1Qty += qty; row.s1Price += amountDkk; }
+          else if (inv.season_id === s2) { row.s2Qty += qty; row.s2Price += amountDkk; }
+          m.set(spId, row);
+        }
       }
       const styles = StyleSheet.create({
         page: { padding: 16, fontSize: 12, color: '#0f172a' },
@@ -433,6 +454,34 @@ export async function exportOverview(ctx: Ctx) {
         const r2 = c2 ? ((rates as any)[cur2] ?? 1) : 1;
         const s1Local2 = row2 ? (r2 ? row2.s1Price / r2 : row2.s1Price) : 0;
         const s2Local2 = row2 ? (r2 ? row2.s2Price / r2 : row2.s2Price) : 0;
+        // Build salesperson table for c1
+        const spRows1 = Array.from((perSp[c1] || new Map()).entries()).map(([id, v]) => ({ id, name: spNameById.get(id) || '—', ...v }))
+          .sort((a,b) => (b.s1Price + b.s2Price) - (a.s1Price + a.s2Price));
+        const spTable1 = React.createElement(View, { style: { marginTop: 8 } },
+          React.createElement(View, { style: styles.row },
+            TextRow('Name','28%','left',true), TextRow('S1 Qty','12%','right',true), TextRow('S1 Price (DKK)','20%','right',true),
+            TextRow('S2 Qty','12%','right',true), TextRow('S2 Price (DKK)','20%','right',true)
+          ),
+          ...spRows1.map(r => React.createElement(View, { style: styles.row },
+            TextRow(r.name,'28%','left'), TextRow(String(r.s1Qty),'12%','right'), TextRow(fmt(r.s1Price),'20%','right'),
+            TextRow(String(r.s2Qty),'12%','right'), TextRow(fmt(r.s2Price),'20%','right')
+          ))
+        );
+        // Build salesperson table for c2
+        const spRows2 = c2 ? Array.from((perSp[c2] || new Map()).entries()).map(([id, v]) => ({ id, name: spNameById.get(id) || '—', ...v }))
+          .sort((a,b) => (b.s1Price + b.s2Price) - (a.s1Price + a.s2Price)) : [];
+        const spTable2 = c2 ? React.createElement(View, { style: { marginTop: 8 } },
+          React.createElement(View, { style: styles.row },
+            TextRow('Name','28%','left',true), TextRow('S1 Qty','12%','right',true), TextRow('S1 Price (DKK)','20%','right',true),
+            TextRow('S2 Qty','12%','right',true), TextRow('S2 Price (DKK)','20%','right',true)
+          ),
+          ...spRows2.map(r => React.createElement(View, { style: styles.row },
+            TextRow(r.name,'28%','left'), TextRow(String(r.s1Qty),'12%','right'), TextRow(fmt(r.s1Price),'20%','right'),
+            TextRow(String(r.s2Qty),'12%','right'), TextRow(fmt(r.s2Price),'20%','right')
+          ))
+        ) : null;
+        const TextRow = (txt: string, w: string, align: 'left' | 'right', header?: boolean) =>
+          React.createElement(Text, { style: [{ width: w }, styles.cell, align==='left'?styles.left:styles.right, header ? { fontWeight: 700 } : {}] }, txt);
         return React.createElement(PdfPage, { size: 'A4', style: styles.page },
           React.createElement(View, { style: { flexDirection: 'column', gap: 24 } },
             React.createElement(View, { style: { width: '100%' as any } },
@@ -449,7 +498,8 @@ export async function exportOverview(ctx: Ctx) {
                   React.createElement(Text, { style: styles.boxSub }, `${fmt(row1.s1Price)} DKK vs ${fmt(row1.s2Price)} DKK`),
                   React.createElement(Donut as any, { pct: pricePct1, label: 'Omsætning' })
                 )
-              )
+              ),
+              spTable1
             ),
             c2 ? React.createElement(View, { style: { width: '100%' as any } },
               React.createElement(Text, { style: styles.h1 }, `Countries · ${c2}`),
@@ -464,7 +514,8 @@ export async function exportOverview(ctx: Ctx) {
                   React.createElement(Text, { style: styles.boxNums }, `${fmt(s1Local2)} ${cur2} vs ${fmt(s2Local2)} ${cur2}`),
                   React.createElement(Text, { style: styles.boxSub }, `${fmt(row2!.s1Price)} DKK vs ${fmt(row2!.s2Price)} DKK`),
                   React.createElement(Donut as any, { pct: pricePct2, label: 'Omsætning' })
-                )
+                ),
+                spTable2
               )
             ) : null
           )
