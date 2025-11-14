@@ -105,6 +105,14 @@ export default function StatisticsDashboardPage() {
             attachments.push({ name: fname, data: base64 });
           } catch {}
         }
+        try {
+          console.log('[email:salesperson] prepared', {
+            recipient,
+            includeCountries: !!(includeCountries && countries?.public_url),
+            includeTop10Salesmen: !!(includeTop10Salesmen && top10Salesmen?.public_url),
+            attachments: attachments.map(a => ({ name: a.name, sizeKb: Math.round(((a.data?.length || 0) * 3) / 4 / 1024) }))
+          });
+        } catch {}
         if (attachments.length === 0) continue;
         const subject = 'Din statistik';
         const firstName = String(byId[sp.id]?.name || '');
@@ -144,6 +152,14 @@ export default function StatisticsDashboardPage() {
         if (row?.public_url) { try { const du = await fetchToDataUrl(row.public_url); dynamicParams.top10_overall_pdf = du; } catch {} }
       }
       if (!overallOpts.overview && !overallOpts.countries && !overallOpts.top10overall) { alert('No options selected.'); return; }
+      try {
+        const summarize = (p: Record<string, string>) => Object.fromEntries(Object.entries(p).map(([k, v]) => [k, { len: (v || '').length, head: (v || '').slice(0, 32) }]));
+        console.log('[email:overall] prepared', {
+          to,
+          include: { overview: overallOpts.overview, countries: overallOpts.countries, top10overall: overallOpts.top10overall },
+          params: summarize(dynamicParams)
+        });
+      } catch {}
       const subject = 'Statistik opdatering';
       const bodyHtml = 'Hermed statistik :)';
       await sendEmailJs(to, subject, bodyHtml, undefined, dynamicParams);
@@ -163,6 +179,15 @@ export default function StatisticsDashboardPage() {
     if (!EMAILJS_SERVICE_ID || !EMAILJS_TEMPLATE_ID || !EMAILJS_PUBLIC_KEY) {
       throw new Error('EmailJS browser env missing. Set NEXT_PUBLIC_EMAILJS_* variables.');
     }
+    const summarizeParams = (p?: Record<string, string>) => {
+      const out: any = {};
+      if (!p) return out;
+      for (const k of Object.keys(p)) {
+        const v = p[k] || '';
+        out[k] = { len: v.length, head: v.slice(0, 24) };
+      }
+      return out;
+    };
     for (const recipient of to) {
       // Prefer Dynamic Attachments via template params; fall back to attachments shapes if needed
       const basePayload = {
@@ -195,11 +220,21 @@ export default function StatisticsDashboardPage() {
             }
           ];
       let sent = false; let lastErr: string | null = null;
-      for (const payload of shapes) {
+      for (let idx = 0; idx < shapes.length; idx++) {
+        const payload = shapes[idx];
+        try {
+          console.log('[EmailJS:request:preview]', {
+            to: recipient,
+            shapeIndex: idx,
+            hasAttachments: Array.isArray(payload.attachments) ? payload.attachments.length : 0,
+            templateParams: summarizeParams(payload.template_params)
+          });
+        } catch {}
         const res = await fetch(EMAILJS_ENDPOINT, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
         if (res.ok) { sent = true; break; }
-        lastErr = await res.text();
-        try { console.error('[EmailJS error]', lastErr); } catch {}
+        const body = await res.text().catch(() => '');
+        lastErr = `${res.status} ${res.statusText} :: ${body}`;
+        try { console.error('[EmailJS:error]', lastErr); } catch {}
       }
       if (!sent) {
         throw new Error(lastErr || 'EmailJS send failed');
