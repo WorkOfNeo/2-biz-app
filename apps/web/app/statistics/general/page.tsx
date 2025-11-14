@@ -298,7 +298,7 @@ export default function StatisticsGeneralPage() {
     }
   }
 
-  const { data: rows } = useSWR(
+  const { data: rows, mutate: mutateGeneralRows } = useSWR(
     s1 && s2 ? ['general-stats', s1, s2, selectedSalespersonId ?? 'all'] : null,
     async () => {
       // Fetch both seasons at once and aggregate client-side by account_no
@@ -427,7 +427,7 @@ export default function StatisticsGeneralPage() {
     if (overridesKey) console.log('[stats] overrides', overridesKey, overrides);
   }, [overridesKey, overrides?.id, overrides?.value]);
 
-  const { data: closedCustomers } = useSWR('customers-closed', async () => {
+  const { data: closedCustomers, mutate: mutateClosedCustomers } = useSWR('customers-closed', async () => {
     const { data, error } = await supabase.from('customers').select('customer_id, permanently_closed, excluded, nulled');
     if (error) throw new Error(error.message);
     const setClosed = new Set<string>();
@@ -1190,6 +1190,16 @@ export default function StatisticsGeneralPage() {
                         const js = await res.json();
                         try { console.log('[import:result]', js); } catch {}
                         setImportResult(js);
+                        // Revalidate views so UI reflects seasonal nulls and permanent closures
+                        try {
+                          if (importSeasonId && (importSeasonId === s1 || importSeasonId === s2)) {
+                            await mutateGeneralRows();
+                          }
+                          if (importSeasonId && importSeasonId === s1) {
+                            await mutateOverrides();
+                          }
+                          await mutateClosedCustomers();
+                        } catch {}
                       } catch (e: any) {
                         alert(e?.message || 'Import failed');
                       } finally {
