@@ -1220,9 +1220,11 @@ export default function StatisticsGeneralPage() {
                       const XLSX = await import('xlsx');
                       const buf = await file.arrayBuffer();
                       const wb = XLSX.read(buf, { type: 'array' });
-                      const first = wb.SheetNames[0];
-                      const ws = wb.Sheets[first];
-                      const rows = XLSX.utils.sheet_to_json(ws) as any[];
+                      const sheetNames: string[] = Array.isArray(wb.SheetNames) ? (wb.SheetNames as string[]) : [];
+                      const first = sheetNames.length > 0 ? sheetNames[0] : null;
+                      if (!first) { setImportRows([]); setImportHeaders([]); return; }
+                      const ws = (wb.Sheets as any)[first as string];
+                      const rows = XLSX.utils.sheet_to_json(ws as any) as any[];
                       setImportRows(rows);
                       const headers = Object.keys(rows[0] || {});
                       setImportHeaders(headers);
