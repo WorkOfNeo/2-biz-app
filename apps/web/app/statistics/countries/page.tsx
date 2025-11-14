@@ -286,6 +286,8 @@ export default function CountriesPage() {
         const spRows = Array.from(spMap.entries()).map(([id, v]) => ({
           id, name: spNameById.get(id) || '—', ...v
         })).sort((a, b) => (b.s1PriceDkk + b.s2PriceDkk) - (a.s1PriceDkk + a.s2PriceDkk));
+        const s1Label = getSeasonLabel(s1) || 'Season 1';
+        const s2Label = getSeasonLabel(s2) || 'Season 2';
         return (
           <div key={c} className="rounded-lg border bg-white">
             <div className="border-b text-center bg-[#0f172a] text-white rounded-t-lg text-[2rem] leading-tight py-2">{c}</div>
@@ -307,14 +309,14 @@ export default function CountriesPage() {
             {/* Per-salesperson section (split into two, borderless tables, equal heights) */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 px-6 pb-6">
               <div className="flex flex-col min-h-[280px]">
-                <div className="text-sm font-semibold text-left mb-2">Per Salesperson · Stk</div>
+                <div className="text-sm font-semibold text-left mb-2">Per sælger - stk</div>
                 <div className="flex-1 overflow-auto">
                   <table className="min-w-full text-sm">
                     <thead>
                       <tr>
                         <th className="p-2 text-left font-semibold">Name</th>
-                        <th className="p-2 text-right font-semibold">Qty S1</th>
-                        <th className="p-2 text-right font-semibold">Qty S2</th>
+                        <th className="p-2 text-right font-semibold">{s1Label}</th>
+                        <th className="p-2 text-right font-semibold">{s2Label}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -333,14 +335,14 @@ export default function CountriesPage() {
                 </div>
               </div>
               <div className="flex flex-col min-h-[280px]">
-                <div className="text-sm font-semibold text-left mb-2">Per Salesperson · Omsætning (DKK)</div>
+                <div className="text-sm font-semibold text-left mb-2">Per sælger - omsætning (DKK)</div>
                 <div className="flex-1 overflow-auto">
                   <table className="min-w-full text-sm">
                     <thead>
                       <tr>
                         <th className="p-2 text-left font-semibold">Name</th>
-                        <th className="p-2 text-right font-semibold">Price S1</th>
-                        <th className="p-2 text-right font-semibold">Price S2</th>
+                        <th className="p-2 text-right font-semibold">{s1Label}</th>
+                        <th className="p-2 text-right font-semibold">{s2Label}</th>
                       </tr>
                     </thead>
                     <tbody>
