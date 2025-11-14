@@ -289,49 +289,67 @@ export default function CountriesPage() {
         return (
           <div key={c} className="rounded-lg border bg-white">
             <div className="border-b text-center bg-[#0f172a] text-white rounded-t-lg text-[2rem] leading-tight py-2">{c}</div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-6 text-center">
-              <div className="space-y-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-6">
+              <div className="space-y-3 text-center">
                 <div className="font-medium">Antal stk</div>
                 <div className="text-sm text-gray-600">{getSeasonLabel(s1) || 'Season 1'} vs {getSeasonLabel(s2) || 'Season 2'}</div>
                 <div className="text-lg font-semibold">{row.s1Qty.toLocaleString('da-DK')} vs {row.s2Qty.toLocaleString('da-DK')}</div>
                 <Donut pct={qtyPct} label={`Stk`} />
+                <div className="text-sm font-semibold text-left mt-3">Per Salesperson</div>
+                <div className="overflow-auto rounded border">
+                  <table className="min-w-full text-sm">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="p-2 text-left">Name</th>
+                        <th className="p-2 text-right">Qty S1</th>
+                        <th className="p-2 text-right">Qty S2</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {spRows.map((r) => (
+                        <tr key={r.id} className="border-t">
+                          <td className="p-2 text-left">{r.name}</td>
+                          <td className="p-2 text-right">{r.s1Qty.toLocaleString('da-DK')}</td>
+                          <td className="p-2 text-right">{r.s2Qty.toLocaleString('da-DK')}</td>
+                        </tr>
+                      ))}
+                      {spRows.length === 0 && (
+                        <tr><td className="p-2 text-left text-xs text-gray-500" colSpan={3}>No data</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
               </div>
-              <div className="space-y-3">
+              <div className="space-y-3 text-center">
                 <div className="font-medium">Omsætning</div>
                 <div className="text-sm text-gray-600">{getSeasonLabel(s1) || 'Season 1'} vs {getSeasonLabel(s2) || 'Season 2'}</div>
                 <div className="text-lg font-semibold">{Math.round(s1Local).toLocaleString('da-DK')} {cur} vs {Math.round(s2Local).toLocaleString('da-DK')} {cur}</div>
                 <div className="text-sm text-gray-600">{Math.round(row.s1PriceDkk).toLocaleString('da-DK')} DKK vs {Math.round(row.s2PriceDkk).toLocaleString('da-DK')} DKK</div>
                 <Donut pct={pricePct} label={`Omsætning`} />
-              </div>
-            </div>
-            <div className="p-4">
-              <div className="text-sm font-semibold text-left mb-2">Per Salesperson</div>
-              <div className="overflow-auto rounded border">
-                <table className="min-w-full text-sm">
-                  <thead className="bg-gray-50">
-                    <tr>
-                      <th className="p-2 text-left">Name</th>
-                      <th className="p-2 text-right">Qty S1</th>
-                      <th className="p-2 text-right">Price S1 (DKK)</th>
-                      <th className="p-2 text-right">Qty S2</th>
-                      <th className="p-2 text-right">Price S2 (DKK)</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {spRows.map((r) => (
-                      <tr key={r.id} className="border-t">
-                        <td className="p-2 text-left">{r.name}</td>
-                        <td className="p-2 text-right">{r.s1Qty.toLocaleString('da-DK')}</td>
-                        <td className="p-2 text-right">{Math.round(r.s1PriceDkk).toLocaleString('da-DK')}</td>
-                        <td className="p-2 text-right">{r.s2Qty.toLocaleString('da-DK')}</td>
-                        <td className="p-2 text-right">{Math.round(r.s2PriceDkk).toLocaleString('da-DK')}</td>
+                <div className="text-sm font-semibold text-left mt-3">Per Salesperson</div>
+                <div className="overflow-auto rounded border">
+                  <table className="min-w-full text-sm">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="p-2 text-left">Name</th>
+                        <th className="p-2 text-right">Price S1 (DKK)</th>
+                        <th className="p-2 text-right">Price S2 (DKK)</th>
                       </tr>
-                    ))}
-                    {spRows.length === 0 && (
-                      <tr><td className="p-2 text-left text-xs text-gray-500" colSpan={5}>No data</td></tr>
-                    )}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {spRows.map((r) => (
+                        <tr key={r.id} className="border-t">
+                          <td className="p-2 text-left">{r.name}</td>
+                          <td className="p-2 text-right">{Math.round(r.s1PriceDkk).toLocaleString('da-DK')}</td>
+                          <td className="p-2 text-right">{Math.round(r.s2PriceDkk).toLocaleString('da-DK')}</td>
+                        </tr>
+                      ))}
+                      {spRows.length === 0 && (
+                        <tr><td className="p-2 text-left text-xs text-gray-500" colSpan={3}>No data</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
           </div>
