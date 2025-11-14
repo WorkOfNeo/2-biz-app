@@ -31,9 +31,9 @@ async function handle(req: Request) {
     for (const sp of (salespersons ?? []) as any[]) {
       if (sp.id) currencyBySp.set(sp.id as string, (sp.currency as string | null) || 'DKK');
     }
-    // Normalize and insert; also collect season-nulled accounts (by account_no)
+    // Normalize, aggregate per account_no, and upsert; also collect season-nulled/permanent accounts
     let inserted = 0;
-    const batch: Array<any> = [];
+    const agg = new Map<string, any>();
     const nulledAccounts = new Set<string>();
     const permAccounts = new Set<string>();
     for (const r of rows) {
@@ -44,6 +44,7 @@ async function handle(req: Request) {
         const key = `${customer_name.toLowerCase()}||${city.toLowerCase()}`;
         account_no = byNameCity.get(key) || '';
       }
+      if (!account_no) continue; // cannot insert without account number due to NOT NULL + unique
       const qty = Number(r.qty || 0) || 0;
       const price = Number(r.price || 0) || 0;
       const spId = account_no ? (spByAccount.get(account_no) ?? null) : null;
@@ -55,30 +56,37 @@ async function handle(req: Request) {
       const nulled = isYes || perm; // ignore all other values; 'no' -> not nulled
       if (nulled && account_no) nulledAccounts.add(account_no);
       if (perm && account_no) permAccounts.add(account_no);
-      // Skip empty rows
-      if (!qty && !price) continue;
-      batch.push({
-        account_no: account_no || null,
-        customer_name: customer_name || null,
-        city: city || null,
-        qty,
-        price,
-        currency,
-        season_id: seasonId,
-        salesperson_id: spId,
-        frozen: false
-      });
-      if (batch.length >= 500) {
-        const { error } = await supabase.from('sales_stats').insert(batch as any);
-        if (error) return new Response(JSON.stringify({ error: error.message }), { status: 500 });
-        inserted += batch.length;
-        batch.length = 0;
+      if (!qty && !price) continue; // Skip empty contributions
+      const existing = agg.get(account_no) as any | undefined;
+      if (existing) {
+        existing.qty = (Number(existing.qty||0) + qty);
+        existing.price = (Number(existing.price||0) + price);
+        if (!existing.customer_name && customer_name) existing.customer_name = customer_name;
+        if (!existing.city && city) existing.city = city;
+        if (!existing.salesperson_id && spId) existing.salesperson_id = spId;
+        existing.currency = existing.currency || currency;
+      } else {
+        agg.set(account_no, {
+          account_no,
+          customer_name: customer_name || null,
+          city: city || null,
+          qty,
+          price,
+          currency,
+          season_id: seasonId,
+          salesperson_id: spId,
+          frozen: false
+        });
       }
     }
-    if (batch.length) {
-      const { error } = await supabase.from('sales_stats').insert(batch as any);
+    // Upsert aggregated rows to avoid unique violations and overwrite prior imports for the season
+    const aggregated = Array.from(agg.values());
+    const chunkSize = 500;
+    for (let i = 0; i < aggregated.length; i += chunkSize) {
+      const part = aggregated.slice(i, i + chunkSize);
+      const { error } = await supabase.from('sales_stats').upsert(part as any, { onConflict: 'season_id,account_no' as any });
       if (error) return new Response(JSON.stringify({ error: error.message }), { status: 500 });
-      inserted += batch.length;
+      inserted += part.length;
     }
     // Update season overrides (nulled) for this season
     if (nulledAccounts.size > 0) {
