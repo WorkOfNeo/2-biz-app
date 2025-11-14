@@ -26,12 +26,12 @@ export default function StockListPage() {
     const rows: any[] = [];
     while (from < cap) {
       const to = from + pageSize - 1;
-      const { data, error } = await supabase
-        .from('style_stock')
-        .select('style_no, color, sizes, section, row_label, values, po_link, scraped_at')
-        .order('scraped_at', { ascending: false })
+    const { data, error } = await supabase
+      .from('style_stock')
+      .select('style_no, color, sizes, section, row_label, values, po_link, scraped_at')
+      .order('scraped_at', { ascending: false })
         .range(from, to);
-      if (error) throw new Error(error.message);
+    if (error) throw new Error(error.message);
       const batch = data ?? [];
       rows.push(...batch);
       if (batch.length < pageSize) break;
@@ -98,6 +98,45 @@ export default function StockListPage() {
       map.set(r.style_color_id, set);
     }
     return map as Map<string, Set<string>>;
+  }, { refreshInterval: 0 });
+
+  // DB-backed stock lists (lists, styles, and per-list color exclusions)
+  const { data: stockLists } = useSWR('stock-lists:all', async () => {
+    const { data, error } = await supabase.from('stock_lists').select('id, name').order('name', { ascending: true });
+    if (error) throw new Error(error.message);
+    return (data ?? []) as Array<{ id: string; name: string }>;
+  });
+  const [activeListId, setActiveListId] = React.useState<string>('');
+  const { data: listStyles } = useSWR(activeListId ? ['stock-list-styles:byList', activeListId] : null, async () => {
+    const { data, error } = await supabase.from('stock_list_styles').select('style_id').eq('list_id', activeListId);
+    if (error) throw new Error(error.message);
+    return (data ?? []) as Array<{ style_id: string }>;
+  });
+  const styleIdsInList = React.useMemo(() => new Set((listStyles ?? []).map(r => r.style_id)), [listStyles]);
+  const { data: listColorExclusions } = useSWR(activeListId ? ['stock_list_colors:byList', activeListId] : null, async () => {
+    const { data, error } = await supabase.from('stock_list_colors').select('style_id, style_color_id, include').eq('list_id', activeListId);
+    if (error) throw new Error(error.message);
+    const excluded = new Map<string, Set<string>>();
+    const invertByStyle = new Map<string, Map<string, string>>(); // style_id -> (style_color_id -> colorLower)
+    for (const sid of styleIds) {
+      const cmap = styleColors?.get(sid) || new Map<string, string>();
+      const inv = new Map<string, string>();
+      for (const [ck, id] of Array.from(cmap.entries())) inv.set(id, ck);
+      invertByStyle.set(sid, inv);
+    }
+    for (const r of (data ?? []) as any[]) {
+      const sid = String(r.style_id || '');
+      const scId = String(r.style_color_id || '');
+      if (r.include === false) {
+        const inv = invertByStyle.get(sid) || new Map<string, string>();
+        const ckey = inv.get(scId) || null;
+        if (!ckey) continue;
+        const set = excluded.get(sid) || new Set<string>();
+        set.add(ckey);
+        excluded.set(sid, set);
+      }
+    }
+    return excluded as Map<string, Set<string>>;
   }, { refreshInterval: 0 });
 
   // Removed per-user selection and view toggles
@@ -181,52 +220,7 @@ export default function StockListPage() {
     return Array.from(new Set(out));
   }, [groups, styleRows, styleColors, styleMetaByNo]);
 
-  // Load visibility flags for colors for styles shown
-  const { data: colorVisibility } = useSWR(styleIds.length ? ['style_colors:visible', styleIds.join(',')] : null, async () => {
-    // Chunk large IN lists to avoid long URLs (400 Bad Request)
-    async function fetchChunks<T extends { style_id: string; color: string; visible?: boolean | null }>(
-      selectCols: string
-    ): Promise<T[]> {
-      const ids = styleIds.slice();
-      const out: T[] = [];
-      const chunkSize = 50;
-      for (let i = 0; i < ids.length; i += chunkSize) {
-        const chunk = ids.slice(i, i + chunkSize);
-        const { data, error } = await supabase
-          .from('style_colors')
-          .select(selectCols)
-          .in('style_id', chunk);
-        if (error) throw error as any;
-        out.push(...(((data ?? []) as unknown) as T[]));
-      }
-      return out;
-    }
-    async function loadWithVisible(): Promise<Map<string, Map<string, boolean>>> {
-      const rows = await fetchChunks<{ style_id: string; color: string; visible: boolean | null }>('style_id, color, visible');
-      const map = new Map<string, Map<string, boolean>>();
-      for (const r of rows) {
-        const sid = String(r.style_id || '');
-        const ckey = String(r.color || '').trim().toLowerCase();
-        if (!map.has(sid)) map.set(sid, new Map());
-        map.get(sid)!.set(ckey, (r.visible as boolean | null) !== false);
-      }
-      return map;
-    }
-    try {
-      return await loadWithVisible();
-    } catch (e: any) {
-      // Fallback if column is missing or any error occurs
-      const rows = await fetchChunks<{ style_id: string; color: string }>('style_id, color');
-      const map = new Map<string, Map<string, boolean>>();
-      for (const r of rows) {
-        const sid = String(r.style_id || '');
-        const ckey = String(r.color || '').trim().toLowerCase();
-        if (!map.has(sid)) map.set(sid, new Map());
-        map.get(sid)!.set(ckey, true);
-      }
-      return map;
-    }
-  }, { refreshInterval: 0 });
+  // Per-list color includes (exclusions) for selected list will be loaded below after list selection setup
 
   // Group merged rows by style, then list colors within
   const groupedByStyle = React.useMemo(() => {
@@ -238,60 +232,31 @@ export default function StockListPage() {
     const out = Array.from(map.entries()).map(([styleNo, list]) => ({ styleNo, colors: list.sort((a, b) => a.color.localeCompare(b.color)) }));
     // Sort styles numerically-then-lexicographically
     out.sort((a, b) => a.styleNo.localeCompare(b.styleNo));
-    // Filter colors by visibility (if defined); default visible
+    // Apply per-list color exclusions when a list is selected
+    if (!activeListId) return out as Array<{ styleNo: string; colors: Group[] }>;
     const filtered = out.map((row) => {
       const sid = styleMetaByNo[row.styleNo]?.id || null;
       if (!sid) return row;
-      const visMap = colorVisibility?.get(sid) || new Map<string, boolean>();
-      const colors = row.colors.filter((c) => {
-        const key = (c.color || '').trim().toLowerCase();
-        const vis = visMap.has(key) ? (visMap.get(key) as boolean) : true;
-        return vis;
-      });
+      const excluded = (listColorExclusions?.get(sid) as Set<string> | undefined) || new Set<string>();
+      const colors = row.colors.filter((c) => !excluded.has(String(c.color || '').trim().toLowerCase()));
       return { ...row, colors };
     });
     return filtered as Array<{ styleNo: string; colors: Group[] }>;
-  }, [groups, colorVisibility, styleMetaByNo]);
+  }, [groups, styleMetaByNo, activeListId, listColorExclusions]);
 
   const [openSold, setOpenSold] = React.useState<Record<string, boolean>>({});
   const [openPurchase, setOpenPurchase] = React.useState<Record<string, boolean>>({});
 
-  // Load style lists + rules
-  const { data: styleLists } = useSWR('app-settings:style-lists', async () => {
-    const { data } = await supabase.from('app_settings').select('value').eq('key', 'style_lists').maybeSingle();
-    const val = ((data as any)?.value || {}) as { lists?: Record<string, string[]>; rules?: Record<string, { includeSeasonIds?: string[] }> };
-    return { lists: val.lists || {}, rules: val.rules || {} } as { lists: Record<string, string[]>; rules: Record<string, { includeSeasonIds?: string[] }> };
-  });
-  const [activeList, setActiveList] = React.useState<string>('');
-  React.useEffect(() => {
-    if (styleLists && activeList === '') {
-      // default remains 'All' (empty denotes All)
-    }
-  }, [styleLists, activeList]);
-  // Load style_seasons for auto-inclusion rules
-  const { data: styleSeasonsAll } = useSWR('style_seasons:for-stock', async () => {
-    const { data, error } = await supabase.from('style_seasons').select('style_no, seasons').limit(100000);
-    if (error) throw new Error(error.message);
-    const map = new Map<string, string[]>();
-    for (const r of (data ?? []) as any[]) map.set(r.style_no, Array.isArray(r.seasons) ? (r.seasons as string[]) : []);
-    return map as Map<string, string[]>;
-  }, { refreshInterval: 0 });
+  // (migrated to top of file to satisfy dependencies)
 
-  // Filter rows based on active Style List and search
+  // Filter rows based on active Stock List and search
   const filteredForView = React.useMemo(() => {
     let base = groupedByStyle;
-    if (activeList && styleLists) {
-        const manual = (styleLists.lists?.[activeList] || []) as string[];
-        const includeSeasons = (styleLists.rules?.[activeList]?.includeSeasonIds || []) as string[];
-        const auto = new Set<string>();
-        if (includeSeasons.length) {
-          for (const row of groupedByStyle) {
-            const arr = styleSeasonsAll?.get(row.styleNo) || [];
-            if (arr.some((sid) => includeSeasons.includes(sid))) auto.add(row.styleNo);
-          }
-        }
-        const allow = new Set<string>([...manual, ...Array.from(auto)]);
-        base = base.filter(({ styleNo }) => allow.has(styleNo));
+    if (activeListId) {
+      base = base.filter(({ styleNo }) => {
+        const sid = styleMetaByNo[styleNo]?.id || null;
+        return sid ? styleIdsInList.has(sid) : false;
+      });
     }
     const q = searchQuery.trim().toLowerCase();
     if (!q) return base;
@@ -300,17 +265,17 @@ export default function StockListPage() {
       if (styleNo.toLowerCase().includes(q) || (name || '').toLowerCase().includes(q)) return true;
       return colors.some((c) => (c.color || '').toLowerCase().includes(q));
     });
-  }, [groupedByStyle, activeList, styleLists, searchQuery, styleMetaByNo]);
+  }, [groupedByStyle, activeListId, styleIdsInList.size, searchQuery, styleMetaByNo]);
 
   const emptyState: JSX.Element | null = React.useMemo(() => {
-    if (activeList && filteredForView.length === 0) {
+    if (activeListId && filteredForView.length === 0) {
       return <div className="text-sm text-gray-600">No stock data yet for styles in the selected list.</div>;
     }
     if (filteredForView.length === 0) {
       return <div className="text-sm text-gray-600">No scraped stock data available yet.</div>;
     }
     return null;
-  }, [activeList, filteredForView.length]);
+  }, [activeListId, filteredForView.length]);
 
   return (
     <div className="space-y-4 sl-root">
@@ -321,12 +286,12 @@ export default function StockListPage() {
 
       <div className="flex items-center justify-between gap-3 sl-controls">
         <div className="flex items-center gap-2 sl-lists">
-          <button
-            className={(activeList===''?'bg-slate-900 text-white ':'bg-white text-slate-900 ') + 'text-xs px-2 py-1 border rounded sl-list-chip sl-list-all'}
-            onClick={()=>setActiveList('')}
-          >All</button>
-          {Object.keys(styleLists?.lists || {}).map((name) => (
-            <button key={name} className={(activeList===name?'bg-slate-900 text-white ':'bg-white text-slate-900 ') + 'text-xs px-2 py-1 border rounded sl-list-chip'} onClick={()=>setActiveList(name)}>{name}</button>
+            <button
+            className={(activeListId===''?'bg-slate-900 text-white ':'bg-white text-slate-900 ') + 'text-xs px-2 py-1 border rounded sl-list-chip sl-list-all'}
+            onClick={()=>setActiveListId('')}
+            >All</button>
+          {(stockLists ?? []).map((row) => (
+            <button key={row.id} className={(activeListId===row.id?'bg-slate-900 text-white ':'bg-white text-slate-900 ') + 'text-xs px-2 py-1 border rounded sl-list-chip'} onClick={()=>setActiveListId(row.id)}>{row.name}</button>
           ))}
         </div>
         <div className="sl-search">
@@ -336,8 +301,8 @@ export default function StockListPage() {
             value={searchQuery}
             onChange={(e)=>setSearchQuery(e.target.value)}
           />
-        </div>
-      </div>
+              </div>
+          </div>
 
       {/* Main content */}
       <div className="space-y-4 sl-main">
@@ -365,16 +330,16 @@ export default function StockListPage() {
               </div>
               {/* Right: per-color tables */}
               <div className="space-y-4 sl-color-sections">
-              {colors.map((g) => {
-                const key = `${g.styleNo}:${g.color}`;
-                const sum = (arr: number[]) => arr.reduce((a, b) => a + (Number(b) || 0), 0);
-                const stockTotal = sum(g.stock);
-                const soldTotal = sum(g.soldSum);
-                const purchaseTotal = sum(g.purchaseSum);
-                const availableTotal = sum(g.available);
-                return (
+                {colors.map((g) => {
+                  const key = `${g.styleNo}:${g.color}`;
+                  const sum = (arr: number[]) => arr.reduce((a, b) => a + (Number(b) || 0), 0);
+                  const stockTotal = sum(g.stock);
+                  const soldTotal = sum(g.soldSum);
+                  const purchaseTotal = sum(g.purchaseSum);
+                  const availableTotal = sum(g.available);
+                  return (
                   <div key={key} className="space-y-1 sl-color-block">
-                    {/* Seasons chips and add control */}
+                      {/* Seasons chips and add control */}
                     <div className="flex flex-wrap items-center gap-1 sl-season-chips">
                         {(() => {
                           const sid = styleMetaByNo[g.styleNo]?.id || null;
@@ -416,21 +381,21 @@ export default function StockListPage() {
                             </>
                           );
                         })()}
-                    </div>
+                      </div>
                     {/* Sizes table with image + color columns */}
                     <div className="overflow-auto sl-table-wrap">
                       <table className="min-w-full text-xs sl-table">
-                        <thead className="bg-gray-50">
-                          <tr>
+                          <thead className="bg-gray-50">
+                            <tr>
                             <th className="p-2 text-left border-b sl-th sl-th-color" style={{ width: 140 }}>Color</th>
                             <th className="p-2 text-left border-b whitespace-nowrap sl-th sl-th-section" style={{ width: 160 }}>Section</th>
                             {Array.from({ length: maxSizeCount }, (_, i) => g.sizes[i] ?? '').map((s, i) => (
                               <th key={i} className="p-2 text-right border-b sl-th sl-th-size" style={{ width: 64 }}>{s}</th>
                             ))}
                             <th className="p-2 text-right border-b sl-th sl-th-total" style={{ width: 72 }}>Total</th>
-                          </tr>
-                        </thead>
-                        <tbody>
+                            </tr>
+                          </thead>
+                          <tbody>
                           <tr className="sl-row sl-row-stock">
                             <td className="p-2 border-b align-top sl-cell sl-cell-color" rowSpan={4} style={{ width: 140 }}>{g.color}</td>
                             <td className="p-2 border-b whitespace-nowrap sl-cell sl-cell-section" style={{ width: 160 }}>Stock</td>
@@ -445,7 +410,7 @@ export default function StockListPage() {
                               <td key={i} className="p-2 border-b text-right text-red-600 sl-cell sl-cell-size" style={{ width: 64 }}>{i < g.sizes.length ? (Number(v) > 0 ? `-${v}` : v) : ''}</td>
                             ))}
                             <td className="p-2 border-b text-right font-medium text-red-700 sl-cell sl-cell-total" style={{ width: 72 }}>{soldTotal > 0 ? `-${soldTotal}` : soldTotal}</td>
-                          </tr>
+                        </tr>
                           {openSold[key] && g.soldRows.map((r, idx) => (
                             <tr key={`sold-${idx}`} className="bg-gray-50 sl-row sl-row-sold-detail">
                               <td className="p-2 border-b whitespace-nowrap sl-cell sl-cell-section" style={{ width: 160 }}>• {r.row_label ?? 'Row'}</td>
@@ -477,13 +442,13 @@ export default function StockListPage() {
                               <td key={i} className={"p-2 text-right font-semibold sl-cell sl-cell-size " + ((Number(v) < 0) ? 'text-red-700' : ((Number(v) > 0) ? 'text-green-800' : '') )} style={{ width: 64 }}>{i < g.sizes.length ? v : ''}</td>
                             ))}
                             <td className={"p-2 text-right font-semibold sl-cell sl-cell-total " + (availableTotal < 0 ? 'text-red-700' : (availableTotal > 0 ? 'text-green-800' : '') )} style={{ width: 72 }}>{availableTotal}</td>
-                          </tr>
-                        </tbody>
-                      </table>
+                            </tr>
+                          </tbody>
+                        </table>
                     </div>
-                  </div>
-                );
-              })}
+                    </div>
+                  );
+        })}
               </div>
             </div>
           </div>
