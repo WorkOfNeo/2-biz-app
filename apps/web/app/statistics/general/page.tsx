@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { Menu, EyeOff, Trash2, Ban } from 'lucide-react';
 import { ProgressBar } from '../../../components/ProgressBar';
 import { Modal } from '../../../components/Modal';
+import Papa from 'papaparse';
 
 export default function StatisticsGeneralPage() {
   const { data: seasons } = useSWR('seasons-all', async () => {
@@ -65,6 +66,19 @@ export default function StatisticsGeneralPage() {
   const [nullByInputOpen, setNullByInputOpen] = useState(false);
   const [nullByInputText, setNullByInputText] = useState('');
   const [nullByInputResult, setNullByInputResult] = useState<string | null>(null);
+  // Import Statistics modal state
+  const [importOpen, setImportOpen] = useState(false);
+  const [importSeasonId, setImportSeasonId] = useState<string>('');
+  const [importLookup, setImportLookup] = useState<'account' | 'name_city'>('account');
+  const [importHeaders, setImportHeaders] = useState<string[]>([]);
+  const [importRows, setImportRows] = useState<any[]>([]);
+  const [mapAccount, setMapAccount] = useState<string>('');
+  const [mapCustomer, setMapCustomer] = useState<string>('');
+  const [mapCity, setMapCity] = useState<string>('');
+  const [mapQty, setMapQty] = useState<string>('');
+  const [mapPrice, setMapPrice] = useState<string>('');
+  const [mapCurrency, setMapCurrency] = useState<string>('');
+  const [importBusy, setImportBusy] = useState(false);
   const spNameById = useMemo(() => Object.fromEntries(((salespersons ?? []) as { id: string; name: string }[]).map(s => [s.id, s.name])), [salespersons]);
   const spCurrencyById = useMemo(() => Object.fromEntries(((salespersons ?? []) as { id: string; currency?: string | null }[]).map(s => [s.id, s.currency ?? 'DKK'])), [salespersons]);
   useEffect(() => {
@@ -626,6 +640,10 @@ export default function StatisticsGeneralPage() {
                     }
                   }}
                 >Export PDF (ZIP)</button>
+                <button
+                  className="block w-full px-3 py-2 text-left hover:bg-gray-50"
+                  onClick={() => { setImportOpen(true); }}
+                >Import Statistic</button>
                 <button className="block w-full px-3 py-2 text-left hover:bg-gray-50" onClick={() => { setNullByInputText(''); setNullByInputResult(null); setNullByInputOpen(true); }}>Null Customers by Input</button>
               </div>
             </div>
@@ -1120,6 +1138,150 @@ export default function StatisticsGeneralPage() {
                 <div className="text-sm text-gray-600">Enter one customer name per line. Matching is case-insensitive against the Customer column shown in the table. Matches will be nulled for the selected Season 1.</div>
                 <textarea className="w-full h-48 border rounded-md p-2 text-sm" value={nullByInputText} onChange={(e) => setNullByInputText(e.target.value)} placeholder={"Customer A\nCustomer B"} />
                 {nullByInputResult && <div className="text-sm">{nullByInputResult}</div>}
+              </div>
+            </Modal>
+            {/* Import Statistic modal */}
+            <Modal
+              open={importOpen}
+              onClose={() => setImportOpen(false)}
+              title="Import Statistic"
+              footer={(
+                <div className="flex items-center gap-2">
+                  <button className="rounded border px-3 py-1.5 text-sm" onClick={() => setImportOpen(false)}>Close</button>
+                  <button
+                    className="inline-flex items-center rounded-md bg-slate-900 text-white px-3 py-1.5 text-sm hover:bg-slate-800 disabled:opacity-50"
+                    disabled={importBusy || !importSeasonId || !mapQty || !mapPrice || (importLookup==='account' ? !mapAccount : (!mapCustomer || !mapCity))}
+                    onClick={async () => {
+                      try {
+                        if (!importSeasonId) { alert('Select target season'); return; }
+                        setImportBusy(true);
+                        const { data: { session } } = await supabase.auth.getSession();
+                        if (!session) throw new Error('Not signed in');
+                        // Normalize rows according to mapping
+                        const rows = importRows.map((r) => {
+                          const account_no = mapAccount ? String(r[mapAccount] ?? '').trim() : '';
+                          const customer_name = mapCustomer ? String(r[mapCustomer] ?? '').trim() : '';
+                          const city = mapCity ? String(r[mapCity] ?? '').trim() : '';
+                          const qty = Number(r[mapQty] ?? 0) || 0;
+                          const price = Number(r[mapPrice] ?? 0) || 0;
+                          const currency = mapCurrency ? String(r[mapCurrency] ?? '').trim() : 'DKK';
+                          return { account_no, customer_name, city, qty, price, currency };
+                        }).filter((x) => (x.qty || x.price));
+                        const res = await fetch('/api/statistics/import', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+                          body: JSON.stringify({ seasonId: importSeasonId, lookup: importLookup, rows })
+                        });
+                        if (!res.ok) throw new Error(await res.text());
+                        const js = await res.json();
+                        alert(`Imported ${js.inserted ?? 0} rows`);
+                        setImportOpen(false);
+                      } catch (e: any) {
+                        alert(e?.message || 'Import failed');
+                      } finally {
+                        setImportBusy(false);
+                      }
+                    }}
+                  >
+                    {importBusy ? 'Importing…' : 'Import'}
+                  </button>
+                </div>
+              )}
+            >
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <label className="text-sm text-gray-700">Target season</label>
+                  <select className="rounded border px-2 py-1 text-sm" value={importSeasonId} onChange={(e)=>setImportSeasonId(e.target.value)}>
+                    <option value="">Select…</option>
+                    {(seasons ?? []).map((s:any) => (
+                      <option key={s.id} value={s.id}>{s.name}{s.year ? ' ' + s.year : ''}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className="text-sm text-gray-700">Account lookup</label>
+                  <select className="rounded border px-2 py-1 text-sm" value={importLookup} onChange={(e)=>setImportLookup(e.target.value as any)}>
+                    <option value="account">Account No</option>
+                    <option value="name_city">Customer + City</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-700 mb-1">Upload CSV/XLSX</label>
+                  <input
+                    type="file"
+                    accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel"
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      if (file.name.toLowerCase().endsWith('.csv')) {
+                        Papa.parse(file, {
+                          header: true,
+                          skipEmptyLines: true,
+                          complete: (res) => {
+                            const rows = (res.data as any[]).filter(Boolean);
+                            setImportRows(rows);
+                            const headers = Object.keys(rows[0] || {});
+                            setImportHeaders(headers);
+                          }
+                        });
+                      } else {
+                        // XLSX
+                        const XLSX = await import('xlsx');
+                        const buf = await file.arrayBuffer();
+                        const wb = XLSX.read(buf);
+                        const first = wb.SheetNames[0];
+                        const ws = wb.Sheets[first];
+                        const rows = XLSX.utils.sheet_to_json(ws) as any[];
+                        setImportRows(rows);
+                        const headers = Object.keys(rows[0] || {});
+                        setImportHeaders(headers);
+                      }
+                    }}
+                  />
+                </div>
+                {importHeaders.length > 0 && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div className="space-y-2">
+                      <div className="text-sm font-medium">Column mapping</div>
+                      <label className="text-sm">Account No</label>
+                      <select className="rounded border px-2 py-1 text-sm w-full" value={mapAccount} onChange={(e)=>setMapAccount(e.target.value)}>
+                        <option value="">—</option>
+                        {importHeaders.map((h) => (<option key={h} value={h}>{h}</option>))}
+                      </select>
+                      <label className="text-sm">Customer</label>
+                      <select className="rounded border px-2 py-1 text-sm w-full" value={mapCustomer} onChange={(e)=>setMapCustomer(e.target.value)}>
+                        <option value="">—</option>
+                        {importHeaders.map((h) => (<option key={h} value={h}>{h}</option>))}
+                      </select>
+                      <label className="text-sm">City</label>
+                      <select className="rounded border px-2 py-1 text-sm w-full" value={mapCity} onChange={(e)=>setMapCity(e.target.value)}>
+                        <option value="">—</option>
+                        {importHeaders.map((h) => (<option key={h} value={h}>{h}</option>))}
+                      </select>
+                    </div>
+                    <div className="space-y-2">
+                      <div className="text-sm font-medium">Values</div>
+                      <label className="text-sm">Qty</label>
+                      <select className="rounded border px-2 py-1 text-sm w-full" value={mapQty} onChange={(e)=>setMapQty(e.target.value)}>
+                        <option value="">—</option>
+                        {importHeaders.map((h) => (<option key={h} value={h}>{h}</option>))}
+                      </select>
+                      <label className="text-sm">Price</label>
+                      <select className="rounded border px-2 py-1 text-sm w-full" value={mapPrice} onChange={(e)=>setMapPrice(e.target.value)}>
+                        <option value="">—</option>
+                        {importHeaders.map((h) => (<option key={h} value={h}>{h}</option>))}
+                      </select>
+                      <label className="text-sm">Currency</label>
+                      <select className="rounded border px-2 py-1 text-sm w-full" value={mapCurrency} onChange={(e)=>setMapCurrency(e.target.value)}>
+                        <option value="">— (defaults to DKK)</option>
+                        {importHeaders.map((h) => (<option key={h} value={h}>{h}</option>))}
+                      </select>
+                    </div>
+                  </div>
+                )}
+                {importRows.length > 0 && (
+                  <div className="text-xs text-gray-600">Loaded {importRows.length} rows.</div>
+                )}
               </div>
             </Modal>
             </>
