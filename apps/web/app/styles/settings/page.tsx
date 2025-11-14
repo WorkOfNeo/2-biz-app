@@ -69,11 +69,11 @@ export default function StylesSettingsPage() {
       return all;
     }
     try {
-      const rows = await loadPaged('id, style_id, color, visible, scrape_enabled, updated_at');
-      const map = new Map<string, Array<{ id: string; color: string; visible: boolean | null; scrape_enabled: boolean | null; updated_at: string }>>();
+      const rows = await loadPaged('id, style_id, color, visible, updated_at');
+      const map = new Map<string, Array<{ id: string; color: string; visible: boolean | null; updated_at: string }>>();
       for (const r of rows) {
         const arr = map.get(r.style_id) || [];
-        arr.push({ id: r.id, color: r.color, visible: (r.visible as boolean | null) ?? null, scrape_enabled: r.scrape_enabled, updated_at: r.updated_at });
+        arr.push({ id: r.id, color: r.color, visible: (r.visible as boolean | null) ?? null, updated_at: r.updated_at });
         map.set(r.style_id, arr);
       }
       return map;
@@ -82,11 +82,11 @@ export default function StylesSettingsPage() {
       console.warn('[styles-settings] style_colors fallback without "visible" column', e1);
       // Fallback 1: when 'visible' column not present; default to null
       try {
-        const rows = await loadPaged('id, style_id, color, scrape_enabled, updated_at');
-        const map = new Map<string, Array<{ id: string; color: string; visible: boolean | null; scrape_enabled: boolean | null; updated_at: string }>>();
+        const rows = await loadPaged('id, style_id, color, updated_at');
+        const map = new Map<string, Array<{ id: string; color: string; visible: boolean | null; updated_at: string }>>();
         for (const r of rows) {
           const arr = map.get(r.style_id) || [];
-          arr.push({ id: r.id, color: r.color, visible: null, scrape_enabled: r.scrape_enabled, updated_at: r.updated_at });
+          arr.push({ id: r.id, color: r.color, visible: null, updated_at: r.updated_at });
           map.set(r.style_id, arr);
         }
         return map;
@@ -96,16 +96,16 @@ export default function StylesSettingsPage() {
         // Fallback 2: as a last resort, avoid order/range entirely
         const { data, error } = await supabase
           .from('style_colors')
-          .select('id, style_id, color, visible, scrape_enabled, updated_at');
+          .select('id, style_id, color, visible, updated_at');
         if (error) {
           // eslint-disable-next-line no-console
           console.error('[styles-settings] style_colors final fetch failed', error);
           throw error;
         }
-        const map = new Map<string, Array<{ id: string; color: string; visible: boolean | null; scrape_enabled: boolean | null; updated_at: string }>>();
+        const map = new Map<string, Array<{ id: string; color: string; visible: boolean | null; updated_at: string }>>();
         for (const r of (data ?? []) as any[]) {
           const arr = map.get(r.style_id) || [];
-          arr.push({ id: r.id, color: r.color, visible: (r.visible as boolean | null) ?? null, scrape_enabled: r.scrape_enabled, updated_at: r.updated_at });
+          arr.push({ id: r.id, color: r.color, visible: (r.visible as boolean | null) ?? null, updated_at: r.updated_at });
           map.set(r.style_id, arr);
         }
         return map;
