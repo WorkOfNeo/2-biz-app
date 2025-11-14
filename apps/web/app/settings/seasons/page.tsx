@@ -231,7 +231,7 @@ export default function SeasonsSettingsPage() {
                       >Reset</button>
                     </div>
                   ) : (
-                    <a className="underline" href={`/settings/seasons/${s.id}/logs`}>{s.name}</a>
+                    <a className="underline" href={`/settings/seasons/${s.id}`}>{s.name}</a>
                   )}
                 </td>
                 <td className="p-2 border-b">{s.year ?? '-'}</td>
@@ -290,7 +290,10 @@ export default function SeasonsSettingsPage() {
                 </td>
                 <td className="p-2 border-b">
                   {editingId === s.id ? null : (
-                    <button className="rounded border px-2 py-1 text-xs" onClick={() => { setEditingId(s.id); setEditingName(s.name); }}>Edit</button>
+                    <div className="flex items-center gap-2">
+                      <button className="rounded border px-2 py-1 text-xs" onClick={() => { setEditingId(s.id); setEditingName(s.name); }}>Edit</button>
+                      <a className="rounded border px-2 py-1 text-xs" href={`/settings/seasons/${s.id}/logs`}>Logs</a>
+                    </div>
                   )}
                 </td>
                 <td className="p-2 border-b">
