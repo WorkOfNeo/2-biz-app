@@ -62,6 +62,32 @@ export default function CountriesPage() {
     if (error) throw new Error(error.message);
     return data as any[];
   });
+  // Seasonal overrides (use Season 1 for null/hidden filtering, consistent with @general/)
+  const overridesKey = s1 ? `season_overrides:${s1}` : null;
+  const { data: overrides } = useSWR(overridesKey, async () => {
+    if (!overridesKey) return { nulled: [] as string[], hidden: [] as string[] };
+    const { data, error } = await supabase.from('app_settings').select('value').eq('key', overridesKey).maybeSingle();
+    if (error) throw new Error(error.message);
+    const val = (data?.value as any) || {};
+    return {
+      nulled: Array.isArray(val.nulled) ? (val.nulled as string[]) : [],
+      hidden: Array.isArray(val.hidden) ? (val.hidden as string[]) : []
+    };
+  }, { refreshInterval: 0 });
+  // Closed/excluded customers
+  const { data: closedCustomers } = useSWR('countries:customers-closed', async () => {
+    const { data, error } = await supabase.from('customers').select('customer_id, permanently_closed, excluded, nulled');
+    if (error) throw new Error(error.message);
+    const setClosed = new Set<string>();
+    const setExcluded = new Set<string>();
+    const setNulled = new Set<string>();
+    for (const c of (data ?? []) as any[]) {
+      if (c.permanently_closed) setClosed.add(c.customer_id);
+      if (c.excluded) setExcluded.add(c.customer_id);
+      if (c.nulled) setNulled.add(c.customer_id);
+    }
+    return { setClosed, setExcluded, setNulled };
+  }, { refreshInterval: 0 });
   // Minimal customers map to resolve country for invoices
   const { data: customers } = useSWR('countries:customers', async () => {
     const { data, error } = await supabase.from('customers').select('customer_id, country');
@@ -90,9 +116,20 @@ export default function CountriesPage() {
     const out: Record<string, { s1Qty: number; s2Qty: number; s1PriceDkk: number; s2PriceDkk: number }> = {};
     for (const c of countries) out[c] = { s1Qty: 0, s2Qty: 0, s1PriceDkk: 0, s2PriceDkk: 0 };
     const rates = { DKK: 1, ...(currencyRatesRow ?? {}) } as Record<string, number>;
+    const seasonalNulled = new Set(overrides?.nulled ?? []);
+    const seasonalHidden = new Set(overrides?.hidden ?? []);
     for (const r of (stats ?? []) as any[]) {
       const ctry = String(r.customers?.country || '').trim();
       if (!countries.includes(ctry)) continue;
+      const acc = String(r.account_no || '');
+      if (acc) {
+        // Exclude accounts that are seasonal hidden/nulled or globally closed/excluded/nulled
+        if (seasonalHidden.has(acc)) continue;
+        if (seasonalNulled.has(acc)) continue;
+        if (closedCustomers?.setClosed.has(acc)) continue;
+        if (closedCustomers?.setExcluded.has(acc)) continue;
+        if (closedCustomers?.setNulled.has(acc)) continue;
+      }
       const bucket = out[ctry] || (out[ctry] = { s1Qty: 0, s2Qty: 0, s1PriceDkk: 0, s2PriceDkk: 0 });
       const rate = rates[(String(r.currency || 'DKK').toUpperCase())] ?? 1;
       const priceDkk = Number(r.price || 0) * rate;
@@ -105,6 +142,12 @@ export default function CountriesPage() {
     for (const inv of (invoices ?? [])) {
       const acc = inv.account_no ?? '';
       if (!acc) continue;
+      // Apply same filtering for invoices (by account)
+      if (seasonalHidden.has(acc)) continue;
+      if (seasonalNulled.has(acc)) continue;
+      if (closedCustomers?.setClosed.has(acc)) continue;
+      if (closedCustomers?.setExcluded.has(acc)) continue;
+      if (closedCustomers?.setNulled.has(acc)) continue;
       const ctry = String(customerCountryById.get(acc) || '').trim();
       if (!countries.includes(ctry)) continue;
       const bucket = out[ctry] || (out[ctry] = { s1Qty: 0, s2Qty: 0, s1PriceDkk: 0, s2PriceDkk: 0 });
@@ -115,7 +158,7 @@ export default function CountriesPage() {
       else if (inv.season_id === s2) { bucket.s2Qty += qty; bucket.s2PriceDkk += amountDkk; }
     }
     return out;
-  }, [stats, invoices, customers, s1, s2, currencyRatesRow]);
+  }, [stats, invoices, customers, s1, s2, currencyRatesRow, overrides?.nulled?.length, overrides?.hidden?.length, closedCustomers?.setClosed.size, closedCustomers?.setExcluded.size, closedCustomers?.setNulled.size]);
   function getSeasonLabel(seasonId: string | undefined) {
     if (!seasonId) return '';
     const s = (seasons ?? []).find((x) => x.id === seasonId);
