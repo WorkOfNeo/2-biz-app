@@ -17,55 +17,48 @@ export async function exportStockList(ctx: Ctx) {
   const { job, log, saveResult, setJobFailedOrRequeue, setJobSucceeded, supabase } = ctx;
   try {
     await log(job.id, 'info', 'STEP:export_stock_list_begin', {});
-    // Load lists + rules from app_settings
-    const { data: setting } = await supabase.from('app_settings').select('value').eq('key', 'style_lists').maybeSingle();
-    const cfg = ((setting?.value || {}) as any) as { lists?: Record<string, string[]>; rules?: Record<string, { includeSeasonIds?: string[] }> };
-    const lists: Record<string, string[]> = (cfg.lists || {}) as Record<string, string[]>;
-    const rules: Record<string, { includeSeasonIds?: string[] }> = (cfg.rules || {}) as Record<string, { includeSeasonIds?: string[] }>;
-    const listEntries = Object.entries(lists);
-    if (listEntries.length === 0) {
-      await setJobFailedOrRequeue(job, 'No style lists found');
+    // Load lists from DB
+    const { data: lists } = await supabase.from('stock_lists').select('id, name').order('name', { ascending: true });
+    const listRows = (lists ?? []) as Array<{ id: string; name: string }>;
+    if (listRows.length === 0) {
+      await setJobFailedOrRequeue(job, 'No stock lists found');
       return;
     }
     let generated = 0;
-    for (const [listName, styleNos] of listEntries) {
-      await log(job.id, 'info', 'STEP:export_stock_list_list', { listName, count: styleNos.length });
-      // Expand rules: auto-include styles whose style_seasons overlap includeSeasonIds
-      let combined = new Set<string>(styleNos);
-      const includeIds = (rules?.[listName]?.includeSeasonIds || []) as string[];
-      if (includeIds.length) {
-        try {
-          const { data: ss } = await supabase.from('style_seasons').select('style_no, seasons').limit(100000);
-          for (const r of (ss ?? []) as any[]) {
-            const arr = Array.isArray(r.seasons) ? (r.seasons as string[]) : [];
-            if (arr.some((id) => includeIds.includes(id))) combined.add(String(r.style_no));
-          }
-        } catch {}
-      }
-      const finalStyleNos = Array.from(combined);
-      if (finalStyleNos.length === 0) {
+    for (const list of listRows) {
+      const listId = list.id;
+      const listName = list.name || 'List';
+      // Load styles for this list
+      const { data: styleItems } = await supabase.from('stock_list_styles').select('style_id').eq('list_id', listId);
+      const styleIds = ((styleItems ?? []) as Array<{ style_id: string }>).map((r) => r.style_id).filter(Boolean);
+      await log(job.id, 'info', 'STEP:export_stock_list_list', { listName, count: styleIds.length });
+      if (styleIds.length === 0) {
         await log(job.id, 'info', 'STEP:export_stock_list_skip_empty', { listName });
         continue;
       }
-      // Fetch style meta (include id for visibility lookup)
-      const { data: styleRows } = await supabase.from('styles').select('id, style_no, style_name, image_url, supplier').in('style_no', finalStyleNos);
+      // Fetch style meta
+      const { data: styleRows } = await supabase.from('styles').select('id, style_no, style_name, image_url, supplier').in('id', styleIds);
       const metaByNo = new Map<string, { id: string | null; name: string | null; image: string | null; supplier: string | null }>();
-      const styleIds: string[] = [];
+      const finalStyleNos: string[] = [];
       for (const r of (styleRows ?? []) as any[]) {
         metaByNo.set(r.style_no, { id: (r.id as string) || null, name: r.style_name ?? null, image: r.image_url ?? null, supplier: r.supplier ?? null });
-        if (r.id) styleIds.push(r.id as string);
+        if (r.style_no) finalStyleNos.push(r.style_no as string);
       }
-      // Load color visibility flags per style_id/color; default visible=true on missing/NULL
-      const visibilityMap = new Map<string, Map<string, boolean>>();
+      // Map colors per style_id -> colorLower -> style_color_id
+      const styleColorIdMap = new Map<string, Map<string, string>>();
       if (styleIds.length) {
-        const { data: visRows } = await supabase.from('style_colors').select('style_id, color, visible').in('style_id', styleIds);
-        for (const v of (visRows ?? []) as any[]) {
-          const sid = String(v.style_id || '');
-          const key = String(v.color || '').trim().toLowerCase();
-          if (!visibilityMap.has(sid)) visibilityMap.set(sid, new Map());
-          visibilityMap.get(sid)!.set(key, (v.visible as boolean | null) !== false);
+        const { data: cols } = await supabase.from('style_colors').select('id, style_id, color').in('style_id', styleIds);
+        for (const c of (cols ?? []) as any[]) {
+          const sid = String(c.style_id || '');
+          const key = String(c.color || '').trim().toLowerCase();
+          if (!styleColorIdMap.has(sid)) styleColorIdMap.set(sid, new Map());
+          styleColorIdMap.get(sid)!.set(key, c.id as string);
         }
       }
+      // Load per-list color includes
+      const includeMap = new Map<string, boolean>(); // style_color_id -> include
+      const { data: inclRows } = await supabase.from('stock_list_colors').select('style_color_id, include').eq('list_id', listId);
+      for (const r of (inclRows ?? []) as any[]) includeMap.set(r.style_color_id as string, r.include !== false);
       // Fetch stock rows
       const { data: stockRows } = await supabase
         .from('style_stock')
@@ -91,10 +84,11 @@ export async function exportStockList(ctx: Ctx) {
         const metaEntry = metaByNo.get(style_no) || { id: null, name: null, image: null, supplier: null };
         const sid = metaEntry.id || null;
         for (const [color, rows] of byColor.entries()) {
-          // Respect visibility flag when present
+          // Respect per-list include flag when present (default include if missing)
           if (sid) {
-            const vis = visibilityMap.get(sid)?.get(String(color || '').trim().toLowerCase());
-            if (vis === false) continue;
+            const cmap = styleColorIdMap.get(sid) || new Map<string, string>();
+            const scId = cmap.get(String(color || '').trim().toLowerCase()) || null;
+            if (scId && includeMap.has(scId) && includeMap.get(scId) === false) continue;
           }
           const latestMap = new Map<string, Row>();
           for (const r of rows) {

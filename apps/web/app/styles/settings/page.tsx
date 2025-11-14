@@ -473,146 +473,77 @@ function ColorVisibilityEditor({ styleId }: { styleId: string }) {
 function StyleListsEditor({ styles }: { styles: { id: string; style_no: string; style_name: string | null; scrape_enabled: boolean | null; updated_at: string }[] }) {
   const supabase = createClientComponentClient();
   const React = require('react') as typeof import('react');
-  const { data, mutate } = useSWR('app-settings:style-lists', async () => {
-    const { data } = await supabase.from('app_settings').select('id, value').eq('key', 'style_lists').maybeSingle();
-    const id = (data as any)?.id as string | null;
-    const value = (((data as any)?.value || {}) as { lists?: Record<string, string[]>; rules?: Record<string, { includeSeasonIds?: string[] }> }) || {};
-    const lists = value.lists || {};
-    const rules = value.rules || {};
-    return { id, lists, rules } as { id: string | null; lists: Record<string, string[]>; rules: Record<string, { includeSeasonIds?: string[] }> };
+  // Load lists from DB
+  const { data: lists, mutate } = useSWR('stock-lists:all', async () => {
+    const { data, error } = await supabase.from('stock_lists').select('id, name').order('name', { ascending: true });
+    if (error) throw new Error(error.message);
+    return (data ?? []) as Array<{ id: string; name: string }>;
   });
-  const [active, setActive] = React.useState<string>('');
+  const [activeId, setActiveId] = React.useState<string>('');
+  const [activeName, setActiveName] = React.useState<string>('');
   React.useEffect(() => {
-    if (!active && data) {
-      const names = Object.keys(data.lists || {});
-      const first = (names.length > 0 ? names[0] : '') as string;
-      if (first) setActive(first);
+    if (!activeId && lists && (lists as any).length > 0) {
+      const first = (lists as Array<{ id: string; name: string }>)[0] as { id: string; name: string } | undefined;
+      if (first?.id) { setActiveId(first.id); setActiveName(first.name || ''); }
     }
-  }, [data, active]);
+  }, [lists, activeId]);
   const [newList, setNewList] = React.useState('');
   const [query, setQuery] = React.useState('');
   const [openColorsFor, setOpenColorsFor] = React.useState<Record<string, boolean>>({});
-  // Load style seasons to enable season filtering in the lists editor
-  const { data: styleSeasons } = useSWR('style_seasons:for-lists', async () => {
-    const { data, error } = await supabase.from('style_seasons').select('style_no, seasons').limit(5000);
+  // Current list styles
+  const { data: listStyleRows, mutate: mutateListStyles } = useSWR(activeId ? ['stock-list-styles:byList', activeId] : null, async () => {
+    const { data, error } = await supabase.from('stock_list_styles').select('style_id').eq('list_id', activeId);
     if (error) throw new Error(error.message);
-    const byStyle = new Map<string, string[]>();
-    const labels = new Set<string>();
-    for (const r of (data ?? []) as any[]) {
-      const arr = Array.isArray(r.seasons) ? (r.seasons as string[]) : [];
-      byStyle.set(r.style_no, arr);
-      for (const s of arr) labels.add(String(s));
-    }
-    return { byStyle, labels: Array.from(labels).sort() } as { byStyle: Map<string, string[]>; labels: string[] };
-  }, { refreshInterval: 0 });
-  const { data: seasonsMap } = useSWR('seasons:map-for-lists', async () => {
-    const { data, error } = await supabase.from('seasons').select('id, name, year').limit(5000);
-    if (error) throw new Error(error.message);
-    const m = new Map<string, string>();
-    for (const r of (data ?? []) as any[]) {
-      const n = (r.name as string | null) || '';
-      const y = (r.year as number | null) || null;
-      m.set(r.id as string, y ? `${n} ${y}` : n);
-    }
-    return m as Map<string, string>;
-  }, { refreshInterval: 0 });
-  const [seasonFilter, setSeasonFilter] = React.useState<string>('');
-  // Compute auto-included styles for the active list based on rules (seasons)
-  const autoIncludedForActive = React.useMemo(() => {
-    if (!data || !active) return new Set<string>();
-    const includeIds = (data.rules?.[active]?.includeSeasonIds || []) as string[];
-    if (!includeIds.length) return new Set<string>();
-    const included = new Set<string>();
-    for (const s of styles) {
-      const arr = styleSeasons?.byStyle.get(s.style_no) || [];
-      if (arr.some((id) => includeIds.includes(id))) included.add(s.style_no);
-    }
-    return included;
-  }, [data, active, styles, styleSeasons?.labels.length]);
+    return (data ?? []) as Array<{ style_id: string }>;
+  });
+  const styleIdSet = React.useMemo(() => new Set((listStyleRows ?? []).map((r) => r.style_id)), [listStyleRows]);
   const filteredStyles = React.useMemo(() => {
     const q = query.trim().toLowerCase();
     let base = styles;
-    if (seasonFilter) {
-      base = base.filter((s) => {
-        const arr = styleSeasons?.byStyle.get(s.style_no) || [];
-        return arr.includes(seasonFilter);
-      });
-    }
-    // Exclude styles already in active list (manual) or auto-included by rule
-    const excludeSet = new Set<string>([...(data?.lists?.[active] || []), ...Array.from(autoIncludedForActive)]);
-    base = base.filter((s) => !excludeSet.has(s.style_no));
+    // Exclude styles already in active list
+    base = base.filter((s) => !styleIdSet.has(s.id));
     if (!q) return base;
     return base.filter((s) => (s.style_name || '').toLowerCase().includes(q) || (s.style_no || '').toLowerCase().includes(q));
-  }, [styles, query, seasonFilter, styleSeasons?.labels.length, data?.lists, active, autoIncludedForActive.size]);
-  async function save(next: Record<string, string[]>) {
-    const existsId = data?.id || null;
-    const payload = { key: 'style_lists', value: { lists: next, rules: data?.rules || {} } } as any;
-    if (existsId) await supabase.from('app_settings').update({ value: payload.value }).eq('id', existsId as any);
-    else await supabase.from('app_settings').insert(payload);
-    await mutate();
-  }
-  async function saveRules(nextRules: Record<string, { includeSeasonIds?: string[] }>) {
-    const existsId = data?.id || null;
-    const payload = { key: 'style_lists', value: { lists: data?.lists || {}, rules: nextRules } } as any;
-    if (existsId) await supabase.from('app_settings').update({ value: payload.value }).eq('id', existsId as any);
-    else await supabase.from('app_settings').insert(payload);
-    await mutate();
-  }
-  function addList() {
+  }, [styles, query, styleIdSet.size]);
+  async function addList() {
     const name = newList.trim();
     if (!name) return;
-    const next = { ...(data?.lists || {}) } as Record<string, string[]>;
-    if (!next[name]) next[name] = [];
-    save(next);
-    setActive(name);
+    const { data: row, error } = await supabase.from('stock_lists').insert({ name }).select('id, name').maybeSingle();
+    if (error) { alert(error.message); return; }
+    await mutate();
+    if (row?.id) { setActiveId(row.id); setActiveName(row.name || name); }
     setNewList('');
   }
-  function deleteList() {
-    if (!active) return;
-    if (!confirm(`Delete list “${active}”?`)) return;
-    const nextLists = { ...(data?.lists || {}) } as Record<string, string[]>;
-    const nextRules = { ...(data?.rules || {}) } as Record<string, { includeSeasonIds?: string[] }>;
-    delete nextLists[active];
-    delete nextRules[active];
-    // Persist both lists and rules
-    (async () => {
-      const existsId = data?.id || null;
-      const payload = { key: 'style_lists', value: { lists: nextLists, rules: nextRules } } as any;
-      if (existsId) await supabase.from('app_settings').update({ value: payload.value }).eq('id', existsId as any);
-      else await supabase.from('app_settings').insert(payload);
-      await mutate();
-      setActive('');
-    })().catch(()=>{});
+  async function deleteList() {
+    if (!activeId) return;
+    if (!confirm(`Delete list “${activeName || activeId}”?`)) return;
+    await supabase.from('stock_lists').delete().eq('id', activeId);
+    await mutate();
+    setActiveId('');
+    setActiveName('');
   }
-  function removeFromList(styleNo: string) {
-    const next = { ...(data?.lists || {}) } as Record<string, string[]>;
-    const list = new Set(next[active] || []);
-    list.delete(styleNo);
-    next[active] = Array.from(list);
-    save(next);
+  async function removeFromList(styleId: string) {
+    if (!activeId) return;
+    await supabase.from('stock_list_styles').delete().eq('list_id', activeId).eq('style_id', styleId);
+    await mutateListStyles();
   }
-  function addToList(styleNo: string) {
-    const next = { ...(data?.lists || {}) } as Record<string, string[]>;
-    const list = new Set(next[active] || []);
-    list.add(styleNo);
-    next[active] = Array.from(list);
-    save(next);
+  async function addToList(styleId: string) {
+    if (!activeId) return;
+    await supabase.from('stock_list_styles').insert({ list_id: activeId, style_id: styleId });
+    await mutateListStyles();
   }
-  function clearList() {
-    if (!active) return;
-    const next = { ...(data?.lists || {}) } as Record<string, string[]>;
-    next[active] = [];
-    save(next);
+  async function clearList() {
+    if (!activeId) return;
+    await supabase.from('stock_list_styles').delete().eq('list_id', activeId);
+    await mutateListStyles();
   }
-  function addAllFilteredToList() {
-    if (!active) return;
-    const next = { ...(data?.lists || {}) } as Record<string, string[]>;
-    const list = new Set(next[active] || []);
-    for (const s of filteredStyles) list.add(s.style_no);
-    next[active] = Array.from(list);
-    save(next);
+  async function addAllFilteredToList() {
+    if (!activeId) return;
+    const rows = filteredStyles.map((s) => ({ list_id: activeId, style_id: s.id }));
+    if (rows.length === 0) return;
+    await supabase.from('stock_list_styles').upsert(rows, { onConflict: 'list_id,style_id' as any });
+    await mutateListStyles();
   }
-  const listItems = (data?.lists?.[active] || []) as string[];
   const styleNoToName = React.useMemo(() => {
     const m = new Map<string, string | null>();
     for (const s of styles) m.set(s.style_no, s.style_name);
@@ -623,13 +554,18 @@ function StyleListsEditor({ styles }: { styles: { id: string; style_no: string; 
     for (const s of styles) m.set(s.style_no, s.id);
     return m;
   }, [styles]);
+  const styleIdToNo = React.useMemo(() => {
+    const m = new Map<string, string>();
+    for (const s of styles) m.set(s.id, s.style_no);
+    return m;
+  }, [styles]);
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2">
         <div className="text-xs">Lists:</div>
         <div className="flex flex-wrap gap-2">
-          {Object.keys(data?.lists || {}).map((name) => (
-            <button key={name} className={(active===name?'bg-slate-900 text-white ':'bg-white text-slate-900 ') + 'text-xs px-2 py-1 border rounded'} onClick={()=>setActive(name)}>{name}</button>
+          {(lists ?? []).map((row) => (
+            <button key={row.id} className={(activeId===row.id?'bg-slate-900 text-white ':'bg-white text-slate-900 ') + 'text-xs px-2 py-1 border rounded'} onClick={()=>{ setActiveId(row.id); setActiveName(row.name); }}>{row.name}</button>
           ))}
         </div>
       </div>
@@ -637,43 +573,15 @@ function StyleListsEditor({ styles }: { styles: { id: string; style_no: string; 
         <input className="text-xs border rounded px-2 py-1" value={newList} onChange={(e)=>setNewList(e.target.value)} placeholder="New list name" />
         <button className="text-xs px-2 py-1 border rounded bg-slate-900 text-white" onClick={addList}>Add list</button>
       </div>
-      {active && (
+      {activeId && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div className="rounded border p-2">
-            {/* Rules editor for auto-including by seasons */}
-            <div className="mb-2">
-              <div className="text-[11px] font-medium mb-1">Auto-include seasons</div>
-              <div className="flex flex-wrap gap-2">
-                {(styleSeasons?.labels || []).map((sid) => {
-                  const rules = data?.rules || {};
-                  const include = new Set(rules[active]?.includeSeasonIds || []);
-                  const checked = include.has(sid);
-                  const label = seasonsMap?.get(sid) ? `${seasonsMap.get(sid)}` : sid;
-                  return (
-                    <label key={sid} className="inline-flex items-center gap-1 text-[11px] border rounded px-1.5 py-0.5">
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={async (e) => {
-                          const next = { ...(data?.rules || {}) } as Record<string, { includeSeasonIds?: string[] }>;
-                          const set = new Set(next[active]?.includeSeasonIds || []);
-                          if (e.target.checked) set.add(sid); else set.delete(sid);
-                          next[active] = { includeSeasonIds: Array.from(set) };
-                          await saveRules(next);
-                        }}
-                      />
-                      <span>{label}</span>
-                    </label>
-                  );
-                })}
-              </div>
-            </div>
             <div className="flex items-center justify-between mb-1">
-              <div className="text-xs font-medium">In “{active}”</div>
+              <div className="text-xs font-medium">In “{activeName || 'List'}”</div>
               <button
                 className="text-[11px] underline disabled:text-gray-400"
                 onClick={clearList}
-                disabled={!active || listItems.length === 0}
+                disabled={!activeId || (listStyleRows?.length || 0) === 0}
               >Remove all styles</button>
               <button
                 className="text-[11px] underline text-red-700"
@@ -681,22 +589,23 @@ function StyleListsEditor({ styles }: { styles: { id: string; style_no: string; 
               >Delete list</button>
             </div>
             <div className="space-y-1 max-h-64 overflow-auto">
-              {listItems.length === 0 && <div className="text-[11px] text-gray-500">No styles yet.</div>}
-              {listItems.map((no) => {
-                const styleId = styleNoToId.get(no) || '';
+              {(listStyleRows?.length || 0) === 0 && <div className="text-[11px] text-gray-500">No styles yet.</div>}
+              {(listStyleRows || []).map((row) => {
+                const no = styleIdToNo.get(row.style_id) || '';
+                const styleId = row.style_id || '';
                 const open = !!openColorsFor[no];
                 return (
                   <div key={no} className="text-xs border rounded">
                     <div className="flex items-center justify-between px-2 py-1">
-                  <span>{no}{styleNoToName.get(no) ? ` — ${styleNoToName.get(no)}` : ''}</span>
+                      <span>{no}{no ? (styleNoToName.get(no) ? ` — ${styleNoToName.get(no)}` : '') : ''}</span>
                       <div className="flex items-center gap-3">
                         <button className="underline" onClick={()=>setOpenColorsFor((m)=>({ ...m, [no]: !open }))}>{open ? 'Hide colors' : 'Edit colors'}</button>
-                  <button className="underline" onClick={()=>removeFromList(no)}>Remove</button>
+                        <button className="underline" onClick={()=>removeFromList(styleId)}>Remove</button>
                 </div>
                     </div>
                     {open && styleId && (
                       <div className="px-2 pb-2">
-                        <ColorVisibilityEditor styleId={styleId} />
+                        <ListColorEditor listId={activeId} styleId={styleId} />
                       </div>
                     )}
                   </div>
@@ -709,26 +618,79 @@ function StyleListsEditor({ styles }: { styles: { id: string; style_no: string; 
               <div className="text-xs font-medium">All styles</div>
               <div className="flex items-center gap-2">
                 <input className="text-xs border rounded px-2 py-1" placeholder="Search styles" value={query} onChange={(e)=>setQuery(e.target.value)} />
-                <select className="text-xs border rounded px-2 py-1" value={seasonFilter} onChange={(e)=>setSeasonFilter(e.target.value)}>
-                  <option value="">All seasons</option>
-                  {(styleSeasons?.labels || []).map((label) => (
-                    <option key={label} value={label}>{seasonsMap?.get(label) ? `${label} — ${seasonsMap.get(label)}` : label}</option>
-                  ))}
-                </select>
-                <button className="text-xs px-2 py-1 border rounded bg-slate-900 text-white" onClick={addAllFilteredToList} disabled={!active}>Add all</button>
+                <button className="text-xs px-2 py-1 border rounded bg-slate-900 text-white" onClick={addAllFilteredToList} disabled={!activeId}>Add all</button>
               </div>
             </div>
             <div className="mt-1 max-h-64 overflow-auto space-y-1">
               {filteredStyles.map((s) => (
                 <div key={s.id} className="flex items-center justify-between text-xs border rounded px-2 py-1">
                   <span>{s.style_no} {s.style_name ? `— ${s.style_name}` : ''}</span>
-                  <button className="underline" onClick={()=>addToList(s.style_no)}>Add</button>
+                  <button className="underline" onClick={()=>addToList(s.id)}>Add</button>
                 </div>
               ))}
             </div>
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+
+function ListColorEditor({ listId, styleId }: { listId: string; styleId: string }) {
+  const supabase = createClientComponentClient();
+  const React = require('react') as typeof import('react');
+  // Load available colors for the style
+  const { data: colors } = useSWR(styleId ? ['style_colors:for-style', styleId] : null, async () => {
+    const { data, error } = await supabase.from('style_colors').select('id, color').eq('style_id', styleId).order('color', { ascending: true });
+    if (error) throw error;
+    return (data ?? []) as Array<{ id: string; color: string }>;
+  });
+  // Load per-list color includes
+  const { data: includes, mutate } = useSWR(listId && styleId ? ['stock_list_colors:includes', listId, styleId] : null, async () => {
+    const { data, error } = await supabase.from('stock_list_colors').select('style_color_id, include').eq('list_id', listId).eq('style_id', styleId);
+    if (error) throw error;
+    const m = new Map<string, boolean>();
+    for (const r of (data ?? []) as any[]) m.set(r.style_color_id as string, r.include !== false);
+    return m as Map<string, boolean>;
+  });
+  async function addAll() {
+    if (!colors?.length) return;
+    const rows = colors.map((c) => ({ list_id: listId, style_id: styleId, style_color_id: c.id, include: true }));
+    await supabase.from('stock_list_colors').upsert(rows, { onConflict: 'list_id,style_color_id' as any });
+    await mutate();
+  }
+  return (
+    <div className="flex flex-col gap-2">
+      <div>
+        <button className="text-[11px] underline" onClick={addAll}>Add all colors</button>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {(colors ?? []).map((c) => {
+          const checked = includes?.has(c.id) ? (includes.get(c.id) as boolean) : false;
+          return (
+            <label key={c.id} className="inline-flex items-center gap-1 border rounded px-1.5 py-0.5">
+              <input
+                type="checkbox"
+                checked={checked}
+                onChange={async (e) => {
+                  const next = e.target.checked;
+                  // optimistic
+                  (includes as any)?.set?.(c.id, next);
+                  try {
+                    await supabase.from('stock_list_colors').upsert({ list_id: listId, style_id: styleId, style_color_id: c.id, include: next } as any, { onConflict: 'list_id,style_color_id' as any });
+                    await mutate();
+                  } catch (err: any) {
+                    alert(err?.message || 'Failed to update color include');
+                    try { await mutate(); } catch {}
+                  }
+                }}
+              />
+              <span className="text-[11px]">{c.color}</span>
+            </label>
+          );
+        })}
+      </div>
     </div>
   );
 }
