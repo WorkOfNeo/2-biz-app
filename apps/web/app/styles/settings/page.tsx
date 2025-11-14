@@ -103,16 +103,16 @@ export default function StylesSettingsPage() {
           throw error;
         }
         const map = new Map<string, Array<{ id: string; color: string; visible: boolean | null; updated_at: string }>>();
-        for (const r of (data ?? []) as any[]) {
-          const arr = map.get(r.style_id) || [];
+    for (const r of (data ?? []) as any[]) {
+      const arr = map.get(r.style_id) || [];
           arr.push({ id: r.id, color: r.color, visible: (r.visible as boolean | null) ?? null, updated_at: r.updated_at });
-          map.set(r.style_id, arr);
-        }
-        return map;
+      map.set(r.style_id, arr);
+    }
+    return map;
       }
     }
   }, { refreshInterval: 0 });
-  const [openColors, setOpenColors] = useState<Record<string, boolean>>({});
+  // Removed global color editor from this section
   // Per-user selection map: { [user_id]: string[] }
   const { data: selectionMap, mutate: mutateSelection } = useSWR(isAdmin ? 'app-settings:styles-user-selection' : null, async () => {
     const { data } = await supabase.from('app_settings').select('id, value').eq('key', 'styles_user_selection').maybeSingle();
@@ -253,65 +253,18 @@ export default function StylesSettingsPage() {
                 const added = selectedForUser.has(s.style_no);
                 return (
                   <>
-                    <tr key={s.style_no} className={(added ? 'bg-slate-50 ' : '') + 'hover:bg-slate-50 transition-colors'}>
-                      <td className="p-2 border-b align-middle">
-                        <button
-                          className={(added ? 'bg-slate-300 text-gray-800 ' : 'bg-slate-900 text-white ') + 'text-xs px-2 py-1 rounded border'}
-                          onClick={async ()=>{ await toggleStyleForUser(s.style_no); }}
-                        >{added ? 'Added' : 'Add to list'}</button>
-                      </td>
-                      <td className={(added ? 'border-l-4 border-l-slate-900 ' : '') + 'p-2 border-b font-medium'}>{s.style_no}</td>
-                      <td className="p-2 border-b text-gray-700">{s.style_name ?? '—'}</td>
-                      <td className="p-2 border-b">
-                        <button
-                          className="text-[11px] underline"
-                          onClick={() => setOpenColors((m) => ({ ...m, [s.id]: !m[s.id] }))}
-                        >
-                          {openColors[s.id] ? 'Hide colors' : 'Show colors'}
-                        </button>
-                      </td>
-                    </tr>
-                    {openColors[s.id] && (
-                      <tr key={s.id + ':colors'}>
-                        <td className="p-2 border-b bg-white" colSpan={4}>
-                          <div className="flex flex-wrap gap-2">
-                            {(colorsByStyle?.get(s.id) || []).map((c) => {
-                              const checked = (c as any).visible !== false; // default ON
-                              return (
-                                <label key={c.id} className="inline-flex items-center gap-1 border rounded px-1.5 py-0.5">
-                                  <input
-                                    type="checkbox"
-                                    checked={checked}
-                                    onChange={async (e) => {
-                                      const next = e.target.checked;
-                                      // optimistic update
-                                      mutateColors((prev: any) => {
-                                        const map = new Map(prev as Map<string, any[]>);
-                                        const arr = Array.from(map.get(s.id) || []);
-                                        for (let i = 0; i < arr.length; i++) {
-                                          if (arr[i].id === c.id) { arr[i] = { ...arr[i], visible: next }; break; }
-                                        }
-                                        map.set(s.id, arr);
-                                        return map;
-                                      }, false);
-                                      try {
-                                        const { error } = await supabase.from('style_colors').update({ visible: next }).eq('id', c.id);
-                                        if (error) throw error as any;
-                                        await mutateColors();
-                                      } catch (err: any) {
-                                        alert(err?.message || 'Failed to update color visibility');
-                                        try { await mutateColors(); } catch {}
-                                      }
-                                    }}
-                                  />
-                                  <span className="text-[11px]">{c.color}</span>
-                                </label>
-                              );
-                            })}
-                          </div>
-                        </td>
-                      </tr>
-                    )}
+                  <tr key={s.style_no} className={(added ? 'bg-slate-50 ' : '') + 'hover:bg-slate-50 transition-colors'}>
+                    <td className="p-2 border-b align-middle">
+                      <button
+                        className={(added ? 'bg-slate-300 text-gray-800 ' : 'bg-slate-900 text-white ') + 'text-xs px-2 py-1 rounded border'}
+                        onClick={async ()=>{ await toggleStyleForUser(s.style_no); }}
+                      >{added ? 'Added' : 'Add to list'}</button>
+                    </td>
+                    <td className={(added ? 'border-l-4 border-l-slate-900 ' : '') + 'p-2 border-b font-medium'}>{s.style_no}</td>
+                    <td className="p-2 border-b text-gray-700">{s.style_name ?? '—'}</td>
+                      <td className="p-2 border-b text-[11px] text-gray-500">—</td>
+                  </tr>
+                    {/* colors editor removed from this section */}
                   </>
                 );
               })}
@@ -497,8 +450,10 @@ function ColorVisibilityEditor({ styleId }: { styleId: string }) {
                   return arr;
                 }, false);
                 try {
-                  const { error } = await supabase.from('style_colors').update({ visible: next }).eq('id', c.id);
+                  const { data: updated, error } = await supabase.from('style_colors').update({ visible: next }).eq('id', c.id).select('id, visible').maybeSingle();
                   if (error) throw error as any;
+                  // eslint-disable-next-line no-console
+                  console.log('[styles-settings] updated color visibility', { id: c.id, next, server: updated });
                   await mutate();
                 } catch (err: any) {
                   alert(err?.message || 'Failed to update color visibility');
@@ -733,11 +688,11 @@ function StyleListsEditor({ styles }: { styles: { id: string; style_no: string; 
                 return (
                   <div key={no} className="text-xs border rounded">
                     <div className="flex items-center justify-between px-2 py-1">
-                      <span>{no}{styleNoToName.get(no) ? ` — ${styleNoToName.get(no)}` : ''}</span>
+                  <span>{no}{styleNoToName.get(no) ? ` — ${styleNoToName.get(no)}` : ''}</span>
                       <div className="flex items-center gap-3">
                         <button className="underline" onClick={()=>setOpenColorsFor((m)=>({ ...m, [no]: !open }))}>{open ? 'Hide colors' : 'Edit colors'}</button>
-                        <button className="underline" onClick={()=>removeFromList(no)}>Remove</button>
-                      </div>
+                  <button className="underline" onClick={()=>removeFromList(no)}>Remove</button>
+                </div>
                     </div>
                     {open && styleId && (
                       <div className="px-2 pb-2">
