@@ -48,6 +48,17 @@ export default function StatisticsDashboardPage() {
     setSendingSp(true);
     try {
       const spExport = latestByKind.get('general_salesmen_pdfs');
+      const top10 = latestByKind.get('top_styles_pdf');
+      const stockListRows = (latestExports ?? []).filter((r: any) => r.kind === 'stock_list_pdf');
+      // Keep only the most recent entry per list name
+      const seenLists = new Set<string>();
+      const latestStockLists: Array<any> = [];
+      for (const r of stockListRows) {
+        const listName = String(r?.meta?.list || '');
+        if (!listName || seenLists.has(listName)) continue;
+        seenLists.add(listName);
+        latestStockLists.push(r);
+      }
       if (!spExport) { alert('No salesperson PDFs found. Please run exports first.'); return; }
       const files = (spExport.meta?.files as Array<{ name: string; path: string; publicUrl?: string | null; salesperson_id?: string }>) || [];
       const chosen = (salespersons ?? []).filter((s) => selected[s.id]);
@@ -74,16 +85,32 @@ export default function StatisticsDashboardPage() {
             attachments.push({ name: 'Countries.pdf', data: base64 });
           } catch {}
         }
+        if (top10?.public_url) {
+          try {
+            const dataUrl = await fetchToDataUrl(top10.public_url);
+            const base64 = dataUrl.split(',')[1] || '';
+            attachments.push({ name: 'Top 10 Styles.pdf', data: base64 });
+          } catch {}
+        }
+        // Attach up to two latest stock list PDFs
+        for (const r of latestStockLists.slice(0, 2)) {
+          const pub = r?.public_url;
+          const title = String(r?.title || 'Stock List');
+          if (!pub) continue;
+          try {
+            const dataUrl = await fetchToDataUrl(pub);
+            const base64 = dataUrl.split(',')[1] || '';
+            const fname = (title.endsWith('.pdf') ? title : `${title}.pdf`);
+            attachments.push({ name: fname, data: base64 });
+          } catch {}
+        }
         if (attachments.length === 0) continue;
         const subject = 'Din statistik';
         const firstName = String(byId[sp.id]?.name || '');
         const hej = firstName ? `Hej ${firstName.split(' ')[0]},` : 'Hej,';
         const bodyHtml = `${hej}\n\nHermed statistik :)`;
-        // Dynamic attachment params for EmailJS template
-        const dynamicParams: Record<string, string> = {};
-        if (attachments[0]) dynamicParams['salesman_pdf'] = `data:application/pdf;base64,${attachments[0].data}`;
-        if (attachments[1]) dynamicParams['countries_pdf'] = `data:application/pdf;base64,${attachments[1].data}`;
-        await sendEmailJs([recipient], subject, bodyHtml, undefined, dynamicParams);
+        // Send with attachments array (avoids relying on template param names)
+        await sendEmailJs([recipient], subject, bodyHtml, attachments, undefined);
       }
       alert('Emails queued for sending.');
     } finally {
@@ -273,8 +300,15 @@ export default function StatisticsDashboardPage() {
             </table>
           </div>
           <label className="flex items-center gap-2 text-sm">
-            <input type="checkbox" checked={includeCountries} onChange={(e) => setIncludeCountries(e.target.checked)} />
-            Include Countries
+            <button
+              type="button"
+              onClick={() => setIncludeCountries((v) => !v)}
+              className={"relative inline-flex h-5 w-9 items-center rounded-full transition-colors " + (includeCountries ? 'bg-slate-900' : 'bg-slate-200')}
+              aria-pressed={includeCountries}
+            >
+              <span className={"inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform " + (includeCountries ? 'translate-x-4' : 'translate-x-0')} />
+            </button>
+            <span>Include Countries</span>
           </label>
           <div>
             <button className="rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-50" disabled={sendingSp} onClick={sendSalespersonEmails}>Send</button>
