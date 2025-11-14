@@ -73,7 +73,17 @@ export async function exportOverview(ctx: Ctx) {
         const visited = a.visitedValid.size; const visitedPct = effective > 0 ? (visited / effective) * 100 : 0;
         return React.createElement(View, { style: styles.row }, Cell(sp.name, '28%'), Cell(String(a.s1Qty), '9%', 'right'), Cell(fmt(a.s1Price), '13%', 'right'), Cell(String(a.s2Qty), '9%', 'right'), Cell(fmt(a.s2Price), '13%', 'right'), Cell(String(visited), '8%', 'right'), Cell(String(effective), '8%', 'right'), Cell(visitedPct.toFixed(2) + '%', '12%', 'right'));
       });
-      const doc = React.createElement(Document, null, React.createElement(PdfPage, { size: 'A4', style: styles.page }, React.createElement(Text, { style: styles.h1 }, 'Overview'), head, ...body));
+      const doc = React.createElement(
+        Document,
+        null,
+        React.createElement(
+          PdfPage,
+          { size: 'A4', orientation: 'landscape', style: styles.page },
+          React.createElement(Text, { style: styles.h1 }, 'Overview'),
+          head,
+          ...body
+        )
+      );
       const pdfOut = await pdf(doc).toBuffer();
       const pdfBuf = await ensureBuffer(pdfOut);
       const path = `overview/${job.id}/overview.pdf`;
@@ -114,7 +124,7 @@ export async function exportOverview(ctx: Ctx) {
         null,
         React.createElement(
           PdfPage,
-          { size: 'A4', style: styles.page },
+          { size: 'A4', orientation: 'landscape', style: styles.page },
           React.createElement(Text, { style: styles.h1 }, 'General Export'),
           React.createElement(Text, { style: styles.p }, `Season 1 Qty: ${String(s1Qty)}`),
           React.createElement(Text, { style: styles.p }, `Season 1 Price: ${String(Math.round(s1Price))}`),
@@ -500,7 +510,7 @@ export async function exportOverview(ctx: Ctx) {
             T(r.name,'40%','left'), T(fmt(r.s1Price),'30%','right'), T(fmt(r.s2Price),'30%','right')
           ))
         ) : null;
-        return React.createElement(PdfPage, { size: 'A4', style: styles.page },
+        return React.createElement(PdfPage, { size: 'A4', orientation: 'landscape', style: styles.page },
           React.createElement(View, { style: { flexDirection: 'column', gap: 24 } },
             React.createElement(View, { style: { width: '100%' as any } },
               React.createElement(Text, { style: styles.h1 }, `Countries · ${c1}`),
