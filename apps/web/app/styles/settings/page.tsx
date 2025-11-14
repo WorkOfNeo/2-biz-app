@@ -654,6 +654,9 @@ function ListColorEditor({ listId, styleId }: { listId: string; styleId: string 
     for (const r of (data ?? []) as any[]) m.set(r.style_color_id as string, r.include !== false);
     return m as Map<string, boolean>;
   });
+  const [savingAll, setSavingAll] = React.useState(false);
+  const [savingById, setSavingById] = React.useState<Record<string, boolean>>({});
+  const [lastSavedAt, setLastSavedAt] = React.useState<number | null>(null);
   const total = (colors?.length || 0);
   const includedCount = React.useMemo(() => {
     if (!colors) return 0;
@@ -666,6 +669,7 @@ function ListColorEditor({ listId, styleId }: { listId: string; styleId: string 
   }, [colors?.length, includes && Array.from((includes as Map<string, boolean>).entries()).map(([k,v])=>k+':'+String(v)).join(',')]);
   async function setInclude(styleColorId: string, next: boolean) {
     // optimistic update: clone map
+    setSavingById((m) => ({ ...m, [styleColorId]: true }));
     await mutate((prev: any) => {
       const m = new Map<string, boolean>(prev as Map<string, boolean> | undefined);
       m.set(styleColorId, next);
@@ -674,14 +678,22 @@ function ListColorEditor({ listId, styleId }: { listId: string; styleId: string 
     try {
       await supabase.from('stock_list_colors').upsert({ list_id: listId, style_id: styleId, style_color_id: styleColorId, include: next } as any, { onConflict: 'list_id,style_color_id' as any });
       await mutate();
+      setLastSavedAt(Date.now());
     } catch (err) {
       // revert
       await mutate();
+    } finally {
+      setSavingById((m) => {
+        const copy = { ...m };
+        delete copy[styleColorId];
+        return copy;
+      });
     }
   }
   async function addAll() {
     if (!colors?.length) return;
     // optimistic set all to true
+    setSavingAll(true);
     await mutate((prev: any) => {
       const m = new Map<string, boolean>(prev as Map<string, boolean> | undefined);
       for (const c of colors) m.set(c.id, true);
@@ -691,8 +703,11 @@ function ListColorEditor({ listId, styleId }: { listId: string; styleId: string 
       const rows = colors.map((c) => ({ list_id: listId, style_id: styleId, style_color_id: c.id, include: true }));
       await supabase.from('stock_list_colors').upsert(rows, { onConflict: 'list_id,style_color_id' as any });
       await mutate();
+      setLastSavedAt(Date.now());
     } catch (e) {
       await mutate();
+    } finally {
+      setSavingAll(false);
     }
   }
   return (
@@ -700,23 +715,30 @@ function ListColorEditor({ listId, styleId }: { listId: string; styleId: string 
       <div className="flex items-center justify-between">
         <div className="text-[11px] text-gray-600">Included: <span className="font-medium text-black">{includedCount}</span> / {total}</div>
         <div>
-          <button className="text-[11px] underline" onClick={addAll}>Add all colors</button>
+          <button className={"text-[11px] underline " + (savingAll ? 'opacity-60 cursor-not-allowed' : '')} onClick={addAll} disabled={savingAll}>
+            {savingAll ? 'Adding…' : 'Add all colors'}
+          </button>
         </div>
       </div>
+      {lastSavedAt && (
+        <div className="text-[11px] text-green-700">Saved just now</div>
+      )}
       <div className="flex flex-wrap gap-2">
         {(colors ?? []).map((c) => {
           const checked = includes?.has(c.id) ? (includes.get(c.id) as boolean) : false;
+          const saving = !!savingById[c.id];
           return (
             <label key={c.id} className="inline-flex items-center gap-1 border rounded px-1.5 py-0.5">
               <input
                 type="checkbox"
                 checked={checked}
+                disabled={saving}
                 onChange={async (e) => {
                   const next = e.target.checked;
                   await setInclude(c.id, next);
                 }}
               />
-              <span className="text-[11px]">{c.color}</span>
+              <span className={"text-[11px] " + (saving ? 'opacity-60' : '')}>{c.color}</span>
             </label>
           );
         })}
