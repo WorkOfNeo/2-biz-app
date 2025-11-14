@@ -44,16 +44,32 @@ export default function StylesSettingsPage() {
   }, { refreshInterval: 0 });
   const [seasonFilter, setSeasonFilter] = useState<string>('');
   const { data: colorsByStyle, mutate: mutateColors } = useSWR(isAdmin ? 'style_colors:all' : null, async () => {
-    const { data, error } = await supabase.from('style_colors').select('id, style_id, color, scrape_enabled, updated_at').order('color').limit(5000);
-    if (error) throw new Error(error.message);
-    const map = new Map<string, Array<{ id: string; color: string; scrape_enabled: boolean | null; updated_at: string }>>();
-    for (const r of (data ?? []) as any[]) {
-      const arr = map.get(r.style_id) || [];
-      arr.push({ id: r.id, color: r.color, scrape_enabled: r.scrape_enabled, updated_at: r.updated_at });
-      map.set(r.style_id, arr);
+    async function loadWithVisible() {
+      const { data, error } = await supabase.from('style_colors').select('id, style_id, color, visible, scrape_enabled, updated_at').order('color').limit(5000);
+      if (error) throw error;
+      const map = new Map<string, Array<{ id: string; color: string; visible: boolean | null; scrape_enabled: boolean | null; updated_at: string }>>();
+      for (const r of (data ?? []) as any[]) {
+        const arr = map.get(r.style_id) || [];
+        arr.push({ id: r.id, color: r.color, visible: (r.visible as boolean | null) ?? null, scrape_enabled: r.scrape_enabled, updated_at: r.updated_at });
+        map.set(r.style_id, arr);
+      }
+      return map;
     }
-    return map;
+    try {
+      return await loadWithVisible();
+    } catch {
+      // Fallback when 'visible' column not present; default to null
+      const { data } = await supabase.from('style_colors').select('id, style_id, color, scrape_enabled, updated_at').order('color').limit(5000);
+      const map = new Map<string, Array<{ id: string; color: string; visible: boolean | null; scrape_enabled: boolean | null; updated_at: string }>>();
+      for (const r of (data ?? []) as any[]) {
+        const arr = map.get(r.style_id) || [];
+        arr.push({ id: r.id, color: r.color, visible: null, scrape_enabled: r.scrape_enabled, updated_at: r.updated_at });
+        map.set(r.style_id, arr);
+      }
+      return map;
+    }
   }, { refreshInterval: 0 });
+  const [openColors, setOpenColors] = useState<Record<string, boolean>>({});
   // Per-user selection map: { [user_id]: string[] }
   const { data: selectionMap, mutate: mutateSelection } = useSWR(isAdmin ? 'app-settings:styles-user-selection' : null, async () => {
     const { data } = await supabase.from('app_settings').select('id, value').eq('key', 'styles_user_selection').maybeSingle();
@@ -186,22 +202,74 @@ export default function StylesSettingsPage() {
                 <th className="p-2 text-left border-b">Action</th>
                 <th className="p-2 text-left border-b">Style No.</th>
                 <th className="p-2 text-left border-b">Style Name</th>
+                <th className="p-2 text-left border-b">Colors</th>
               </tr>
             </thead>
             <tbody>
               {(filteredStyles ?? []).map((s) => {
                 const added = selectedForUser.has(s.style_no);
                 return (
-                  <tr key={s.style_no} className={(added ? 'bg-slate-50 ' : '') + 'hover:bg-slate-50 transition-colors'}>
-                    <td className="p-2 border-b align-middle">
-                      <button
-                        className={(added ? 'bg-slate-300 text-gray-800 ' : 'bg-slate-900 text-white ') + 'text-xs px-2 py-1 rounded border'}
-                        onClick={async ()=>{ await toggleStyleForUser(s.style_no); }}
-                      >{added ? 'Added' : 'Add to list'}</button>
-                    </td>
-                    <td className={(added ? 'border-l-4 border-l-slate-900 ' : '') + 'p-2 border-b font-medium'}>{s.style_no}</td>
-                    <td className="p-2 border-b text-gray-700">{s.style_name ?? '—'}</td>
-                  </tr>
+                  <>
+                    <tr key={s.style_no} className={(added ? 'bg-slate-50 ' : '') + 'hover:bg-slate-50 transition-colors'}>
+                      <td className="p-2 border-b align-middle">
+                        <button
+                          className={(added ? 'bg-slate-300 text-gray-800 ' : 'bg-slate-900 text-white ') + 'text-xs px-2 py-1 rounded border'}
+                          onClick={async ()=>{ await toggleStyleForUser(s.style_no); }}
+                        >{added ? 'Added' : 'Add to list'}</button>
+                      </td>
+                      <td className={(added ? 'border-l-4 border-l-slate-900 ' : '') + 'p-2 border-b font-medium'}>{s.style_no}</td>
+                      <td className="p-2 border-b text-gray-700">{s.style_name ?? '—'}</td>
+                      <td className="p-2 border-b">
+                        <button
+                          className="text-[11px] underline"
+                          onClick={() => setOpenColors((m) => ({ ...m, [s.id]: !m[s.id] }))}
+                        >
+                          {openColors[s.id] ? 'Hide colors' : 'Show colors'}
+                        </button>
+                      </td>
+                    </tr>
+                    {openColors[s.id] && (
+                      <tr key={s.id + ':colors'}>
+                        <td className="p-2 border-b bg-white" colSpan={4}>
+                          <div className="flex flex-wrap gap-2">
+                            {(colorsByStyle?.get(s.id) || []).map((c) => {
+                              const checked = (c as any).visible !== false; // default ON
+                              return (
+                                <label key={c.id} className="inline-flex items-center gap-1 border rounded px-1.5 py-0.5">
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={async (e) => {
+                                      const next = e.target.checked;
+                                      // optimistic update
+                                      mutateColors((prev: any) => {
+                                        const map = new Map(prev as Map<string, any[]>);
+                                        const arr = Array.from(map.get(s.id) || []);
+                                        for (let i = 0; i < arr.length; i++) {
+                                          if (arr[i].id === c.id) { arr[i] = { ...arr[i], visible: next }; break; }
+                                        }
+                                        map.set(s.id, arr);
+                                        return map;
+                                      }, false);
+                                      try {
+                                        const { error } = await supabase.from('style_colors').update({ visible: next }).eq('id', c.id);
+                                        if (error) throw error as any;
+                                        await mutateColors();
+                                      } catch (err: any) {
+                                        alert(err?.message || 'Failed to update color visibility');
+                                        try { await mutateColors(); } catch {}
+                                      }
+                                    }}
+                                  />
+                                  <span className="text-[11px]">{c.color}</span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </>
                 );
               })}
             </tbody>
