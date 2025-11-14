@@ -17,18 +17,19 @@ async function handle(req: Request) {
     if (!seasonId || rows.length === 0) {
       return new Response(JSON.stringify({ error: 'seasonId and rows are required' }), { status: 400 });
     }
-    // Optionally build a lookup map for customers by (name, city)
-    let customers: Array<{ customer_id: string; company: string | null; city: string | null }> = [];
-    if (lookup === 'name_city') {
-      const { data } = await supabase.from('customers').select('customer_id, company, city').limit(100000);
-      customers = (data ?? []) as any[];
-    }
+    // Build lookup maps for customers and salespersons
+    const { data: customers } = await supabase.from('customers').select('customer_id, company, city, salesperson_id').limit(100000);
     const byNameCity = new Map<string, string>(); // "name||city" -> account_no
-    if (lookup === 'name_city') {
-      for (const c of customers) {
-        const key = `${(c.company || '').trim().toLowerCase()}||${(c.city || '').trim().toLowerCase()}`;
-        if (!byNameCity.has(key) && c.customer_id) byNameCity.set(key, c.customer_id);
-      }
+    const spByAccount = new Map<string, string | null>(); // account_no -> salesperson_id
+    for (const c of (customers ?? []) as any[]) {
+      if (c.customer_id) spByAccount.set(c.customer_id, c.salesperson_id ?? null);
+      const key = `${(c.company || '').trim().toLowerCase()}||${(c.city || '').trim().toLowerCase()}`;
+      if (!byNameCity.has(key) && c.customer_id) byNameCity.set(key, c.customer_id);
+    }
+    const { data: salespersons } = await supabase.from('salespersons').select('id, currency').limit(100000);
+    const currencyBySp = new Map<string, string>();
+    for (const sp of (salespersons ?? []) as any[]) {
+      if (sp.id) currencyBySp.set(sp.id as string, (sp.currency as string | null) || 'DKK');
     }
     // Normalize and insert; also collect season-nulled accounts (by account_no)
     let inserted = 0;
@@ -45,7 +46,8 @@ async function handle(req: Request) {
       }
       const qty = Number(r.qty || 0) || 0;
       const price = Number(r.price || 0) || 0;
-      const currency = (r.currency || 'DKK').toString().trim().toUpperCase() || 'DKK';
+      const spId = account_no ? (spByAccount.get(account_no) ?? null) : null;
+      const currency = spId ? (currencyBySp.get(spId) || 'DKK') : 'DKK';
       const nulled = Boolean(r.nulled) || String(r.nulled || '').toLowerCase() === 'yes';
       const perm = Boolean(r.perm) || String(r.nulled || '').toLowerCase() === 'perm' || String(r.perm || '').toLowerCase() === 'perm';
       if (nulled && account_no) nulledAccounts.add(account_no);
@@ -60,7 +62,7 @@ async function handle(req: Request) {
         price,
         currency,
         season_id: seasonId,
-        salesperson_id: null,
+        salesperson_id: spId,
         frozen: false
       });
       if (batch.length >= 500) {
