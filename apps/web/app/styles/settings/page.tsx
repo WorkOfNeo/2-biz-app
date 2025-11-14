@@ -403,6 +403,55 @@ export default function StylesSettingsPage() {
   );
 }
 
+function ColorVisibilityEditor({ styleId }: { styleId: string }) {
+  const supabase = createClientComponentClient();
+  const React = require('react') as typeof import('react');
+  const { data, mutate } = useSWR(styleId ? ['style_colors:editor', styleId] : null, async () => {
+    async function loadWithVisible() {
+      const { data, error } = await supabase.from('style_colors').select('id, color, visible').eq('style_id', styleId).order('color');
+      if (error) throw error;
+      return (data ?? []) as Array<{ id: string; color: string; visible: boolean | null }>;
+    }
+    try {
+      return await loadWithVisible();
+    } catch {
+      const { data } = await supabase.from('style_colors').select('id, color').eq('style_id', styleId).order('color');
+      return ((data ?? []) as any[]).map((r) => ({ ...r, visible: null })) as Array<{ id: string; color: string; visible: boolean | null }>;
+    }
+  });
+  return (
+    <div className="flex flex-wrap gap-2">
+      {(data ?? []).map((c) => {
+        const checked = c.visible !== false;
+        return (
+          <label key={c.id} className="inline-flex items-center gap-1 border rounded px-1.5 py-0.5">
+            <input
+              type="checkbox"
+              checked={checked}
+              onChange={async (e) => {
+                const next = e.target.checked;
+                mutate((prev: any) => {
+                  const arr = Array.isArray(prev) ? prev.map((row: any) => row.id === c.id ? { ...row, visible: next } : row) : prev;
+                  return arr;
+                }, false);
+                try {
+                  const { error } = await supabase.from('style_colors').update({ visible: next }).eq('id', c.id);
+                  if (error) throw error as any;
+                  await mutate();
+                } catch (err: any) {
+                  alert(err?.message || 'Failed to update color visibility');
+                  try { await mutate(); } catch {}
+                }
+              }}
+            />
+            <span className="text-[11px]">{c.color}</span>
+          </label>
+        );
+      })}
+    </div>
+  );
+}
+
 
 function StyleListsEditor({ styles }: { styles: { id: string; style_no: string; style_name: string | null; scrape_enabled: boolean | null; updated_at: string }[] }) {
   const supabase = createClientComponentClient();
@@ -425,6 +474,7 @@ function StyleListsEditor({ styles }: { styles: { id: string; style_no: string; 
   }, [data, active]);
   const [newList, setNewList] = React.useState('');
   const [query, setQuery] = React.useState('');
+  const [openColorsFor, setOpenColorsFor] = React.useState<Record<string, boolean>>({});
   // Load style seasons to enable season filtering in the lists editor
   const { data: styleSeasons } = useSWR('style_seasons:for-lists', async () => {
     const { data, error } = await supabase.from('style_seasons').select('style_no, seasons').limit(5000);
@@ -551,6 +601,11 @@ function StyleListsEditor({ styles }: { styles: { id: string; style_no: string; 
     for (const s of styles) m.set(s.style_no, s.style_name);
     return m;
   }, [styles]);
+  const styleNoToId = React.useMemo(() => {
+    const m = new Map<string, string>();
+    for (const s of styles) m.set(s.style_no, s.id);
+    return m;
+  }, [styles]);
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2">
@@ -610,12 +665,26 @@ function StyleListsEditor({ styles }: { styles: { id: string; style_no: string; 
             </div>
             <div className="space-y-1 max-h-64 overflow-auto">
               {listItems.length === 0 && <div className="text-[11px] text-gray-500">No styles yet.</div>}
-              {listItems.map((no) => (
-                <div key={no} className="flex items-center justify-between text-xs border rounded px-2 py-1">
-                  <span>{no}{styleNoToName.get(no) ? ` — ${styleNoToName.get(no)}` : ''}</span>
-                  <button className="underline" onClick={()=>removeFromList(no)}>Remove</button>
-                </div>
-              ))}
+              {listItems.map((no) => {
+                const styleId = styleNoToId.get(no) || '';
+                const open = !!openColorsFor[no];
+                return (
+                  <div key={no} className="text-xs border rounded">
+                    <div className="flex items-center justify-between px-2 py-1">
+                      <span>{no}{styleNoToName.get(no) ? ` — ${styleNoToName.get(no)}` : ''}</span>
+                      <div className="flex items-center gap-3">
+                        <button className="underline" onClick={()=>setOpenColorsFor((m)=>({ ...m, [no]: !open }))}>{open ? 'Hide colors' : 'Edit colors'}</button>
+                        <button className="underline" onClick={()=>removeFromList(no)}>Remove</button>
+                      </div>
+                    </div>
+                    {open && styleId && (
+                      <div className="px-2 pb-2">
+                        <ColorVisibilityEditor styleId={styleId} />
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
           <div className="rounded border p-2">
