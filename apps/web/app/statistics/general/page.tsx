@@ -78,6 +78,7 @@ export default function StatisticsGeneralPage() {
   const [mapPrice, setMapPrice] = useState<string>('');
   const [mapNulled, setMapNulled] = useState<string>('');
   const [importBusy, setImportBusy] = useState(false);
+  const [importResult, setImportResult] = useState<any | null>(null);
   const spNameById = useMemo(() => Object.fromEntries(((salespersons ?? []) as { id: string; name: string }[]).map(s => [s.id, s.name])), [salespersons]);
   const spCurrencyById = useMemo(() => Object.fromEntries(((salespersons ?? []) as { id: string; currency?: string | null }[]).map(s => [s.id, s.currency ?? 'DKK'])), [salespersons]);
   useEffect(() => {
@@ -1177,8 +1178,7 @@ export default function StatisticsGeneralPage() {
                         });
                         if (!res.ok) throw new Error(await res.text());
                         const js = await res.json();
-                        alert(`Imported ${js.inserted ?? 0} rows`);
-                        setImportOpen(false);
+                        setImportResult(js);
                       } catch (e: any) {
                         alert(e?.message || 'Import failed');
                       } finally {
@@ -1192,6 +1192,34 @@ export default function StatisticsGeneralPage() {
               )}
             >
               <div className="space-y-3">
+                {importResult && (
+                  <div className="rounded border p-3 text-sm">
+                    <div className="font-medium mb-1">Import overview</div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1">
+                      <div>Total rows: {importResult.totalRows ?? '—'}</div>
+                      <div>Resolved accounts: {importResult.resolvedAccounts ?? 0} ({importResult.resolvedByNameCity ?? 0} by Name+City)</div>
+                      <div>Unresolved (no match): {importResult.unresolved ?? 0}</div>
+                      <div>Skipped zero qty/price: {importResult.skippedZeroValues ?? 0}</div>
+                      <div>Aggregated accounts: {importResult.aggregatedAccounts ?? 0}</div>
+                      <div>Upserted: {importResult.upserted ?? 0}</div>
+                      <div>Seasonal nulled applied: {importResult.seasonalNulled ?? 0}</div>
+                      <div>Permanently closed: {importResult.permClosed ?? 0}</div>
+                    </div>
+                    {(importResult.unmatchedSamples?.length ?? 0) > 0 && (
+                      <div className="mt-2">
+                        <div className="text-xs text-gray-600 mb-1">Unmatched samples (first {Math.min(25, importResult.unmatchedSamples.length)}):</div>
+                        <ul className="list-disc pl-5 text-xs">
+                          {importResult.unmatchedSamples.slice(0, 25).map((r:any, i:number) => (
+                            <li key={i}>{(r.customer_name || '—')} · {(r.city || '—')}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    <div className="mt-3">
+                      <button className="rounded border px-3 py-1.5 text-sm" onClick={() => { setImportResult(null); setImportOpen(false); }}>Close</button>
+                    </div>
+                  </div>
+                )}
                 <div className="flex items-center gap-2">
                   <label className="text-sm text-gray-700">Target season</label>
                   <select className="rounded border px-2 py-1 text-sm" value={importSeasonId} onChange={(e)=>setImportSeasonId(e.target.value)}>
