@@ -146,10 +146,7 @@ export default function StatisticsDashboardPage() {
       if (attachments.length === 0) { alert('No exports available yet or no options selected.'); return; }
       const subject = 'Statistik opdatering';
       const bodyHtml = 'Hermed statistik :)';
-      const dynamicParams: Record<string, string> = {};
-      const countriesA = attachments.find(a => a.name.toLowerCase().includes('countries'));
-      if (countriesA) dynamicParams['countries_pdf'] = `data:application/pdf;base64,${countriesA.data}`;
-      await sendEmailJs(to, subject, bodyHtml, undefined, dynamicParams);
+      await sendEmailJs(to, subject, bodyHtml, attachments, undefined);
       alert('Email sent');
     } finally {
       setSendingOverall(false);
