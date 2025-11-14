@@ -211,9 +211,9 @@ export async function exportOverview(ctx: Ctx) {
             map.set(key, agg);
           }
           for (const c of items) {
-            const agg = map.get(c.customer_id);
             const isHidden = hiddenSet.has(c.customer_id) || Boolean(c.excluded);
-            if (!agg || isHidden) continue;
+            if (isHidden) continue;
+            const agg = map.get(c.customer_id) || { s1Qty: 0, s1Price: 0, s2Qty: 0, s2Price: 0 };
             const isNulled = nulledSet.has(c.customer_id) || Boolean(c.nulled) || Boolean(c.permanently_closed);
             rows.push({ account: c.customer_id, company: c.company || '-', city: c.city || '-', nulled: isNulled, ...agg });
           }
