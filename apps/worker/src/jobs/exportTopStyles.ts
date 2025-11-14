@@ -24,13 +24,13 @@ export async function exportTopStyles(ctx: Ctx) {
     }
     if (!seasonId) throw new Error('No current season set');
     await log(job.id, 'info', 'STEP:top_styles_export_season', { season_id: seasonId });
-    // Fetch top 10 and suppliers
+    // Fetch top 15 and suppliers
     const { data: rows } = await supabase
       .from('top_styles')
       .select('id, style_no, style_name, image_url, color, type, quality, qty, dg')
       .eq('season_id', seasonId)
       .order('qty', { ascending: false })
-      .limit(10);
+      .limit(15);
     const list = (rows ?? []) as Array<{ id: string; style_no: string; style_name?: string | null; image_url?: string | null; color?: string | null; type?: string | null; quality?: string | null; qty: number; dg?: string | null }>;
     await log(job.id, 'info', 'STEP:top_styles_export_rows', { count: list.length });
     // Season display name
@@ -61,59 +61,103 @@ export async function exportTopStyles(ctx: Ctx) {
       img: { width: 28, height: 28, objectFit: 'cover' as any, borderRadius: 4 },
     });
     const Cell = (txt: string, w: string | number, align: 'left' | 'right' = 'left', extra?: any) => React.createElement(Text, { style: [{ width: w }, styles.cell, align === 'left' ? styles.left : styles.right, extra || {}] }, txt);
-    const Head = React.createElement(View, { style: styles.header },
-      Cell('#', '5%','left'), Cell('Image','9%','left'), Cell('Style No','14%','left'), Cell('Style Name','18%','left'), Cell('Color','18%','left'), Cell('Supplier','14%','left'), Cell('DG','8%','left'), Cell('Qty','6%','right')
+    // Build Salesmen version (Place, Image, Style Name, Color, Sold)
+    const HeadSalesmen = React.createElement(View, { style: styles.header },
+      Cell('Place', '8%','left'), Cell('Image','12%','left'), Cell('Style Name','35%','left'), Cell('Color','25%','left'), Cell('Sold','20%','right')
     );
-    const body = list.map((r, i) => React.createElement(View, { style: styles.row },
-      Cell(String(i+1), '5%','left'),
-      React.createElement(View, { style: [{ width: '9%' as any, padding: 4 }] }, r.image_url ? React.createElement(Image, { style: styles.img, src: r.image_url }) : React.createElement(Text, { style: styles.cell }, '')),
-      Cell(r.style_no, '14%','left'),
-      Cell(r.style_name || '—', '18%','left'),
-      Cell(r.color || '—', '18%','left'),
-      Cell(supplierByStyle.get(r.style_no) || '—', '14%','left'),
-      Cell((r.dg || '') + '', '8%','left'),
-      Cell(new Intl.NumberFormat('da-DK').format(Math.round(Number(r.qty || 0))), '6%','right')
+    const bodySalesmen = list.map((r, i) => React.createElement(View, { style: styles.row },
+      Cell(String(i+1), '8%','left'),
+      React.createElement(View, { style: [{ width: '12%' as any, padding: 4 }] }, r.image_url ? React.createElement(Image, { style: styles.img, src: r.image_url }) : React.createElement(Text, { style: styles.cell }, '')),
+      Cell(r.style_name || '—', '35%','left'),
+      Cell(r.color || '—', '25%','left'),
+      Cell(new Intl.NumberFormat('da-DK').format(Math.round(Number(r.qty || 0))), '20%','right')
     ));
-    const doc = React.createElement(
+    const docSalesmen = React.createElement(
       Document,
       null,
       React.createElement(
         PdfPage,
         { size: 'A4', style: styles.page },
-        React.createElement(Text, { style: styles.h1 }, 'Top 10 Styles'),
+        React.createElement(Text, { style: styles.h1 }, 'Top 15 Styles — Salesmen'),
         React.createElement(Text, { style: styles.sub }, seasonName),
-        Head,
-        ...body
+        HeadSalesmen,
+        ...bodySalesmen
       )
     );
-    await log(job.id, 'info', 'STEP:top_styles_export_pdf_building');
-    const out = await pdf(doc).toBuffer();
-    const buf = await ensureBuffer(out as any);
-    const path = `top_styles/${job.id}/top_styles.pdf`;
+    await log(job.id, 'info', 'STEP:top_styles_export_build_salesmen');
+    const outSalesmen = await pdf(docSalesmen).toBuffer();
+    const bufSalesmen = await ensureBuffer(outSalesmen as any);
+    const pathSalesmen = `top_styles/${job.id}/top_15_salesmen.pdf`;
     try {
-      const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
-      const { error: upErr } = await supabase.storage.from('exports').upload(path, ab as ArrayBuffer, { contentType: 'application/pdf', upsert: true });
+      const ab = bufSalesmen.buffer.slice(bufSalesmen.byteOffset, bufSalesmen.byteOffset + bufSalesmen.byteLength);
+      const { error: upErr } = await supabase.storage.from('exports').upload(pathSalesmen, ab as ArrayBuffer, { contentType: 'application/pdf', upsert: true });
       if (upErr) throw upErr;
-      await log(job.id, 'info', 'STEP:top_styles_export_uploaded', { path });
     } catch (e: any) {
-      await log(job.id, 'error', 'STEP:top_styles_export_upload_failed', { error: e?.message || String(e) });
+      await log(job.id, 'error', 'STEP:top_styles_export_upload_failed_salesmen', { error: e?.message || String(e) });
       throw e;
     }
-    let publicUrl: string | null = null;
+    let publicUrlSalesmen: string | null = null;
     try {
-      const { data: pub } = supabase.storage.from('exports').getPublicUrl(path);
-      publicUrl = pub?.publicUrl ?? null;
-      await log(job.id, 'info', 'STEP:top_styles_export_public_url', { publicUrl });
+      const { data: pub } = supabase.storage.from('exports').getPublicUrl(pathSalesmen);
+      publicUrlSalesmen = pub?.publicUrl ?? null;
     } catch {}
     try {
-      const { error: insErr } = await supabase.from('exports').insert({ kind: 'top_styles_pdf', title: 'Top 10 Styles', path, public_url: publicUrl, job_id: job.id, meta: { season_id: seasonId } });
+      const { error: insErr } = await supabase.from('exports').insert({ kind: 'top_styles_pdf_salesmen', title: 'Top 15 Styles — Salesmen', path: pathSalesmen, public_url: publicUrlSalesmen, job_id: job.id, meta: { season_id: seasonId } });
       if (insErr) throw insErr;
-      await log(job.id, 'info', 'STEP:top_styles_export_row_inserted', { path, publicUrl });
     } catch (e: any) {
-      await log(job.id, 'error', 'STEP:top_styles_export_row_failed', { error: e?.message || String(e) });
+      await log(job.id, 'error', 'STEP:top_styles_export_row_failed_salesmen', { error: e?.message || String(e) });
       throw e;
     }
-    await saveResult(job.id, 'export_top_styles_pdf', { file: { path, publicUrl }, season_id: seasonId });
+    // Build Overall version (Place, Image, Style Name, Color, Sold, DG, Supplier)
+    const HeadOverall = React.createElement(View, { style: styles.header },
+      Cell('Place', '6%','left'), Cell('Image','10%','left'), Cell('Style Name','28%','left'), Cell('Color','22%','left'), Cell('Sold','12%','right'), Cell('DG','10%','left'), Cell('Supplier','12%','left')
+    );
+    const bodyOverall = list.map((r, i) => React.createElement(View, { style: styles.row },
+      Cell(String(i+1), '6%','left'),
+      React.createElement(View, { style: [{ width: '10%' as any, padding: 4 }] }, r.image_url ? React.createElement(Image, { style: styles.img, src: r.image_url }) : React.createElement(Text, { style: styles.cell }, '')),
+      Cell(r.style_name || '—', '28%','left'),
+      Cell(r.color || '—', '22%','left'),
+      Cell(new Intl.NumberFormat('da-DK').format(Math.round(Number(r.qty || 0))), '12%','right'),
+      Cell((r.dg || '') + '', '10%','left'),
+      Cell(supplierByStyle.get(r.style_no) || '—', '12%','left')
+    ));
+    const docOverall = React.createElement(
+      Document,
+      null,
+      React.createElement(
+        PdfPage,
+        { size: 'A4', style: styles.page },
+        React.createElement(Text, { style: styles.h1 }, 'Top 15 Styles — Overall'),
+        React.createElement(Text, { style: styles.sub }, seasonName),
+        HeadOverall,
+        ...bodyOverall
+      )
+    );
+    await log(job.id, 'info', 'STEP:top_styles_export_build_overall');
+    const outOverall = await pdf(docOverall).toBuffer();
+    const bufOverall = await ensureBuffer(outOverall as any);
+    const pathOverall = `top_styles/${job.id}/top_15_overall.pdf`;
+    try {
+      const ab = bufOverall.buffer.slice(bufOverall.byteOffset, bufOverall.byteOffset + bufOverall.byteLength);
+      const { error: upErr } = await supabase.storage.from('exports').upload(pathOverall, ab as ArrayBuffer, { contentType: 'application/pdf', upsert: true });
+      if (upErr) throw upErr;
+    } catch (e: any) {
+      await log(job.id, 'error', 'STEP:top_styles_export_upload_failed_overall', { error: e?.message || String(e) });
+      throw e;
+    }
+    let publicUrlOverall: string | null = null;
+    try {
+      const { data: pub } = supabase.storage.from('exports').getPublicUrl(pathOverall);
+      publicUrlOverall = pub?.publicUrl ?? null;
+    } catch {}
+    try {
+      const { error: insErr } = await supabase.from('exports').insert({ kind: 'top_styles_pdf_overall', title: 'Top 15 Styles — Overall', path: pathOverall, public_url: publicUrlOverall, job_id: job.id, meta: { season_id: seasonId } });
+      if (insErr) throw insErr;
+    } catch (e: any) {
+      await log(job.id, 'error', 'STEP:top_styles_export_row_failed_overall', { error: e?.message || String(e) });
+      throw e;
+    }
+    await saveResult(job.id, 'export_top_styles_pdf', { files: [{ path: pathSalesmen, publicUrl: publicUrlSalesmen }, { path: pathOverall, publicUrl: publicUrlOverall }], season_id: seasonId });
     await setJobSucceeded(job.id);
   } catch (e: any) {
     await setJobFailedOrRequeue(job, e?.message || String(e));

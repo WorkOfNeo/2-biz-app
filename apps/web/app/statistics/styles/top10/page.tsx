@@ -40,7 +40,7 @@ export default function Top10StylesPage() {
     if (excludedGlobalSet && excludedGlobalSet.size > 0) {
       filtered = filtered.filter((r) => !excludedGlobalSet.has(String(r.style_no)));
     }
-    return showAll ? filtered : filtered.slice(0, 10);
+    return showAll ? filtered : filtered.slice(0, 15);
   }, [allItems, excludedSet, excludedGlobalSet, showAll]);
   const { data: supplierMap } = useSWR(items && items.length ? ['suppliers', items.map(i=>i.style_no).join(',')] : null, async () => {
     const { data } = await supabase.from('styles').select('style_no, supplier').in('style_no', (items ?? []).map((i:any)=>i.style_no));
@@ -138,7 +138,7 @@ export default function Top10StylesPage() {
     <div className="space-y-4">
       <div className="text-xs text-gray-500">Statistics</div>
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Top 10 Styles</h1>
+        <h1 className="text-xl font-semibold">Top 15 Styles</h1>
         {has('admin') && (
           <div className="relative">
             <button
@@ -187,7 +187,6 @@ export default function Top10StylesPage() {
               <th className="p-2 text-left">Type</th>
               <th className="p-2 text-right">Sold</th>
               <th className="p-2 text-left">DG</th>
-              <th className="p-2 text-left">Quality</th>
               <th className="p-2 text-left">Supplier</th>
             </tr>
           </thead>
@@ -217,14 +216,13 @@ export default function Top10StylesPage() {
                     }}
                   />
                 </td>
-                <td className="p-2">{r.quality}</td>
                 <td className="p-2">{supplierMap?.get(r.style_no) || '—'}</td>
               </tr>
             ))}
           </tbody>
         </table>
         <div className="p-2">
-          {!showAll && (items?.length ?? 0) >= 10 && (
+          {!showAll && (items?.length ?? 0) >= 15 && (
             <button
               className="text-xs text-gray-600 hover:underline"
               onClick={() => setShowAll(true)}
