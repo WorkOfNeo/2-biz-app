@@ -50,8 +50,17 @@ export default function StylesSettingsPage() {
       let from = 0;
       while (true) {
         const to = from + pageSize - 1;
-        const { data, error } = await supabase.from('style_colors').select(selectCols).order('color').range(from, to);
-        if (error) throw error;
+        // Primary attempt: order by color with range pagination
+        const { data, error } = await supabase
+          .from('style_colors')
+          .select(selectCols)
+          .order('color', { ascending: true })
+          .range(from, to);
+        if (error) {
+          // eslint-disable-next-line no-console
+          console.error('[styles-settings] style_colors loadPaged error (ordered/ranged)', error);
+          throw error;
+        }
         const batch = (data ?? []) as any[];
         all.push(...batch);
         if (batch.length < pageSize) break;
@@ -68,16 +77,39 @@ export default function StylesSettingsPage() {
         map.set(r.style_id, arr);
       }
       return map;
-    } catch {
-      // Fallback when 'visible' column not present; default to null
-      const rows = await loadPaged('id, style_id, color, scrape_enabled, updated_at');
-      const map = new Map<string, Array<{ id: string; color: string; visible: boolean | null; scrape_enabled: boolean | null; updated_at: string }>>();
-      for (const r of rows) {
-        const arr = map.get(r.style_id) || [];
-        arr.push({ id: r.id, color: r.color, visible: null, scrape_enabled: r.scrape_enabled, updated_at: r.updated_at });
-        map.set(r.style_id, arr);
+    } catch (e1) {
+      // eslint-disable-next-line no-console
+      console.warn('[styles-settings] style_colors fallback without "visible" column', e1);
+      // Fallback 1: when 'visible' column not present; default to null
+      try {
+        const rows = await loadPaged('id, style_id, color, scrape_enabled, updated_at');
+        const map = new Map<string, Array<{ id: string; color: string; visible: boolean | null; scrape_enabled: boolean | null; updated_at: string }>>();
+        for (const r of rows) {
+          const arr = map.get(r.style_id) || [];
+          arr.push({ id: r.id, color: r.color, visible: null, scrape_enabled: r.scrape_enabled, updated_at: r.updated_at });
+          map.set(r.style_id, arr);
+        }
+        return map;
+      } catch (e2) {
+        // eslint-disable-next-line no-console
+        console.warn('[styles-settings] style_colors fallback without order/range', e2);
+        // Fallback 2: as a last resort, avoid order/range entirely
+        const { data, error } = await supabase
+          .from('style_colors')
+          .select('id, style_id, color, visible, scrape_enabled, updated_at');
+        if (error) {
+          // eslint-disable-next-line no-console
+          console.error('[styles-settings] style_colors final fetch failed', error);
+          throw error;
+        }
+        const map = new Map<string, Array<{ id: string; color: string; visible: boolean | null; scrape_enabled: boolean | null; updated_at: string }>>();
+        for (const r of (data ?? []) as any[]) {
+          const arr = map.get(r.style_id) || [];
+          arr.push({ id: r.id, color: r.color, visible: (r.visible as boolean | null) ?? null, scrape_enabled: r.scrape_enabled, updated_at: r.updated_at });
+          map.set(r.style_id, arr);
+        }
+        return map;
       }
-      return map;
     }
   }, { refreshInterval: 0 });
   const [openColors, setOpenColors] = useState<Record<string, boolean>>({});
@@ -419,14 +451,33 @@ function ColorVisibilityEditor({ styleId }: { styleId: string }) {
   const React = require('react') as typeof import('react');
   const { data, mutate } = useSWR(styleId ? ['style_colors:editor', styleId] : null, async () => {
     async function loadWithVisible() {
-      const { data, error } = await supabase.from('style_colors').select('id, color, visible').eq('style_id', styleId).order('color');
-      if (error) throw error;
+      const { data, error } = await supabase
+        .from('style_colors')
+        .select('id, color, visible')
+        .eq('style_id', styleId)
+        .order('color', { ascending: true });
+      if (error) {
+        // eslint-disable-next-line no-console
+        console.warn('[styles-settings] ColorVisibilityEditor loadWithVisible ordered error', error);
+        throw error;
+      }
       return (data ?? []) as Array<{ id: string; color: string; visible: boolean | null }>;
     }
     try {
       return await loadWithVisible();
-    } catch {
-      const { data } = await supabase.from('style_colors').select('id, color').eq('style_id', styleId).order('color');
+    } catch (e1) {
+      // eslint-disable-next-line no-console
+      console.warn('[styles-settings] ColorVisibilityEditor fallback without visible/order', e1);
+      // Fallback: avoid order first
+      const { data, error } = await supabase
+        .from('style_colors')
+        .select('id, color')
+        .eq('style_id', styleId);
+      if (error) {
+        // eslint-disable-next-line no-console
+        console.error('[styles-settings] ColorVisibilityEditor final fetch failed', error);
+        throw error;
+      }
       return ((data ?? []) as any[]).map((r) => ({ ...r, visible: null })) as Array<{ id: string; color: string; visible: boolean | null }>;
     }
   });
