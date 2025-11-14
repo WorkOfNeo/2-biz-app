@@ -34,6 +34,7 @@ async function handle(req: Request) {
     let inserted = 0;
     const batch: Array<any> = [];
     const nulledAccounts = new Set<string>();
+    const permAccounts = new Set<string>();
     for (const r of rows) {
       let account_no = (r.account_no || '').toString().trim();
       const customer_name = (r.customer_name || '').toString().trim();
@@ -45,8 +46,10 @@ async function handle(req: Request) {
       const qty = Number(r.qty || 0) || 0;
       const price = Number(r.price || 0) || 0;
       const currency = (r.currency || 'DKK').toString().trim().toUpperCase() || 'DKK';
-      const nulled = Boolean(r.nulled);
+      const nulled = Boolean(r.nulled) || String(r.nulled || '').toLowerCase() === 'yes';
+      const perm = Boolean(r.perm) || String(r.nulled || '').toLowerCase() === 'perm' || String(r.perm || '').toLowerCase() === 'perm';
       if (nulled && account_no) nulledAccounts.add(account_no);
+      if (perm && account_no) permAccounts.add(account_no);
       // Skip empty rows
       if (!qty && !price) continue;
       batch.push({
@@ -86,7 +89,18 @@ async function handle(req: Request) {
         await supabase.from('app_settings').insert({ key, value: next } as any);
       }
     }
-    return new Response(JSON.stringify({ inserted, nulled: nulledAccounts.size }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    // Apply permanent closures across customers
+    if (permAccounts.size > 0) {
+      // Update customers table: permanently_closed=true, nulled=true
+      // Batch in chunks
+      const ids = Array.from(permAccounts);
+      const chunkSize = 500;
+      for (let i = 0; i < ids.length; i += chunkSize) {
+        const chunk = ids.slice(i, i + chunkSize);
+        await supabase.from('customers').update({ permanently_closed: true, nulled: true }).in('customer_id', chunk);
+      }
+    }
+    return new Response(JSON.stringify({ inserted, nulled: nulledAccounts.size, perm: permAccounts.size }), { status: 200, headers: { 'Content-Type': 'application/json' } });
   } catch (e: any) {
     return new Response(JSON.stringify({ error: e?.message || 'Import error' }), { status: 500 });
   }

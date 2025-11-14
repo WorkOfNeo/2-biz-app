@@ -1166,8 +1166,10 @@ export default function StatisticsGeneralPage() {
                           const qty = Number(r[mapQty] ?? 0) || 0;
                           const price = Number(r[mapPrice] ?? 0) || 0;
                           const currency = mapCurrency ? String(r[mapCurrency] ?? '').trim() : 'DKK';
-                          const nulled = mapNulled ? (String(r[mapNulled] ?? '').trim().toLowerCase() in {yes:1,y:1,true:1,'1':1}) : false;
-                          return { account_no, customer_name, city, qty, price, currency, nulled };
+                          const rawNull = mapNulled ? String(r[mapNulled] ?? '').trim().toLowerCase() : '';
+                          const isPerm = rawNull === 'perm' || rawNull === 'permanent' || rawNull === 'permanently';
+                          const nulled = !!(isPerm || (rawNull in { yes:1, y:1, true:1, '1':1 }));
+                          return { account_no, customer_name, city, qty, price, currency, nulled, perm: isPerm };
                         }).filter((x) => (x.qty || x.price));
                         const res = await fetch('/api/statistics/import', {
                           method: 'POST',
@@ -1278,7 +1280,7 @@ export default function StatisticsGeneralPage() {
                         <option value="">— (defaults to DKK)</option>
                         {importHeaders.map((h) => (<option key={h} value={h}>{h}</option>))}
                       </select>
-                      <label className="text-sm">Nulled (Yes/blank)</label>
+                      <label className="text-sm">Nulled (Yes/Perm/blank)</label>
                       <select className="rounded border px-2 py-1 text-sm w-full" value={mapNulled} onChange={(e)=>setMapNulled(e.target.value)}>
                         <option value="">—</option>
                         {importHeaders.map((h) => (<option key={h} value={h}>{h}</option>))}
