@@ -355,75 +355,120 @@ export async function exportOverview(ctx: Ctx) {
       const { s1, s2 } = await getSeasonCompare();
       if (!s1 || !s2) throw new Error('Missing season compare (s1/s2)');
       const countries = ['Denmark', 'Norway', 'Sweden', 'Finland'];
+      // Data loads
       const { data: stats } = await supabase.from('sales_stats').select('season_id, qty, price, currency, account_no, customer_id, customers(country)').in('season_id', [s1, s2]).limit(200000);
-      const { data: customers } = await supabase.from('customers').select('customer_id, country, salesperson_id');
+      const { data: customers } = await supabase.from('customers').select('customer_id, country, salesperson_id, nulled, excluded, permanently_closed');
       const { data: people } = await supabase.from('salespersons').select('id, name');
       const { data: invoices } = await supabase.from('sales_invoices').select('account_no, qty, amount, currency, season_id').in('season_id', [s1, s2]).limit(200000);
-      let rates: Record<string, number> = { DKK: 1 };
-      try { const { data: rateRow } = await supabase.from('app_settings').select('value').eq('key', 'currency_rates').maybeSingle(); rates = { DKK: 1, ...((rateRow?.value as any) ?? {}) } as Record<string, number>; } catch {}
+      // Global and season-specific currency rates
+      let globalRates: Record<string, number> = { DKK: 1 };
+      try { const { data: rateRow } = await supabase.from('app_settings').select('value').eq('key', 'currency_rates').maybeSingle(); globalRates = { DKK: 1, ...((rateRow?.value as any) ?? {}) } as Record<string, number>; } catch {}
+      let ratesS1: Record<string, number> = {};
+      let ratesS2: Record<string, number> = {};
+      try { const { data } = await supabase.from('app_settings').select('value').eq('key', `currency_rates:${s1}`).maybeSingle(); ratesS1 = ((data?.value as any) || {}) as Record<string, number>; } catch {}
+      try { const { data } = await supabase.from('app_settings').select('value').eq('key', `currency_rates:${s2}`).maybeSingle(); ratesS2 = ((data?.value as any) || {}) as Record<string, number>; } catch {}
+      // Seasonal overrides (use S1 for filtering)
+      let seasonalHidden = new Set<string>(); let seasonalNulled = new Set<string>();
+      try {
+        const { data } = await supabase.from('app_settings').select('value').eq('key', `season_overrides:${s1}`).maybeSingle();
+        const val = (data?.value as any) || {};
+        (Array.isArray(val.hidden) ? val.hidden : []).forEach((a: string) => seasonalHidden.add(a));
+        (Array.isArray(val.nulled) ? val.nulled : []).forEach((a: string) => seasonalNulled.add(a));
+      } catch {}
+      // Maps
       const customerCountryById = new Map<string, string | null>();
       const customerSpById = new Map<string, string | null>();
+      const closedSet = new Set<string>(); const excludedSet = new Set<string>(); const nulledSet = new Set<string>();
+      for (const c of (customers ?? []) as any[]) {
+        customerCountryById.set(c.customer_id, c.country ?? null);
+        customerSpById.set(c.customer_id, c.salesperson_id ?? null);
+        if (c.permanently_closed) closedSet.add(c.customer_id);
+        if (c.excluded) excludedSet.add(c.customer_id);
+        if (c.nulled) nulledSet.add(c.customer_id);
+      }
       const spNameById = new Map<string, string>();
       for (const p of (people ?? []) as any[]) spNameById.set(p.id as string, p.name as string);
-      for (const c of (customers ?? []) as any[]) { customerCountryById.set(c.customer_id, c.country ?? null); customerSpById.set(c.customer_id, c.salesperson_id ?? null); }
+      // Aggregation
       const totals: Record<string, { s1Qty: number; s2Qty: number; s1Price: number; s2Price: number }> = {};
       const perSp: Record<string, Map<string, { s1Qty: number; s1Price: number; s2Qty: number; s2Price: number }>> = {};
       for (const c of countries) totals[c] = { s1Qty: 0, s2Qty: 0, s1Price: 0, s2Price: 0 };
+      // Stats rows (already have country via join; fall back to customers map)
       for (const r of (stats ?? []) as any[]) {
-        const ctry = String(r.customers?.country || '').trim();
+        const acc = String(r.account_no || '');
+        const ctry = String(r.customers?.country ?? customerCountryById.get(acc) ?? '').trim();
         if (!countries.includes(ctry)) continue;
-        let bucket = totals[ctry];
-        if (!bucket) { bucket = totals[ctry] = { s1Qty: 0, s2Qty: 0, s1Price: 0, s2Price: 0 }; }
-        const rate = rates[(String(r.currency || 'DKK').toUpperCase())] ?? 1;
-        const priceDkk = Number(r.price || 0) * rate;
-        if (r.season_id === s1) { bucket.s1Qty += Number(r.qty||0); bucket.s1Price += priceDkk; }
-        else if (r.season_id === s2) { bucket.s2Qty += Number(r.qty||0); bucket.s2Price += priceDkk; }
-        const spId = (customerSpById.get(r.account_no) ?? null) as string | null;
-        if (spId) {
-          const m = (perSp[ctry] ||= new Map());
-          const row = m.get(spId) || { s1Qty: 0, s1Price: 0, s2Qty: 0, s2Price: 0 };
-          if (r.season_id === s1) { row.s1Qty += Number(r.qty||0); row.s1Price += priceDkk; }
-          else if (r.season_id === s2) { row.s2Qty += Number(r.qty||0); row.s2Price += priceDkk; }
-          m.set(spId, row);
+        // Filters
+        if (acc) {
+          if (seasonalHidden.has(acc)) continue;
+          if (seasonalNulled.has(acc)) continue;
+          if (closedSet.has(acc)) continue;
+          if (excludedSet.has(acc)) continue;
+          if (nulledSet.has(acc)) continue;
         }
-      }
-      for (const inv of (invoices ?? []) as any[]) {
-        const acc = inv.account_no ?? '';
-        if (!acc) continue;
-        const ctry = String(customerCountryById.get(acc) || '').trim();
-        if (!countries.includes(ctry)) continue;
         let bucket = totals[ctry];
         if (!bucket) { bucket = totals[ctry] = { s1Qty: 0, s2Qty: 0, s1Price: 0, s2Price: 0 }; }
-        const rate = rates[(String(inv.currency || 'DKK').toUpperCase())] ?? 1;
-        const amountDkk = Number(inv.amount || 0) * rate;
-        const qty = Number(inv.qty || 0) || 0;
-        if (inv.season_id === s1) { bucket.s1Qty += qty; bucket.s1Price += amountDkk; }
-        else if (inv.season_id === s2) { bucket.s2Qty += qty; bucket.s2Price += amountDkk; }
+        const cur = (String(r.currency || 'DKK').toUpperCase());
+        const rate1 = ({ ...globalRates, ...ratesS1 } as Record<string, number>)[cur] ?? 1;
+        const rate2 = ({ ...globalRates, ...ratesS2 } as Record<string, number>)[cur] ?? 1;
+        const price = Number(r.price || 0);
+        if (r.season_id === s1) { bucket.s1Qty += Number(r.qty||0); bucket.s1Price += price * rate1; }
+        else if (r.season_id === s2) { bucket.s2Qty += Number(r.qty||0); bucket.s2Price += price * rate2; }
         const spId = (customerSpById.get(acc) ?? null) as string | null;
         if (spId) {
           const m = (perSp[ctry] ||= new Map());
           const row = m.get(spId) || { s1Qty: 0, s1Price: 0, s2Qty: 0, s2Price: 0 };
-          if (inv.season_id === s1) { row.s1Qty += qty; row.s1Price += amountDkk; }
-          else if (inv.season_id === s2) { row.s2Qty += qty; row.s2Price += amountDkk; }
+          if (r.season_id === s1) { row.s1Qty += Number(r.qty||0); row.s1Price += price * rate1; }
+          else if (r.season_id === s2) { row.s2Qty += Number(r.qty||0); row.s2Price += price * rate2; }
           m.set(spId, row);
         }
       }
+      // Invoices mapped via customer country
+      for (const inv of (invoices ?? []) as any[]) {
+        const acc = inv.account_no ?? '';
+        if (!acc) continue;
+        if (seasonalHidden.has(acc)) continue;
+        if (seasonalNulled.has(acc)) continue;
+        if (closedSet.has(acc)) continue;
+        if (excludedSet.has(acc)) continue;
+        if (nulledSet.has(acc)) continue;
+        const ctry = String(customerCountryById.get(acc) || '').trim();
+        if (!countries.includes(ctry)) continue;
+        let bucket = totals[ctry];
+        if (!bucket) { bucket = totals[ctry] = { s1Qty: 0, s2Qty: 0, s1Price: 0, s2Price: 0 }; }
+        const cur = (String(inv.currency || 'DKK').toUpperCase());
+        const rate1 = ({ ...globalRates, ...ratesS1 } as Record<string, number>)[cur] ?? 1;
+        const rate2 = ({ ...globalRates, ...ratesS2 } as Record<string, number>)[cur] ?? 1;
+        const amount = Number(inv.amount || 0);
+        const qty = Number(inv.qty || 0) || 0;
+        if (inv.season_id === s1) { bucket.s1Qty += qty; bucket.s1Price += amount * rate1; }
+        else if (inv.season_id === s2) { bucket.s2Qty += qty; bucket.s2Price += amount * rate2; }
+        const spId = (customerSpById.get(acc) ?? null) as string | null;
+        if (spId) {
+          const m = (perSp[ctry] ||= new Map());
+          const row = m.get(spId) || { s1Qty: 0, s1Price: 0, s2Qty: 0, s2Price: 0 };
+          if (inv.season_id === s1) { row.s1Qty += qty; row.s1Price += amount * rate1; }
+          else if (inv.season_id === s2) { row.s2Qty += qty; row.s2Price += amount * rate2; }
+          m.set(spId, row);
+        }
+      }
+      // Styling (20% smaller)
+      const SCALE = 0.8;
+      const s = (n: number) => Math.max(0.5, n * SCALE);
       const styles = StyleSheet.create({
-        page: { padding: 16, fontSize: 12, color: '#0f172a' },
-        h1: { fontSize: 18, marginBottom: 10 },
-        row: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 },
-        section: { flexDirection: 'row', gap: 16 },
-        box: { width: '50%' as any, padding: 8, alignItems: 'center' as any },
-        boxTitle: { fontSize: 12, marginBottom: 2 },
-        boxSub: { fontSize: 10, color: '#64748b', marginBottom: 4 },
-        boxNums: { fontSize: 12, fontWeight: 700 as any, marginBottom: 6 }
+        page: { padding: s(16), fontSize: s(12), color: '#0f172a' },
+        h1: { fontSize: s(18), marginBottom: s(10) },
+        row: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: s(8) },
+        section: { flexDirection: 'row', gap: s(16) },
+        box: { width: '50%' as any, padding: s(8), alignItems: 'center' as any },
+        boxTitle: { fontSize: s(12), marginBottom: s(2) },
+        boxSub: { fontSize: s(10), color: '#64748b', marginBottom: s(4) },
+        boxNums: { fontSize: s(12), fontWeight: 700 as any, marginBottom: s(6) }
       });
       const fmt = (n: number) => new Intl.NumberFormat('da-DK').format(Math.round(n));
       const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
       function Donut({ pct, label }: { pct: number; label: string }) {
         const visualPct = clamp(pct, 0, 100);
-        // 250% larger: size ~200px with thicker progress stroke
-        const r = 90; const cx = 100; const cy = 100; const restW = 8; const progW = 16;
+        const r = s(90); const cx = s(100); const cy = s(100); const restW = s(8); const progW = s(16);
         const endAngle = (-90 + (visualPct / 100) * 360) * (Math.PI / 180);
         const x = cx + r * Math.cos(endAngle);
         const y = cy + r * Math.sin(endAngle);
@@ -432,138 +477,78 @@ export async function exportOverview(ctx: Ctx) {
         const hue = Math.round((visualPct / 100) * 120);
         const color = `hsl(${hue}, 70%, 40%)`;
         return React.createElement(View, { style: { alignItems: 'center' } },
-          React.createElement(Svg, { width: 200, height: 200 },
+          React.createElement(Svg, { width: s(200), height: s(200) },
             React.createElement(Circle, { cx, cy, r, stroke: '#e5e7eb', strokeWidth: restW, fill: 'none' }),
             visualPct > 0 ? React.createElement(Path, { d: arcPath, stroke: color, strokeWidth: progW, fill: 'none' }) : null
           ),
-          React.createElement(Text, { style: { fontSize: 10, marginTop: 2 } }, `${label} · ${Math.round(pct)}%`)
+          React.createElement(Text, { style: { fontSize: s(10), marginTop: s(2) } }, `${label} · ${Math.round(pct)}%`)
         );
       }
       // Map country -> currency like on page
       const countryCurrency: Record<string, string> = { Denmark: 'DKK', Norway: 'NOK', Sweden: 'SEK', Finland: 'EUR' };
-      // Pair countries: two per page
-      const pairs: Array<[string, string | null]> = [];
-      for (let i = 0; i < countries.length; i += 2) {
-        const c1 = countries[i] as string;
-        const c2 = (i + 1) < countries.length ? (countries[i + 1] as string) : null;
-        pairs.push([c1, c2]);
-      }
       const seasonNames = async (id: string | null): Promise<string | null> => {
         if (!id) return null;
         try { const { data } = await supabase.from('seasons').select('name, year').eq('id', id).maybeSingle(); const n = (data as any)?.name as string | null; const y = (data as any)?.year as number | null; return n ? (y ? `${n} ${y}` : n) : null; } catch { return null; }
       };
       const s1Name = await seasonNames(s1);
       const s2Name = await seasonNames(s2);
-      const pages = pairs.map((pair) => {
-        const [c1, c2] = pair;
-        const row1 = totals[c1] || { s1Qty: 0, s2Qty: 0, s1Price: 0, s2Price: 0 };
-        const row2 = c2 ? (totals[c2] || { s1Qty: 0, s2Qty: 0, s1Price: 0, s2Price: 0 }) : null;
-        const qtyPct1 = row1.s2Qty === 0 ? 0 : (row1.s1Qty / row1.s2Qty) * 100;
-        const pricePct1 = row1.s2Price === 0 ? 0 : (row1.s1Price / row1.s2Price) * 100;
-        const qtyPct2 = row2 ? (row2.s2Qty === 0 ? 0 : (row2.s1Qty / row2.s2Qty) * 100) : 0;
-        const pricePct2 = row2 ? (row2.s2Price === 0 ? 0 : (row2.s1Price / row2.s2Price) * 100) : 0;
-        const cur1 = countryCurrency[c1] || 'DKK';
-        const r1 = (rates as any)[cur1] ?? 1;
-        const s1Local1 = r1 ? row1.s1Price / r1 : row1.s1Price;
-        const s2Local1 = r1 ? row1.s2Price / r1 : row1.s2Price;
-        const cur2 = c2 ? (countryCurrency[c2] || 'DKK') : 'DKK';
-        const r2 = c2 ? ((rates as any)[cur2] ?? 1) : 1;
-        const s1Local2 = row2 ? (r2 ? row2.s1Price / r2 : row2.s1Price) : 0;
-        const s2Local2 = row2 ? (r2 ? row2.s2Price / r2 : row2.s2Price) : 0;
-        // Build salesperson table for c1
-        const spRows1 = Array.from((perSp[c1] || new Map()).entries()).map(([id, v]) => ({ id, name: spNameById.get(id) || '—', ...v }))
+      // Build one full page per country
+      const pages = countries.map((cName) => {
+        const row = totals[cName] || { s1Qty: 0, s2Qty: 0, s1Price: 0, s2Price: 0 };
+        const qtyPct = row.s2Qty === 0 ? 0 : (row.s1Qty / row.s2Qty) * 100;
+        const pricePct = row.s2Price === 0 ? 0 : (row.s1Price / row.s2Price) * 100;
+        const cur = countryCurrency[cName] || 'DKK';
+        const rCur = (globalRates as any)[cur] ?? 1;
+        const s1Local = rCur ? row.s1Price / rCur : row.s1Price;
+        const s2Local = rCur ? row.s2Price / rCur : row.s2Price;
+        const spRows = Array.from((perSp[cName] || new Map()).entries()).map(([id, v]) => ({ id, name: spNameById.get(id) || '—', ...v }))
           .sort((a,b) => (b.s1Price + b.s2Price) - (a.s1Price + a.s2Price));
         const T = (txt: string, w: string, align: 'left' | 'right' = 'left', bold = false) =>
           React.createElement(Text, { style: [{ width: w, textAlign: align }, bold ? { fontWeight: 700 as any } : {}] }, txt);
-        const qtyTable1 = React.createElement(View, { style: { marginTop: 8 } },
+        const qtyTable = React.createElement(View, { style: { marginTop: s(8) } },
           React.createElement(View, { style: styles.row },
             T('Name','40%','left',true), T(s1Name || 'Season 1','30%','right',true), T(s2Name || 'Season 2','30%','right',true)
           ),
-          ...spRows1.map(r => React.createElement(View, { style: styles.row },
+          ...spRows.map(r => React.createElement(View, { style: styles.row },
             T(r.name,'40%','left'), T(String(r.s1Qty),'30%','right'), T(String(r.s2Qty),'30%','right')
           ))
         );
-        const priceTable1 = React.createElement(View, { style: { marginTop: 8 } },
+        const priceTable = React.createElement(View, { style: { marginTop: s(8) } },
           React.createElement(View, { style: styles.row },
             T('Name','40%','left',true), T((s1Name || 'Season 1') + ' (DKK)','30%','right',true), T((s2Name || 'Season 2') + ' (DKK)','30%','right',true)
           ),
-          ...spRows1.map(r => React.createElement(View, { style: styles.row },
+          ...spRows.map(r => React.createElement(View, { style: styles.row },
             T(r.name,'40%','left'), T(fmt(r.s1Price),'30%','right'), T(fmt(r.s2Price),'30%','right')
           ))
         );
-        // Build salesperson table for c2
-        const spRows2 = c2 ? Array.from((perSp[c2] || new Map()).entries()).map(([id, v]) => ({ id, name: spNameById.get(id) || '—', ...v }))
-          .sort((a,b) => (b.s1Price + b.s2Price) - (a.s1Price + a.s2Price)) : [];
-        const qtyTable2 = c2 ? React.createElement(View, { style: { marginTop: 8 } },
-          React.createElement(View, { style: styles.row },
-            T('Name','40%','left',true), T(s1Name || 'Season 1','30%','right',true), T(s2Name || 'Season 2','30%','right',true)
-          ),
-          ...spRows2.map(r => React.createElement(View, { style: styles.row },
-            T(r.name,'40%','left'), T(String(r.s1Qty),'30%','right'), T(String(r.s2Qty),'30%','right')
-          ))
-        ) : null;
-        const priceTable2 = c2 ? React.createElement(View, { style: { marginTop: 8 } },
-          React.createElement(View, { style: styles.row },
-            T('Name','40%','left',true), T((s1Name || 'Season 1') + ' (DKK)','30%','right',true), T((s2Name || 'Season 2') + ' (DKK)','30%','right',true)
-          ),
-          ...spRows2.map(r => React.createElement(View, { style: styles.row },
-            T(r.name,'40%','left'), T(fmt(r.s1Price),'30%','right'), T(fmt(r.s2Price),'30%','right')
-          ))
-        ) : null;
         return React.createElement(PdfPage, { size: 'A4', orientation: 'landscape', style: styles.page },
-          React.createElement(View, { style: { flexDirection: 'column', gap: 24 } },
+          React.createElement(View, { style: { flexDirection: 'column', gap: s(24) } },
             React.createElement(View, { style: { width: '100%' as any } },
-              React.createElement(Text, { style: styles.h1 }, `Countries · ${c1}`),
+              React.createElement(Text, { style: styles.h1 }, `Countries · ${cName}`),
               React.createElement(View, { style: styles.section },
                 React.createElement(View, { style: styles.box },
                   React.createElement(Text, { style: styles.boxTitle }, 'Antal stk'),
-                  React.createElement(Text, { style: styles.boxNums }, `${row1.s1Qty} vs ${row1.s2Qty}`),
-                  React.createElement(Donut as any, { pct: qtyPct1, label: 'Stk' })
+                  React.createElement(Text, { style: styles.boxNums }, `${row.s1Qty} vs ${row.s2Qty}`),
+                  React.createElement(Donut as any, { pct: qtyPct, label: 'Stk' })
                 ),
                 React.createElement(View, { style: styles.box },
                   React.createElement(Text, { style: styles.boxTitle }, 'Omsætning'),
-                  React.createElement(Text, { style: styles.boxNums }, `${fmt(s1Local1)} ${cur1} vs ${fmt(s2Local1)} ${cur1}`),
-                  React.createElement(Text, { style: styles.boxSub }, `${fmt(row1.s1Price)} DKK vs ${fmt(row1.s2Price)} DKK`),
-                  React.createElement(Donut as any, { pct: pricePct1, label: 'Omsætning' })
+                  React.createElement(Text, { style: styles.boxNums }, `${fmt(s1Local)} ${cur} vs ${fmt(s2Local)} ${cur}`),
+                  React.createElement(Text, { style: styles.boxSub }, `${fmt(row.s1Price)} DKK vs ${fmt(row.s2Price)} DKK`),
+                  React.createElement(Donut as any, { pct: pricePct, label: 'Omsætning' })
                 )
               ),
-              React.createElement(View, { style: { flexDirection: 'row', gap: 16 } },
+              React.createElement(View, { style: { flexDirection: 'row', gap: s(16) } },
                 React.createElement(View, { style: { width: '50%' as any } }, 
                   React.createElement(Text, { style: styles.boxTitle }, 'Per sælger - stk'),
-                  qtyTable1
+                  qtyTable
                 ),
                 React.createElement(View, { style: { width: '50%' as any } }, 
                   React.createElement(Text, { style: styles.boxTitle }, 'Per sælger - omsætning (DKK)'),
-                  priceTable1
+                  priceTable
                 )
               )
-            ),
-            c2 ? React.createElement(View, { style: { width: '100%' as any } },
-              React.createElement(Text, { style: styles.h1 }, `Countries · ${c2}`),
-              React.createElement(View, { style: styles.section },
-                React.createElement(View, { style: styles.box },
-                  React.createElement(Text, { style: styles.boxTitle }, 'Antal stk'),
-                  React.createElement(Text, { style: styles.boxNums }, `${row2!.s1Qty} vs ${row2!.s2Qty}`),
-                  React.createElement(Donut as any, { pct: qtyPct2, label: 'Stk' })
-                ),
-                React.createElement(View, { style: styles.box },
-                  React.createElement(Text, { style: styles.boxTitle }, 'Omsætning'),
-                  React.createElement(Text, { style: styles.boxNums }, `${fmt(s1Local2)} ${cur2} vs ${fmt(s2Local2)} ${cur2}`),
-                  React.createElement(Text, { style: styles.boxSub }, `${fmt(row2!.s1Price)} DKK vs ${fmt(row2!.s2Price)} DKK`),
-                  React.createElement(Donut as any, { pct: pricePct2, label: 'Omsætning' })
-                ),
-                React.createElement(View, { style: { flexDirection: 'row', gap: 16, width: '100%' as any } },
-                  React.createElement(View, { style: { width: '50%' as any } }, 
-                    React.createElement(Text, { style: styles.boxTitle }, 'Per sælger - stk'),
-                    qtyTable2
-                  ),
-                  React.createElement(View, { style: { width: '50%' as any } }, 
-                    React.createElement(Text, { style: styles.boxTitle }, 'Per sælger - omsætning (DKK)'),
-                    priceTable2
-                  )
-                )
-              )
-            ) : null
+            )
           )
         );
       });
