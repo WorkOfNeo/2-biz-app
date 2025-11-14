@@ -6,7 +6,6 @@ import Link from 'next/link';
 import { Menu, EyeOff, Trash2, Ban } from 'lucide-react';
 import { ProgressBar } from '../../../components/ProgressBar';
 import { Modal } from '../../../components/Modal';
-import Papa from 'papaparse';
 
 export default function StatisticsGeneralPage() {
   const { data: seasons } = useSWR('seasons-all', async () => {
@@ -1217,29 +1216,16 @@ export default function StatisticsGeneralPage() {
                     onChange={async (e) => {
                       const file = e.target.files?.[0];
                       if (!file) return;
-                      if (file.name.toLowerCase().endsWith('.csv')) {
-                        Papa.parse(file, {
-                          header: true,
-                          skipEmptyLines: true,
-                          complete: (res) => {
-                            const rows = (res.data as any[]).filter(Boolean);
-                            setImportRows(rows);
-                            const headers = Object.keys(rows[0] || {});
-                            setImportHeaders(headers);
-                          }
-                        });
-                      } else {
-                        // XLSX
-                        const XLSX = await import('xlsx');
-                        const buf = await file.arrayBuffer();
-                        const wb = XLSX.read(buf);
-                        const first = wb.SheetNames[0];
-                        const ws = wb.Sheets[first];
-                        const rows = XLSX.utils.sheet_to_json(ws) as any[];
-                        setImportRows(rows);
-                        const headers = Object.keys(rows[0] || {});
-                        setImportHeaders(headers);
-                      }
+                      // Use XLSX to parse both CSV and XLSX
+                      const XLSX = await import('xlsx');
+                      const buf = await file.arrayBuffer();
+                      const wb = XLSX.read(buf, { type: 'array' });
+                      const first = wb.SheetNames[0];
+                      const ws = wb.Sheets[first];
+                      const rows = XLSX.utils.sheet_to_json(ws) as any[];
+                      setImportRows(rows);
+                      const headers = Object.keys(rows[0] || {});
+                      setImportHeaders(headers);
                     }}
                   />
                 </div>
