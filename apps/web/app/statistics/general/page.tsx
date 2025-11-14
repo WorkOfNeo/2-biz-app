@@ -78,6 +78,7 @@ export default function StatisticsGeneralPage() {
   const [mapQty, setMapQty] = useState<string>('');
   const [mapPrice, setMapPrice] = useState<string>('');
   const [mapCurrency, setMapCurrency] = useState<string>('');
+  const [mapNulled, setMapNulled] = useState<string>('');
   const [importBusy, setImportBusy] = useState(false);
   const spNameById = useMemo(() => Object.fromEntries(((salespersons ?? []) as { id: string; name: string }[]).map(s => [s.id, s.name])), [salespersons]);
   const spCurrencyById = useMemo(() => Object.fromEntries(((salespersons ?? []) as { id: string; currency?: string | null }[]).map(s => [s.id, s.currency ?? 'DKK'])), [salespersons]);
@@ -1165,7 +1166,8 @@ export default function StatisticsGeneralPage() {
                           const qty = Number(r[mapQty] ?? 0) || 0;
                           const price = Number(r[mapPrice] ?? 0) || 0;
                           const currency = mapCurrency ? String(r[mapCurrency] ?? '').trim() : 'DKK';
-                          return { account_no, customer_name, city, qty, price, currency };
+                          const nulled = mapNulled ? (String(r[mapNulled] ?? '').trim().toLowerCase() in {yes:1,y:1,true:1,'1':1}) : false;
+                          return { account_no, customer_name, city, qty, price, currency, nulled };
                         }).filter((x) => (x.qty || x.price));
                         const res = await fetch('/api/statistics/import', {
                           method: 'POST',
@@ -1274,6 +1276,11 @@ export default function StatisticsGeneralPage() {
                       <label className="text-sm">Currency</label>
                       <select className="rounded border px-2 py-1 text-sm w-full" value={mapCurrency} onChange={(e)=>setMapCurrency(e.target.value)}>
                         <option value="">— (defaults to DKK)</option>
+                        {importHeaders.map((h) => (<option key={h} value={h}>{h}</option>))}
+                      </select>
+                      <label className="text-sm">Nulled (Yes/blank)</label>
+                      <select className="rounded border px-2 py-1 text-sm w-full" value={mapNulled} onChange={(e)=>setMapNulled(e.target.value)}>
+                        <option value="">—</option>
                         {importHeaders.map((h) => (<option key={h} value={h}>{h}</option>))}
                       </select>
                     </div>

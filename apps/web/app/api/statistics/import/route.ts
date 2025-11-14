@@ -30,9 +30,10 @@ async function handle(req: Request) {
         if (!byNameCity.has(key) && c.customer_id) byNameCity.set(key, c.customer_id);
       }
     }
-    // Normalize and insert
+    // Normalize and insert; also collect season-nulled accounts (by account_no)
     let inserted = 0;
     const batch: Array<any> = [];
+    const nulledAccounts = new Set<string>();
     for (const r of rows) {
       let account_no = (r.account_no || '').toString().trim();
       const customer_name = (r.customer_name || '').toString().trim();
@@ -44,6 +45,8 @@ async function handle(req: Request) {
       const qty = Number(r.qty || 0) || 0;
       const price = Number(r.price || 0) || 0;
       const currency = (r.currency || 'DKK').toString().trim().toUpperCase() || 'DKK';
+      const nulled = Boolean(r.nulled);
+      if (nulled && account_no) nulledAccounts.add(account_no);
       // Skip empty rows
       if (!qty && !price) continue;
       batch.push({
@@ -69,7 +72,21 @@ async function handle(req: Request) {
       if (error) return new Response(JSON.stringify({ error: error.message }), { status: 500 });
       inserted += batch.length;
     }
-    return new Response(JSON.stringify({ inserted }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    // Update season overrides (nulled) for this season
+    if (nulledAccounts.size > 0) {
+      const key = `season_overrides:${seasonId}`;
+      const { data: exist } = await supabase.from('app_settings').select('id, value').eq('key', key).maybeSingle();
+      const val = (exist?.value as any) || {};
+      const existingNulled: string[] = Array.isArray(val.nulled) ? val.nulled : [];
+      const hidden: string[] = Array.isArray(val.hidden) ? val.hidden : [];
+      const next = { nulled: Array.from(new Set([...existingNulled, ...Array.from(nulledAccounts)])), hidden };
+      if (exist?.id) {
+        await supabase.from('app_settings').update({ value: next }).eq('id', exist.id as any);
+      } else {
+        await supabase.from('app_settings').insert({ key, value: next } as any);
+      }
+    }
+    return new Response(JSON.stringify({ inserted, nulled: nulledAccounts.size }), { status: 200, headers: { 'Content-Type': 'application/json' } });
   } catch (e: any) {
     return new Response(JSON.stringify({ error: e?.message || 'Import error' }), { status: 500 });
   }
