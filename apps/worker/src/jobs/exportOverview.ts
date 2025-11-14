@@ -438,6 +438,12 @@ export async function exportOverview(ctx: Ctx) {
         const c2 = (i + 1) < countries.length ? (countries[i + 1] as string) : null;
         pairs.push([c1, c2]);
       }
+      const seasonNames = async (id: string | null): Promise<string | null> => {
+        if (!id) return null;
+        try { const { data } = await supabase.from('seasons').select('name, year').eq('id', id).maybeSingle(); const n = (data as any)?.name as string | null; const y = (data as any)?.year as number | null; return n ? (y ? `${n} ${y}` : n) : null; } catch { return null; }
+      };
+      const s1Name = await seasonNames(s1);
+      const s2Name = await seasonNames(s2);
       const pages = pairs.map((pair) => {
         const [c1, c2] = pair;
         const row1 = totals[c1] || { s1Qty: 0, s2Qty: 0, s1Price: 0, s2Price: 0 };
@@ -457,31 +463,43 @@ export async function exportOverview(ctx: Ctx) {
         // Build salesperson table for c1
         const spRows1 = Array.from((perSp[c1] || new Map()).entries()).map(([id, v]) => ({ id, name: spNameById.get(id) || '—', ...v }))
           .sort((a,b) => (b.s1Price + b.s2Price) - (a.s1Price + a.s2Price));
-        const spTable1 = React.createElement(View, { style: { marginTop: 8 } },
+        const T = (txt: string, w: string, align: 'left' | 'right' = 'left', bold = false) =>
+          React.createElement(Text, { style: [{ width: w, textAlign: align }, bold ? { fontWeight: 700 as any } : {}] }, txt);
+        const qtyTable1 = React.createElement(View, { style: { marginTop: 8 } },
           React.createElement(View, { style: styles.row },
-            TextRow('Name','28%','left',true), TextRow('S1 Qty','12%','right',true), TextRow('S1 Price (DKK)','20%','right',true),
-            TextRow('S2 Qty','12%','right',true), TextRow('S2 Price (DKK)','20%','right',true)
+            T('Name','40%','left',true), T(s1Name || 'Season 1','30%','right',true), T(s2Name || 'Season 2','30%','right',true)
           ),
           ...spRows1.map(r => React.createElement(View, { style: styles.row },
-            TextRow(r.name,'28%','left'), TextRow(String(r.s1Qty),'12%','right'), TextRow(fmt(r.s1Price),'20%','right'),
-            TextRow(String(r.s2Qty),'12%','right'), TextRow(fmt(r.s2Price),'20%','right')
+            T(r.name,'40%','left'), T(String(r.s1Qty),'30%','right'), T(String(r.s2Qty),'30%','right')
+          ))
+        );
+        const priceTable1 = React.createElement(View, { style: { marginTop: 8 } },
+          React.createElement(View, { style: styles.row },
+            T('Name','40%','left',true), T((s1Name || 'Season 1') + ' (DKK)','30%','right',true), T((s2Name || 'Season 2') + ' (DKK)','30%','right',true)
+          ),
+          ...spRows1.map(r => React.createElement(View, { style: styles.row },
+            T(r.name,'40%','left'), T(fmt(r.s1Price),'30%','right'), T(fmt(r.s2Price),'30%','right')
           ))
         );
         // Build salesperson table for c2
         const spRows2 = c2 ? Array.from((perSp[c2] || new Map()).entries()).map(([id, v]) => ({ id, name: spNameById.get(id) || '—', ...v }))
           .sort((a,b) => (b.s1Price + b.s2Price) - (a.s1Price + a.s2Price)) : [];
-        const spTable2 = c2 ? React.createElement(View, { style: { marginTop: 8 } },
+        const qtyTable2 = c2 ? React.createElement(View, { style: { marginTop: 8 } },
           React.createElement(View, { style: styles.row },
-            TextRow('Name','28%','left',true), TextRow('S1 Qty','12%','right',true), TextRow('S1 Price (DKK)','20%','right',true),
-            TextRow('S2 Qty','12%','right',true), TextRow('S2 Price (DKK)','20%','right',true)
+            T('Name','40%','left',true), T(s1Name || 'Season 1','30%','right',true), T(s2Name || 'Season 2','30%','right',true)
           ),
           ...spRows2.map(r => React.createElement(View, { style: styles.row },
-            TextRow(r.name,'28%','left'), TextRow(String(r.s1Qty),'12%','right'), TextRow(fmt(r.s1Price),'20%','right'),
-            TextRow(String(r.s2Qty),'12%','right'), TextRow(fmt(r.s2Price),'20%','right')
+            T(r.name,'40%','left'), T(String(r.s1Qty),'30%','right'), T(String(r.s2Qty),'30%','right')
           ))
         ) : null;
-        const TextRow = (txt: string, w: string, align: 'left' | 'right', header?: boolean) =>
-          React.createElement(Text, { style: [{ width: w }, styles.cell, align==='left'?styles.left:styles.right, header ? { fontWeight: 700 } : {}] }, txt);
+        const priceTable2 = c2 ? React.createElement(View, { style: { marginTop: 8 } },
+          React.createElement(View, { style: styles.row },
+            T('Name','40%','left',true), T((s1Name || 'Season 1') + ' (DKK)','30%','right',true), T((s2Name || 'Season 2') + ' (DKK)','30%','right',true)
+          ),
+          ...spRows2.map(r => React.createElement(View, { style: styles.row },
+            T(r.name,'40%','left'), T(fmt(r.s1Price),'30%','right'), T(fmt(r.s2Price),'30%','right')
+          ))
+        ) : null;
         return React.createElement(PdfPage, { size: 'A4', style: styles.page },
           React.createElement(View, { style: { flexDirection: 'column', gap: 24 } },
             React.createElement(View, { style: { width: '100%' as any } },
@@ -499,7 +517,16 @@ export async function exportOverview(ctx: Ctx) {
                   React.createElement(Donut as any, { pct: pricePct1, label: 'Omsætning' })
                 )
               ),
-              spTable1
+              React.createElement(View, { style: { flexDirection: 'row', gap: 16 } },
+                React.createElement(View, { style: { width: '50%' as any } }, 
+                  React.createElement(Text, { style: styles.boxTitle }, 'Per sælger - stk'),
+                  qtyTable1
+                ),
+                React.createElement(View, { style: { width: '50%' as any } }, 
+                  React.createElement(Text, { style: styles.boxTitle }, 'Per sælger - omsætning (DKK)'),
+                  priceTable1
+                )
+              )
             ),
             c2 ? React.createElement(View, { style: { width: '100%' as any } },
               React.createElement(Text, { style: styles.h1 }, `Countries · ${c2}`),
@@ -515,7 +542,16 @@ export async function exportOverview(ctx: Ctx) {
                   React.createElement(Text, { style: styles.boxSub }, `${fmt(row2!.s1Price)} DKK vs ${fmt(row2!.s2Price)} DKK`),
                   React.createElement(Donut as any, { pct: pricePct2, label: 'Omsætning' })
                 ),
-                spTable2
+                React.createElement(View, { style: { flexDirection: 'row', gap: 16, width: '100%' as any } },
+                  React.createElement(View, { style: { width: '50%' as any } }, 
+                    React.createElement(Text, { style: styles.boxTitle }, 'Per sælger - stk'),
+                    qtyTable2
+                  ),
+                  React.createElement(View, { style: { width: '50%' as any } }, 
+                    React.createElement(Text, { style: styles.boxTitle }, 'Per sælger - omsætning (DKK)'),
+                    priceTable2
+                  )
+                )
               )
             ) : null
           )
