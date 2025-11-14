@@ -118,10 +118,13 @@ export default function CountriesPage() {
     const rates = { DKK: 1, ...(currencyRatesRow ?? {}) } as Record<string, number>;
     const seasonalNulled = new Set(overrides?.nulled ?? []);
     const seasonalHidden = new Set(overrides?.hidden ?? []);
+    // Build customer -> country map once and use it as a fallback for stats rows too
+    const customerCountryById = new Map<string, string | null>();
+    for (const c of (customers ?? [])) { customerCountryById.set(c.customer_id, c.country ?? null); }
     for (const r of (stats ?? []) as any[]) {
-      const ctry = String(r.customers?.country || '').trim();
-      if (!countries.includes(ctry)) continue;
       const acc = String(r.account_no || '');
+      const ctry = String((r.customers?.country ?? customerCountryById.get(acc) ?? '')).trim();
+      if (!countries.includes(ctry)) continue;
       if (acc) {
         // Exclude accounts that are seasonal hidden/nulled or globally closed/excluded/nulled
         if (seasonalHidden.has(acc)) continue;
@@ -137,8 +140,6 @@ export default function CountriesPage() {
       else if (r.season_id === s2) { bucket.s2Qty += Number(r.qty||0); bucket.s2PriceDkk += priceDkk; }
     }
     // Add invoices mapped to country via customers
-    const customerCountryById = new Map<string, string | null>();
-    for (const c of (customers ?? [])) { customerCountryById.set(c.customer_id, c.country ?? null); }
     for (const inv of (invoices ?? [])) {
       const acc = inv.account_no ?? '';
       if (!acc) continue;
