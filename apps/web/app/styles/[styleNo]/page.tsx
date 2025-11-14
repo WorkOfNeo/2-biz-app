@@ -141,27 +141,25 @@ export default function StyleDetailPage({ params }: { params: { styleNo: string 
                     className="h-4 w-4 accent-slate-900 rounded"
                     checked={c.visible !== false}
                     onChange={async (e) => {
+                      const next = e.target.checked;
+                      // Immediate optimistic update (sync), then persist; revalidate afterwards
+                      mutateColors((prev: any) => {
+                        const arr = Array.isArray(prev) ? prev.map((row: any) => row.id === c.id ? { ...row, visible: next } : row) : prev;
+                        return arr;
+                      }, false);
                       try {
-                        const next = e.target.checked;
-                        // Optimistic update
-                        await mutateColors(async (prev: any) => {
-                          const arr = Array.isArray(prev) ? prev.slice() : [];
-                          for (let i = 0; i < arr.length; i++) {
-                            if ((arr[i] as any).id === c.id) { (arr[i] as any).visible = next; break; }
-                          }
-                          // Persist to DB
-                          const { error } = await supabase.from('style_colors').update({ visible: next }).eq('id', c.id);
-                          if (error) throw error as any;
-                          return arr;
-                        }, false);
+                        const { error } = await supabase.from('style_colors').update({ visible: next }).eq('id', c.id);
+                        if (error) throw error as any;
+                        // Finalize with a quiet revalidate to ensure server value matches
+                        await mutateColors();
                       } catch (err: any) {
                         if (err?.code === '42703') {
                           alert('Visibility field not available yet. Please run the database migration for style_colors.visible');
                         } else {
                           alert(err?.message || 'Failed to update visibility');
-                          // Revalidate to rollback UI if needed
-                          try { await mutateColors(); } catch {}
                         }
+                        // Revalidate to restore server truth if save failed
+                        try { await mutateColors(); } catch {}
                       }
                     }}
                   />
