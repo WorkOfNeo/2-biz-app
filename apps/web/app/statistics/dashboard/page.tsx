@@ -72,54 +72,47 @@ export default function StatisticsDashboardPage() {
         if (!my || !my.publicUrl) continue;
         const recipient = byId[sp.id]?.email || '';
         if (!recipient) continue;
-        const attachments: Array<{ name: string; data: string }> = [];
+        const dynamicParams: Record<string, string> = {
+          salesman_pdf: '',
+          countries_pdf: '',
+          top10_salesmen_pdf: ''
+        };
         try {
           const dataUrl = await fetchToDataUrl(my.publicUrl);
-          const base64 = dataUrl.split(',')[1] || '';
-          const name = (my.name ? `${my.name}.pdf` : (my.path?.split('/').pop() || 'statistics.pdf'));
-          attachments.push({ name, data: base64 });
+          dynamicParams.salesman_pdf = dataUrl;
         } catch {}
         if (includeCountries && countries?.public_url) {
           try {
             const dataUrl = await fetchToDataUrl(countries.public_url);
-            const base64 = dataUrl.split(',')[1] || '';
-            attachments.push({ name: 'Countries.pdf', data: base64 });
+            dynamicParams.countries_pdf = dataUrl;
           } catch {}
         }
         if (includeTop10Salesmen && top10Salesmen?.public_url) {
           try {
             const dataUrl = await fetchToDataUrl(top10Salesmen.public_url);
-            const base64 = dataUrl.split(',')[1] || '';
-            attachments.push({ name: 'Top 10 - Salesmen.pdf', data: base64 });
-          } catch {}
-        }
-        // Attach up to two latest stock list PDFs
-        for (const r of latestStockLists.slice(0, 2)) {
-          const pub = r?.public_url;
-          const title = String(r?.title || 'Stock List');
-          if (!pub) continue;
-          try {
-            const dataUrl = await fetchToDataUrl(pub);
-            const base64 = dataUrl.split(',')[1] || '';
-            const fname = (title.endsWith('.pdf') ? title : `${title}.pdf`);
-            attachments.push({ name: fname, data: base64 });
+            dynamicParams.top10_salesmen_pdf = dataUrl;
           } catch {}
         }
         try {
-          console.log('[email:salesperson] prepared', {
+          const summarize = (p: Record<string, string>) => Object.fromEntries(Object.entries(p).map(([k, v]) => [k, { len: (v || '').length, head: (v || '').slice(0, 32) }]));
+          console.log('[email:salesperson] prepared: using template params', {
             recipient,
             includeCountries: !!(includeCountries && countries?.public_url),
             includeTop10Salesmen: !!(includeTop10Salesmen && top10Salesmen?.public_url),
-            attachments: attachments.map(a => ({ name: a.name, sizeKb: Math.round(((a.data?.length || 0) * 3) / 4 / 1024) }))
+            params: summarize(dynamicParams)
           });
         } catch {}
-        if (attachments.length === 0) continue;
+        const anyParam =
+          Boolean(dynamicParams.salesman_pdf) ||
+          Boolean(dynamicParams.countries_pdf) ||
+          Boolean(dynamicParams.top10_salesmen_pdf);
+        if (!anyParam) continue;
         const subject = 'Din statistik';
         const firstName = String(byId[sp.id]?.name || '');
         const hej = firstName ? `Hej ${firstName.split(' ')[0]},` : 'Hej,';
         const bodyHtml = `${hej}\n\nHermed statistik :)`;
-        // Send with attachments array (avoids relying on template param names)
-        await sendEmailJs([recipient], subject, bodyHtml, attachments, undefined);
+        // Send with dynamic template params (EmailJS)
+        await sendEmailJs([recipient], subject, bodyHtml, undefined, dynamicParams);
       }
       alert('Emails queued for sending.');
     } finally {
