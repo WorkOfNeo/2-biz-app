@@ -47,10 +47,25 @@ export async function exportStockList(ctx: Ctx) {
         await log(job.id, 'info', 'STEP:export_stock_list_skip_empty', { listName });
         continue;
       }
-      // Fetch style meta
-      const { data: styleRows } = await supabase.from('styles').select('style_no, style_name, image_url, supplier').in('style_no', finalStyleNos);
-      const metaByNo = new Map<string, { name: string | null; image: string | null; supplier: string | null }>();
-      for (const r of (styleRows ?? []) as any[]) metaByNo.set(r.style_no, { name: r.style_name ?? null, image: r.image_url ?? null, supplier: r.supplier ?? null });
+      // Fetch style meta (include id for visibility lookup)
+      const { data: styleRows } = await supabase.from('styles').select('id, style_no, style_name, image_url, supplier').in('style_no', finalStyleNos);
+      const metaByNo = new Map<string, { id: string | null; name: string | null; image: string | null; supplier: string | null }>();
+      const styleIds: string[] = [];
+      for (const r of (styleRows ?? []) as any[]) {
+        metaByNo.set(r.style_no, { id: (r.id as string) || null, name: r.style_name ?? null, image: r.image_url ?? null, supplier: r.supplier ?? null });
+        if (r.id) styleIds.push(r.id as string);
+      }
+      // Load color visibility flags per style_id/color; default visible=true on missing/NULL
+      const visibilityMap = new Map<string, Map<string, boolean>>();
+      if (styleIds.length) {
+        const { data: visRows } = await supabase.from('style_colors').select('style_id, color, visible').in('style_id', styleIds);
+        for (const v of (visRows ?? []) as any[]) {
+          const sid = String(v.style_id || '');
+          const key = String(v.color || '').trim().toLowerCase();
+          if (!visibilityMap.has(sid)) visibilityMap.set(sid, new Map());
+          visibilityMap.get(sid)!.set(key, (v.visible as boolean | null) !== false);
+        }
+      }
       // Fetch stock rows
       const { data: stockRows } = await supabase
         .from('style_stock')
@@ -73,7 +88,14 @@ export async function exportStockList(ctx: Ctx) {
       }
       const out: Array<{ style_no: string; color: string; sizes: string[]; stockArr: number[]; soldArr: number[]; purchaseArr: number[]; availableArr: number[]; stock: number; sold: number; purchase: number; available: number }> = [];
       for (const [style_no, byColor] of byStyle.entries()) {
+        const metaEntry = metaByNo.get(style_no) || { id: null, name: null, image: null, supplier: null };
+        const sid = metaEntry.id || null;
         for (const [color, rows] of byColor.entries()) {
+          // Respect visibility flag when present
+          if (sid) {
+            const vis = visibilityMap.get(sid)?.get(String(color || '').trim().toLowerCase());
+            if (vis === false) continue;
+          }
           const latestMap = new Map<string, Row>();
           for (const r of rows) {
             const key = `${r.section}|${r.row_label ?? ''}`;
