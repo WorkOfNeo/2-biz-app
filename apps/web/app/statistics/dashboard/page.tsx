@@ -130,23 +130,23 @@ export default function StatisticsDashboardPage() {
     try {
       const to = receivers.split(',').map(s => s.trim()).filter(Boolean);
       if (to.length === 0) { alert('Enter at least one receiver email.'); return; }
-      const attachments: Array<{ name: string; data: string }> = [];
+      const dynamicParams: Record<string, string> = { overview_pdf: '', countries_pdf: '', top10_overall_pdf: '' };
       if (overallOpts.overview) {
         const row = latestByKind.get('overview_pdf');
-        if (row?.public_url) { try { const du = await fetchToDataUrl(row.public_url); attachments.push({ name: 'Overview.pdf', data: du.split(',')[1] || '' }); } catch {} }
+        if (row?.public_url) { try { const du = await fetchToDataUrl(row.public_url); dynamicParams.overview_pdf = du; } catch {} }
       }
       if (overallOpts.countries) {
         const row = latestByKind.get('countries_pdf');
-        if (row?.public_url) { try { const du = await fetchToDataUrl(row.public_url); attachments.push({ name: 'Countries.pdf', data: du.split(',')[1] || '' }); } catch {} }
+        if (row?.public_url) { try { const du = await fetchToDataUrl(row.public_url); dynamicParams.countries_pdf = du; } catch {} }
       }
       if (overallOpts.top10overall) {
         const row = latestByKind.get('top_styles_pdf_overall');
-        if (row?.public_url) { try { const du = await fetchToDataUrl(row.public_url); attachments.push({ name: 'Top 10 - Overall.pdf', data: du.split(',')[1] || '' }); } catch {} }
+        if (row?.public_url) { try { const du = await fetchToDataUrl(row.public_url); dynamicParams.top10_overall_pdf = du; } catch {} }
       }
-      if (attachments.length === 0) { alert('No exports available yet or no options selected.'); return; }
+      if (!overallOpts.overview && !overallOpts.countries && !overallOpts.top10overall) { alert('No options selected.'); return; }
       const subject = 'Statistik opdatering';
       const bodyHtml = 'Hermed statistik :)';
-      await sendEmailJs(to, subject, bodyHtml, attachments, undefined);
+      await sendEmailJs(to, subject, bodyHtml, undefined, dynamicParams);
       alert('Email sent');
     } finally {
       setSendingOverall(false);
