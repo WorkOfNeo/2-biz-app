@@ -48,8 +48,11 @@ async function handle(req: Request) {
       const price = Number(r.price || 0) || 0;
       const spId = account_no ? (spByAccount.get(account_no) ?? null) : null;
       const currency = spId ? (currencyBySp.get(spId) || 'DKK') : 'DKK';
-      const nulled = Boolean(r.nulled) || String(r.nulled || '').toLowerCase() === 'yes';
-      const perm = Boolean(r.perm) || String(r.nulled || '').toLowerCase() === 'perm' || String(r.perm || '').toLowerCase() === 'perm';
+      const rawNull = String((r.nulled ?? '') as any).toLowerCase();
+      const isYes = rawNull === 'yes';
+      const isNo = rawNull === 'no';
+      const perm = String((r.perm ?? '') as any).toLowerCase() === 'perm' || rawNull === 'perm' || rawNull === 'permanent' || rawNull === 'permanently';
+      const nulled = isYes || perm; // ignore all other values; 'no' -> not nulled
       if (nulled && account_no) nulledAccounts.add(account_no);
       if (perm && account_no) permAccounts.add(account_no);
       // Skip empty rows

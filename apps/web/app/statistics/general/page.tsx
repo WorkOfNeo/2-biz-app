@@ -1165,7 +1165,9 @@ export default function StatisticsGeneralPage() {
                           const price = Number(r[mapPrice] ?? 0) || 0;
                           const rawNull = mapNulled ? String(r[mapNulled] ?? '').trim().toLowerCase() : '';
                           const isPerm = rawNull === 'perm' || rawNull === 'permanent' || rawNull === 'permanently';
-                          const nulled = !!(isPerm || (rawNull in { yes:1, y:1, true:1, '1':1 }));
+                          const isYes = rawNull === 'yes';
+                          const isNo = rawNull === 'no';
+                          const nulled = !!(isPerm || isYes); // ignore any other values
                           return { account_no, customer_name, city, qty, price, nulled, perm: isPerm };
                         }).filter((x) => (x.qty || x.price));
                         const res = await fetch('/api/statistics/import', {
