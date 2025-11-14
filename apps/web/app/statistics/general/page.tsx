@@ -52,6 +52,8 @@ export default function StatisticsGeneralPage() {
     if (error) throw new Error(error.message);
     return (data?.value as Record<string, number> | undefined) ?? {};
   });
+  const [s1, setS1] = useState<string>('');
+  const [s2, setS2] = useState<string>('');
   const { data: ratesS1 } = useSWR(s1 ? `season:${s1}:currency-rates` : null, async () => {
     const key = `currency_rates:${s1}`;
     const { data } = await supabase.from('app_settings').select('value').eq('key', key).maybeSingle();
@@ -62,8 +64,6 @@ export default function StatisticsGeneralPage() {
     const { data } = await supabase.from('app_settings').select('value').eq('key', key).maybeSingle();
     return ((data?.value as any) || {}) as Record<string, number>;
   });
-  const [s1, setS1] = useState<string>('');
-  const [s2, setS2] = useState<string>('');
   const [activePerson, setActivePerson] = useState<string>('');
   const [showSave, setShowSave] = useState(false);
   const [updating, setUpdating] = useState(false);
