@@ -19,7 +19,7 @@ export default function StyleDetailPage({ params }: { params: { styleNo: string 
     return data as { id: string; style_no: string; style_name: string | null; supplier: string | null; image_url: string | null; link_href: string | null; updated_at: string } | null;
   });
 
-  const { data: colors } = useSWR(['style:colors', styleNo, meta?.id], async () => {
+  const { data: colors, mutate: mutateColors } = useSWR(['style:colors', styleNo, meta?.id], async () => {
     if (!meta?.id) return [] as Array<{ id: string; color: string; visible: boolean | null; updated_at: string | null }>;
     try {
       const { data, error } = await supabase
@@ -142,10 +142,25 @@ export default function StyleDetailPage({ params }: { params: { styleNo: string 
                     checked={c.visible !== false}
                     onChange={async (e) => {
                       try {
-                        await supabase.from('style_colors').update({ visible: e.target.checked }).eq('id', c.id);
+                        const next = e.target.checked;
+                        // Optimistic update
+                        await mutateColors(async (prev: any) => {
+                          const arr = Array.isArray(prev) ? prev.slice() : [];
+                          for (let i = 0; i < arr.length; i++) {
+                            if ((arr[i] as any).id === c.id) { (arr[i] as any).visible = next; break; }
+                          }
+                          // Persist to DB
+                          const { error } = await supabase.from('style_colors').update({ visible: next }).eq('id', c.id);
+                          if (error) throw error as any;
+                          return arr;
+                        }, false);
                       } catch (err: any) {
                         if (err?.code === '42703') {
                           alert('Visibility field not available yet. Please run the database migration for style_colors.visible');
+                        } else {
+                          alert(err?.message || 'Failed to update visibility');
+                          // Revalidate to rollback UI if needed
+                          try { await mutateColors(); } catch {}
                         }
                       }
                     }}
