@@ -207,12 +207,22 @@ export default function Top10StylesPage() {
                     className="w-36 rounded border px-2 py-1 text-sm"
                     placeholder="DG"
                     onBlur={async (e) => {
+                      const val = (e.target.value || '').trim();
+                      if ((r.dg || '') === val) return;
                       try {
-                        const val = e.target.value;
-                        await supabase.from('top_styles').update({ dg: val || null }).eq('id', r.id);
-                        // Also persist DG on styles so general style cards show it
-                        await supabase.from('styles').update({ dg: val || null }).eq('style_no', r.style_no);
-                      } catch {}
+                        const res = await fetch('/api/top-styles/dg', {
+                          method: 'PATCH',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ id: r.id, style_no: r.style_no, dg: val || null })
+                        });
+                        if (!res.ok) {
+                          const txt = await res.text().catch(()=> '');
+                          throw new Error(txt || 'Failed to save DG');
+                        }
+                        await mutate();
+                      } catch (err: any) {
+                        alert(err?.message || 'Failed to save DG');
+                      }
                     }}
                   />
                 </td>
