@@ -48,7 +48,7 @@ export default function StatisticsDashboardPage() {
     setSendingSp(true);
     try {
       const spExport = latestByKind.get('general_salesmen_pdfs');
-      const top10 = latestByKind.get('top_styles_pdf');
+      const top10Salesmen = latestByKind.get('top_styles_pdf_salesmen');
       const stockListRows = (latestExports ?? []).filter((r: any) => r.kind === 'stock_list_pdf');
       // Keep only the most recent entry per list name
       const seenLists = new Set<string>();
@@ -85,11 +85,11 @@ export default function StatisticsDashboardPage() {
             attachments.push({ name: 'Countries.pdf', data: base64 });
           } catch {}
         }
-        if (top10?.public_url) {
+        if (top10Salesmen?.public_url) {
           try {
-            const dataUrl = await fetchToDataUrl(top10.public_url);
+            const dataUrl = await fetchToDataUrl(top10Salesmen.public_url);
             const base64 = dataUrl.split(',')[1] || '';
-            attachments.push({ name: 'Top 10 Styles.pdf', data: base64 });
+            attachments.push({ name: 'Top 10 - Salesmen.pdf', data: base64 });
           } catch {}
         }
         // Attach up to two latest stock list PDFs
@@ -120,7 +120,7 @@ export default function StatisticsDashboardPage() {
 
   // Box #2 - Overall Statistics
   const [receivers, setReceivers] = React.useState('');
-  const [overallOpts, setOverallOpts] = React.useState<{ all: boolean; overview: boolean; countries: boolean; top10styles: boolean; top10vendors: boolean }>({ all: false, overview: true, countries: true, top10styles: false, top10vendors: false });
+  const [overallOpts, setOverallOpts] = React.useState<{ all: boolean; overview: boolean; countries: boolean; top10overall: boolean; top10vendors: boolean }>({ all: false, overview: true, countries: true, top10overall: false, top10vendors: false });
   const [sendingOverall, setSendingOverall] = React.useState(false);
 
   async function sendOverall() {
@@ -137,6 +137,10 @@ export default function StatisticsDashboardPage() {
       if (overallOpts.countries) {
         const row = latestByKind.get('countries_pdf');
         if (row?.public_url) { try { const du = await fetchToDataUrl(row.public_url); attachments.push({ name: 'Countries.pdf', data: du.split(',')[1] || '' }); } catch {} }
+      }
+      if (overallOpts.top10overall) {
+        const row = latestByKind.get('top_styles_pdf_overall');
+        if (row?.public_url) { try { const du = await fetchToDataUrl(row.public_url); attachments.push({ name: 'Top 10 - Overall.pdf', data: du.split(',')[1] || '' }); } catch {} }
       }
       if (attachments.length === 0) { alert('No exports available yet or no options selected.'); return; }
       const subject = 'Statistik opdatering';
@@ -326,7 +330,7 @@ export default function StatisticsDashboardPage() {
               { key: 'all', label: 'All salespeople' },
               { key: 'overview', label: 'Overview' },
               { key: 'countries', label: 'Countries' },
-              { key: 'top10styles', label: 'Top 10 Styles' },
+              { key: 'top10overall', label: 'Top 10 - Overall' },
               { key: 'top10vendors', label: 'Top 10 Vendors' }
             ].map((opt: any) => (
               <div key={opt.key} className="flex items-center gap-2">
