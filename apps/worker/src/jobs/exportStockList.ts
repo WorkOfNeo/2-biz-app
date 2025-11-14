@@ -124,23 +124,27 @@ export async function exportStockList(ctx: Ctx) {
       // - Per style "block" with image/meta on the left
       // - On the right: one compact "table" per color with its own header and spacing between tables
       // - Each color table shows Section rows (Stock, Sold, Purchase, Available) with per-size columns and a Total
+      // Apply 80% scale across sizes/paddings/fonts
+      const SCALE = 0.8;
+      const s = (n: number) => Math.max(0.5, n * SCALE);
       const styles = StyleSheet.create({
-        page: { padding: 16, fontSize: 9, color: '#0f172a' },
+        page: { padding: s(16), fontSize: s(9), color: '#0f172a' },
         // Center title and add extra spacing before first style block
-        h1: { fontSize: 14, marginBottom: 20, textAlign: 'center' as any },
-        block: { marginBottom: 10, borderBottom: 0.5, borderColor: '#e5e7eb', paddingBottom: 6 },
-        row: { flexDirection: 'row', gap: 8 },
-        left: { width: 84 },
-        leftPanel: { width: 120 }, // left column (image + meta) for the whole style
-        img: { width: 80, height: 80, objectFit: 'cover' as any },
-        meta: { fontSize: 9, marginBottom: 4 },
+        h1: { fontSize: s(14), marginBottom: s(20), textAlign: 'center' as any },
+        block: { marginBottom: s(10), borderBottom: 0.5, borderColor: '#e5e7eb', paddingBottom: s(6) },
+        row: { flexDirection: 'row', gap: s(8) },
+        left: { width: s(84) },
+        leftPanel: { width: s(120) }, // left column (image + meta) for the whole style
+        // Use contain to avoid cutting images in the PDF
+        img: { width: s(80), height: s(80), objectFit: 'contain' as any },
+        meta: { fontSize: s(9), marginBottom: s(4) },
         // Color table container (adds spacing between colors)
-        colorTable: { marginBottom: 22 }, // increased spacing between colors (+14px)
+        colorTable: { marginBottom: s(22) },
         tableHeader: { flexDirection: 'row', backgroundColor: '#f7f7f7', color: '#000', borderBottom: 0.5, borderColor: '#cbd5e1' },
         tableRow: { flexDirection: 'row', borderBottom: 0.5, borderColor: '#e2e8f0' },
         // Make headers/cells a bit smaller so many sizes fit comfortably
-        th: { padding: 3, fontSize: 8, fontWeight: 700 as any },
-        cell: { padding: 3, fontSize: 8 },
+        th: { padding: s(3), fontSize: s(8), fontWeight: 700 as any },
+        cell: { padding: s(3), fontSize: s(8) },
         leftCell: { textAlign: 'left' as any },
         rightCell: { textAlign: 'right' as any },
         bold: { fontWeight: 700 as any },
