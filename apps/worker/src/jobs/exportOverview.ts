@@ -399,11 +399,9 @@ export async function exportOverview(ctx: Ctx) {
         if (!countries.includes(ctry)) continue;
         // Filters
         if (acc) {
+          // Exclude hidden/excluded entirely
           if (seasonalHidden.has(acc)) continue;
-          if (seasonalNulled.has(acc)) continue;
-          if (closedSet.has(acc)) continue;
           if (excludedSet.has(acc)) continue;
-          if (nulledSet.has(acc)) continue;
         }
         let bucket = totals[ctry];
         if (!bucket) { bucket = totals[ctry] = { s1Qty: 0, s2Qty: 0, s1Price: 0, s2Price: 0 }; }
@@ -411,13 +409,14 @@ export async function exportOverview(ctx: Ctx) {
         const rate1 = ({ ...globalRates, ...ratesS1 } as Record<string, number>)[cur] ?? 1;
         const rate2 = ({ ...globalRates, ...ratesS2 } as Record<string, number>)[cur] ?? 1;
         const price = Number(r.price || 0);
-        if (r.season_id === s1) { bucket.s1Qty += Number(r.qty||0); bucket.s1Price += price * rate1; }
+        const isNullS1 = acc ? (seasonalNulled.has(acc) || closedSet.has(acc) || nulledSet.has(acc)) : false;
+        if (r.season_id === s1) { if (!isNullS1) { bucket.s1Qty += Number(r.qty||0); bucket.s1Price += price * rate1; } }
         else if (r.season_id === s2) { bucket.s2Qty += Number(r.qty||0); bucket.s2Price += price * rate2; }
         const spId = (customerSpById.get(acc) ?? null) as string | null;
         if (spId) {
           const m = (perSp[ctry] ||= new Map());
           const row = m.get(spId) || { s1Qty: 0, s1Price: 0, s2Qty: 0, s2Price: 0 };
-          if (r.season_id === s1) { row.s1Qty += Number(r.qty||0); row.s1Price += price * rate1; }
+          if (r.season_id === s1) { if (!isNullS1) { row.s1Qty += Number(r.qty||0); row.s1Price += price * rate1; } }
           else if (r.season_id === s2) { row.s2Qty += Number(r.qty||0); row.s2Price += price * rate2; }
           m.set(spId, row);
         }
@@ -427,10 +426,7 @@ export async function exportOverview(ctx: Ctx) {
         const acc = inv.account_no ?? '';
         if (!acc) continue;
         if (seasonalHidden.has(acc)) continue;
-        if (seasonalNulled.has(acc)) continue;
-        if (closedSet.has(acc)) continue;
         if (excludedSet.has(acc)) continue;
-        if (nulledSet.has(acc)) continue;
         const ctry = String(customerCountryById.get(acc) || '').trim();
         if (!countries.includes(ctry)) continue;
         let bucket = totals[ctry];
@@ -440,13 +436,14 @@ export async function exportOverview(ctx: Ctx) {
         const rate2 = ({ ...globalRates, ...ratesS2 } as Record<string, number>)[cur] ?? 1;
         const amount = Number(inv.amount || 0);
         const qty = Number(inv.qty || 0) || 0;
-        if (inv.season_id === s1) { bucket.s1Qty += qty; bucket.s1Price += amount * rate1; }
+        const isNullS1 = seasonalNulled.has(acc) || closedSet.has(acc) || nulledSet.has(acc);
+        if (inv.season_id === s1) { if (!isNullS1) { bucket.s1Qty += qty; bucket.s1Price += amount * rate1; } }
         else if (inv.season_id === s2) { bucket.s2Qty += qty; bucket.s2Price += amount * rate2; }
         const spId = (customerSpById.get(acc) ?? null) as string | null;
         if (spId) {
           const m = (perSp[ctry] ||= new Map());
           const row = m.get(spId) || { s1Qty: 0, s1Price: 0, s2Qty: 0, s2Price: 0 };
-          if (inv.season_id === s1) { row.s1Qty += qty; row.s1Price += amount * rate1; }
+          if (inv.season_id === s1) { if (!isNullS1) { row.s1Qty += qty; row.s1Price += amount * rate1; } }
           else if (inv.season_id === s2) { row.s2Qty += qty; row.s2Price += amount * rate2; }
           m.set(spId, row);
         }

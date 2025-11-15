@@ -142,19 +142,18 @@ export default function CountriesPage() {
       const ctry = String((r.customers?.country ?? customerCountryById.get(acc) ?? '')).trim();
       if (!countries.includes(ctry)) continue;
       if (acc) {
-        // Exclude accounts that are seasonal hidden/nulled or globally closed/excluded/nulled
+        // Exclude hidden/excluded entirely from UI
         if (seasonalHidden.has(acc)) continue;
-        if (seasonalNulled.has(acc)) continue;
-        if (closedCustomers?.setClosed.has(acc)) continue;
         if (closedCustomers?.setExcluded.has(acc)) continue;
-        if (closedCustomers?.setNulled.has(acc)) continue;
       }
       const bucket = out[ctry] || (out[ctry] = { s1Qty: 0, s2Qty: 0, s1PriceDkk: 0, s2PriceDkk: 0 });
       const cur = (String(r.currency || 'DKK').toUpperCase());
       const rateS1 = { ...baseRates, ...(ratesS1 ?? {}) }[cur] ?? 1;
       const rateS2 = { ...baseRates, ...(ratesS2 ?? {}) }[cur] ?? 1;
       const price = Number(r.price || 0);
-      if (r.season_id === s1) { bucket.s1Qty += Number(r.qty||0); bucket.s1PriceDkk += price * rateS1; }
+      // Seasonal nulling (overrides) and permanent closures/nulled only affect Season 1 (current season)
+      const isNullS1 = acc ? (seasonalNulled.has(acc) || closedCustomers?.setClosed.has(acc) || closedCustomers?.setNulled.has(acc)) : false;
+      if (r.season_id === s1) { if (!isNullS1) { bucket.s1Qty += Number(r.qty||0); bucket.s1PriceDkk += price * rateS1; } }
       else if (r.season_id === s2) { bucket.s2Qty += Number(r.qty||0); bucket.s2PriceDkk += price * rateS2; }
     }
     // Add invoices mapped to country via customers
@@ -163,10 +162,7 @@ export default function CountriesPage() {
       if (!acc) continue;
       // Apply same filtering for invoices (by account)
       if (seasonalHidden.has(acc)) continue;
-      if (seasonalNulled.has(acc)) continue;
-      if (closedCustomers?.setClosed.has(acc)) continue;
       if (closedCustomers?.setExcluded.has(acc)) continue;
-      if (closedCustomers?.setNulled.has(acc)) continue;
       const ctry = String(customerCountryById.get(acc) || '').trim();
       if (!countries.includes(ctry)) continue;
       const bucket = out[ctry] || (out[ctry] = { s1Qty: 0, s2Qty: 0, s1PriceDkk: 0, s2PriceDkk: 0 });
@@ -175,7 +171,8 @@ export default function CountriesPage() {
       const rateS2 = { ...baseRates, ...(ratesS2 ?? {}) }[cur] ?? 1;
       const amount = Number(inv.amount || 0);
       const qty = Number(inv.qty || 0) || 0;
-      if (inv.season_id === s1) { bucket.s1Qty += qty; bucket.s1PriceDkk += amount * rateS1; }
+      const isNullS1 = seasonalNulled.has(acc) || closedCustomers?.setClosed.has(acc) || closedCustomers?.setNulled.has(acc);
+      if (inv.season_id === s1) { if (!isNullS1) { bucket.s1Qty += qty; bucket.s1PriceDkk += amount * rateS1; } }
       else if (inv.season_id === s2) { bucket.s2Qty += qty; bucket.s2PriceDkk += amount * rateS2; }
     }
     return out;
@@ -194,20 +191,17 @@ export default function CountriesPage() {
       if (!countries.includes(ctry)) continue;
       if (acc) {
         if (seasonalHidden.has(acc)) continue;
-        if (seasonalNulled.has(acc)) continue;
-        if (closedCustomers?.setClosed.has(acc)) continue;
         if (closedCustomers?.setExcluded.has(acc)) continue;
-        if (closedCustomers?.setNulled.has(acc)) continue;
       }
-      const spId = (r.salesperson_id as string | null) ?? (customerSpById.get(acc) ?? null);
-      if (!spId) continue;
+      const spId = ((r.salesperson_id as string | null) ?? (customerSpById.get(acc) ?? null)) || '__unknown__';
       const cur = (String(r.currency || 'DKK').toUpperCase());
       const rateS1 = { ...baseRates, ...(ratesS1 ?? {}) }[cur] ?? 1;
       const rateS2 = { ...baseRates, ...(ratesS2 ?? {}) }[cur] ?? 1;
       const price = Number(r.price || 0);
       const m = (out[ctry] ||= new Map());
       const row = m.get(spId) || { s1Qty: 0, s1PriceDkk: 0, s2Qty: 0, s2PriceDkk: 0 };
-      if (r.season_id === s1) { row.s1Qty += Number(r.qty||0); row.s1PriceDkk += price * rateS1; }
+      const isNullS1 = acc ? (seasonalNulled.has(acc) || closedCustomers?.setClosed.has(acc) || closedCustomers?.setNulled.has(acc)) : false;
+      if (r.season_id === s1) { if (!isNullS1) { row.s1Qty += Number(r.qty||0); row.s1PriceDkk += price * rateS1; } }
       else if (r.season_id === s2) { row.s2Qty += Number(r.qty||0); row.s2PriceDkk += price * rateS2; }
       m.set(spId, row);
     }
@@ -215,14 +209,10 @@ export default function CountriesPage() {
       const acc = inv.account_no ?? '';
       if (!acc) continue;
       if (seasonalHidden.has(acc)) continue;
-      if (seasonalNulled.has(acc)) continue;
-      if (closedCustomers?.setClosed.has(acc)) continue;
       if (closedCustomers?.setExcluded.has(acc)) continue;
-      if (closedCustomers?.setNulled.has(acc)) continue;
       const ctry = String(customerCountryById.get(acc) || '').trim();
       if (!countries.includes(ctry)) continue;
-      const spId = customerSpById.get(acc) ?? null;
-      if (!spId) continue;
+      const spId = (customerSpById.get(acc) ?? null) || '__unknown__';
       const cur = (String(inv.currency || 'DKK').toUpperCase());
       const rateS1 = { ...baseRates, ...(ratesS1 ?? {}) }[cur] ?? 1;
       const rateS2 = { ...baseRates, ...(ratesS2 ?? {}) }[cur] ?? 1;
@@ -230,7 +220,8 @@ export default function CountriesPage() {
       const qty = Number(inv.qty || 0) || 0;
       const m = (out[ctry] ||= new Map());
       const row = m.get(spId) || { s1Qty: 0, s1PriceDkk: 0, s2Qty: 0, s2PriceDkk: 0 };
-      if (inv.season_id === s1) { row.s1Qty += qty; row.s1PriceDkk += amount * rateS1; }
+      const isNullS1 = seasonalNulled.has(acc) || closedCustomers?.setClosed.has(acc) || closedCustomers?.setNulled.has(acc);
+      if (inv.season_id === s1) { if (!isNullS1) { row.s1Qty += qty; row.s1PriceDkk += amount * rateS1; } }
       else if (inv.season_id === s2) { row.s2Qty += qty; row.s2PriceDkk += amount * rateS2; }
       m.set(spId, row);
     }

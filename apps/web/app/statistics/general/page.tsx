@@ -798,13 +798,15 @@ export default function StatisticsGeneralPage() {
                   <tfoot>
                     {(() => {
                       const baseRates = { DKK: 1, ...(currencyRatesRow ?? {}) } as Record<string, number>;
+                      const nulledSeasonal = new Set(overrides?.value.nulled ?? []);
                       const totals = items.reduce((a, r) => {
                         const cur = r.salespersonId ? (spCurrencyById[r.salespersonId] ?? 'DKK') : 'DKK';
                         const rateS1 = { ...baseRates, ...(ratesS1 ?? {}) }[cur] ?? 1;
                         const rateS2 = { ...baseRates, ...(ratesS2 ?? {}) }[cur] ?? 1;
-                        a.s1Qty += r.s1Qty; a.s2Qty += r.s2Qty;
-                        a.s1Local += r.s1Price; a.s2Local += r.s2Price;
-                        a.s1Dkk += r.s1Price * rateS1; a.s2Dkk += r.s2Price * rateS2;
+                        const isNullS1 = nulledSeasonal.has(r.account_no) || Boolean(closedCustomers?.setClosed.has(r.account_no)) || Boolean(closedCustomers?.setNulled.has(r.account_no));
+                        a.s1Qty += isNullS1 ? 0 : r.s1Qty; a.s2Qty += r.s2Qty;
+                        a.s1Local += isNullS1 ? 0 : r.s1Price; a.s2Local += r.s2Price;
+                        a.s1Dkk += (isNullS1 ? 0 : r.s1Price) * rateS1; a.s2Dkk += r.s2Price * rateS2;
                         return a;
                       }, { s1Qty: 0, s2Qty: 0, s1Local: 0, s2Local: 0, s1Dkk: 0, s2Dkk: 0 });
                       const devQty = totals.s1Qty - totals.s2Qty;
