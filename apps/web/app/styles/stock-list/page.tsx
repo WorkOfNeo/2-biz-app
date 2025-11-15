@@ -19,6 +19,7 @@ export default function StockListPage() {
   const supabase = createClientComponentClient();
   const { has } = useRoles();
   const [searchQuery, setSearchQuery] = React.useState<string>('');
+  const [scrapeBusy, setScrapeBusy] = React.useState<string | null>(null);
   const { data } = useSWR('style_stock:list', async () => {
     const pageSize = 2000;
     const cap = 50000; // avoid runaway
@@ -237,21 +238,64 @@ export default function StockListPage() {
     // Sort styles numerically-then-lexicographically
     out.sort((a, b) => a.styleNo.localeCompare(b.styleNo));
     // Apply per-list color exclusions when a list is selected
-    if (!activeListId) return out as Array<{ styleNo: string; colors: Group[] }>;
+    if (!activeListId) {
+      return out as Array<{ styleNo: string; colors: Group[] }>;
+    }
+    // Build a quick styleId -> styleNo map for list styles present in styles table
+    const styleIdToNoLocal = new Map<string, string>();
+    for (const r of (styleRows ?? []) as any[]) {
+      if (r?.id && r?.style_no) styleIdToNoLocal.set(String(r.id), String(r.style_no));
+    }
+    const presentStyleNos = new Set(out.map((r) => r.styleNo));
+    // Ensure rows exist for styles in the active list even if they have no scraped data yet
+    for (const sid of Array.from(styleIdsInList)) {
+      const styleNo = styleIdToNoLocal.get(sid) || '';
+      if (!styleNo) continue;
+      if (!presentStyleNos.has(styleNo)) {
+        out.push({ styleNo, colors: [] });
+        presentStyleNos.add(styleNo);
+      }
+    }
+    // Apply whitelist rules and add placeholder colors when needed
     const filtered = out.map((row) => {
       const sid = styleMetaByNo[row.styleNo]?.id || null;
       if (!sid) return row;
       const includeSet = (listColorRules?.includeMap?.get(sid) as Set<string> | undefined) || new Set<string>();
       const hasAny = Boolean(listColorRules?.hasAnyMap?.get(sid));
-      // If there are any explicit rules for this style, treat it as a whitelist:
-      // only colors present in includeSet are shown. If no rules exist, show all.
-      const colors = hasAny
-        ? row.colors.filter((c) => includeSet.has(String(c.color || '').trim().toLowerCase()))
-        : row.colors;
+      // Compute allowed color keys for this style
+      const allColorKeysMap = styleColors?.get(sid) || new Map<string, string>(); // colorLower -> style_color_id
+      const allowedKeys = hasAny ? includeSet : new Set<string>(Array.from(allColorKeysMap.keys()));
+      // Start from current colors and keep only allowed when whitelist exists
+      const current = hasAny
+        ? row.colors.filter((c) => allowedKeys.has(String(c.color || '').trim().toLowerCase()))
+        : row.colors.slice();
+      // Add placeholder entries for allowed colors that have no scraped data yet
+      const existingKeys = new Set(current.map((c) => `${row.styleNo}|${String(c.color || '').trim().toLowerCase()}`));
+      const placeholders: Group[] = [];
+      for (const ckey of Array.from(allowedKeys)) {
+        const key = `${row.styleNo}|${ckey}`;
+        if (!existingKeys.has(key)) {
+          // Create a zeroed placeholder; sizes left empty (table pads columns)
+          const colorLabel = ckey; // we only have lowercased; serve as label
+          placeholders.push({
+            styleNo: row.styleNo,
+            color: colorLabel,
+            sizes: [],
+            stock: [],
+            soldSum: [],
+            purchaseSum: [],
+            available: [],
+            soldRows: [],
+            purchaseRows: [],
+            scrapedAt: ''
+          });
+        }
+      }
+      const colors = [...current, ...placeholders].sort((a, b) => a.color.localeCompare(b.color));
       return { ...row, colors };
     });
     return filtered as Array<{ styleNo: string; colors: Group[] }>;
-  }, [groups, styleMetaByNo, activeListId, listColorRules?.includeMap, listColorRules?.hasAnyMap]);
+  }, [groups, styleMetaByNo, activeListId, listColorRules?.includeMap, listColorRules?.hasAnyMap, styleRows, styleColors, styleIdsInList]);
 
   const [openSold, setOpenSold] = React.useState<Record<string, boolean>>({});
   const [openPurchase, setOpenPurchase] = React.useState<Record<string, boolean>>({});
@@ -310,8 +354,17 @@ export default function StockListPage() {
             value={searchQuery}
             onChange={(e)=>setSearchQuery(e.target.value)}
           />
+                          </div>
+                  </div>
+      {/* Scrape active list */}
+      {activeListId && (
+        <div className="flex items-center justify-end">
+          <ScrapeActiveListButton
+            listId={activeListId}
+            styleIdsInList={Array.from(styleIdsInList)}
+          />
               </div>
-          </div>
+        )}
 
       {/* Main content */}
       <div className="space-y-4 sl-main">
@@ -454,7 +507,7 @@ export default function StockListPage() {
                             </tr>
                           </tbody>
                         </table>
-                    </div>
+                      </div>
                     </div>
                   );
         })}
@@ -494,6 +547,60 @@ function SeasonAdder({ seasons, selected, onAdd }: { seasons: Array<{ id: string
         </div>
       )}
     </div>
+  );
+}
+
+
+function ScrapeActiveListButton({ listId, styleIdsInList }: { listId: string; styleIdsInList: string[] }) {
+  const supabase = createClientComponentClient();
+  const React = require('react') as typeof import('react');
+  const [busy, setBusy] = React.useState(false);
+  const [done, setDone] = React.useState(false);
+  return (
+    <button
+      className={"text-xs px-2 py-1 border rounded " + (busy ? 'bg-slate-300 text-gray-700' : 'bg-slate-900 text-white hover:bg-slate-800')}
+      disabled={busy}
+      onClick={async () => {
+        try {
+          setBusy(true);
+          setDone(false);
+          // Resolve style_nos for styles in this list
+          const ids = Array.from(new Set(styleIdsInList || []));
+          if (ids.length === 0) {
+            alert('This list has no styles yet.');
+            setBusy(false);
+            return;
+          }
+          const { data: styles } = await supabase.from('styles').select('style_no').in('id', ids);
+          const nos = Array.from(new Set((styles ?? []).map((r: any) => String(r.style_no || '')).filter(Boolean)));
+          if (nos.length === 0) {
+            alert('No style numbers found for this list.');
+            setBusy(false);
+            return;
+          }
+          const { data: { session } } = await supabase.auth.getSession();
+          if (!session) { alert('Not signed in'); setBusy(false); return; }
+          const res = await fetch('/api/enqueue', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+            body: JSON.stringify({ type: 'update_style_stock', payload: { requestedBy: session.user.email, styleNos: nos } })
+          });
+          if (!res.ok) {
+            const t = await res.text().catch(()=>'');
+            throw new Error(t || `Failed (${res.status})`);
+          }
+          // eslint-disable-next-line no-console
+          console.log('[stock-list] scrape list enqueued', { listId, count: nos.length });
+          setDone(true);
+        } catch (e: any) {
+          alert(e?.message || 'Failed to enqueue scrape');
+        } finally {
+          setBusy(false);
+        }
+      }}
+    >
+      {busy ? 'Scraping…' : (done ? 'Enqueued!' : 'Scrape this list')}
+    </button>
   );
 }
 
