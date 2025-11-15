@@ -113,11 +113,14 @@ export default function StockListPage() {
     return (data ?? []) as Array<{ style_id: string }>;
   });
   const styleIdsInList = React.useMemo(() => new Set((listStyles ?? []).map(r => r.style_id)), [listStyles]);
-  const { data: listColorExclusions } = useSWR(activeListId ? ['stock_list_colors:byList', activeListId] : null, async () => {
+  const { data: listColorRules } = useSWR(activeListId ? ['stock_list_colors:byList', activeListId] : null, async () => {
     const { data, error } = await supabase.from('stock_list_colors').select('style_id, style_color_id, include').eq('list_id', activeListId);
     if (error) throw new Error(error.message);
-    const excluded = new Map<string, Set<string>>();
-    const invertByStyle = new Map<string, Map<string, string>>(); // style_id -> (style_color_id -> colorLower)
+    // Build: includeMap (style_id -> set of included colorLower), and hasAnyMap (style_id -> boolean)
+    const includeMap = new Map<string, Set<string>>();
+    const hasAnyMap = new Map<string, boolean>();
+    // Build reverse map: style_id -> (style_color_id -> colorLower)
+    const invertByStyle = new Map<string, Map<string, string>>();
     for (const sid of styleIds) {
       const cmap = styleColors?.get(sid) || new Map<string, string>();
       const inv = new Map<string, string>();
@@ -127,16 +130,17 @@ export default function StockListPage() {
     for (const r of (data ?? []) as any[]) {
       const sid = String(r.style_id || '');
       const scId = String(r.style_color_id || '');
-      if (r.include === false) {
-        const inv = invertByStyle.get(sid) || new Map<string, string>();
-        const ckey = inv.get(scId) || null;
-        if (!ckey) continue;
-        const set = excluded.get(sid) || new Set<string>();
+      const inv = invertByStyle.get(sid) || new Map<string, string>();
+      const ckey = inv.get(scId) || null;
+      if (!ckey) continue;
+      hasAnyMap.set(sid, true);
+      if (r.include === true) {
+        const set = includeMap.get(sid) || new Set<string>();
         set.add(ckey);
-        excluded.set(sid, set);
+        includeMap.set(sid, set);
       }
     }
-    return excluded as Map<string, Set<string>>;
+    return { includeMap, hasAnyMap } as { includeMap: Map<string, Set<string>>; hasAnyMap: Map<string, boolean> };
   }, { refreshInterval: 0 });
 
   // Removed per-user selection and view toggles
@@ -237,12 +241,17 @@ export default function StockListPage() {
     const filtered = out.map((row) => {
       const sid = styleMetaByNo[row.styleNo]?.id || null;
       if (!sid) return row;
-      const excluded = (listColorExclusions?.get(sid) as Set<string> | undefined) || new Set<string>();
-      const colors = row.colors.filter((c) => !excluded.has(String(c.color || '').trim().toLowerCase()));
+      const includeSet = (listColorRules?.includeMap?.get(sid) as Set<string> | undefined) || new Set<string>();
+      const hasAny = Boolean(listColorRules?.hasAnyMap?.get(sid));
+      // If there are any explicit rules for this style, treat it as a whitelist:
+      // only colors present in includeSet are shown. If no rules exist, show all.
+      const colors = hasAny
+        ? row.colors.filter((c) => includeSet.has(String(c.color || '').trim().toLowerCase()))
+        : row.colors;
       return { ...row, colors };
     });
     return filtered as Array<{ styleNo: string; colors: Group[] }>;
-  }, [groups, styleMetaByNo, activeListId, listColorExclusions]);
+  }, [groups, styleMetaByNo, activeListId, listColorRules?.includeMap, listColorRules?.hasAnyMap]);
 
   const [openSold, setOpenSold] = React.useState<Record<string, boolean>>({});
   const [openPurchase, setOpenPurchase] = React.useState<Record<string, boolean>>({});

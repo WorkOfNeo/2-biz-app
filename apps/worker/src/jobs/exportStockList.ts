@@ -55,10 +55,14 @@ export async function exportStockList(ctx: Ctx) {
           styleColorIdMap.get(sid)!.set(key, c.id as string);
         }
       }
-      // Load per-list color includes
-      const includeMap = new Map<string, boolean>(); // style_color_id -> include
-      const { data: inclRows } = await supabase.from('stock_list_colors').select('style_color_id, include').eq('list_id', listId);
-      for (const r of (inclRows ?? []) as any[]) includeMap.set(r.style_color_id as string, r.include !== false);
+      // Load per-list color includes; build whitelist per style when any rule exists
+      const includeMap = new Map<string, boolean>(); // style_color_id -> include (true = include)
+      const hasAnyMap = new Map<string, boolean>();   // style_id -> has any rule rows
+      const { data: inclRows } = await supabase.from('stock_list_colors').select('style_id, style_color_id, include').eq('list_id', listId);
+      for (const r of (inclRows ?? []) as any[]) {
+        includeMap.set(r.style_color_id as string, r.include === true);
+        if (r.style_id) hasAnyMap.set(String(r.style_id), true);
+      }
       // Fetch stock rows
       const { data: stockRows } = await supabase
         .from('style_stock')
@@ -88,7 +92,13 @@ export async function exportStockList(ctx: Ctx) {
           if (sid) {
             const cmap = styleColorIdMap.get(sid) || new Map<string, string>();
             const scId = cmap.get(String(color || '').trim().toLowerCase()) || null;
-            if (scId && includeMap.has(scId) && includeMap.get(scId) === false) continue;
+            const hasAny = hasAnyMap.get(sid) === true;
+            if (hasAny) {
+              // Whitelist mode: only include if explicitly included
+              if (!scId) continue;
+              const allow = includeMap.get(scId) === true;
+              if (!allow) continue;
+            }
           }
           const latestMap = new Map<string, Row>();
           for (const r of rows) {
