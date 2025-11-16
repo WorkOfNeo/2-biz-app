@@ -25,8 +25,10 @@ export default function StyleListDetailPage({ params }: { params: { listId: stri
 			.eq('list_id', listId)
 			.order('created_at', { ascending: true });
 		if (error) throw error;
-		const rows = (data ?? []) as Array<{ style: { id: string; style_no: string; style_name: string | null } }>;
-		return rows.map((r) => r.style).filter(Boolean);
+		// Supabase can sometimes infer joins as arrays; normalize to flat array of style objects
+		const rows = (data ?? []) as Array<{ style: any }>;
+		const arr = rows.flatMap((r) => Array.isArray(r.style) ? r.style : (r.style ? [r.style] : []));
+		return (arr ?? []) as Array<{ id: string; style_no: string; style_name: string | null }>;
 	});
 
 	const [query, setQuery] = useState('');
