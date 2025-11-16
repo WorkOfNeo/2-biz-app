@@ -1,6 +1,7 @@
 'use client';
 import { useMemo, useState } from 'react';
 import useSWR from 'swr';
+import Link from 'next/link';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { useRoles } from '../../../lib/supabaseClient';
 import { ProgressBar } from '../../../components/ProgressBar';
@@ -283,7 +284,10 @@ export default function StylesSettingsPage() {
 
       {isAdmin && (
       <div className="rounded-md border bg-white p-3">
-        <div className="text-sm font-medium">Style Lists</div>
+        <div className="flex items-center justify-between">
+          <div className="text-sm font-medium">Style Lists</div>
+          <Link href={{ pathname: '/styles/lists' }} className="text-[11px] underline">Open lists</Link>
+        </div>
         <StyleListsEditor styles={styles ?? []} />
       </div>
       )}
@@ -583,6 +587,7 @@ function StyleListsEditor({ styles }: { styles: { id: string; style_no: string; 
                 onClick={clearList}
                 disabled={!activeId || (listStyleRows?.length || 0) === 0}
               >Remove all styles</button>
+              <Link href={{ pathname: '/styles/lists/[listId]', query: { listId: activeId } }} className="text-[11px] underline">Open page</Link>
               <button
                 className="text-[11px] underline text-red-700"
                 onClick={deleteList}
