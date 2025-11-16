@@ -141,6 +141,13 @@ export default function StockListPage() {
         includeMap.set(sid, set);
       }
     }
+    // eslint-disable-next-line no-console
+    console.log('[stock-list] listColorRules loaded', {
+      listId: activeListId,
+      listColorRows: (data ?? []).length,
+      includeStyles: includeMap.size,
+      hasAnyStyles: hasAnyMap.size
+    });
     return { includeMap, hasAnyMap } as { includeMap: Map<string, Set<string>>; hasAnyMap: Map<string, boolean> };
   }, { refreshInterval: 0 });
 
@@ -292,10 +299,36 @@ export default function StockListPage() {
         }
       }
       const colors = [...current, ...placeholders].sort((a, b) => a.color.localeCompare(b.color));
+      // eslint-disable-next-line no-console
+      if (activeListId && hasAny) {
+        console.log('[stock-list] style filter', {
+          listId: activeListId,
+          styleNo: row.styleNo,
+          styleId: sid,
+          allowedColorCount: allowedKeys.size,
+          presentColors: row.colors.map((c) => c.color),
+          keptColors: colors.map((c) => c.color)
+        });
+      }
       return { ...row, colors };
     });
     return filtered as Array<{ styleNo: string; colors: Group[] }>;
   }, [groups, styleMetaByNo, activeListId, listColorRules?.includeMap, listColorRules?.hasAnyMap, styleRows, styleColors, styleIdsInList]);
+
+  // Log selection changes and high-level counts
+  React.useEffect(() => {
+    if (!activeListId) {
+      // eslint-disable-next-line no-console
+      console.log('[stock-list] activeListId cleared (All)');
+    } else {
+      // eslint-disable-next-line no-console
+      console.log('[stock-list] activeListId set', {
+        listId: activeListId,
+        stylesInList: styleIdsInList.size,
+        groupsCount: groups.length
+      });
+    }
+  }, [activeListId, styleIdsInList.size, groups.length]);
 
   const [openSold, setOpenSold] = React.useState<Record<string, boolean>>({});
   const [openPurchase, setOpenPurchase] = React.useState<Record<string, boolean>>({});
