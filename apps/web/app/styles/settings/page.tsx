@@ -587,7 +587,7 @@ function StyleListsEditor({ styles }: { styles: { id: string; style_no: string; 
                 onClick={clearList}
                 disabled={!activeId || (listStyleRows?.length || 0) === 0}
               >Remove all styles</button>
-              <Link href={{ pathname: '/styles/lists/[listId]', query: { listId: activeId } }} className="text-[11px] underline">Open page</Link>
+              <Link href={`/styles/lists/${activeId}` as any} className="text-[11px] underline">Open page</Link>
               <button
                 className="text-[11px] underline text-red-700"
                 onClick={deleteList}

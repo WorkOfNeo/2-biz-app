@@ -103,9 +103,9 @@ export default function StockListPage() {
 
   // DB-backed stock lists (lists, styles, and per-list color exclusions)
   const { data: stockLists } = useSWR('stock-lists:all', async () => {
-    const { data, error } = await supabase.from('stock_lists').select('id, name').order('name', { ascending: true });
+    const { data, error } = await supabase.from('stock_lists').select('id, name, sort_by').order('name', { ascending: true });
     if (error) throw new Error(error.message);
-    return (data ?? []) as Array<{ id: string; name: string }>;
+    return (data ?? []) as Array<{ id: string; name: string; sort_by?: 'style_no' | 'style_name' | null }>;
   });
   const [activeListId, setActiveListId] = React.useState<string>('');
   const { data: listStyles } = useSWR(activeListId ? ['stock-list-styles:byList', activeListId] : null, async () => {
@@ -242,8 +242,21 @@ export default function StockListPage() {
       map.get(g.styleNo)!.push(g);
     }
     const out = Array.from(map.entries()).map(([styleNo, list]) => ({ styleNo, colors: list.sort((a, b) => a.color.localeCompare(b.color)) }));
-    // Sort styles numerically-then-lexicographically
-    out.sort((a, b) => a.styleNo.localeCompare(b.styleNo));
+    // Sort styles based on list preference (default item number)
+    const activeSortBy = (() => {
+      if (!activeListId) return 'style_no' as 'style_no' | 'style_name';
+      const row = (stockLists || []).find((r) => r.id === activeListId);
+      return (row?.sort_by as any) === 'style_name' ? 'style_name' : 'style_no';
+    })();
+    out.sort((a, b) => {
+      if (activeSortBy === 'style_name') {
+        const an = (styleMetaByNo[a.styleNo]?.name || '').toLowerCase();
+        const bn = (styleMetaByNo[b.styleNo]?.name || '').toLowerCase();
+        const byName = an.localeCompare(bn);
+        if (byName !== 0) return byName;
+      }
+      return a.styleNo.localeCompare(b.styleNo);
+    });
     // Apply per-list color exclusions when a list is selected
     if (!activeListId) {
       return out as Array<{ styleNo: string; colors: Group[] }>;

@@ -13,9 +13,9 @@ export default function StyleListDetailPage({ params }: { params: { listId: stri
 	const listId = params.listId;
 
 	const { data: list } = useSWR(isAdmin && listId ? ['stock-lists:one', listId] : null, async () => {
-		const { data, error } = await supabase.from('stock_lists').select('id, name').eq('id', listId).maybeSingle();
+		const { data, error } = await supabase.from('stock_lists').select('id, name, sort_by').eq('id', listId).maybeSingle();
 		if (error) throw error;
-		return (data ?? null) as { id: string; name: string } | null;
+		return (data ?? null) as { id: string; name: string; sort_by?: 'style_no' | 'style_name' | null } | null;
 	});
 
 	const { data: styles } = useSWR(isAdmin && listId ? ['stock-list-styles:with-styles', listId] : null, async () => {
@@ -49,8 +49,31 @@ export default function StyleListDetailPage({ params }: { params: { listId: stri
 					<div className="text-xs text-gray-500">Styles</div>
 					<h1 className="text-xl font-semibold">{list?.name ? `List: ${list.name}` : 'Style List'}</h1>
 				</div>
-				<div className="text-xs">
-					<Link href="/styles/lists" className="underline">All lists</Link>
+				<div className="flex items-center gap-3">
+					<div className="text-xs flex items-center gap-1">
+						<span className="text-gray-500">Sort by</span>
+						<select
+							className="text-xs border rounded px-2 py-1"
+							value={(list?.sort_by as any) || 'style_no'}
+							onChange={async (e) => {
+								const sortBy = e.target.value === 'style_name' ? 'style_name' : 'style_no';
+								try {
+									await supabase.from('stock_lists').update({ sort_by: sortBy } as any).eq('id', listId);
+									// eslint-disable-next-line no-console
+									console.log('[lists-detail] sort_by updated', { listId, sortBy });
+								} catch (err) {
+									// eslint-disable-next-line no-alert
+									alert((err as any)?.message || 'Failed to update sort order');
+								}
+							}}
+						>
+							<option value="style_no">Item No.</option>
+							<option value="style_name">Name</option>
+						</select>
+					</div>
+					<div className="text-xs">
+						<Link href="/styles/lists" className="underline">All lists</Link>
+					</div>
 				</div>
 			</div>
 			<div className="rounded-md border bg-white p-3">
