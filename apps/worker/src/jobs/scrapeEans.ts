@@ -43,6 +43,7 @@ export async function scrapeEans(ctx: Ctx) {
       await log(job.id, 'info', 'STEP:ean_progress', { index, total, style_no: s.style_no });
       const base = new URL(href, SPY_BASE_URL).toString().replace(/#.*$/, '');
       const url = base + '#tab=ean';
+      await log(job.id, 'info', 'STEP:ean_nav', { style_no: s.style_no, url });
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
       // Try to switch to EAN tab robustly (by href or visible text)
       try {
@@ -61,15 +62,25 @@ export async function scrapeEans(ctx: Ctx) {
         });
         if (switched) await page.waitForTimeout(300);
       } catch {}
-      // Avoid waiting for "visible" (some tables may be present but hidden before clicking),
-      // just ensure the container exists or move on quickly (max ~5s)
-      const hasContainer = await page.waitForSelector('.spy-container', { timeout: 5000 }).then(() => true).catch(() => false);
-      if (!hasContainer) {
-        await log(job.id, 'error', 'STEP:ean_no_table', { style_no: s.style_no, error: 'EAN container not found' });
+      // Wait a bit for the EAN table to load (poll up to ~8s)
+      const ok = await page.waitForFunction(() => {
+        // Look for the standardList with expected headers or any data rows
+        const tables = Array.from(document.querySelectorAll('.standardList')) as HTMLTableElement[];
+        for (const t of tables) {
+          const head = t.querySelector('thead.table-fixed') as HTMLTableSectionElement | null;
+          const ths = head ? Array.from(head.querySelectorAll('th')).map((th) => (th.textContent || '').trim().toLowerCase()) : [];
+          const hasCols = ths.includes('color') && ths.includes('size') && ths.join(',').includes('ean');
+          const hasRows = t.querySelector('tbody[data-section_no] tr');
+          if (hasCols || hasRows) return true;
+        }
+        return false;
+      }, {}, { timeout: 8000 }).then(() => true).catch(() => false);
+      if (!ok) {
+        await log(job.id, 'error', 'STEP:ean_no_table', { style_no: s.style_no, error: 'EAN table not found after wait' });
         continue;
       }
       // Extract rows
-      const rows = await page.$$eval('.spy-container .standardList tbody[data-section_no] tr', (trs) => {
+      const rows = await page.$$eval('.standardList tbody[data-section_no] tr', (trs) => {
         const out: Array<{ color: string; size: string; ean: string }> = [];
         for (const tr of Array.from(trs) as HTMLTableRowElement[]) {
           const parentTbody = tr.closest('tbody') as HTMLTableSectionElement | null;
