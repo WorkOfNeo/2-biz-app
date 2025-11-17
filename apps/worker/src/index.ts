@@ -13,6 +13,7 @@ import { scrapeTopStyles as scrapeTopStylesJob } from './jobs/scrapeTopStyles.js
 import { scrapeStatisticsPerSize } from './jobs/scrapeStatisticsPerSize.js';
 import { fixInvoices as fixInvoicesJob } from './jobs/fixInvoices.js';
 import { scrapePurchaseOrders as scrapePurchaseOrdersJob } from './jobs/scrapePurchaseOrders.js';
+import { scrapeEans as scrapeEansJob } from './jobs/scrapeEans.js';
 // (imported with .js extension above)
 
 const SUPABASE_URL = process.env.SUPABASE_URL!;
@@ -226,6 +227,10 @@ async function runJob(job: JobRow) {
 
   if (job.type === 'scrape_styles') {
     await scrapeStyles({ job, page: page!, log, saveResult, ensureNotCancelled, captureHtmlSnippet, supabase, SPY_BASE_URL, findFirst });
+    return;
+  }
+  if ((job.type as any) === 'scrape_eans') {
+    await scrapeEansJob({ job, page: page!, log, saveResult, setJobFailedOrRequeue, setJobSucceeded, ensureNotCancelled, supabase, SPY_BASE_URL });
     return;
   }
   if (job.type === 'scrape_customers') {

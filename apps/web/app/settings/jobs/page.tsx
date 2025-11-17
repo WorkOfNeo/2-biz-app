@@ -22,6 +22,8 @@ const JOB_DESCRIPTIONS: Record<string, string> = {
     'Scrape Top 10 Styles: Collects top-performing styles (and optionally color variants) and stores results for Top 10 dashboards.',
   export_top_styles:
     'Export Top 10 Styles: Builds PDF exports for Top styles based on stored results and uploads them to Storage.',
+  scrape_eans:
+    'Scrape EANs: Visits each style’s EAN tab (#tab=ean), parses Color/Size/EAN, maps to style_colors, flushes and reimports the EAN table.',
   fix_invoices:
     'Fix Invoices: Reconciles season_id on invoices by matching invoice_date to season date ranges. Supports dry run and apply.'
 };
@@ -189,6 +191,7 @@ export default function JobsOverviewPage() {
                 { type: 'scrape_customers', label: 'Scrape Customers', actions: [{ label: 'Run', payload: {} }] },
                 { type: 'scrape_statistics', label: 'Scrape Statistics', actions: [{ label: 'Run Deep', payload: { toggles: { deep: true } } }, { label: 'Per-size Snapshot', payload: { kind: 'per_size' } }] },
                 { type: 'scrape_top_styles', label: 'Scrape Top 10 Styles', actions: [{ label: 'Run', payload: {} }] },
+                { type: 'scrape_eans', label: 'Scrape EANs', actions: [{ label: 'Run', payload: {} }] },
                 { type: 'fix_invoices', label: 'Fix Invoices', actions: [{ label: 'Dry run', payload: { dryRun: true } }, { label: 'Apply', payload: { dryRun: false } }] }
               ]
             },

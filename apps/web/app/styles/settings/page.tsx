@@ -397,6 +397,34 @@ export default function StylesSettingsPage() {
             Clear seasons (ALL)
           </button>
         </div>
+        <div className="mt-4">
+          <button
+            className={"text-xs px-2 py-1 border rounded bg-slate-900 text-white hover:bg-slate-800 " + (runLoading ? 'opacity-60 cursor-not-allowed' : '')}
+            disabled={runLoading}
+            onClick={async () => {
+              setRunLoading(true);
+              try {
+                const { data: { session } } = await supabase.auth.getSession();
+                if (!session) throw new Error('Not signed in');
+                const res = await fetch('/api/enqueue', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+                  body: JSON.stringify({ type: 'scrape_eans', payload: { requestedBy: session.user.email } })
+                });
+                const js = await res.json().catch(() => ({}));
+                // eslint-disable-next-line no-console
+                console.log('[styles-settings] enqueue scrape_eans', res.status, js);
+                try { if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('job-started', { detail: { label: 'Scrape EANs — job started' } })); } catch {}
+              } catch (e) {
+                // eslint-disable-next-line no-console
+                console.error('[styles-settings] enqueue error', e);
+              }
+              setRunLoading(false);
+            }}
+          >
+            Scrape EANs
+          </button>
+        </div>
       </div>
       )}
     </div>

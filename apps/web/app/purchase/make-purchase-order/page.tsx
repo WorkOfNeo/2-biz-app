@@ -8,7 +8,7 @@ type ShopMap = Record<string, string>; // shopId -> customer_id
 
 export default function MakePurchaseOrderPage() {
   const supabase = createClientComponentClient();
-  const [activeTab, setActiveTab] = React.useState<'nielsens' | 'other'>('nielsens');
+  const [activeTab, setActiveTab] = React.useState<'nielsens' | 'nielsens_stock'>('nielsens');
   return (
     <div className="space-y-4">
       <div>
@@ -21,13 +21,11 @@ export default function MakePurchaseOrderPage() {
           onClick={() => setActiveTab('nielsens')}
         >Nielsens</button>
         <button
-          className={'px-3 py-1.5 text-sm rounded border ' + (activeTab==='other' ? 'bg-slate-900 text-white' : 'bg-white')}
-          onClick={() => setActiveTab('other')}
-        >???</button>
+          className={'px-3 py-1.5 text-sm rounded border ' + (activeTab==='nielsens_stock' ? 'bg-slate-900 text-white' : 'bg-white')}
+          onClick={() => setActiveTab('nielsens_stock')}
+        >Nielsens — Stock</button>
       </div>
-      {activeTab === 'nielsens' ? <NielsensPanel /> : (
-        <div className="rounded border bg-white p-3 text-sm text-gray-600">Coming soon…</div>
-      )}
+      {activeTab === 'nielsens' ? <NielsensPanel /> : <NielsensPanel key="stock" />}
     </div>
   );
 }
