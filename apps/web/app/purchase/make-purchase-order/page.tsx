@@ -68,7 +68,8 @@ function NielsensPanel() {
         const first = wb.SheetNames?.[0] || null;
         if (!first) continue;
         const ws = wb.Sheets[first];
-        const json = XLSX.utils.sheet_to_json(ws, { header: 1 }) as any[][];
+        if (!ws) continue;
+        const json = XLSX.utils.sheet_to_json(ws as any, { header: 1 }) as any[][];
         const hdr = (Array.isArray(json?.[0]) ? (json[0] as any[]) : []).map((x) => String(x ?? '').trim());
         summaries.push({ name: f.name, headers: hdr });
       }
@@ -99,7 +100,8 @@ function NielsensPanel() {
         const first = wb.SheetNames?.[0] || null;
         if (!first) continue;
         const ws = wb.Sheets[first];
-        const json = XLSX.utils.sheet_to_json(ws) as Array<Record<string, any>>;
+        if (!ws) continue;
+        const json = XLSX.utils.sheet_to_json(ws as any) as Array<Record<string, any>>;
         for (const r of json) {
           const shopIdRaw = String(r[shopIdCol] ?? '').trim();
           if (!shopIdRaw) continue;
