@@ -45,47 +45,42 @@ export async function scrapeEans(ctx: Ctx) {
       const url = base + '#tab=ean';
       await log(job.id, 'info', 'STEP:ean_nav', { style_no: s.style_no, url });
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
-      // Try to switch to EAN tab robustly (by href or visible text)
+      // Try to switch to EAN tab (supports <td data-tab-name="ean"> and <a href="#tab=ean">)
       try {
         const switched = await page.evaluate(() => {
-          function clickEl(el: Element | null): boolean {
-            if (!el) return false;
-            (el as HTMLElement).click();
-            return true;
-          }
+          const td = document.querySelector('.pageTabContainer .pagesTabSelector td[data-tab-name="ean"]') as HTMLElement | null;
+          if (td) { td.click(); return true; }
           const byHref = document.querySelector('a[href$="#tab=ean"], a[href*="#tab=ean"]') as HTMLAnchorElement | null;
-          if (clickEl(byHref)) return true;
-          const links = Array.from(document.querySelectorAll('a')) as HTMLAnchorElement[];
-          const eanLink = links.find(a => (a.textContent || '').trim().toLowerCase() === 'ean');
-          if (clickEl(eanLink || null)) return true;
+          if (byHref) { byHref.click(); return true; }
           return false;
         });
         if (switched) await page.waitForTimeout(300);
       } catch {}
       // Wait a bit for the EAN table to load (poll up to ~8s)
       const ok = await page.waitForFunction(() => {
-        // Look for the standardList with expected headers or any data rows
-        const tables = Array.from(document.querySelectorAll('.standardList')) as HTMLTableElement[];
-        for (const t of tables) {
-          const head = t.querySelector('thead.table-fixed') as HTMLTableSectionElement | null;
-          const ths = head ? Array.from(head.querySelectorAll('th')).map((th) => (th.textContent || '').trim().toLowerCase()) : [];
-          const hasCols = ths.includes('color') && ths.includes('size') && ths.join(',').includes('ean');
-          const hasRows = t.querySelector('tbody[data-section_no] tr');
-          if (hasCols || hasRows) return true;
-        }
-        return false;
+        const tab = document.querySelector('div[data-tab-name="ean"].pagesTab') as HTMLElement | null;
+        if (!tab) return false;
+        if (getComputedStyle(tab).display === 'none') return false;
+        const table = tab.querySelector('.standardList') as HTMLTableElement | null;
+        if (!table) return false;
+        const head = table.querySelector('thead.table-fixed') as HTMLTableSectionElement | null;
+        const ths = head ? Array.from(head.querySelectorAll('th')).map(th => (th.textContent || '').trim().toLowerCase()) : [];
+        const hasCols = ths.includes('color') && ths.includes('size') && ths.join(',').includes('ean');
+        const hasRows = !!table.querySelector('tbody[data-section_no] tr');
+        return hasCols || hasRows;
       }, {}, { timeout: 8000 }).then(() => true).catch(() => false);
       if (!ok) {
         await log(job.id, 'error', 'STEP:ean_no_table', { style_no: s.style_no, error: 'EAN table not found after wait' });
         continue;
       }
-      // Extract rows
-      const rows = await page.$$eval('.standardList tbody[data-section_no] tr', (trs) => {
+      // Extract rows from the active EAN tab only
+      const rows = await page.$eval('div[data-tab-name="ean"].pagesTab', (root) => {
         const out: Array<{ color: string; size: string; ean: string }> = [];
-        for (const tr of Array.from(trs) as HTMLTableRowElement[]) {
-          const parentTbody = tr.closest('tbody') as HTMLTableSectionElement | null;
+        const trs = Array.from(root.querySelectorAll('.standardList tbody[data-section_no] tr')) as HTMLTableRowElement[];
+        for (const tr of trs) {
+          const parentTbody = tr.closest('tbody') as HTMLElement | null;
           if (parentTbody && parentTbody.classList.contains('table-fixed--skip')) continue;
-          const tds = Array.from(tr.querySelectorAll('td')) as HTMLElement[];
+          const tds = Array.from(tr.querySelectorAll('td'));
           if (tds.length < 3) continue;
           const color = (tds[0]?.textContent || '').replace(/\s+/g, ' ').trim();
           const size = (tds[1]?.textContent || '').replace(/\s+/g, ' ').trim();
@@ -95,6 +90,7 @@ export async function scrapeEans(ctx: Ctx) {
         }
         return out;
       });
+      await log(job.id, 'info', 'STEP:ean_rows', { style_no: s.style_no, count: rows.length, sample: rows.slice(0, 5) });
       if (!rows.length) continue;
       // Map color -> style_color_id for this style
       const { data: colorRows } = await supabase.from('style_colors').select('id, color').eq('style_id', s.id);
@@ -120,6 +116,7 @@ export async function scrapeEans(ctx: Ctx) {
             await log(job.id, 'error', 'STEP:ean_insert_error', { style_no: s.style_no, error: error?.message || String(error) });
           } else {
             totalInserted += chunk.length;
+            await log(job.id, 'info', 'STEP:ean_inserted', { style_no: s.style_no, inserted: chunk.length, totalInserted });
           }
         }
       }
