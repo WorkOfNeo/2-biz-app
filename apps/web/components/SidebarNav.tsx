@@ -85,6 +85,9 @@ export function SidebarNav() {
           {!has('salesman') && has('admin') && (
             <NavLink href="/purchase/make-order" label="Make order" />
           )}
+          {!has('salesman') && has('admin') && (
+            <NavLink href="/purchase/make-purchase-order" label="Make Purchase Order" />
+          )}
         </div>
         )}
       </div>
