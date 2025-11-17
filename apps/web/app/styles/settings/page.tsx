@@ -16,9 +16,9 @@ export default function StylesSettingsPage() {
   const [deepProgress, setDeepProgress] = useState<{ index: number; total: number } | null>(null);
   const [deepDone, setDeepDone] = useState(false);
   const { data: styles } = useSWR(isAdmin ? 'styles:all' : null, async () => {
-    const { data, error } = await supabase.from('styles').select('id, style_no, style_name, scrape_enabled, updated_at').order('style_no').limit(1000);
+    const { data, error } = await supabase.from('styles').select('id, style_no, style_name, style_type, supplier, scrape_enabled, updated_at').order('style_no').limit(2000);
     if (error) throw new Error(error.message);
-    return data as { id: string; style_no: string; style_name: string | null; scrape_enabled: boolean | null; updated_at: string }[];
+    return data as { id: string; style_no: string; style_name: string | null; style_type: string | null; supplier: string | null; scrape_enabled: boolean | null; updated_at: string }[];
   });
   const { data: styleSeasons } = useSWR(isAdmin ? 'style_seasons:all' : null, async () => {
     const { data, error } = await supabase.from('style_seasons').select('style_no, seasons').limit(5000);
@@ -139,7 +139,12 @@ export default function StylesSettingsPage() {
       });
     }
     if (!q) return base;
-    return base.filter((s) => (s.style_name || '').toLowerCase().includes(q) || (s.style_no || '').toLowerCase().includes(q));
+    return base.filter((s) => {
+      const name = (s.style_name || '').toLowerCase();
+      const no = (s.style_no || '').toLowerCase();
+      const type = (s as any).style_type ? String((s as any).style_type).toLowerCase() : '';
+      return name.includes(q) || no.includes(q) || type.includes(q);
+    });
   }, [styles, searchQuery, seasonFilter, styleSeasons?.labels.length]);
 
   // (Seasons column removed)
@@ -245,16 +250,18 @@ export default function StylesSettingsPage() {
               <tr>
                 <th className="p-2 text-left border-b">Action</th>
                 <th className="p-2 text-left border-b">Style No.</th>
-                <th className="p-2 text-left border-b">Style Name</th>
+                <th className="p-2 text-left border-b">Name</th>
+                <th className="p-2 text-left border-b">Type</th>
+                <th className="p-2 text-left border-b">Supplier</th>
                 <th className="p-2 text-left border-b">Colors</th>
               </tr>
             </thead>
             <tbody>
-              {(filteredStyles ?? []).map((s) => {
+              {(filteredStyles as any[] ?? []).map((s) => {
                 const added = selectedForUser.has(s.style_no);
                 return (
                   <>
-                  <tr key={s.style_no} className={(added ? 'bg-slate-50 ' : '') + 'hover:bg-slate-50 transition-colors'}>
+                  <tr key={s.id} className={(added ? 'bg-slate-50 ' : '') + 'hover:bg-slate-50 transition-colors'}>
                     <td className="p-2 border-b align-middle">
                       <button
                         className={(added ? 'bg-slate-300 text-gray-800 ' : 'bg-slate-900 text-white ') + 'text-xs px-2 py-1 rounded border'}
@@ -262,8 +269,12 @@ export default function StylesSettingsPage() {
                       >{added ? 'Added' : 'Add to list'}</button>
                     </td>
                     <td className={(added ? 'border-l-4 border-l-slate-900 ' : '') + 'p-2 border-b font-medium'}>{s.style_no}</td>
-                    <td className="p-2 border-b text-gray-700">{s.style_name ?? '—'}</td>
-                      <td className="p-2 border-b text-[11px] text-gray-500">—</td>
+                    <td className="p-2 border-b text-gray-700">
+                      <div className="font-medium">{s.style_name ?? '—'}</div>
+                    </td>
+                    <td className="p-2 border-b text-gray-600 text-sm">{(s as any).style_type ?? '—'}</td>
+                    <td className="p-2 border-b text-gray-600 text-sm">{s.supplier ?? '—'}</td>
+                    <td className="p-2 border-b text-[11px] text-gray-500">—</td>
                   </tr>
                     {/* colors editor removed from this section */}
                   </>

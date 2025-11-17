@@ -80,6 +80,24 @@ export async function scrapeStyles(ctx: Ctx) {
     return out;
   });
   await log(job.id, 'info', 'STEP:styles_rows', { count: rows.length });
+  // Enrich with style_type (category) by briefly visiting each style detail page to read the selected Type
+  for (let i = 0; i < rows.length; i++) {
+    await ensureNotCancelled(job.id);
+    const r = rows[i];
+    if (!r.link_href) continue;
+    try {
+      const detailUrl = new URL(r.link_href, SPY_BASE_URL).toString();
+      await log(job.id, 'info', 'STEP:styles_detail_nav', { style_no: r.style_no, url: detailUrl, index: i + 1, total: rows.length });
+      await page.goto(detailUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      const typeText = await page.$eval('select[name=\"sTypeId\"]', (sel: HTMLSelectElement) => {
+        const opt = sel && sel.selectedIndex >= 0 ? sel.options[sel.selectedIndex] : null;
+        return (opt?.textContent || '').trim();
+      }).catch(() => null as string | null);
+      (r as any).style_type = typeText;
+    } catch (e: any) {
+      await log(job.id, 'error', 'STEP:styles_detail_error', { style_no: r.style_no, error: e?.message || String(e) });
+    }
+  }
   let upserted = 0;
   for (let i = 0; i < rows.length; i += 1000) {
     await ensureNotCancelled(job.id);
@@ -89,6 +107,7 @@ export async function scrapeStyles(ctx: Ctx) {
       style_no: r.style_no,
       style_name: r.style_name,
       supplier: r.supplier,
+      style_type: (r as any).style_type || null,
       image_url: r.image_url,
       link_href: r.link_href,
       updated_at: new Date().toISOString()
