@@ -24,7 +24,7 @@ begin
       'scrape_purchase_orders',
       'fix_invoices',
       'scrape_eans'
-    ));
+    )) not valid;
 end $$;
 
 

@@ -44,20 +44,28 @@ export async function scrapeEans(ctx: Ctx) {
       const base = new URL(href, SPY_BASE_URL).toString().replace(/#.*$/, '');
       const url = base + '#tab=ean';
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
-      // Click tab if link exists
+      // Try to switch to EAN tab robustly (by href or visible text)
       try {
-        const clicked = await page.evaluate(() => {
-          const a = document.querySelector('a[href$="#tab=ean"], a[href*="#tab=ean"]') as HTMLAnchorElement | null;
-          if (a) { a.click(); return true; }
+        const switched = await page.evaluate(() => {
+          function clickEl(el: Element | null): boolean {
+            if (!el) return false;
+            (el as HTMLElement).click();
+            return true;
+          }
+          const byHref = document.querySelector('a[href$="#tab=ean"], a[href*="#tab=ean"]') as HTMLAnchorElement | null;
+          if (clickEl(byHref)) return true;
+          const links = Array.from(document.querySelectorAll('a')) as HTMLAnchorElement[];
+          const eanLink = links.find(a => (a.textContent || '').trim().toLowerCase() === 'ean');
+          if (clickEl(eanLink || null)) return true;
           return false;
         });
-        if (clicked) { await page.waitForTimeout(300); }
+        if (switched) await page.waitForTimeout(300);
       } catch {}
-      // Wait for table markers
-      try {
-        await page.waitForSelector('.spy-container .standardList table, .spy-container .standardList', { timeout: 20_000 });
-      } catch (e: any) {
-        await log(job.id, 'error', 'STEP:ean_no_table', { style_no: s.style_no, error: e?.message || String(e) });
+      // Avoid waiting for "visible" (some tables may be present but hidden before clicking),
+      // just ensure the container exists or move on quickly (max ~5s)
+      const hasContainer = await page.waitForSelector('.spy-container', { timeout: 5000 }).then(() => true).catch(() => false);
+      if (!hasContainer) {
+        await log(job.id, 'error', 'STEP:ean_no_table', { style_no: s.style_no, error: 'EAN container not found' });
         continue;
       }
       // Extract rows
