@@ -39,7 +39,7 @@ export async function POST(req: Request) {
       auth: { persistSession: false, autoRefreshToken: false },
       global: { headers: auth ? { Authorization: auth } : {} }
     });
-    const isStock = type === 'update_style_stock';
+    const isStock = type === 'update_style_stock' || type === 'scrape_eans';
     const isFast = type === 'scrape_purchase_orders';
     const insertBody = { type, payload, status: 'queued', max_attempts: 3, queue: isStock ? 'stock' : (isFast ? 'fast' : 'default'), priority: isStock ? 200 : 100 } as any;
     const { data, error } = await supabase.from('jobs').insert(insertBody).select('id').single();

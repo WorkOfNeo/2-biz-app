@@ -140,7 +140,7 @@ async function verifySupabaseJWT(authorization?: string): Promise<JWTPayload | n
 }
 
 const enqueueSchema = z.object({
-  type: z.enum(['scrape_statistics','scrape_styles','update_style_stock','export_overview','scrape_customers','deep_scrape_styles','scrape_eans']),
+  type: z.enum(['scrape_statistics','scrape_styles','update_style_stock','export_overview','scrape_customers','deep_scrape_styles','scrape_top_styles','export_top_styles','scrape_purchase_orders','scrape_eans']),
   payload: z.record(z.any())
 });
 
@@ -214,7 +214,7 @@ app.post('/enqueue', async (c) => {
 
     const body = enqueueSchema.parse(await c.req.json<EnqueueRequestBody>());
 
-    const isStock = body.type === 'update_style_stock';
+    const isStock = body.type === 'update_style_stock' || body.type === 'scrape_eans';
     const insertBody = {
       type: body.type,
       payload: body.payload as any,
