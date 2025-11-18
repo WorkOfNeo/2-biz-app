@@ -458,6 +458,7 @@ app.post('/import/customers', async (c) => {
   }
 });
 
+// deploy bump 2025-11-18
 app.patch('/customers/:id', async (c) => {
   try {
     const payload = await verifySupabaseJWT(c.req.header('authorization'));

@@ -1859,4 +1859,5 @@ mainLoop().catch((e) => {
   process.exit(1);
 });
 
+// deploy bump 2025-11-18
 
