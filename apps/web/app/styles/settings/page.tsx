@@ -186,6 +186,23 @@ export default function StylesSettingsPage() {
   }, [selectionMap, currentUserId]);
   // Search by style name (and number)
   const [searchQuery, setSearchQuery] = useState('');
+  // Build season filter options from style_seasons labels (these are strings like "25 WINTER")
+  const seasonOptions = useMemo(() => {
+    function formatLabel(lbl: string): string {
+      const m = /^(\d{2})\s+(.*)$/i.exec(lbl.trim());
+      if (m) {
+        const yy = m[1] ?? '';
+        const name = (m[2] ?? '').toUpperCase();
+        const yyyy = yy ? `20${yy}` : '';
+        return `${name}${yyyy ? ` ${yyyy}` : ''}`.trim() || lbl;
+      }
+      return lbl;
+    }
+    return (styleSeasons?.labels || []).map((lbl) => ({
+      value: String(lbl),
+      label: formatLabel(String(lbl))
+    }));
+  }, [styleSeasons?.labels && styleSeasons.labels.join('|')]);
   const filteredStyles = useMemo(() => {
     if (!styles) return [] as { id: string; style_no: string; style_name: string | null; scrape_enabled: boolean | null; updated_at: string }[];
     const q = searchQuery.trim().toLowerCase();
@@ -294,15 +311,7 @@ export default function StylesSettingsPage() {
               onChange={(e)=>setSearchQuery(e.target.value)}
             />
             <SearchSelect
-              items={
-                (seasonsList ?? [])
-                  .filter((s) => !(s as any).hidden)
-                  .map((s) => {
-                    const full = `${(s.name || '').trim()}${s.year ? ` ${s.year}` : ''}`.trim();
-                    const code = seasonCodeById.get(String(s.id)) || '';
-                    return { value: String(s.id), label: code ? `${code} — ${full}` : full };
-                  })
-              }
+              items={seasonOptions}
               value={seasonFilter}
               onChange={setSeasonFilter}
               placeholder="All seasons"
