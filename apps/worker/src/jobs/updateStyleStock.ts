@@ -13,6 +13,10 @@ type Ctx = {
 
 export async function updateStyleStock(ctx: Ctx) {
   const { job, page, log, saveResult, ensureNotCancelled, supabase, SPY_BASE_URL } = ctx;
+  // Tunable timeouts to avoid long stalls on pages that do not render details
+  const SELECTOR_TIMEOUT_MS = 20_000;      // previously 120_000
+  const FORCED_SELECTOR_TIMEOUT_MS = 5_000;
+  const BETWEEN_CLICK_WAIT_MS = 350;       // previously 500
   await ensureNotCancelled(job.id);
   await log(job.id, 'info', 'STEP:style_stock_begin');
   let styleNos: string[] = Array.isArray(job.payload?.styleNos) ? (job.payload?.styleNos as string[]) : [];
@@ -38,6 +42,7 @@ export async function updateStyleStock(ctx: Ctx) {
   }
   const { data: styles } = await supabase.from('styles').select('id, style_no, link_href, scrape_enabled').in('style_no', styleNos);
   let totalRows = 0;
+  const missingStyles: Array<{ style_no: string; reason: string }> = [];
   for (const s of (styles ?? []) as any[]) {
     await ensureNotCancelled(job.id);
     const href = (s.link_href || '').toString();
@@ -77,6 +82,18 @@ export async function updateStyleStock(ctx: Ctx) {
           arrowsUp: document.querySelectorAll('.sprite.sprite168.spriteArrowUp.right.clickable').length
         }));
         await log(job.id, 'info', 'STEP:style_stock_pre_counts', counts as any);
+        // If nothing seems visible, try a fast reload-and-tab-click once
+        if ((counts as any)?.boxes === 0 && (counts as any)?.arrowsDown === 0 && (counts as any)?.arrowsUp === 0) {
+          await page.reload({ waitUntil: 'domcontentloaded', timeout: 30_000 }).catch(() => {});
+          try {
+            const clickedAgain = await page.evaluate(() => {
+              const a = document.querySelector('a[href$="#tab=statandstock"], a[href*="#tab=statandstock"]') as HTMLAnchorElement | null;
+              if (a) { a.click(); return true; }
+              return false;
+            });
+            if (clickedAgain) await page.waitForTimeout(250);
+          } catch {}
+        }
       } catch {}
       for (let i = 0; i < 10; i++) {
         const clicked = await page.evaluate((allowed: Record<string, boolean>) => {
@@ -102,7 +119,7 @@ export async function updateStyleStock(ctx: Ctx) {
         }, allowedColors);
         await log(job.id, 'info', 'STEP:style_stock_expand_click', { iteration: i + 1, clicked });
         if (!clicked) break;
-        await page.waitForTimeout(500);
+        await page.waitForTimeout(BETWEEN_CLICK_WAIT_MS);
       }
       const headerClicks = await page.evaluate((allowed: Record<string, boolean>) => {
         let clicked = 0;
@@ -122,12 +139,12 @@ export async function updateStyleStock(ctx: Ctx) {
         return clicked;
       }, allowedColors).catch(() => 0);
       if (headerClicks) await log(job.id, 'info', 'STEP:style_stock_header_clicks', { clicked: headerClicks });
-      await page.waitForTimeout(500);
+      await page.waitForTimeout(BETWEEN_CLICK_WAIT_MS);
     } catch (e: any) {
       await log(job.id, 'error', 'STEP:style_stock_expand_error', { error: e?.message || String(e) });
     }
     try {
-      await page.waitForSelector('.statAndStockDetails', { timeout: 120_000, state: 'attached' as any });
+      await page.waitForSelector('.statAndStockDetails', { timeout: SELECTOR_TIMEOUT_MS, state: 'attached' as any });
     } catch (e: any) {
       try {
         const forced = await page.evaluate(() => {
@@ -136,11 +153,12 @@ export async function updateStyleStock(ctx: Ctx) {
           return shown;
         });
         await log(job.id, 'info', 'STEP:style_stock_force_show', { tablesShown: forced });
-        await page.waitForTimeout(500);
-        await page.waitForSelector('.statAndStockDetails', { timeout: 10_000, state: 'attached' as any });
+        await page.waitForTimeout(250);
+        await page.waitForSelector('.statAndStockDetails', { timeout: FORCED_SELECTOR_TIMEOUT_MS, state: 'attached' as any });
       } catch {}
       const html = await page.content();
-      await log(job.id, 'error', 'STEP:style_stock_missing', { style_no: s.style_no, error: e?.message || String(e), html });
+      await log(job.id, 'error', 'STEP:style_stock_missing_skip', { style_no: s.style_no, error: e?.message || String(e), html_sample: String(html || '').slice(0, 5_000) });
+      missingStyles.push({ style_no: s.style_no, reason: 'details_missing' });
       continue;
     }
     const extracted = await page.$$eval('.statAndStockBox', (boxes, allowed: Record<string, boolean>) => {
@@ -278,8 +296,8 @@ export async function updateStyleStock(ctx: Ctx) {
     }
     await log(job.id, 'info', 'STEP:style_stock_rows', { style_no: s.style_no, rows: extracted.length });
   }
-  await saveResult(job.id, 'Style stock scrape completed', { totalRows });
-  await log(job.id, 'info', 'STEP:complete', { totalRows });
+  await saveResult(job.id, 'Style stock scrape completed', { totalRows, missingStyles });
+  await log(job.id, 'info', 'STEP:complete', { totalRows, missing: missingStyles.length });
 }
 
 
