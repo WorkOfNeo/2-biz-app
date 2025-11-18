@@ -85,9 +85,6 @@ export function SidebarNav() {
           {!has('salesman') && has('admin') && (
             <NavLink href="/purchase/make-order" label="Make order" />
           )}
-          {!has('salesman') && has('admin') && (
-            <NavLink href="/purchase/make-purchase-order" label="Make Purchase Order" />
-          )}
         </div>
         )}
       </div>
@@ -98,6 +95,7 @@ export function SidebarNav() {
         {open.sales && (
         <div className="ml-2 space-y-1">
           {!has('salesman') && has('admin') && <NavLink href="/sales/nielsens" label="Nielsens" />}
+          {!has('salesman') && has('admin') && <NavLink href="/sales/make-purchase-order" label="Make Purchase Order" />}
         </div>
         )}
       </div>

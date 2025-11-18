@@ -12,7 +12,7 @@ export default function MakePurchaseOrderPage() {
   return (
     <div className="space-y-4">
       <div>
-        <div className="text-xs text-gray-500">Purchase</div>
+        <div className="text-xs text-gray-500">Sales</div>
         <h1 className="text-xl font-semibold">Make Purchase Order · Nielsens</h1>
       </div>
       <div className="flex items-center gap-2">
@@ -129,14 +129,59 @@ function NielsensPanel() {
     try {
       if (!rowsOut.length) { alert('No converted rows yet'); return; }
       const [XLSX, { default: saveAs }] = await Promise.all([import('xlsx'), import('file-saver')]);
-      const header = ['ShopID', 'Spy Account No', 'Delivery', 'EAN', 'QTY', 'External Order No'];
-      const data = rowsOut.map(r => [r.ShopID, r.SpyAccountNo, r.Delivery, r.EAN, r.QTY, r.ExternalOrderNo ?? '']);
+      // Exact header order and casing as requested
+      const header = [
+        'Cust. Acc. Number',
+        'External Order No',
+        'Customer Name',
+        'Delivery Date',
+        'Item EAN',
+        'Style No.',
+        'Style Name',
+        'Color',
+        'Size',
+        'Assort.',
+        'Quantity',
+        'Address Line 1',
+        'Address Line 2',
+        'Postal Code',
+        'City',
+        'State',
+        'Country',
+        'E-mail',
+        'Phone',
+        'Price',
+        'Discount',
+        'Order',
+        'Comment',
+      ];
+      // We only fill a subset of columns; others remain blank
+      const data = rowsOut.map(r => ([
+        r.SpyAccountNo,          // Cust. Acc. Number
+        r.ExternalOrderNo ?? '', // External Order No
+        '',                      // Customer Name
+        r.Delivery,              // Delivery Date
+        r.EAN,                   // Item EAN
+        '',                      // Style No.
+        '',                      // Style Name
+        '',                      // Color
+        '',                      // Size
+        '',                      // Assort.
+        r.QTY,                   // Quantity
+        '', '', '', '', '', '',  // Address Line 1..Country
+        '',                      // E-mail
+        '',                      // Phone
+        '',                      // Price
+        '',                      // Discount
+        '',                      // Order
+        '',                      // Comment
+      ]));
       const wb = XLSX.utils.book_new();
       const ws = XLSX.utils.aoa_to_sheet([header, ...data]);
       XLSX.utils.book_append_sheet(wb, ws, 'Nielsens');
       const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
       const blob = new Blob([wbout], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-      saveAs(blob, 'purchase_order_nielsens.xlsx');
+      saveAs(blob, 'nielsens_order.xlsx');
     } catch (e: any) {
       alert(e?.message || 'Export failed');
     }
@@ -347,5 +392,6 @@ function ShopSettingsModal({ open, onClose, shopMapId, shopMapValue, onSaved }: 
     </Modal>
   );
 }
+
 
 
