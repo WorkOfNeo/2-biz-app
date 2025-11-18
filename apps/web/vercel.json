@@ -1,8 +1,5 @@
 {
   "crons": [
-    { "path": "/api/cron/update-stock-selected", "schedule": "0 7 * * *" },
-    { "path": "/api/cron/update-stock-selected", "schedule": "0 11 * * *" },
-    { "path": "/api/cron/update-stock-selected", "schedule": "0 14 * * *" },
     { "path": "/api/cron/update-stock-all", "schedule": "0 0 * * *" },
     { "path": "/api/cron/scrape-statistics-deep", "schedule": "0 8 * * *" },
     { "path": "/api/cron/scrape-statistics-deep", "schedule": "0 12 * * *" },

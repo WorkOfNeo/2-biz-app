@@ -190,8 +190,78 @@ function ScrapingTab({ supabase }: { supabase: any }) {
       .map((s) => ({ value: String(s.id), label: seasonCodeById.get(String(s.id)) || String(s.id) }));
   }, [seasons && seasons.length, seasonCodeById && Array.from(seasonCodeById.keys()).length]);
 
+  // Manual run: enqueue selected scrape and measure elapsed seconds
+  const [runBusy, setRunBusy] = ReactNS.useState(false);
+  const [runJobId, setRunJobId] = ReactNS.useState<string | null>(null);
+  const [elapsedSec, setElapsedSec] = ReactNS.useState<number>(0);
+  const [completedSec, setCompletedSec] = ReactNS.useState<number | null>(null);
+  ReactNS.useEffect(() => {
+    let t: any;
+    if (runJobId && !completedSec) {
+      t = setInterval(() => setElapsedSec((s) => s + 1), 1000);
+    }
+    return () => { if (t) clearInterval(t); };
+  }, [runJobId, completedSec]);
+  ReactNS.useEffect(() => {
+    if (!runJobId) return;
+    let t: any;
+    const poll = async () => {
+      try {
+        const { data } = await supabase.from('jobs').select('status, started_at, finished_at').eq('id', runJobId).maybeSingle();
+        const st = (data as any)?.status as string | undefined;
+        const startedAt = (data as any)?.started_at ? new Date((data as any).started_at).getTime() : null;
+        const finishedAt = (data as any)?.finished_at ? new Date((data as any).finished_at).getTime() : null;
+        if (st && (st === 'succeeded' || st === 'failed' || st === 'cancelled')) {
+          let secs: number;
+          if (startedAt && finishedAt) secs = Math.max(0, Math.round((finishedAt - startedAt) / 1000));
+          else secs = elapsedSec;
+          setCompletedSec(secs);
+          setRunBusy(false);
+          return;
+        }
+      } catch {}
+    };
+    t = setInterval(poll, 1200);
+    return () => { if (t) clearInterval(t); };
+  }, [runJobId, elapsedSec]);
+
   return (
     <div className="text-sm text-gray-700">
+      <div className="mb-3 flex items-center justify-between">
+        <div className="text-xs text-gray-600">Run scraping for “Often scraped” selection.</div>
+        <button
+          className={"text-xs px-2 py-1 border rounded " + (runBusy ? 'bg-slate-300 text-gray-800' : 'bg-slate-900 text-white hover:bg-slate-800')}
+          disabled={runBusy}
+          onClick={async () => {
+            try {
+              setRunBusy(true);
+              setRunJobId(null);
+              setElapsedSec(0);
+              setCompletedSec(null);
+              const { data: { session } } = await supabase.auth.getSession();
+              if (!session) throw new Error('Not signed in');
+              const res = await fetch('/api/enqueue', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+                body: JSON.stringify({ type: 'update_style_stock', payload: { requestedBy: session.user.email, mode: 'selected' } })
+              });
+              const js = await res.json().catch(() => ({}));
+              if (!res.ok || !js?.jobId) throw new Error(js?.error || 'Failed to enqueue');
+              setRunJobId(js.jobId as string);
+            } catch (e: any) {
+              alert(e?.message || 'Failed to enqueue run');
+              setRunBusy(false);
+            }
+          }}
+        >
+          {runBusy ? 'Running…' : 'Run selected now'}
+        </button>
+      </div>
+      {runJobId && (
+        <div className="mb-3 text-xs text-gray-700">
+          Job: <span className="font-mono">{runJobId.slice(0,8)}…</span> · Elapsed: {completedSec ?? elapsedSec}s {completedSec != null ? '(completed)' : ''}
+        </div>
+      )}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <div className="rounded border">
           <div className="px-2 py-1 text-xs font-medium border-b bg-gray-50">All styles</div>
