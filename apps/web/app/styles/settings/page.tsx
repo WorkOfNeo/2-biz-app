@@ -35,20 +35,14 @@ export default function StylesSettingsPage() {
       return (data ?? []) as unknown as Array<StyleRow>;
     }
     try {
-      // Preferred full set (may fail on older DBs missing some columns)
-      return await fetchStyles('id, style_no, style_name, style_type, supplier, image_url, scrape_enabled, updated_at');
+      // Preferred set without style_type to avoid 400s on older DBs
+      return await fetchStyles('id, style_no, style_name, supplier, image_url, scrape_enabled, updated_at');
     } catch (e1: any) {
       // eslint-disable-next-line no-console
-      console.warn('[styles-settings] styles full select failed, trying without style_type', e1?.message || e1);
-      try {
-        // Secondary attempt: include image_url but omit style_type
-        return await fetchStyles('id, style_no, style_name, supplier, image_url, scrape_enabled, updated_at');
-      } catch (e2: any) {
-        // Final fallback: minimal set without image_url/style_type
-        console.warn('[styles-settings] styles select without style_type failed, falling back minimal', e2?.message || e2);
-        const rows: Array<StyleRow> = await fetchStyles('id, style_no, style_name, supplier, scrape_enabled, updated_at');
-        return rows.map((r) => ({ ...r, style_type: (r.style_type ?? null), image_url: (r.image_url ?? null) })) as Array<StyleRow>;
-      }
+      console.warn('[styles-settings] styles select failed, falling back minimal', e1?.message || e1);
+      // Final fallback: minimal set without image_url
+      const rows: Array<StyleRow> = await fetchStyles('id, style_no, style_name, supplier, scrape_enabled, updated_at');
+      return rows.map((r) => ({ ...r, style_type: (r.style_type ?? null), image_url: (r.image_url ?? null) })) as Array<StyleRow>;
     }
   });
   const { data: styleSeasons } = useSWR(isAdmin ? 'style_seasons:all' : null, async () => {
@@ -269,7 +263,7 @@ export default function StylesSettingsPage() {
             <select className="text-xs border rounded px-2 py-1" value={seasonFilter} onChange={(e)=>setSeasonFilter(e.target.value)}>
               <option value="">All seasons</option>
               {(styleSeasons?.labels || []).map((label) => (
-                <option key={label} value={label}>{seasonsMap?.get(label) ? `${label} — ${seasonsMap.get(label)}` : label}</option>
+                <option key={label} value={label}>{seasonsMap?.get(label) || label}</option>
               ))}
             </select>
             <button className="text-xs px-2 py-1 border rounded bg-slate-900 text-white hover:bg-slate-800" onClick={addAllFiltered}>Add all</button>
@@ -284,7 +278,7 @@ export default function StylesSettingsPage() {
                 return (
                   <div key={s.id} className="flex items-center justify-between px-2 py-1 hover:bg-slate-50">
                     <div className="flex items-center gap-2 min-w-0">
-                      {s.image_url ? <img src={s.image_url} alt="" className="w-7 h-7 rounded object-cover border" /> : <div className="w-7 h-7 rounded border bg-gray-100" />}
+                      <Thumb src={s.image_url || ''} />
                       <div className="truncate">
                         <div className="font-medium text-gray-900 truncate">{s.style_no}</div>
                         <div className="text-gray-700 truncate">{name}</div>
@@ -307,7 +301,7 @@ export default function StylesSettingsPage() {
                 return (
                   <div key={s.id} className="flex items-center justify-between px-2 py-1 hover:bg-slate-50">
                     <div className="flex items-center gap-2 min-w-0">
-                      {s.image_url ? <img src={s.image_url} alt="" className="w-7 h-7 rounded object-cover border" /> : <div className="w-7 h-7 rounded border bg-gray-100" />}
+                      <Thumb src={s.image_url || ''} />
                       <div className="truncate">
                         <div className="font-medium text-gray-900 truncate">{s.style_no}</div>
                         <div className="text-gray-700 truncate">{name}</div>
@@ -376,6 +370,42 @@ export default function StylesSettingsPage() {
       </div>
       )}
     </div>
+  );
+}
+
+function Thumb({ src }: { src: string }) {
+  const React = require('react') as typeof import('react');
+  const [imgSrc, setImgSrc] = React.useState<string>(src);
+  const [attempt, setAttempt] = React.useState<number>(0);
+  React.useEffect(() => { setImgSrc(src); setAttempt(0); }, [src]);
+  if (!imgSrc) return <div className="w-7 h-7 rounded border bg-gray-100" />;
+  // eslint-disable-next-line @next/next/no-img-element
+  return (
+    <img
+      src={imgSrc}
+      alt=""
+      className="w-7 h-7 rounded object-cover border"
+      onError={() => {
+        // Try smaller transforms, then drop transform, then hide
+        if (attempt === 0 && /tr:n-s1024/i.test(imgSrc)) {
+          setImgSrc(imgSrc.replace(/tr:n-s1024/ig, 'tr:n-s512'));
+          setAttempt(1);
+          return;
+        }
+        if (attempt === 1 && /tr:n-s512/i.test(imgSrc)) {
+          setImgSrc(imgSrc.replace(/tr:n-s512/ig, 'tr:n-s256'));
+          setAttempt(2);
+          return;
+        }
+        if (attempt === 2 && /\/tr:n-s\d+\//i.test(imgSrc)) {
+          setImgSrc(imgSrc.replace(/\/tr:n-s\d+\//ig, '/'));
+          setAttempt(3);
+          return;
+        }
+        // Give up, show placeholder
+        setImgSrc('');
+      }}
+    />
   );
 }
 
