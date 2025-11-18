@@ -58,22 +58,27 @@ export default function StylesSettingsPage() {
     }
     return { byStyle, labels: Array.from(labels).sort() } as { byStyle: Map<string, string[]>; labels: string[] };
   }, { refreshInterval: 0 });
-  const { data: seasonsMap } = useSWR(isAdmin ? 'seasons:map' : null, async () => {
-    const { data, error } = await supabase.from('seasons').select('id, name, year').limit(5000);
-    if (error) throw new Error(error.message);
-    const m = new Map<string, string>();
-    for (const r of (data ?? []) as any[]) {
-      const n = (r.name as string | null) || '';
-      const y = (r.year as number | null) || null;
-      m.set(r.id as string, y ? `${n} ${y}` : n);
-    }
-    return m as Map<string, string>;
-  }, { refreshInterval: 0 });
+  // Seasons list for dropdown + code/hidden maps for display
   const { data: seasonsList } = useSWR(isAdmin ? 'seasons:list' : null, async () => {
-    const { data, error } = await supabase.from('seasons').select('id, name, year').order('year', { ascending: false });
+    const { data, error } = await supabase.from('seasons').select('id, name, year, hidden').order('year', { ascending: false });
     if (error) throw new Error(error.message);
-    return (data ?? []) as Array<{ id: string; name: string | null; year: number | null }>;
+    return (data ?? []) as Array<{ id: string; name: string | null; year: number | null; hidden?: boolean | null }>;
   }, { refreshInterval: 0 });
+  const seasonCodeById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const s of (seasonsList ?? [])) {
+      const parts = String(s.name || '').trim().split(/\s+/).filter(Boolean);
+      const letters = parts.map((w) => w[0]?.toUpperCase() ?? '').join('');
+      const yy = s.year != null ? String(s.year).slice(-2) : '';
+      m.set(String(s.id), `${letters}${yy}`);
+    }
+    return m;
+  }, [seasonsList && (seasonsList as any).length]);
+  const hiddenSeasonSet = useMemo(() => {
+    const st = new Set<string>();
+    for (const s of (seasonsList ?? [])) if ((s as any).hidden) st.add(String(s.id));
+    return st;
+  }, [seasonsList && (seasonsList as any).length]);
   const { data: colorSeasons } = useSWR(isAdmin ? 'style_color_seasons:all' : null, async () => {
     const pageSize = 2000;
     const out = new Map<string, string[]>();
@@ -289,12 +294,15 @@ export default function StylesSettingsPage() {
               onChange={(e)=>setSearchQuery(e.target.value)}
             />
             <SearchSelect
-              items={[
-                ...((seasonsList ?? []).map((s) => {
-                  const label = `${((s.name || '') + (s.year ? ` ${s.year}` : '')).trim() || String(s.id)}`;
-                  return { value: String(s.id), label };
-                }))
-              ]}
+              items={
+                (seasonsList ?? [])
+                  .filter((s) => !(s as any).hidden)
+                  .map((s) => {
+                    const full = `${(s.name || '').trim()}${s.year ? ` ${s.year}` : ''}`.trim();
+                    const code = seasonCodeById.get(String(s.id)) || '';
+                    return { value: String(s.id), label: code ? `${code} — ${full}` : full };
+                  })
+              }
               value={seasonFilter}
               onChange={setSeasonFilter}
               placeholder="All seasons"
@@ -317,7 +325,7 @@ export default function StylesSettingsPage() {
                       <div className="truncate">
                         <div className="font-medium text-gray-900 truncate">{s.style_no}</div>
                         <div className="text-gray-700 truncate">{name}</div>
-                        <ColorsLine styleId={s.id} colorsByStyle={colorsByStyle} colorSeasons={colorSeasons} seasonsMap={seasonsMap} />
+                        <ColorsLine styleId={s.id} colorsByStyle={colorsByStyle} colorSeasons={colorSeasons} seasonCodeById={seasonCodeById} hiddenSeasonSet={hiddenSeasonSet} />
                       </div>
                     </div>
                     <button
@@ -341,7 +349,7 @@ export default function StylesSettingsPage() {
                       <div className="truncate">
                         <div className="font-medium text-gray-900 truncate">{s.style_no}</div>
                         <div className="text-gray-700 truncate">{name}</div>
-                        <ColorsLine styleId={s.id} colorsByStyle={colorsByStyle} colorSeasons={colorSeasons} seasonsMap={seasonsMap} />
+                        <ColorsLine styleId={s.id} colorsByStyle={colorsByStyle} colorSeasons={colorSeasons} seasonCodeById={seasonCodeById} hiddenSeasonSet={hiddenSeasonSet} />
                       </div>
                     </div>
                     <button
@@ -450,12 +458,14 @@ function ColorsLine({
   styleId,
   colorsByStyle,
   colorSeasons,
-  seasonsMap,
+  seasonCodeById,
+  hiddenSeasonSet,
 }: {
   styleId: string;
   colorsByStyle: Map<string, Array<{ id: string; color: string; visible: boolean | null; updated_at: string }>> | undefined;
   colorSeasons: Map<string, string[]> | undefined;
-  seasonsMap: Map<string, string> | undefined;
+  seasonCodeById: Map<string, string> | undefined;
+  hiddenSeasonSet: Set<string> | undefined;
 }) {
   const React = require('react') as typeof import('react');
   const colors = (colorsByStyle?.get(styleId) || []) as Array<{ id: string; color: string }>;
@@ -463,8 +473,8 @@ function ColorsLine({
   return (
     <div className="mt-1 flex flex-wrap gap-1">
       {colors.map((c) => {
-        const seasonIds = colorSeasons?.get(c.id) || [];
-        const labels = seasonIds.map((sid) => seasonsMap?.get(sid) || sid);
+        const seasonIds = (colorSeasons?.get(c.id) || []).filter((sid) => !(hiddenSeasonSet?.has(sid)));
+        const labels = seasonIds.map((sid) => seasonCodeById?.get(sid) || sid);
         return (
           <span key={c.id} className="inline-flex items-center gap-1 border rounded px-1 py-0.5 bg-white">
             <span className="text-[11px] text-gray-800">{c.color}</span>

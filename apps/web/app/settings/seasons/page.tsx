@@ -82,6 +82,13 @@ export default function SeasonsSettingsPage() {
     }
   }
 
+  function displayCode(n: string, y: number | null): string {
+    const parts = String(n || '').trim().split(/\s+/).filter(Boolean);
+    const letters = parts.map(w => w[0]?.toUpperCase() ?? '').join('');
+    const yy = (y && y >= 0) ? String(y).slice(-2) : '';
+    return (letters + yy);
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -184,6 +191,7 @@ export default function SeasonsSettingsPage() {
             <tr>
               <th className="text-left p-2 border-b">Name</th>
               <th className="text-left p-2 border-b">Year</th>
+              <th className="text-left p-2 border-b">Display</th>
               <th className="text-left p-2 border-b">Spy ID</th>
               <th className="text-left p-2 border-b">Stats</th>
               <th className="text-left p-2 border-b">Display Currency</th>
@@ -235,6 +243,7 @@ export default function SeasonsSettingsPage() {
                   )}
                 </td>
                 <td className="p-2 border-b">{s.year ?? '-'}</td>
+                <td className="p-2 border-b text-xs text-gray-700">{displayCode(s.name, s.year)}</td>
                 <td className="p-2 border-b">{(s as any).spy_season_id ?? '—'}</td>
                 <td className="p-2 border-b">
                   {(() => {
