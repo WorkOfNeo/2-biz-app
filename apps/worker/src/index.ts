@@ -201,9 +201,10 @@ async function runJob(job: JobRow) {
 
     const submitBtn = await findFirst(framePage, ['button[type="submit"]', 'input[type="submit"]', '.btn-login']);
     if (submitBtn) {
-      await submitBtn.click({ timeout: 30_000 });
+      // Avoid waiting for Playwright's auto-wait navigation (which can hang on SPA redirects)
+      await submitBtn.click({ timeout: 30_000, noWaitAfter: true });
     } else {
-      await passInputLoc.press('Enter', { timeout: 30_000 });
+      await passInputLoc.press('Enter', { timeout: 30_000, noWaitAfter: true } as any);
     }
 
     // Post-login check markers
