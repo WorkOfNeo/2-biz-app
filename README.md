@@ -121,6 +121,6 @@ curl -i -X POST https://YOUR-ORCHESTRATOR/enqueue \
 
 ---
 
-Last updated: minor README tweak to trigger deploys (2025-11-18).
+Last updated: deploy bump to trigger Vercel/Railway (2025-11-18).
 
 
