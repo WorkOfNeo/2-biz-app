@@ -1,7 +1,6 @@
 'use client';
 import { useMemo, useState } from 'react';
 import useSWR from 'swr';
-import Link from 'next/link';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { useRoles } from '../../../lib/supabaseClient';
 import { ProgressBar } from '../../../components/ProgressBar';
@@ -40,11 +39,16 @@ export default function StylesSettingsPage() {
       return await fetchStyles('id, style_no, style_name, style_type, supplier, image_url, scrape_enabled, updated_at');
     } catch (e1: any) {
       // eslint-disable-next-line no-console
-      console.warn('[styles-settings] styles full select failed, falling back', e1?.message || e1);
-      // Fallback without optional columns
-      const rows: Array<StyleRow> = await fetchStyles('id, style_no, style_name, supplier, scrape_enabled, updated_at');
-      // Normalize optional fields so downstream UI has consistent shape
-      return rows.map((r) => ({ ...r, style_type: (r.style_type ?? null), image_url: (r.image_url ?? null) })) as Array<StyleRow>;
+      console.warn('[styles-settings] styles full select failed, trying without style_type', e1?.message || e1);
+      try {
+        // Secondary attempt: include image_url but omit style_type
+        return await fetchStyles('id, style_no, style_name, supplier, image_url, scrape_enabled, updated_at');
+      } catch (e2: any) {
+        // Final fallback: minimal set without image_url/style_type
+        console.warn('[styles-settings] styles select without style_type failed, falling back minimal', e2?.message || e2);
+        const rows: Array<StyleRow> = await fetchStyles('id, style_no, style_name, supplier, scrape_enabled, updated_at');
+        return rows.map((r) => ({ ...r, style_type: (r.style_type ?? null), image_url: (r.image_url ?? null) })) as Array<StyleRow>;
+      }
     }
   });
   const { data: styleSeasons } = useSWR(isAdmin ? 'style_seasons:all' : null, async () => {
@@ -335,45 +339,15 @@ export default function StylesSettingsPage() {
       {isAdmin && (
       <div className="rounded-md border bg-white p-3">
         <div className="flex items-center justify-between">
-          <div className="text-sm font-medium">Style Lists</div>
-          <Link href={{ pathname: '/styles/lists' }} className="text-[11px] underline">Open lists</Link>
-        </div>
-        <StyleListsEditor styles={styles ?? []} />
-      </div>
-      )}
-
-      {isAdmin && (
-      <div className="rounded-md border bg-white p-3">
-        <div className="flex items-center justify-between">
           <div className="text-sm font-medium">Runs</div>
-          <button
-            className={"text-xs px-2 py-1 border rounded bg-slate-900 text-white hover:bg-slate-800 " + (runLoading ? 'opacity-60 cursor-not-allowed' : '')}
-            disabled={runLoading}
-            onClick={async () => {
-              setRunLoading(true);
-              try {
-                const { data: { session } } = await supabase.auth.getSession();
-                if (!session) throw new Error('Not signed in');
-                const res = await fetch('/api/enqueue', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
-                  body: JSON.stringify({ type: 'update_style_stock', payload: { requestedBy: session.user.email } })
-                });
-                const js = await res.json().catch(() => ({}));
-                // eslint-disable-next-line no-console
-                console.log('[styles-settings] enqueue update_style_stock', res.status, js);
-                try { if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('job-started', { detail: { label: 'Update style stock — job started' } })); } catch {}
-              } catch (e) {
-                // eslint-disable-next-line no-console
-                console.error('[styles-settings] enqueue error', e);
-              }
-              setRunLoading(false);
-            }}
+          <a
+            href="/styles/runs"
+            className="text-xs px-2 py-1 border rounded bg-slate-900 text-white hover:bg-slate-800"
           >
-            Update Stock
-          </button>
+            Open runs
+          </a>
         </div>
-        <div className="mt-2 text-xs text-gray-600">Runs use the selection above.</div>
+        <div className="mt-2 text-xs text-gray-600">Run all style-related tasks from the Runs page.</div>
       </div>
       )}
 
@@ -381,41 +355,14 @@ export default function StylesSettingsPage() {
       <div className="rounded-md border bg-white p-3">
         <div className="flex items-center justify-between">
           <div className="text-sm font-medium">Deep Scrape</div>
-          <button
-            className={"text-xs px-2 py-1 border rounded bg-slate-900 text-white hover:bg-slate-800 " + (runLoading ? 'opacity-60 cursor-not-allowed' : '')}
-            disabled={runLoading}
-            onClick={async () => {
-              setRunLoading(true);
-              try {
-                const { data: { session } } = await supabase.auth.getSession();
-                if (!session) throw new Error('Not signed in');
-                // Resolve current season
-                const { data: current } = await supabase.from('seasons').select('id, spy_season_id').eq('is_current', true).maybeSingle();
-                const seasonId = (current as any)?.id as string | undefined;
-                const spySeasonId = Number((current as any)?.spy_season_id || 0) || null;
-                if (!seasonId) throw new Error('No current season set');
-                if (!spySeasonId) { alert('Current season has no SPY mapping yet. Please run Seasons scrape to map spy_season_id.'); return; }
-                const res = await fetch('/api/enqueue', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
-                  body: JSON.stringify({ type: 'deep_scrape_styles', payload: { requestedBy: session.user.email, seasonId } })
-                });
-                const js = await res.json().catch(() => ({}));
-                if (js?.jobId) { setDeepJobId(js.jobId as string); setDeepProgress({ index: 0, total: 0 }); setDeepDone(false); }
-                // eslint-disable-next-line no-console
-                console.log('[styles-settings] enqueue deep_scrape_styles', res.status, js);
-                try { if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('job-started', { detail: { label: 'Deep scrape styles — job started' } })); } catch {}
-              } catch (e) {
-                // eslint-disable-next-line no-console
-                console.error('[styles-settings] enqueue error', e);
-              }
-              setRunLoading(false);
-            }}
+          <a
+            href="/styles/runs"
+            className="text-xs px-2 py-1 border rounded bg-slate-900 text-white hover:bg-slate-800"
           >
-            Deep Scrape All
-          </button>
+            Open runs
+          </a>
         </div>
-        <div className="mt-2 text-xs text-gray-600">Opens each style and reads materials season per color.</div>
+        <div className="mt-2 text-xs text-gray-600">Deep scrape controls moved to Runs.</div>
         {deepJobId && (
           <div className="mt-2 flex items-center gap-2">
             <div className="w-56"><ProgressBar value={(() => {
@@ -426,406 +373,8 @@ export default function StylesSettingsPage() {
             <div>{deepProgress ? `${Math.min(deepProgress.index, deepProgress.total)}/${deepProgress.total || '?'}` : ''}{deepDone ? ' Done' : ''}</div>
           </div>
         )}
-        <div className="mt-3">
-          <button
-            className="text-xs px-2 py-1 border rounded bg-white text-red-700 hover:bg-red-50"
-            onClick={async () => {
-              if (!confirm('Clear ALL seasons from style colors? This cannot be undone.')) return;
-              try {
-                const res = await fetch('/api/admin/clear-style-color-seasons?confirm=1', { method: 'POST' });
-                if (!res.ok) {
-                  const text = await res.text();
-                  alert('Failed to clear: ' + text);
-                  return;
-                }
-                alert('Cleared all style_color_seasons.');
-              } catch (e: any) {
-                alert('Error: ' + (e?.message || String(e)));
-              }
-            }}
-          >
-            Clear seasons (ALL)
-          </button>
-        </div>
-        <div className="mt-4">
-          <button
-            className={"text-xs px-2 py-1 border rounded bg-slate-900 text-white hover:bg-slate-800 " + (runLoading ? 'opacity-60 cursor-not-allowed' : '')}
-            disabled={runLoading}
-            onClick={async () => {
-              setRunLoading(true);
-              try {
-                const { data: { session } } = await supabase.auth.getSession();
-                if (!session) throw new Error('Not signed in');
-                const res = await fetch('/api/enqueue', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
-                  body: JSON.stringify({ type: 'scrape_eans', payload: { requestedBy: session.user.email } })
-                });
-                const js = await res.json().catch(() => ({}));
-                // eslint-disable-next-line no-console
-                console.log('[styles-settings] enqueue scrape_eans', res.status, js);
-                try { if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('job-started', { detail: { label: 'Scrape EANs — job started' } })); } catch {}
-              } catch (e) {
-                // eslint-disable-next-line no-console
-                console.error('[styles-settings] enqueue error', e);
-              }
-              setRunLoading(false);
-            }}
-          >
-            Scrape EANs
-          </button>
-        </div>
       </div>
       )}
-    </div>
-  );
-}
-
-function ColorVisibilityEditor({ styleId }: { styleId: string }) {
-  const supabase = createClientComponentClient();
-  const React = require('react') as typeof import('react');
-  const { data, mutate } = useSWR(styleId ? ['style_colors:editor', styleId] : null, async () => {
-    async function loadWithVisible() {
-      const { data, error } = await supabase
-        .from('style_colors')
-        .select('id, color, visible')
-        .eq('style_id', styleId)
-        .order('color', { ascending: true });
-      if (error) {
-        // eslint-disable-next-line no-console
-        console.warn('[styles-settings] ColorVisibilityEditor loadWithVisible ordered error', error);
-        throw error;
-      }
-      return (data ?? []) as Array<{ id: string; color: string; visible: boolean | null }>;
-    }
-    try {
-      return await loadWithVisible();
-    } catch (e1) {
-      // eslint-disable-next-line no-console
-      console.warn('[styles-settings] ColorVisibilityEditor fallback without visible/order', e1);
-      // Fallback: avoid order first
-      const { data, error } = await supabase
-        .from('style_colors')
-        .select('id, color')
-        .eq('style_id', styleId);
-      if (error) {
-        // eslint-disable-next-line no-console
-        console.error('[styles-settings] ColorVisibilityEditor final fetch failed', error);
-        throw error;
-      }
-      return ((data ?? []) as any[]).map((r) => ({ ...r, visible: null })) as Array<{ id: string; color: string; visible: boolean | null }>;
-    }
-  });
-  return (
-    <div className="flex flex-wrap gap-2">
-      {(data ?? []).map((c) => {
-        const checked = c.visible !== false;
-        return (
-          <label key={c.id} className="inline-flex items-center gap-1 border rounded px-1.5 py-0.5">
-            <input
-              type="checkbox"
-              checked={checked}
-              onChange={async (e) => {
-                const next = e.target.checked;
-                mutate((prev: any) => {
-                  const arr = Array.isArray(prev) ? prev.map((row: any) => row.id === c.id ? { ...row, visible: next } : row) : prev;
-                  return arr;
-                }, false);
-                try {
-                  const { data: updated, error } = await supabase.from('style_colors').update({ visible: next }).eq('id', c.id).select('id, visible').maybeSingle();
-                  if (error) throw error as any;
-                  // eslint-disable-next-line no-console
-                  console.log('[styles-settings] updated color visibility', { id: c.id, next, server: updated });
-                  await mutate();
-                } catch (err: any) {
-                  alert(err?.message || 'Failed to update color visibility');
-                  try { await mutate(); } catch {}
-                }
-              }}
-            />
-            <span className="text-[11px]">{c.color}</span>
-          </label>
-        );
-      })}
-    </div>
-  );
-}
-
-
-function StyleListsEditor({ styles }: { styles: { id: string; style_no: string; style_name: string | null; scrape_enabled: boolean | null; updated_at: string }[] }) {
-  const supabase = createClientComponentClient();
-  const React = require('react') as typeof import('react');
-  // Load lists from DB
-  const { data: lists, mutate } = useSWR('stock-lists:all', async () => {
-    const { data, error } = await supabase.from('stock_lists').select('id, name').order('name', { ascending: true });
-    if (error) throw new Error(error.message);
-    return (data ?? []) as Array<{ id: string; name: string }>;
-  });
-  const [activeId, setActiveId] = React.useState<string>('');
-  const [activeName, setActiveName] = React.useState<string>('');
-  React.useEffect(() => {
-    if (!activeId && lists && (lists as any).length > 0) {
-      const first = (lists as Array<{ id: string; name: string }>)[0] as { id: string; name: string } | undefined;
-      if (first?.id) { setActiveId(first.id); setActiveName(first.name || ''); }
-    }
-  }, [lists, activeId]);
-  const [newList, setNewList] = React.useState('');
-  const [query, setQuery] = React.useState('');
-  const [openColorsFor, setOpenColorsFor] = React.useState<Record<string, boolean>>({});
-  // Current list styles
-  const { data: listStyleRows, mutate: mutateListStyles } = useSWR(activeId ? ['stock-list-styles:byList', activeId] : null, async () => {
-    const { data, error } = await supabase.from('stock_list_styles').select('style_id').eq('list_id', activeId);
-    if (error) throw new Error(error.message);
-    return (data ?? []) as Array<{ style_id: string }>;
-  });
-  const styleIdSet = React.useMemo(() => new Set((listStyleRows ?? []).map((r) => r.style_id)), [listStyleRows]);
-  const filteredStyles = React.useMemo(() => {
-    const q = query.trim().toLowerCase();
-    let base = styles;
-    // Exclude styles already in active list
-    base = base.filter((s) => !styleIdSet.has(s.id));
-    if (!q) return base;
-    return base.filter((s) => (s.style_name || '').toLowerCase().includes(q) || (s.style_no || '').toLowerCase().includes(q));
-  }, [styles, query, styleIdSet.size]);
-  async function addList() {
-    const name = newList.trim();
-    if (!name) return;
-    const { data: row, error } = await supabase.from('stock_lists').insert({ name }).select('id, name').maybeSingle();
-    if (error) { alert(error.message); return; }
-    await mutate();
-    if (row?.id) { setActiveId(row.id); setActiveName(row.name || name); }
-    setNewList('');
-  }
-  async function deleteList() {
-    if (!activeId) return;
-    if (!confirm(`Delete list “${activeName || activeId}”?`)) return;
-    await supabase.from('stock_lists').delete().eq('id', activeId);
-    await mutate();
-    setActiveId('');
-    setActiveName('');
-  }
-  async function removeFromList(styleId: string) {
-    if (!activeId) return;
-    await supabase.from('stock_list_styles').delete().eq('list_id', activeId).eq('style_id', styleId);
-    await mutateListStyles();
-  }
-  async function addToList(styleId: string) {
-    if (!activeId) return;
-    await supabase.from('stock_list_styles').insert({ list_id: activeId, style_id: styleId });
-    await mutateListStyles();
-  }
-  async function clearList() {
-    if (!activeId) return;
-    await supabase.from('stock_list_styles').delete().eq('list_id', activeId);
-    await mutateListStyles();
-  }
-  async function addAllFilteredToList() {
-    if (!activeId) return;
-    const rows = filteredStyles.map((s) => ({ list_id: activeId, style_id: s.id }));
-    if (rows.length === 0) return;
-    await supabase.from('stock_list_styles').upsert(rows, { onConflict: 'list_id,style_id' as any });
-    await mutateListStyles();
-  }
-  const styleNoToName = React.useMemo(() => {
-    const m = new Map<string, string | null>();
-    for (const s of styles) m.set(s.style_no, s.style_name);
-    return m;
-  }, [styles]);
-  const styleNoToId = React.useMemo(() => {
-    const m = new Map<string, string>();
-    for (const s of styles) m.set(s.style_no, s.id);
-    return m;
-  }, [styles]);
-  const styleIdToNo = React.useMemo(() => {
-    const m = new Map<string, string>();
-    for (const s of styles) m.set(s.id, s.style_no);
-    return m;
-  }, [styles]);
-  return (
-    <div className="space-y-3">
-      <div className="flex items-center gap-2">
-        <div className="text-xs">Lists:</div>
-        <div className="flex flex-wrap gap-2">
-          {(lists ?? []).map((row) => (
-            <button key={row.id} className={(activeId===row.id?'bg-slate-900 text-white ':'bg-white text-slate-900 ') + 'text-xs px-2 py-1 border rounded'} onClick={()=>{ setActiveId(row.id); setActiveName(row.name); }}>{row.name}</button>
-          ))}
-        </div>
-      </div>
-      <div className="flex items-center gap-2">
-        <input className="text-xs border rounded px-2 py-1" value={newList} onChange={(e)=>setNewList(e.target.value)} placeholder="New list name" />
-        <button className="text-xs px-2 py-1 border rounded bg-slate-900 text-white" onClick={addList}>Add list</button>
-      </div>
-      {activeId && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <div className="rounded border p-2">
-            <div className="flex items-center justify-between mb-1">
-              <div className="text-xs font-medium">In “{activeName || 'List'}”</div>
-              <button
-                className="text-[11px] underline disabled:text-gray-400"
-                onClick={clearList}
-                disabled={!activeId || (listStyleRows?.length || 0) === 0}
-              >Remove all styles</button>
-              <Link href={`/styles/lists/${activeId}` as any} className="text-[11px] underline">Open page</Link>
-              <button
-                className="text-[11px] underline text-red-700"
-                onClick={deleteList}
-              >Delete list</button>
-            </div>
-            <div className="space-y-1 max-h-64 overflow-auto">
-              {(listStyleRows?.length || 0) === 0 && <div className="text-[11px] text-gray-500">No styles yet.</div>}
-              {(listStyleRows || []).map((row) => {
-                const no = styleIdToNo.get(row.style_id) || '';
-                const styleId = row.style_id || '';
-                const open = !!openColorsFor[no];
-                return (
-                  <div key={no} className="text-xs border rounded">
-                    <div className="flex items-center justify-between px-2 py-1">
-                      <span>{no}{no ? (styleNoToName.get(no) ? ` — ${styleNoToName.get(no)}` : '') : ''}</span>
-                      <div className="flex items-center gap-3">
-                        <button className="underline" onClick={()=>setOpenColorsFor((m)=>({ ...m, [no]: !open }))}>{open ? 'Hide colors' : 'Edit colors'}</button>
-                        <button className="underline" onClick={()=>removeFromList(styleId)}>Remove</button>
-                </div>
-                    </div>
-                    {open && styleId && (
-                      <div className="px-2 pb-2">
-                        <ListColorEditor listId={activeId} styleId={styleId} />
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-          <div className="rounded border p-2">
-            <div className="flex items-center justify-between">
-              <div className="text-xs font-medium">All styles</div>
-              <div className="flex items-center gap-2">
-                <input className="text-xs border rounded px-2 py-1" placeholder="Search styles" value={query} onChange={(e)=>setQuery(e.target.value)} />
-                <button className="text-xs px-2 py-1 border rounded bg-slate-900 text-white" onClick={addAllFilteredToList} disabled={!activeId}>Add all</button>
-              </div>
-            </div>
-            <div className="mt-1 max-h-64 overflow-auto space-y-1">
-              {filteredStyles.map((s) => (
-                <div key={s.id} className="flex items-center justify-between text-xs border rounded px-2 py-1">
-                  <span>{s.style_no} {s.style_name ? `— ${s.style_name}` : ''}</span>
-                  <button className="underline" onClick={()=>addToList(s.id)}>Add</button>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-
-function ListColorEditor({ listId, styleId }: { listId: string; styleId: string }) {
-  const supabase = createClientComponentClient();
-  const React = require('react') as typeof import('react');
-  // Load available colors for the style
-  const { data: colors } = useSWR(styleId ? ['style_colors:for-style', styleId] : null, async () => {
-    const { data, error } = await supabase.from('style_colors').select('id, color').eq('style_id', styleId).order('color', { ascending: true });
-    if (error) throw error;
-    return (data ?? []) as Array<{ id: string; color: string }>;
-  });
-  // Load per-list color includes
-  const { data: includes, mutate } = useSWR(listId && styleId ? ['stock_list_colors:includes', listId, styleId] : null, async () => {
-    const { data, error } = await supabase.from('stock_list_colors').select('style_color_id, include').eq('list_id', listId).eq('style_id', styleId);
-    if (error) throw error;
-    const m = new Map<string, boolean>();
-    for (const r of (data ?? []) as any[]) m.set(r.style_color_id as string, r.include !== false);
-    return m as Map<string, boolean>;
-  });
-  const [savingAll, setSavingAll] = React.useState(false);
-  const [savingById, setSavingById] = React.useState<Record<string, boolean>>({});
-  const [lastSavedAt, setLastSavedAt] = React.useState<number | null>(null);
-  const total = (colors?.length || 0);
-  const includedCount = React.useMemo(() => {
-    if (!colors) return 0;
-    let n = 0;
-    for (const c of colors) {
-      const on = includes?.has(c.id) ? (includes.get(c.id) as boolean) : false;
-      if (on) n++;
-    }
-    return n;
-  }, [colors?.length, includes && Array.from((includes as Map<string, boolean>).entries()).map(([k,v])=>k+':'+String(v)).join(',')]);
-  async function setInclude(styleColorId: string, next: boolean) {
-    // optimistic update: clone map
-    setSavingById((m) => ({ ...m, [styleColorId]: true }));
-    await mutate((prev: any) => {
-      const m = new Map<string, boolean>(prev as Map<string, boolean> | undefined);
-      m.set(styleColorId, next);
-      return m;
-    }, false);
-    try {
-      await supabase.from('stock_list_colors').upsert({ list_id: listId, style_id: styleId, style_color_id: styleColorId, include: next } as any, { onConflict: 'list_id,style_color_id' as any });
-      await mutate();
-      setLastSavedAt(Date.now());
-    } catch (err) {
-      // revert
-      await mutate();
-    } finally {
-      setSavingById((m) => {
-        const copy = { ...m };
-        delete copy[styleColorId];
-        return copy;
-      });
-    }
-  }
-  async function addAll() {
-    if (!colors?.length) return;
-    // optimistic set all to true
-    setSavingAll(true);
-    await mutate((prev: any) => {
-      const m = new Map<string, boolean>(prev as Map<string, boolean> | undefined);
-      for (const c of colors) m.set(c.id, true);
-      return m;
-    }, false);
-    try {
-      const rows = colors.map((c) => ({ list_id: listId, style_id: styleId, style_color_id: c.id, include: true }));
-      await supabase.from('stock_list_colors').upsert(rows, { onConflict: 'list_id,style_color_id' as any });
-      await mutate();
-      setLastSavedAt(Date.now());
-    } catch (e) {
-      await mutate();
-    } finally {
-      setSavingAll(false);
-    }
-  }
-  return (
-    <div className="flex flex-col gap-2">
-      <div className="flex items-center justify-between">
-        <div className="text-[11px] text-gray-600">Included: <span className="font-medium text-black">{includedCount}</span> / {total}</div>
-        <div>
-          <button className={"text-[11px] underline " + (savingAll ? 'opacity-60 cursor-not-allowed' : '')} onClick={addAll} disabled={savingAll}>
-            {savingAll ? 'Adding…' : 'Add all colors'}
-          </button>
-        </div>
-      </div>
-      {lastSavedAt && (
-        <div className="text-[11px] text-green-700">Saved just now</div>
-      )}
-      <div className="flex flex-wrap gap-2">
-        {(colors ?? []).map((c) => {
-          const checked = includes?.has(c.id) ? (includes.get(c.id) as boolean) : false;
-          const saving = !!savingById[c.id];
-          return (
-            <label key={c.id} className="inline-flex items-center gap-1 border rounded px-1.5 py-0.5">
-              <input
-                type="checkbox"
-                checked={checked}
-                disabled={saving}
-                onChange={async (e) => {
-                  const next = e.target.checked;
-                  await setInclude(c.id, next);
-                }}
-              />
-              <span className={"text-[11px] " + (saving ? 'opacity-60' : '')}>{c.color}</span>
-            </label>
-          );
-        })}
-      </div>
     </div>
   );
 }
