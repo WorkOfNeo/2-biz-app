@@ -16,9 +16,36 @@ export default function StylesSettingsPage() {
   const [deepProgress, setDeepProgress] = useState<{ index: number; total: number } | null>(null);
   const [deepDone, setDeepDone] = useState(false);
   const { data: styles } = useSWR(isAdmin ? 'styles:all' : null, async () => {
-    const { data, error } = await supabase.from('styles').select('id, style_no, style_name, style_type, supplier, image_url, scrape_enabled, updated_at').order('style_no').limit(2000);
-    if (error) throw new Error(error.message);
-    return data as { id: string; style_no: string; style_name: string | null; style_type: string | null; supplier: string | null; image_url: string | null; scrape_enabled: boolean | null; updated_at: string }[];
+    type StyleRow = {
+      id: string;
+      style_no: string;
+      style_name: string | null;
+      style_type?: string | null;
+      supplier: string | null;
+      image_url?: string | null;
+      scrape_enabled: boolean | null;
+      updated_at: string;
+    };
+    async function fetchStyles(selectCols: string) {
+      const { data, error } = await supabase
+        .from('styles')
+        .select(selectCols)
+        .order('style_no', { ascending: true })
+        .limit(2000);
+      if (error) throw error;
+      return (data ?? []) as unknown as Array<StyleRow>;
+    }
+    try {
+      // Preferred full set (may fail on older DBs missing some columns)
+      return await fetchStyles('id, style_no, style_name, style_type, supplier, image_url, scrape_enabled, updated_at');
+    } catch (e1: any) {
+      // eslint-disable-next-line no-console
+      console.warn('[styles-settings] styles full select failed, falling back', e1?.message || e1);
+      // Fallback without optional columns
+      const rows: Array<StyleRow> = await fetchStyles('id, style_no, style_name, supplier, scrape_enabled, updated_at');
+      // Normalize optional fields so downstream UI has consistent shape
+      return rows.map((r) => ({ ...r, style_type: (r.style_type ?? null), image_url: (r.image_url ?? null) })) as Array<StyleRow>;
+    }
   });
   const { data: styleSeasons } = useSWR(isAdmin ? 'style_seasons:all' : null, async () => {
     const { data, error } = await supabase.from('style_seasons').select('style_no, seasons').limit(5000);
