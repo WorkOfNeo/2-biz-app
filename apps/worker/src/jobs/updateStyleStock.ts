@@ -17,6 +17,32 @@ export async function updateStyleStock(ctx: Ctx) {
   const SELECTOR_TIMEOUT_MS = 20_000;      // previously 120_000
   const FORCED_SELECTOR_TIMEOUT_MS = 5_000;
   const BETWEEN_CLICK_WAIT_MS = 350;       // previously 500
+  // Navigation tuning
+  try {
+    page.setDefaultNavigationTimeout(30_000);
+    page.setDefaultTimeout(15_000);
+    // Block heavy assets not needed for parsing
+    await page.route('**/*', (route) => {
+      const type = route.request().resourceType();
+      if (type === 'image' || type === 'font' || type === 'media') {
+        route.abort().catch(() => {});
+      } else {
+        route.continue().catch(() => {});
+      }
+    });
+  } catch {}
+  async function gotoWithRetry(url: string): Promise<boolean> {
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 25_000 });
+        return true;
+      } catch (e: any) {
+        await log(job.id, 'error', 'STEP:navigate_retry', { url, attempt, error: e?.message || String(e) });
+        await page.waitForTimeout(500);
+      }
+    }
+    return false;
+  }
   await ensureNotCancelled(job.id);
   await log(job.id, 'info', 'STEP:style_stock_begin');
   let styleNos: string[] = Array.isArray(job.payload?.styleNos) ? (job.payload?.styleNos as string[]) : [];
@@ -64,7 +90,12 @@ export async function updateStyleStock(ctx: Ctx) {
     }
     const url = new URL(href, SPY_BASE_URL).toString().replace(/#.*$/, '') + '#tab=statandstock';
     await log(job.id, 'info', 'STEP:style_stock_nav', { style_no: s.style_no, url });
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+    const ok = await gotoWithRetry(url);
+    if (!ok) {
+      await log(job.id, 'error', 'STEP:style_stock_nav_timeout', { style_no: s.style_no, url });
+      missingStyles.push({ style_no: s.style_no, reason: 'nav_timeout' });
+      continue;
+    }
     try {
       const clickedTab = await page.evaluate(() => {
         const a = document.querySelector('a[href$="#tab=statandstock"], a[href*="#tab=statandstock"]') as HTMLAnchorElement | null;
