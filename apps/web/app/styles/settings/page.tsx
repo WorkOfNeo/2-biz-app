@@ -74,6 +74,28 @@ export default function StylesSettingsPage() {
     if (error) throw new Error(error.message);
     return (data ?? []) as Array<{ id: string; name: string | null; year: number | null }>;
   }, { refreshInterval: 0 });
+  const { data: colorSeasons } = useSWR(isAdmin ? 'style_color_seasons:all' : null, async () => {
+    const pageSize = 2000;
+    const out = new Map<string, string[]>();
+    let from = 0;
+    while (true) {
+      const to = from + pageSize - 1;
+      const { data, error } = await supabase
+        .from('style_color_seasons')
+        .select('style_color_id, season_id')
+        .range(from, to);
+      if (error) throw error;
+      const batch = (data ?? []) as Array<{ style_color_id: string; season_id: string }>;
+      for (const r of batch) {
+        const arr = out.get(r.style_color_id) || [];
+        if (!arr.includes(r.season_id)) arr.push(r.season_id);
+        out.set(r.style_color_id, arr);
+      }
+      if (batch.length < pageSize) break;
+      from += pageSize;
+    }
+    return out as Map<string, string[]>;
+  }, { refreshInterval: 0 });
   const [seasonFilter, setSeasonFilter] = useState<string>('');
   const { data: colorsByStyle, mutate: mutateColors } = useSWR(isAdmin ? 'style_colors:all' : null, async () => {
     const pageSize = 1000;
@@ -269,7 +291,7 @@ export default function StylesSettingsPage() {
             <SearchSelect
               items={[
                 ...((seasonsList ?? []).map((s) => {
-                  const label = `${s.id} — ${((s.name || '') + (s.year ? ` ${s.year}` : '')).trim() || String(s.id)}`;
+                  const label = `${((s.name || '') + (s.year ? ` ${s.year}` : '')).trim() || String(s.id)}`;
                   return { value: String(s.id), label };
                 }))
               ]}
@@ -295,6 +317,7 @@ export default function StylesSettingsPage() {
                       <div className="truncate">
                         <div className="font-medium text-gray-900 truncate">{s.style_no}</div>
                         <div className="text-gray-700 truncate">{name}</div>
+                        <ColorsLine styleId={s.id} colorsByStyle={colorsByStyle} colorSeasons={colorSeasons} seasonsMap={seasonsMap} />
                       </div>
                     </div>
                     <button
@@ -318,6 +341,7 @@ export default function StylesSettingsPage() {
                       <div className="truncate">
                         <div className="font-medium text-gray-900 truncate">{s.style_no}</div>
                         <div className="text-gray-700 truncate">{name}</div>
+                        <ColorsLine styleId={s.id} colorsByStyle={colorsByStyle} colorSeasons={colorSeasons} seasonsMap={seasonsMap} />
                       </div>
                     </div>
                     <button
@@ -419,6 +443,36 @@ function Thumb({ src }: { src: string }) {
         setImgSrc('');
       }}
     />
+  );
+}
+
+function ColorsLine({
+  styleId,
+  colorsByStyle,
+  colorSeasons,
+  seasonsMap,
+}: {
+  styleId: string;
+  colorsByStyle: Map<string, Array<{ id: string; color: string; visible: boolean | null; updated_at: string }>> | undefined;
+  colorSeasons: Map<string, string[]> | undefined;
+  seasonsMap: Map<string, string> | undefined;
+}) {
+  const React = require('react') as typeof import('react');
+  const colors = (colorsByStyle?.get(styleId) || []) as Array<{ id: string; color: string }>;
+  if (!colors.length) return null;
+  return (
+    <div className="mt-1 flex flex-wrap gap-1">
+      {colors.map((c) => {
+        const seasonIds = colorSeasons?.get(c.id) || [];
+        const labels = seasonIds.map((sid) => seasonsMap?.get(sid) || sid);
+        return (
+          <span key={c.id} className="inline-flex items-center gap-1 border rounded px-1 py-0.5 bg-white">
+            <span className="text-[11px] text-gray-800">{c.color}</span>
+            <span className="text-[10px] text-gray-500">{labels.join(' / ') || '—'}</span>
+          </span>
+        );
+      })}
+    </div>
   );
 }
 
