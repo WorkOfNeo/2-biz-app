@@ -83,8 +83,9 @@ export async function scrapeStyles(ctx: Ctx) {
   // Enrich with style_type (category) by briefly visiting each style detail page to read the selected Type
   for (let i = 0; i < rows.length; i++) {
     await ensureNotCancelled(job.id);
-    const r = rows[i];
-    if (!r) continue;
+    const rMaybe = rows[i];
+    if (!rMaybe) continue;
+    const r = rMaybe;
     if (!r.link_href) continue;
     try {
       const detailUrl = new URL(r.link_href, SPY_BASE_URL).toString();
