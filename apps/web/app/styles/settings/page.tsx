@@ -203,32 +203,33 @@ export default function StylesSettingsPage() {
     const arr = selectionMap?.value?.[currentUserId] || [];
     return new Set<string>(arr);
   }, [selectionMap, currentUserId]);
-  // Search by style name (and number)
-  const [searchQuery, setSearchQuery] = useState('');
+  // Per-section search and season filters
+  const [searchAll, setSearchAll] = useState('');
+  const [searchSel, setSearchSel] = useState('');
+  const [seasonAll, setSeasonAll] = useState<string>('');
+  const [seasonSel, setSeasonSel] = useState<string>('');
   // Build season filter options from style_seasons labels (these are strings like "25 WINTER")
-  const filteredStyles = useMemo(() => {
-    if (!styles) return [] as { id: string; style_no: string; style_name: string | null; scrape_enabled: boolean | null; updated_at: string }[];
-    const q = searchQuery.trim().toLowerCase();
-    let base = styles;
-    if (seasonFilter) {
-      const target = seasonLabelById.get(seasonFilter) || '';
-      if (target) {
+  function applySearchAndSeasonFilter(list: Array<{ id: string; style_no: string; style_name: string | null }>, q: string, seasonId: string) {
+    let base = list;
+    const target = seasonId ? (seasonLabelById.get(seasonId) || '') : '';
+    if (target) {
       base = base.filter((s) => {
         const arr = styleSeasons?.byStyle.get(s.style_no) || [];
-          return arr.includes(target);
+        return arr.includes(target);
       });
-      } else {
-        base = [];
-      }
     }
-    if (!q) return base;
+    const qq = q.trim().toLowerCase();
+    if (!qq) return base;
     return base.filter((s) => {
       const name = (s.style_name || '').toLowerCase();
       const no = (s.style_no || '').toLowerCase();
-      const type = (s as any).style_type ? String((s as any).style_type).toLowerCase() : '';
-      return name.includes(q) || no.includes(q) || type.includes(q);
+      return name.includes(qq) || no.includes(qq);
     });
-  }, [styles, searchQuery, seasonFilter, styleSeasons, seasonLabelById]);
+  }
+  const allStylesBase = useMemo(() => (styles ?? []).filter((s) => !selectedForUser.has(s.style_no)), [styles, selectedForUser.size]);
+  const selectedStylesBase = useMemo(() => (styles ?? []).filter((s) => selectedForUser.has(s.style_no)), [styles, selectedForUser.size]);
+  const filteredAllStyles = useMemo(() => applySearchAndSeasonFilter(allStylesBase, searchAll, seasonAll), [allStylesBase, searchAll, seasonAll, styleSeasons && (styleSeasons.labels || []).length]);
+  const filteredSelectedStyles = useMemo(() => applySearchAndSeasonFilter(selectedStylesBase, searchSel, seasonSel), [selectedStylesBase, searchSel, seasonSel, styleSeasons && (styleSeasons.labels || []).length]);
 
   // (Seasons column removed)
   // Poll deep scrape job logs to show progress
@@ -279,7 +280,7 @@ export default function StylesSettingsPage() {
     if (!currentUserId) return;
     const map = { ...(selectionMap?.value || {}) } as Record<string, string[]>;
     const list = new Set<string>(map[currentUserId] || []);
-    for (const s of filteredStyles) list.add(s.style_no);
+    for (const s of filteredAllStyles) list.add(s.style_no);
     map[currentUserId] = Array.from(list);
     const existsId = selectionMap?.id || null;
     if (existsId) await supabase.from('app_settings').update({ value: map }).eq('id', existsId as any);
@@ -302,18 +303,7 @@ export default function StylesSettingsPage() {
         <div className="text-xs text-gray-500">Styles</div>
         <h1 className="text-xl font-semibold">Settings</h1>
       </div>
-      {isAdmin && (
-        <div className="flex items-center gap-2">
-          <div className="text-xs text-gray-600">Season</div>
-          <SearchSelect
-            items={seasonSelectItems}
-            value={seasonFilter}
-            onChange={setSeasonFilter}
-            placeholder="All seasons"
-            clearable
-          />
-        </div>
-      )}
+      {/* Per-section filters below */}
 
       {!isAdmin && (
         <div className="rounded-md border bg-white p-3 text-sm text-gray-600">Not authorized.</div>
@@ -326,9 +316,17 @@ export default function StylesSettingsPage() {
           <div className="flex items-center gap-2">
             <input
               className="text-xs border rounded px-2 py-1 w-56"
-              placeholder="Search styles"
-              value={searchQuery}
-              onChange={(e)=>setSearchQuery(e.target.value)}
+              placeholder="Search style no / name"
+              value={searchAll}
+              onChange={(e)=>setSearchAll(e.target.value)}
+            />
+            <SearchSelect
+              items={seasonSelectItems}
+              value={seasonAll}
+              onChange={setSeasonAll}
+              placeholder="All seasons"
+              clearable
+              className="min-w-[12rem]"
             />
             <button className="text-xs px-2 py-1 border rounded bg-slate-900 text-white hover:bg-slate-800" onClick={addAllFiltered}>Add all</button>
           </div>
@@ -337,7 +335,7 @@ export default function StylesSettingsPage() {
           <div className="rounded border">
             <div className="px-2 py-1 text-xs font-medium border-b bg-gray-50">All styles</div>
             <div className="max-h-96 overflow-auto divide-y text-xs">
-              {(filteredStyles as any[] ?? []).filter((s)=>!selectedForUser.has(s.style_no)).map((s) => {
+              {(filteredAllStyles as any[] ?? []).map((s) => {
                 const name = (s.style_name && s.style_name.trim()) ? s.style_name : '—';
                 return (
                   <div key={s.id} className="flex items-center justify-between px-2 py-1 hover:bg-slate-50">
@@ -360,8 +358,24 @@ export default function StylesSettingsPage() {
           </div>
           <div className="rounded border">
             <div className="px-2 py-1 text-xs font-medium border-b bg-gray-50">Often scraped</div>
+            <div className="px-2 py-1 flex items-center gap-2">
+              <input
+                className="text-xs border rounded px-2 py-1 w-56"
+                placeholder="Search style no / name"
+                value={searchSel}
+                onChange={(e)=>setSearchSel(e.target.value)}
+              />
+              <SearchSelect
+                items={seasonSelectItems}
+                value={seasonSel}
+                onChange={setSeasonSel}
+                placeholder="All seasons"
+                clearable
+                className="min-w-[12rem]"
+              />
+            </div>
             <div className="max-h-96 overflow-auto divide-y text-xs">
-              {(styles ?? []).filter((s)=>selectedForUser.has(s.style_no)).map((s) => {
+              {(filteredSelectedStyles as any[] ?? []).map((s) => {
                 const name = (s.style_name && s.style_name.trim()) ? s.style_name : '—';
                 return (
                   <div key={s.id} className="flex items-center justify-between px-2 py-1 hover:bg-slate-50">
