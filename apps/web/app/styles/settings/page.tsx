@@ -3,6 +3,10 @@ import * as React from 'react';
 import useSWR from 'swr';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { SearchSelect } from '../../../components/SearchSelect';
+import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
+import { Button } from '../../../components/ui/button';
+import { Input } from '../../../components/ui/input';
+import { Badge } from '../../../components/ui/badge';
 
 type TabKey = 'scraping' | 'stock-lists';
 
@@ -17,22 +21,18 @@ export default function StylesSettingsPage() {
         <h1 className="text-xl font-semibold">Settings</h1>
       </div>
 
-      <div className="rounded-md border bg-white">
-        <div className="flex items-center gap-1 border-b px-2 pt-2">
-          <TabButton active={tab==='scraping'} onClick={()=>setTab('scraping')}>Scraping</TabButton>
-          <TabButton active={tab==='stock-lists'} onClick={()=>setTab('stock-lists')}>Stock Lists</TabButton>
-        </div>
-        <div className="p-4">
-          {tab === 'scraping' && (
-            <ScrapingTab supabase={supabase} />
-          )}
-          {tab === 'stock-lists' && (
-            <div className="text-sm text-gray-700">
-              Placeholder — Stock Lists management will live here.
-            </div>
-          )}
-        </div>
-      </div>
+      <Card>
+        <CardHeader className="gap-2">
+          <div className="flex items-center gap-1">
+            <TabButton active={tab==='scraping'} onClick={()=>setTab('scraping')}>Scraping</TabButton>
+            <TabButton active={tab==='stock-lists'} onClick={()=>setTab('stock-lists')}>Stock Lists</TabButton>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {tab === 'scraping' && <ScrapingTab supabase={supabase} />}
+          {tab === 'stock-lists' && <div className="text-sm text-gray-700">Placeholder — Stock Lists management will live here.</div>}
+        </CardContent>
+      </Card>
     </div>
   );
 }
@@ -229,8 +229,10 @@ function ScrapingTab({ supabase }: { supabase: any }) {
     <div className="text-sm text-gray-700">
       <div className="mb-3 flex items-center justify-between">
         <div className="text-xs text-gray-600">Run scraping for “Often scraped” selection.</div>
-        <button
-          className={"text-xs px-2 py-1 border rounded " + (runBusy ? 'bg-slate-300 text-gray-800' : 'bg-slate-900 text-white hover:bg-slate-800')}
+        <Button
+          size="sm"
+          className="min-w-[9rem]"
+          variant={runBusy ? 'secondary' : 'default'}
           disabled={runBusy}
           onClick={async () => {
             try {
@@ -255,7 +257,7 @@ function ScrapingTab({ supabase }: { supabase: any }) {
           }}
         >
           {runBusy ? 'Running…' : 'Run selected now'}
-        </button>
+        </Button>
       </div>
       {runJobId && (
         <div className="mb-3 text-xs text-gray-700">
@@ -266,7 +268,7 @@ function ScrapingTab({ supabase }: { supabase: any }) {
         <div className="rounded border">
           <div className="px-2 py-1 text-xs font-medium border-b bg-gray-50">All styles</div>
           <div className="p-2 flex items-center gap-2">
-            <input className="text-xs border rounded px-2 py-1 w-56" placeholder="Search style no / name" value={qLeft} onChange={(e)=>setQLeft(e.target.value)} />
+            <Input className="w-56" placeholder="Search style no / name" value={qLeft} onChange={(e)=>setQLeft(e.target.value)} />
             <SearchSelect items={seasonSelectItems} value={seasonLeft} onChange={setSeasonLeft} placeholder="All seasons" clearable />
           </div>
           <div className="max-h-96 overflow-auto divide-y">
@@ -282,7 +284,7 @@ function ScrapingTab({ supabase }: { supabase: any }) {
                       <ColorsLine styleId={s.id} colorsByStyle={colorsByStyle} colorSeasons={colorSeasons} seasonCodeById={seasonCodeById} hiddenSeasonSet={hiddenSeasonSet} />
                     </div>
                   </div>
-                  <button className={"text-[11px] px-2 py-1 rounded border " + (added ? 'bg-slate-300 text-gray-800' : 'bg-slate-900 text-white hover:bg-slate-800')} onClick={()=>toggle(s.style_no)}>{added ? 'Added' : 'Add'}</button>
+                  <Button size="sm" variant={added ? 'secondary' : 'default'} onClick={()=>toggle(s.style_no)}>{added ? 'Added' : 'Add'}</Button>
         </div>
                 );
               })}
@@ -291,7 +293,7 @@ function ScrapingTab({ supabase }: { supabase: any }) {
         <div className="rounded border">
           <div className="px-2 py-1 text-xs font-medium border-b bg-gray-50">Often scraped</div>
           <div className="p-2 flex items-center gap-2">
-            <input className="text-xs border rounded px-2 py-1 w-56" placeholder="Search style no / name" value={qRight} onChange={(e)=>setQRight(e.target.value)} />
+            <Input className="w-56" placeholder="Search style no / name" value={qRight} onChange={(e)=>setQRight(e.target.value)} />
             <SearchSelect items={seasonSelectItems} value={seasonRight} onChange={setSeasonRight} placeholder="All seasons" clearable />
           </div>
           <div className="max-h-96 overflow-auto divide-y">
@@ -305,7 +307,7 @@ function ScrapingTab({ supabase }: { supabase: any }) {
                     <ColorsLine styleId={s.id} colorsByStyle={colorsByStyle} colorSeasons={colorSeasons} seasonCodeById={seasonCodeById} hiddenSeasonSet={hiddenSeasonSet} />
       </div>
         </div>
-                <button className="text-[11px] px-2 py-1 rounded border bg-white text-slate-900 hover:bg-slate-100" onClick={()=>toggle(s.style_no)}>Remove</button>
+                <Button size="sm" variant="outline" onClick={()=>toggle(s.style_no)}>Remove</Button>
       </div>
             ))}
             {(rightItems ?? []).length === 0 && (
@@ -320,16 +322,15 @@ function ScrapingTab({ supabase }: { supabase: any }) {
 
 function TabButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
   return (
-    <button
-      className={
-        "rounded-t-md px-3 py-1.5 text-xs " +
-        (active ? "bg-slate-900 text-white" : "bg-white text-slate-900 border")
-      }
+    <Button
+      size="sm"
+      variant={active ? 'default' : 'outline'}
       onClick={onClick}
       type="button"
+      className={active ? 'rounded-b-none' : 'rounded-b-none'}
     >
       {children}
-    </button>
+    </Button>
   );
 }
 
@@ -376,10 +377,10 @@ function ColorsLine({
         const seasonIds = (colorSeasons?.get(c.id) || []).filter((sid) => !(hiddenSeasonSet?.has(sid)));
         const labels = seasonIds.map((sid) => seasonCodeById?.get(sid) || sid);
         return (
-          <span key={c.id} className="inline-flex items-center gap-1 border rounded px-1 py-0.5 bg-white">
+          <Badge key={c.id}>
             <span className="text-[11px] text-gray-800">{c.color}</span>
-            <span className="text-[10px] text-gray-500">{labels.join(' / ') || '—'}</span>
-          </span>
+            <span className="text-[10px] text-gray-500 ml-1">{labels.join(' / ') || '—'}</span>
+          </Badge>
         );
       })}
     </div>
