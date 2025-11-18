@@ -195,11 +195,6 @@ function ScrapingTab({ supabase }: { supabase: any }) {
   const [runJobId, setRunJobId] = ReactNS.useState<string | null>(null);
   const [elapsedSec, setElapsedSec] = ReactNS.useState<number>(0);
   const [completedSec, setCompletedSec] = ReactNS.useState<number | null>(null);
-  // Fast fanout run
-  const [runFanBusy, setRunFanBusy] = ReactNS.useState(false);
-  const [fanJobIds, setFanJobIds] = ReactNS.useState<string[] | null>(null);
-  const [fanElapsedSec, setFanElapsedSec] = ReactNS.useState<number>(0);
-  const [fanCompletedSec, setFanCompletedSec] = ReactNS.useState<number | null>(null);
   ReactNS.useEffect(() => {
     let t: any;
     if (runJobId && !completedSec) {
@@ -207,13 +202,6 @@ function ScrapingTab({ supabase }: { supabase: any }) {
     }
     return () => { if (t) clearInterval(t); };
   }, [runJobId, completedSec]);
-  ReactNS.useEffect(() => {
-    let t: any;
-    if (fanJobIds && fanJobIds.length > 0 && !fanCompletedSec) {
-      t = setInterval(() => setFanElapsedSec((s) => s + 1), 1000);
-    }
-    return () => { if (t) clearInterval(t); };
-  }, [fanJobIds && fanJobIds.join(','), fanCompletedSec]);
   ReactNS.useEffect(() => {
     if (!runJobId) return;
     let t: any;
@@ -236,30 +224,6 @@ function ScrapingTab({ supabase }: { supabase: any }) {
     t = setInterval(poll, 1200);
     return () => { if (t) clearInterval(t); };
   }, [runJobId, elapsedSec]);
-  ReactNS.useEffect(() => {
-    if (!fanJobIds || fanJobIds.length === 0) return;
-    let t: any;
-    const poll = async () => {
-      try {
-        const { data } = await supabase.from('jobs').select('id,status,started_at,finished_at').in('id', fanJobIds);
-        const rows = (data ?? []) as any[];
-        if (rows.length === fanJobIds.length) {
-          const unfinished = rows.filter((r) => !['succeeded','failed','cancelled'].includes(String(r.status)));
-          if (unfinished.length === 0) {
-            // compute total elapsed as max(finished_at) - min(started_at)
-            const starts = rows.map((r) => r.started_at ? new Date(r.started_at).getTime() : null).filter(Boolean) as number[];
-            const finishes = rows.map((r) => r.finished_at ? new Date(r.finished_at).getTime() : null).filter(Boolean) as number[];
-            const secs = (starts.length && finishes.length) ? Math.max(0, Math.round((Math.max(...finishes) - Math.min(...starts)) / 1000)) : fanElapsedSec;
-            setFanCompletedSec(secs);
-            setRunFanBusy(false);
-            return;
-          }
-        }
-      } catch {}
-    };
-    t = setInterval(poll, 1500);
-    return () => { if (t) clearInterval(t); };
-  }, [fanJobIds && fanJobIds.join(','), fanElapsedSec]);
 
   return (
     <div className="text-sm text-gray-700">
@@ -295,48 +259,11 @@ function ScrapingTab({ supabase }: { supabase: any }) {
           >
             {runBusy ? 'Running…' : 'Run selected now'}
           </Button>
-          <Button
-            size="sm"
-            className="min-w-[11rem]"
-            variant={runFanBusy ? 'secondary' : 'outline'}
-            disabled={runFanBusy}
-            onClick={async () => {
-              try {
-                setRunFanBusy(true);
-                setFanJobIds(null);
-                setFanElapsedSec(0);
-                setFanCompletedSec(null);
-                const { data: { session } } = await supabase.auth.getSession();
-                if (!session) throw new Error('Not signed in');
-                const orch = (process.env.NEXT_PUBLIC_ORCHESTRATOR_URL || '').replace(/\/+$/,'');
-                if (!orch) throw new Error('Orchestrator URL not configured');
-                const res = await fetch(`${orch}/enqueue/update_style_stock_fanout`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
-                  body: JSON.stringify({})
-                });
-                const js = await res.json().catch(() => ({}));
-                const jobIds: string[] = (js?.jobIds as string[]) || [];
-                if (!res.ok || jobIds.length === 0) throw new Error(js?.error || 'Failed to enqueue fanout');
-                setFanJobIds(jobIds);
-              } catch (e: any) {
-                alert(e?.message || 'Failed to enqueue fast run');
-                setRunFanBusy(false);
-              }
-            }}
-          >
-            {runFanBusy ? 'Running…' : 'Run selected (fast)'}
-          </Button>
         </div>
       </div>
       {runJobId && (
         <div className="mb-3 text-xs text-gray-700">
           Job: <span className="font-mono">{runJobId.slice(0,8)}…</span> · Elapsed: {completedSec ?? elapsedSec}s {completedSec != null ? '(completed)' : ''}
-        </div>
-      )}
-      {fanJobIds && (
-        <div className="mb-3 text-xs text-gray-700">
-          Jobs: {fanJobIds.length} · Elapsed: {fanCompletedSec ?? fanElapsedSec}s {fanCompletedSec != null ? '(completed)' : ''}
         </div>
       )}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
