@@ -16,9 +16,9 @@ export default function StylesSettingsPage() {
   const [deepProgress, setDeepProgress] = useState<{ index: number; total: number } | null>(null);
   const [deepDone, setDeepDone] = useState(false);
   const { data: styles } = useSWR(isAdmin ? 'styles:all' : null, async () => {
-    const { data, error } = await supabase.from('styles').select('id, style_no, style_name, style_type, supplier, scrape_enabled, updated_at').order('style_no').limit(2000);
+    const { data, error } = await supabase.from('styles').select('id, style_no, style_name, style_type, supplier, image_url, scrape_enabled, updated_at').order('style_no').limit(2000);
     if (error) throw new Error(error.message);
-    return data as { id: string; style_no: string; style_name: string | null; style_type: string | null; supplier: string | null; scrape_enabled: boolean | null; updated_at: string }[];
+    return data as { id: string; style_no: string; style_name: string | null; style_type: string | null; supplier: string | null; image_url: string | null; scrape_enabled: boolean | null; updated_at: string }[];
   });
   const { data: styleSeasons } = useSWR(isAdmin ? 'style_seasons:all' : null, async () => {
     const { data, error } = await supabase.from('style_seasons').select('style_no, seasons').limit(5000);
@@ -244,50 +244,62 @@ export default function StylesSettingsPage() {
             <button className="text-xs px-2 py-1 border rounded bg-slate-900 text-white hover:bg-slate-800" onClick={addAllFiltered}>Add all</button>
           </div>
         </div>
-        <div className="mt-3 max-h-96 overflow-auto border rounded">
-          <table className="min-w-full text-xs">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="p-2 text-left border-b">Action</th>
-                <th className="p-2 text-left border-b">Style No.</th>
-                <th className="p-2 text-left border-b">Name</th>
-                <th className="p-2 text-left border-b">Type</th>
-                <th className="p-2 text-left border-b">Supplier</th>
-                <th className="p-2 text-left border-b">Colors</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(filteredStyles as any[] ?? []).map((s) => {
-                const added = selectedForUser.has(s.style_no);
+        <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="rounded border">
+            <div className="px-2 py-1 text-xs font-medium border-b bg-gray-50">All styles</div>
+            <div className="max-h-96 overflow-auto divide-y text-xs">
+              {(filteredStyles as any[] ?? []).filter((s)=>!selectedForUser.has(s.style_no)).map((s) => {
+                const name = (s.style_name && s.style_name.trim()) ? s.style_name : '—';
                 return (
-                  <>
-                  <tr key={s.id} className={(added ? 'bg-slate-50 ' : '') + 'hover:bg-slate-50 transition-colors'}>
-                    <td className="p-2 border-b align-middle">
-                      <button
-                        className={(added ? 'bg-slate-300 text-gray-800 ' : 'bg-slate-900 text-white ') + 'text-xs px-2 py-1 rounded border'}
-                        onClick={async ()=>{ await toggleStyleForUser(s.style_no); }}
-                      >{added ? 'Added' : 'Add to list'}</button>
-                    </td>
-                    <td className={(added ? 'border-l-4 border-l-slate-900 ' : '') + 'p-2 border-b font-medium'}>{s.style_no}</td>
-                    <td className="p-2 border-b text-gray-700">
-                      <div className="font-medium">{s.style_name ?? '—'}</div>
-                    </td>
-                    <td className="p-2 border-b text-gray-600 text-sm">{(s as any).style_type ?? '—'}</td>
-                    <td className="p-2 border-b text-gray-600 text-sm">{s.supplier ?? '—'}</td>
-                    <td className="p-2 border-b text-[11px] text-gray-500">—</td>
-                  </tr>
-                    {/* colors editor removed from this section */}
-                  </>
+                  <div key={s.id} className="flex items-center justify-between px-2 py-1 hover:bg-slate-50">
+                    <div className="flex items-center gap-2 min-w-0">
+                      {s.image_url ? <img src={s.image_url} alt="" className="w-7 h-7 rounded object-cover border" /> : <div className="w-7 h-7 rounded border bg-gray-100" />}
+                      <div className="truncate">
+                        <div className="font-medium text-gray-900 truncate">{s.style_no}</div>
+                        <div className="text-gray-700 truncate">{name}</div>
+                      </div>
+                    </div>
+                    <button
+                      className="text-[11px] px-2 py-1 border rounded bg-slate-900 text-white hover:bg-slate-800 shrink-0"
+                      onClick={async ()=>{ await toggleStyleForUser(s.style_no); }}
+                    >Add</button>
+                  </div>
                 );
               })}
-            </tbody>
-          </table>
-        </div>
-        {has('admin') && (
-          <div className="flex justify-end mt-2">
-            <button className="text-xs text-gray-600 hover:text-black underline" onClick={clearAll}>Clear</button>
+            </div>
           </div>
-        )}
+          <div className="rounded border">
+            <div className="px-2 py-1 text-xs font-medium border-b bg-gray-50">Often scraped</div>
+            <div className="max-h-96 overflow-auto divide-y text-xs">
+              {(styles ?? []).filter((s)=>selectedForUser.has(s.style_no)).map((s) => {
+                const name = (s.style_name && s.style_name.trim()) ? s.style_name : '—';
+                return (
+                  <div key={s.id} className="flex items-center justify-between px-2 py-1 hover:bg-slate-50">
+                    <div className="flex items-center gap-2 min-w-0">
+                      {s.image_url ? <img src={s.image_url} alt="" className="w-7 h-7 rounded object-cover border" /> : <div className="w-7 h-7 rounded border bg-gray-100" />}
+                      <div className="truncate">
+                        <div className="font-medium text-gray-900 truncate">{s.style_no}</div>
+                        <div className="text-gray-700 truncate">{name}</div>
+                      </div>
+                    </div>
+                    <button
+                      className="text-[11px] px-2 py-1 border rounded bg-white text-slate-900 hover:bg-slate-100 shrink-0"
+                      onClick={async ()=>{ await toggleStyleForUser(s.style_no); }}
+                    >Remove</button>
+                  </div>
+                );
+              })}
+              {(styles ?? []).filter((s)=>selectedForUser.has(s.style_no)).length === 0 && (
+                <div className="px-2 py-2 text-[11px] text-gray-500">No styles selected.</div>
+              )}
+            </div>
+            {has('admin') && (
+              <div className="flex justify-end p-2">
+                <button className="text-[11px] text-gray-600 hover:text-black underline" onClick={clearAll}>Clear</button>
+              </div>
+            )}
+          </div>
+        </div>
       </div>
       )}
 
