@@ -73,12 +73,31 @@ export default function StylesSettingsPage() {
       m.set(String(s.id), `${letters}${yy}`);
     }
     return m;
-  }, [seasonsList && (seasonsList as any).length]);
+  }, [seasonsList]);
+  const seasonLabelById = useMemo(() => {
+    // style_seasons stores labels like "25 WINTER"
+    const m = new Map<string, string>();
+    for (const s of (seasonsList ?? [])) {
+      const yy = s.year != null ? String(s.year).slice(-2) : '';
+      const name = String(s.name || '').toUpperCase();
+      if (yy && name) m.set(String(s.id), `${yy} ${name}`);
+    }
+    return m;
+  }, [seasonsList]);
   const hiddenSeasonSet = useMemo(() => {
     const st = new Set<string>();
     for (const s of (seasonsList ?? [])) if ((s as any).hidden) st.add(String(s.id));
     return st;
-  }, [seasonsList && (seasonsList as any).length]);
+  }, [seasonsList]);
+  const seasonSelectItems = useMemo(() => {
+    return (seasonsList ?? [])
+      .filter((s) => !(s as any).hidden)
+      .map((s) => {
+        const code = seasonCodeById.get(String(s.id)) || '';
+        return { value: String(s.id), label: code || String(s.id) };
+      });
+  }, [seasonsList, seasonCodeById]);
+ 
   const { data: colorSeasons } = useSWR(isAdmin ? 'style_color_seasons:all' : null, async () => {
     const pageSize = 2000;
     const out = new Map<string, string[]>();
@@ -187,31 +206,20 @@ export default function StylesSettingsPage() {
   // Search by style name (and number)
   const [searchQuery, setSearchQuery] = useState('');
   // Build season filter options from style_seasons labels (these are strings like "25 WINTER")
-  const seasonOptions = useMemo(() => {
-    function formatLabel(lbl: string): string {
-      const m = /^(\d{2})\s+(.*)$/i.exec(lbl.trim());
-      if (m) {
-        const yy = m[1] ?? '';
-        const name = (m[2] ?? '').toUpperCase();
-        const yyyy = yy ? `20${yy}` : '';
-        return `${name}${yyyy ? ` ${yyyy}` : ''}`.trim() || lbl;
-      }
-      return lbl;
-    }
-    return (styleSeasons?.labels || []).map((lbl) => ({
-      value: String(lbl),
-      label: formatLabel(String(lbl))
-    }));
-  }, [styleSeasons?.labels && styleSeasons.labels.join('|')]);
   const filteredStyles = useMemo(() => {
     if (!styles) return [] as { id: string; style_no: string; style_name: string | null; scrape_enabled: boolean | null; updated_at: string }[];
     const q = searchQuery.trim().toLowerCase();
     let base = styles;
     if (seasonFilter) {
+      const target = seasonLabelById.get(seasonFilter) || '';
+      if (target) {
       base = base.filter((s) => {
         const arr = styleSeasons?.byStyle.get(s.style_no) || [];
-        return arr.includes(seasonFilter);
+          return arr.includes(target);
       });
+      } else {
+        base = [];
+      }
     }
     if (!q) return base;
     return base.filter((s) => {
@@ -220,7 +228,7 @@ export default function StylesSettingsPage() {
       const type = (s as any).style_type ? String((s as any).style_type).toLowerCase() : '';
       return name.includes(q) || no.includes(q) || type.includes(q);
     });
-  }, [styles, searchQuery, seasonFilter, styleSeasons?.labels.length]);
+  }, [styles, searchQuery, seasonFilter, styleSeasons, seasonLabelById]);
 
   // (Seasons column removed)
   // Poll deep scrape job logs to show progress
@@ -294,6 +302,18 @@ export default function StylesSettingsPage() {
         <div className="text-xs text-gray-500">Styles</div>
         <h1 className="text-xl font-semibold">Settings</h1>
       </div>
+      {isAdmin && (
+        <div className="flex items-center gap-2">
+          <div className="text-xs text-gray-600">Season</div>
+          <SearchSelect
+            items={seasonSelectItems}
+            value={seasonFilter}
+            onChange={setSeasonFilter}
+            placeholder="All seasons"
+            clearable
+          />
+        </div>
+      )}
 
       {!isAdmin && (
         <div className="rounded-md border bg-white p-3 text-sm text-gray-600">Not authorized.</div>
@@ -309,14 +329,6 @@ export default function StylesSettingsPage() {
               placeholder="Search styles"
               value={searchQuery}
               onChange={(e)=>setSearchQuery(e.target.value)}
-            />
-            <SearchSelect
-              items={seasonOptions}
-              value={seasonFilter}
-              onChange={setSeasonFilter}
-              placeholder="All seasons"
-              clearable
-              className="min-w-[16rem]"
             />
             <button className="text-xs px-2 py-1 border rounded bg-slate-900 text-white hover:bg-slate-800" onClick={addAllFiltered}>Add all</button>
           </div>
@@ -361,9 +373,9 @@ export default function StylesSettingsPage() {
                         <ColorsLine styleId={s.id} colorsByStyle={colorsByStyle} colorSeasons={colorSeasons} seasonCodeById={seasonCodeById} hiddenSeasonSet={hiddenSeasonSet} />
                       </div>
                     </div>
-                    <button
+                      <button
                       className="text-[11px] px-2 py-1 border rounded bg-white text-slate-900 hover:bg-slate-100 shrink-0"
-                      onClick={async ()=>{ await toggleStyleForUser(s.style_no); }}
+                        onClick={async ()=>{ await toggleStyleForUser(s.style_no); }}
                     >Remove</button>
                   </div>
                 );
@@ -371,8 +383,8 @@ export default function StylesSettingsPage() {
               {(styles ?? []).filter((s)=>selectedForUser.has(s.style_no)).length === 0 && (
                 <div className="px-2 py-2 text-[11px] text-gray-500">No styles selected.</div>
               )}
-            </div>
-            {has('admin') && (
+        </div>
+        {has('admin') && (
               <div className="flex justify-end p-2">
                 <button className="text-[11px] text-gray-600 hover:text-black underline" onClick={clearAll}>Clear</button>
               </div>
