@@ -2,6 +2,7 @@
 import { useMemo, useState } from 'react';
 import useSWR from 'swr';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
+import { SearchSelect } from '../../../components/SearchSelect';
 import { useRoles } from '../../../lib/supabaseClient';
 import { ProgressBar } from '../../../components/ProgressBar';
 
@@ -67,6 +68,11 @@ export default function StylesSettingsPage() {
       m.set(r.id as string, y ? `${n} ${y}` : n);
     }
     return m as Map<string, string>;
+  }, { refreshInterval: 0 });
+  const { data: seasonsList } = useSWR(isAdmin ? 'seasons:list' : null, async () => {
+    const { data, error } = await supabase.from('seasons').select('id, name, year').order('year', { ascending: false });
+    if (error) throw new Error(error.message);
+    return (data ?? []) as Array<{ id: string; name: string | null; year: number | null }>;
   }, { refreshInterval: 0 });
   const [seasonFilter, setSeasonFilter] = useState<string>('');
   const { data: colorsByStyle, mutate: mutateColors } = useSWR(isAdmin ? 'style_colors:all' : null, async () => {
@@ -260,12 +266,19 @@ export default function StylesSettingsPage() {
               value={searchQuery}
               onChange={(e)=>setSearchQuery(e.target.value)}
             />
-            <select className="text-xs border rounded px-2 py-1" value={seasonFilter} onChange={(e)=>setSeasonFilter(e.target.value)}>
-              <option value="">All seasons</option>
-              {(styleSeasons?.labels || []).map((label) => (
-                <option key={label} value={label}>{seasonsMap?.get(label) || label}</option>
-              ))}
-            </select>
+            <SearchSelect
+              items={[
+                ...((seasonsList ?? []).map((s) => {
+                  const label = `${s.id} — ${((s.name || '') + (s.year ? ` ${s.year}` : '')).trim() || String(s.id)}`;
+                  return { value: String(s.id), label };
+                }))
+              ]}
+              value={seasonFilter}
+              onChange={setSeasonFilter}
+              placeholder="All seasons"
+              clearable
+              className="min-w-[16rem]"
+            />
             <button className="text-xs px-2 py-1 border rounded bg-slate-900 text-white hover:bg-slate-800" onClick={addAllFiltered}>Add all</button>
           </div>
         </div>
