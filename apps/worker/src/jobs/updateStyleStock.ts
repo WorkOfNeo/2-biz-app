@@ -126,8 +126,8 @@ export async function updateStyleStock(ctx: Ctx) {
           } catch {}
         }
       } catch {}
-      for (let i = 0; i < 10; i++) {
-        const clicked = await page.evaluate((allowed: Record<string, boolean>) => {
+      for (let i = 0; i < 6; i++) {
+        const { clicked, remaining } = await page.evaluate((allowed: Record<string, boolean>) => {
           let clicks = 0;
           const headers = Array.from(document.querySelectorAll('.statAndStockBox tr.tableBackgroundBlack')) as HTMLTableRowElement[];
           function getColorName(tr: HTMLTableRowElement): string {
@@ -146,10 +146,11 @@ export async function updateStyleStock(ctx: Ctx) {
             const arrow = tr.querySelector('.sprite.sprite168.spriteArrowDown.right.clickable') as HTMLElement | null;
             if (arrow) { arrow.click(); clicks++; }
           }
-          return clicks;
+          const remaining = document.querySelectorAll('.sprite.sprite168.spriteArrowDown.right.clickable').length;
+          return { clicked: clicks, remaining };
         }, allowedColors);
-        await log(job.id, 'info', 'STEP:style_stock_expand_click', { iteration: i + 1, clicked });
-        if (!clicked) break;
+        await log(job.id, 'info', 'STEP:style_stock_expand_click', { iteration: i + 1, clicked, remaining });
+        if (!clicked || remaining === 0) break;
         await page.waitForTimeout(BETWEEN_CLICK_WAIT_MS);
       }
       const headerClicks = await page.evaluate((allowed: Record<string, boolean>) => {

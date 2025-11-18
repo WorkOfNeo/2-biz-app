@@ -208,7 +208,8 @@ async function runJob(job: JobRow) {
 
     // Post-login check markers
     const markers = ['.dashboard', 'nav[aria-label="main"]', '.user-menu', '.logout', '[data-testid="main-shell"]'];
-    await Promise.race(markers.map((m) => framePage.waitForSelector(m, { timeout: 60_000 }))).catch(() => null);
+    // Quicker post-login readiness check; do not block more than 20s
+    await Promise.race(markers.map((m) => framePage.waitForSelector(m, { timeout: 20_000 }))).catch(() => null);
     await log(job.id, 'info', 'Logged in');
     // Drop verbose HTML logging to reduce noise
 
