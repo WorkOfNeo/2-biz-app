@@ -13,7 +13,7 @@ export default function MakePurchaseOrderPage() {
     <div className="space-y-4">
       <div>
         <div className="text-xs text-gray-500">Purchase</div>
-        <h1 className="text-xl font-semibold">Make Purchase Order</h1>
+        <h1 className="text-xl font-semibold">Make Purchase Order · Nielsens</h1>
       </div>
       <div className="flex items-center gap-2">
         <button

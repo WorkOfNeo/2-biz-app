@@ -119,4 +119,8 @@ curl -i -X POST https://YOUR-ORCHESTRATOR/enqueue \
   --data '{"type":"scrape_statistics","payload":{"toggles":{"deep":false},"requestedBy":"you@example.com"}}'
 ```
 
+---
+
+Last updated: minor README tweak to trigger deploys (2025-11-18).
+
 

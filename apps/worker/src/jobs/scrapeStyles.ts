@@ -84,6 +84,7 @@ export async function scrapeStyles(ctx: Ctx) {
   for (let i = 0; i < rows.length; i++) {
     await ensureNotCancelled(job.id);
     const r = rows[i];
+    if (!r) continue;
     if (!r.link_href) continue;
     try {
       const detailUrl = new URL(r.link_href, SPY_BASE_URL).toString();
