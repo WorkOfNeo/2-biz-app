@@ -229,29 +229,29 @@ function ScrapingTab({ supabase }: { supabase: any }) {
     <div className="text-sm text-gray-700">
       <div className="mb-3 flex items-center justify-between">
         <div className="text-xs text-gray-600">Run scraping for “Often scraped” selection.</div>
-        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2">
           <Button
             size="sm"
             className="min-w-[9rem]"
             variant={runBusy ? 'secondary' : 'default'}
             disabled={runBusy}
             onClick={async () => {
-            try {
+              try {
               setRunBusy(true);
               setRunJobId(null);
               setElapsedSec(0);
               setCompletedSec(null);
-              const { data: { session } } = await supabase.auth.getSession();
-              if (!session) throw new Error('Not signed in');
-              const res = await fetch('/api/enqueue', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+                const { data: { session } } = await supabase.auth.getSession();
+                if (!session) throw new Error('Not signed in');
+                const res = await fetch('/api/enqueue', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
                 body: JSON.stringify({ type: 'update_style_stock', payload: { requestedBy: session.user.email, mode: 'selected' } })
-              });
-              const js = await res.json().catch(() => ({}));
+                });
+                const js = await res.json().catch(() => ({}));
               if (!res.ok || !js?.jobId) throw new Error(js?.error || 'Failed to enqueue');
               setRunJobId(js.jobId as string);
-            } catch (e: any) {
+              } catch (e: any) {
               alert(e?.message || 'Failed to enqueue run');
               setRunBusy(false);
             }
@@ -266,17 +266,17 @@ function ScrapingTab({ supabase }: { supabase: any }) {
           Job: <span className="font-mono">{runJobId.slice(0,8)}…</span> · Elapsed: {completedSec ?? elapsedSec}s {completedSec != null ? '(completed)' : ''}
         </div>
       )}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <div className="rounded border">
           <div className="px-2 py-1 text-xs font-medium border-b bg-gray-50">All styles</div>
           <div className="p-2 flex items-center gap-2">
             <Input className="w-56" placeholder="Search style no / name" value={qLeft} onChange={(e)=>setQLeft(e.target.value)} />
             <SearchSelect items={seasonSelectItems} value={seasonLeft} onChange={setSeasonLeft} placeholder="All seasons" clearable />
-          </div>
+            </div>
           <div className="max-h-96 overflow-auto divide-y">
             {(leftItems ?? []).map((s) => {
               const added = selectedSet.has(s.style_no);
-              return (
+                return (
                 <div key={s.id} className={"flex items-start justify-between gap-2 px-2 py-2 " + (added ? 'bg-slate-50' : '')}>
                   <div className="flex items-start gap-2 min-w-0">
                     <Thumb src={s.image_url || ''} />
@@ -287,11 +287,11 @@ function ScrapingTab({ supabase }: { supabase: any }) {
                     </div>
                   </div>
                   <Button size="sm" variant={added ? 'secondary' : 'default'} onClick={()=>toggle(s.style_no)}>{added ? 'Added' : 'Add'}</Button>
-        </div>
+                  </div>
                 );
               })}
+            </div>
           </div>
-        </div>
         <div className="rounded border">
           <div className="px-2 py-1 text-xs font-medium border-b bg-gray-50">Often scraped</div>
           <div className="p-2 flex items-center gap-2">
@@ -307,11 +307,11 @@ function ScrapingTab({ supabase }: { supabase: any }) {
                     <div className="font-medium text-gray-900 truncate">{s.style_no}</div>
                     <div className="text-gray-700 truncate">{s.style_name ?? '—'}</div>
                     <ColorsLine styleId={s.id} colorsByStyle={colorsByStyle} colorSeasons={colorSeasons} seasonCodeById={seasonCodeById} hiddenSeasonSet={hiddenSeasonSet} />
-      </div>
-        </div>
+              </div>
+            </div>
                 <Button size="sm" variant="outline" onClick={()=>toggle(s.style_no)}>Remove</Button>
-      </div>
-            ))}
+                </div>
+              ))}
             {(rightItems ?? []).length === 0 && (
               <div className="px-2 py-2 text-[11px] text-gray-500">No styles selected.</div>
             )}
@@ -383,8 +383,8 @@ function ColorsLine({
             <span className="text-[11px] text-gray-800">{c.color}</span>
             <span className="text-[10px] text-gray-500 ml-1">{labels.join(' / ') || '—'}</span>
           </Badge>
-        );
-      })}
+          );
+        })}
     </div>
   );
 }
