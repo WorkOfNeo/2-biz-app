@@ -3,6 +3,7 @@ import * as React from 'react';
 import { Button } from '../../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
 import { Input } from '../../../components/ui/input';
+import { Dropzone } from '../../../components/ui/dropzone';
 
 type InRow = {
 	linjenr: number;
@@ -44,15 +45,15 @@ export default function CsvSkatPage() {
 	const [busy, setBusy] = React.useState(false);
 	const [error, setError] = React.useState<string | null>(null);
 
-	async function onFileSelected(list: FileList | null) {
+	async function onFilesSelected(files: File[]) {
 		setError(null);
 		setRowsIn([]);
 		setRowsOut([]);
-		if (!list || list.length === 0) return;
+		if (!files || files.length === 0) return;
 		setBusy(true);
 		try {
 			const XLSX = await import('xlsx');
-			const f = list.item(0)!;
+			const f = files[0]!;
 			const buf = await f.arrayBuffer();
 			const wb = XLSX.read(buf, { type: 'array' });
 			const sheetName = wb.SheetNames?.[0];
@@ -76,7 +77,8 @@ export default function CsvSkatPage() {
 				const linjenr = Number(r[idx.linjenr] ?? 0);
 				if (!Number.isFinite(linjenr)) continue;
 				const land = String(r[idx.landekode] ?? '').trim();
-				const moms = String(r[idx.moms] ?? '').trim() || null;
+				const momsRaw = String(r[idx.moms] ?? '').trim();
+				const moms = momsRaw ? momsRaw.replace(/[A-Za-z]/g, '') : null; // strip letters
 				const val = toNumberDK(r[idx.vaerdi]);
 				const rapport = r[idx.rapportnr] ?? null;
 				const trans = r[idx.trans] ?? null;
@@ -116,7 +118,7 @@ export default function CsvSkatPage() {
 				dateStrParam,                // col3 YYYY-MM-DD
 				27492185,                    // col4
 				r.landekode || '',           // col5
-				r.momsnr || '',              // col6
+				(r.momsnr || '').replace(/[A-Za-z]/g, ''), // col6 strip letters
 				Number.isFinite(r.vaerdi) ? r.vaerdi : 0, // col7
 				0,                           // col8
 				0,                           // col9
@@ -175,6 +177,24 @@ export default function CsvSkatPage() {
 		}
 	}
 
+	async function exportXml() {
+		try {
+			if (rowsOut.length === 0) return;
+			// Simple XML with columns col1..col9
+			const esc = (s: any) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+			const rows = rowsOut.map((r) => {
+				const cols = r.map((c, i) => `<col${i + 1}>${esc(c)}</col${i + 1}>`).join('');
+				return `<row>${cols}</row>`;
+			}).join('');
+			const xml = `<?xml version="1.0" encoding="UTF-8"?><skat>${rows}</skat>`;
+			const blob = new Blob([xml], { type: 'application/xml' });
+			const { default: saveAs } = await import('file-saver');
+			saveAs(blob, 'skat_export.xml');
+		} catch (e: any) {
+			alert(e?.message || 'Export XML failed');
+		}
+	}
+
 	return (
 		<div className="space-y-4">
 			<div>
@@ -189,7 +209,7 @@ export default function CsvSkatPage() {
 					<div className="grid grid-cols-1 md:grid-cols-[1fr_200px] gap-3 items-end">
 						<div>
 							<label className="block text-xs mb-1 text-gray-700">Excel file (.xlsx/.xls)</label>
-							<Input type="file" accept=".xlsx,.xls" onChange={(e) => onFileSelected(e.currentTarget.files)} />
+							<Dropzone accept=".xlsx,.xls" multiple={false} onFiles={onFilesSelected} />
 						</div>
 						<div>
 							<label className="block text-xs mb-1 text-gray-700">Date (YYYY-MM-DD)</label>
@@ -200,6 +220,7 @@ export default function CsvSkatPage() {
 					<div className="flex items-center gap-2">
 						<Button size="sm" onClick={exportXlsx} disabled={rowsOut.length === 0 || busy}>Export XLSX</Button>
 						<Button size="sm" variant="outline" onClick={exportCsv} disabled={rowsOut.length === 0 || busy}>Export CSV</Button>
+						<Button size="sm" variant="outline" onClick={exportXml} disabled={rowsOut.length === 0 || busy}>Export XML</Button>
 						{rowsIn.length > 0 && (
 							<div className="text-xs text-gray-600">
 								Rows loaded: {rowsIn.length.toLocaleString('da-DK')} · Included (excl. NO): {Math.max(0, rowsOut.length - 2).toLocaleString('da-DK')}
