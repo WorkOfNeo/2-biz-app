@@ -104,7 +104,7 @@ export default function CsvSkatPage() {
 		// Exclude rows where country code equals 'NO'
 		const filtered = src.filter((r) => String(r.landekode || '').toUpperCase() !== 'NO');
 		// Keep incoming order; we'll compute Linjenr sequentially starting at 1
-		const header = ['0', '27492185', 'LISTE', '', '', '', '', '', ''];
+		const header = [0, 27492185, 'LISTE', '', '', '', '', '', ''];
 		const out: any[][] = [header];
 		let sum = 0;
 		let seq = 0;
@@ -156,41 +156,23 @@ export default function CsvSkatPage() {
 	async function exportCsv() {
 		try {
 			if (rowsOut.length === 0) return;
-			// Comma-separated, quote fields containing comma
+			// Semicolon-separated; keep numbers as numeric tokens (no quotes)
+			const delim = ';';
 			const lines = rowsOut.map((row) =>
-				row
-					.map((cell) => {
-						const s = String(cell ?? '');
-						if (s.includes(',') || s.includes('"') || s.includes('\n')) {
-							return `"${s.replace(/"/g, '""')}"`;
-						}
-						return s;
-					})
-					.join(',')
+				row.map((cell) => {
+					if (typeof cell === 'number') return Number.isFinite(cell) ? String(cell) : '0';
+					const s = String(cell ?? '');
+					if (s.includes(delim) || s.includes('"') || s.includes('\n')) {
+						return `"${s.replace(/"/g, '""')}"`;
+					}
+					return s;
+				}).join(delim)
 			);
 			const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
 			const { default: saveAs } = await import('file-saver');
 			saveAs(blob, 'skat_export.csv');
 		} catch (e: any) {
 			alert(e?.message || 'Export CSV failed');
-		}
-	}
-
-	async function exportXml() {
-		try {
-			if (rowsOut.length === 0) return;
-			// Simple XML with columns col1..col9
-			const esc = (s: any) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-			const rows = rowsOut.map((r) => {
-				const cols = r.map((c, i) => `<col${i + 1}>${esc(c)}</col${i + 1}>`).join('');
-				return `<row>${cols}</row>`;
-			}).join('');
-			const xml = `<?xml version="1.0" encoding="UTF-8"?><skat>${rows}</skat>`;
-			const blob = new Blob([xml], { type: 'application/xml' });
-			const { default: saveAs } = await import('file-saver');
-			saveAs(blob, 'skat_export.xml');
-		} catch (e: any) {
-			alert(e?.message || 'Export XML failed');
 		}
 	}
 
@@ -219,7 +201,6 @@ export default function CsvSkatPage() {
 					<div className="flex items-center gap-2">
 						<Button size="sm" onClick={exportXlsx} disabled={rowsOut.length === 0 || busy}>Export XLSX</Button>
 						<Button size="sm" variant="outline" onClick={exportCsv} disabled={rowsOut.length === 0 || busy}>Export CSV</Button>
-						<Button size="sm" variant="outline" onClick={exportXml} disabled={rowsOut.length === 0 || busy}>Export XML</Button>
 						{rowsIn.length > 0 && (
 							<div className="text-xs text-gray-600">
 								Rows loaded: {rowsIn.length.toLocaleString('da-DK')} · Included (excl. NO): {Math.max(0, rowsOut.length - 2).toLocaleString('da-DK')}
