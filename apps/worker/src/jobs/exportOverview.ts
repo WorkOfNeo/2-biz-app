@@ -495,42 +495,41 @@ export async function exportOverview(ctx: Ctx) {
       const fmt = (n: number) => new Intl.NumberFormat('da-DK').format(Math.round(n));
       const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
       function Donut({ pct, label }: { pct: number; label: string }) {
+        // Filled pie: gray base, blue filled sector; circles at 60% of original size
         const visualPct = clamp(pct, 0, 100);
-        const r = s(70); const cx = s(90); const cy = s(90); const restW = s(8); const progW = s(14);
+        const sizeScale = 0.6;
+        const r = s(90 * sizeScale); const cx = s(100 * sizeScale + 20); const cy = s(100 * sizeScale + 20);
         const endAngle = (-90 + (visualPct / 100) * 360) * (Math.PI / 180);
+        const largeArc = visualPct > 50 ? 1 : 0;
         const x = cx + r * Math.cos(endAngle);
         const y = cy + r * Math.sin(endAngle);
-        const largeArc = visualPct > 50 ? 1 : 0;
-        const arcPath = `M ${cx} ${cy - r} A ${r} ${r} 0 ${largeArc} 1 ${x} ${y}`;
-        const hue = Math.round((visualPct / 100) * 120);
-        const color = `hsl(${hue}, 70%, 40%)`;
+        const blue = '#3b82f6'; // blue-500
+        const gray = '#d1d5db'; // gray-300
+        // Sector path from top, arc to angle, and back to center
+        const sectorPath = `M ${cx} ${cy} L ${cx} ${cy - r} A ${r} ${r} 0 ${largeArc} 1 ${x} ${y} Z`;
         return React.createElement(View, { style: { alignItems: 'center' } },
-          React.createElement(Svg, { width: s(200), height: s(200) },
-            React.createElement(Circle, { cx, cy, r, stroke: '#e5e7eb', strokeWidth: restW, fill: 'none' }),
-            visualPct > 0 ? React.createElement(Path, { d: arcPath, stroke: color, strokeWidth: progW, fill: 'none' }) : null
+          React.createElement(Svg, { width: s(220 * sizeScale), height: s(220 * sizeScale) },
+            React.createElement(Circle, { cx, cy, r, fill: gray }),
+            visualPct > 0 ? React.createElement(Path, { d: sectorPath, fill: blue }) : null
           ),
           React.createElement(Text, { style: { fontSize: s(10), marginTop: s(2) } }, `${label} · ${Math.round(pct)}%`)
         );
       }
-      // Map country -> currency like on page
-      const countryCurrency: Record<string, string> = { Denmark: 'DKK', Norway: 'NOK', Sweden: 'SEK', Finland: 'EUR' };
+      // Prices are aggregated to DKK already; display only DKK
       const s1Name = s1Info ? `${s1Info.name}${s1Info.year ? ' ' + s1Info.year : ''}` : null;
       const s2Name = s2Info ? `${s2Info.name}${s2Info.year ? ' ' + s2Info.year : ''}` : null;
       const s1Code = s1Info?.code || 'S1';
       const s2Code = s2Info?.code || 'S2';
-      // Build one full page per country
-      const pages = countries.map((cName) => {
+      // Build one horizontal section per country (all in single document/page flow)
+      const sections = countries.map((cName) => {
         const row = totals[cName] || { s1Qty: 0, s2Qty: 0, s1Price: 0, s2Price: 0 };
         const qtyPct = row.s2Qty === 0 ? 0 : (row.s1Qty / row.s2Qty) * 100;
         const pricePct = row.s2Price === 0 ? 0 : (row.s1Price / row.s2Price) * 100;
-        const cur = countryCurrency[cName] || 'DKK';
-        const rCur = (globalRates as any)[cur] ?? 1;
-        const s1Local = rCur ? row.s1Price / rCur : row.s1Price;
-        const s2Local = rCur ? row.s2Price / rCur : row.s2Price;
         const spRows = Array.from((perSp[cName] || new Map()).entries()).map(([id, v]) => ({ id, name: spNameById.get(id) || '—', ...v }))
           .sort((a,b) => (b.s1Price + b.s2Price) - (a.s1Price + a.s2Price));
         const T = (txt: string, w: string, align: 'left' | 'right' = 'left', bold = false) =>
           React.createElement(Text, { style: [{ width: w, textAlign: align }, bold ? { fontWeight: 700 as any } : {}] }, txt);
+        // Combined header row for salesperson table
         const spHeader = React.createElement(View, { style: styles.row },
           T('Name','34%','left',true),
           T(`${s1Code} Stk`,'11%','right',true),
@@ -548,31 +547,31 @@ export async function exportOverview(ctx: Ctx) {
             T(fmt(r.s2Price),'22%','right')
           ))
         );
-        return React.createElement(PdfPage, { size: 'A4', orientation: 'landscape', style: styles.page },
-          React.createElement(View, { style: { flexDirection: 'column', gap: s(12) } },
+        // Row layout: [Header + Antal] [Omsætning] [Per sælger]
+        return React.createElement(View, { style: { flexDirection: 'row', gap: s(16), marginBottom: s(12) } },
+          React.createElement(View, { style: { width: '24%' as any, alignItems: 'center' as any } },
             React.createElement(Text, { style: styles.h1 }, `${cName} (${s1Code} vs ${s2Code})`),
-            // Single row: [Antal stk] [Omsætning] [Per sælger table]
-            React.createElement(View, { style: { flexDirection: 'row', gap: s(16) } },
-              React.createElement(View, { style: { width: '24%' as any, alignItems: 'center' as any } },
-                React.createElement(Text, { style: styles.boxTitle }, 'Antal stk'),
-                React.createElement(Text, { style: styles.boxNums }, `${row.s1Qty} vs ${row.s2Qty}`),
-                React.createElement(Donut as any, { pct: qtyPct, label: 'Stk' })
-              ),
-              React.createElement(View, { style: { width: '24%' as any, alignItems: 'center' as any } },
-                React.createElement(Text, { style: styles.boxTitle }, 'Omsætning'),
-                React.createElement(Text, { style: styles.boxNums }, `${fmt(s1Local)} ${cur} vs ${fmt(s2Local)} ${cur}`),
-                React.createElement(Text, { style: styles.boxSub }, `${fmt(row.s1Price)} DKK vs ${fmt(row.s2Price)} DKK`),
-                React.createElement(Donut as any, { pct: pricePct, label: 'Omsætning' })
-              ),
-              React.createElement(View, { style: { width: '52%' as any } },
-                React.createElement(Text, { style: styles.boxTitle }, 'Per sælger'),
-                spTable
-              )
-            )
+            React.createElement(Text, { style: styles.boxTitle }, 'Antal stk'),
+            React.createElement(Text, { style: styles.boxNums }, `${row.s1Qty} vs ${row.s2Qty}`),
+            React.createElement(Donut as any, { pct: qtyPct, label: 'Stk' })
+          ),
+          React.createElement(View, { style: { width: '24%' as any, alignItems: 'center' as any } },
+            React.createElement(Text, { style: styles.boxTitle }, 'Omsætning (DKK)'),
+            React.createElement(Text, { style: styles.boxNums }, `${fmt(row.s1Price)} DKK vs ${fmt(row.s2Price)} DKK`),
+            React.createElement(Donut as any, { pct: pricePct, label: 'Omsætning' })
+          ),
+          React.createElement(View, { style: { width: '52%' as any } },
+            React.createElement(Text, { style: styles.boxTitle }, 'Per sælger'),
+            spTable
           )
         );
       });
-      const combined = React.createElement(Document, null, ...pages);
+      // Single page document; react-pdf will flow to additional pages if needed, but we don't create a page per country manually
+      const combined = React.createElement(Document, null,
+        React.createElement(PdfPage, { size: 'A4', orientation: 'landscape', style: styles.page },
+          React.createElement(View, { style: { flexDirection: 'column', gap: s(6) } }, ...sections)
+        )
+      );
       const combinedOut = await pdf(combined).toBuffer();
       const combinedBuf = await ensureBuffer(combinedOut);
       // Upload a single combined PDF instead of a zip
