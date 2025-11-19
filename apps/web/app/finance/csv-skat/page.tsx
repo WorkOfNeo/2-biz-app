@@ -126,7 +126,7 @@ export default function CsvSkatPage() {
 		// Last summary row
 		out.push([
 			10,                 // col1
-			seq + 1,           // col2: last calculated Linjenr + 1
+			seq,               // col2: same as last calculated Linjenr
 			sum,                // col3: sum of "Samlede værdi af forsyninger" of present rows
 			'', '', '', '', '', '',
 		]);
