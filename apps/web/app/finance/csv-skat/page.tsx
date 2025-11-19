@@ -58,7 +58,8 @@ export default function CsvSkatPage() {
 			const sheetName = wb.SheetNames?.[0];
 			if (!sheetName) throw new Error('No sheet found');
 			const sheet = wb.Sheets[sheetName];
-			const data = XLSX.utils.sheet_to_json(sheet, { header: 1 }) as any[][];
+			if (!sheet) throw new Error('Empty sheet');
+			const data = XLSX.utils.sheet_to_json(sheet as any, { header: 1 }) as any[][];
 			if (data.length === 0) throw new Error('Empty sheet');
 			const header = (data[0] || []).map((h) => normalizeHeader(h));
 			const idx = {
