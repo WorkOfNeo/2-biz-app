@@ -479,8 +479,8 @@ export async function exportOverview(ctx: Ctx) {
           m.set(spId, row);
         }
       }
-      // Styling (20% smaller)
-      const SCALE = 0.8;
+      // Styling (20% smaller overall vs previous)
+      const SCALE = 0.64;
       const s = (n: number) => Math.max(0.5, n * SCALE);
       const styles = StyleSheet.create({
         page: { padding: s(16), fontSize: s(12), color: '#0f172a' },
@@ -529,16 +529,22 @@ export async function exportOverview(ctx: Ctx) {
           .sort((a,b) => (b.s1Price + b.s2Price) - (a.s1Price + a.s2Price));
         const T = (txt: string, w: string, align: 'left' | 'right' = 'left', bold = false) =>
           React.createElement(Text, { style: [{ width: w, textAlign: align }, bold ? { fontWeight: 700 as any } : {}] }, txt);
-        // Combined header row for salesperson table
-        const spHeader = React.createElement(View, { style: styles.row },
+        // Two-level header for salesperson table
+        const spHeaderTop = React.createElement(View, { style: styles.row },
           T('Name','34%','left',true),
-          T(`${s1Code} Stk`,'11%','right',true),
-          T(`${s1Code} Oms`,'22%','right',true),
-          T(`${s2Code} Stk`,'11%','right',true),
-          T(`${s2Code} Oms`,'22%','right',true)
+          T(`${s1Code}`,'33%','center' as any,true),
+          T(`${s2Code}`,'33%','center' as any,true)
         );
-        const spTable = React.createElement(View, { style: { marginTop: s(8) } },
-          spHeader,
+        const spHeaderBottom = React.createElement(View, { style: styles.row },
+          T('','34%','left',false),
+          T('Stk','11%','right',true),
+          T('Oms','22%','right',true),
+          T('Stk','11%','right',true),
+          T('Oms','22%','right',true)
+        );
+        const spTable = React.createElement(View, { style: { marginTop: s(6) } },
+          spHeaderTop,
+          spHeaderBottom,
           ...spRows.map(r => React.createElement(View, { style: styles.row },
             T(r.name,'34%','left'),
             T(String(r.s1Qty),'11%','right'),
@@ -547,22 +553,23 @@ export async function exportOverview(ctx: Ctx) {
             T(fmt(r.s2Price),'22%','right')
           ))
         );
-        // Row layout: [Header + Antal] [Omsætning] [Per sælger]
-        return React.createElement(View, { style: { flexDirection: 'row', gap: s(16), marginBottom: s(12) } },
-          React.createElement(View, { style: { width: '24%' as any, alignItems: 'center' as any } },
-            React.createElement(Text, { style: styles.h1 }, `${cName} (${s1Code} vs ${s2Code})`),
-            React.createElement(Text, { style: styles.boxTitle }, 'Antal stk'),
-            React.createElement(Text, { style: styles.boxNums }, `${row.s1Qty} vs ${row.s2Qty}`),
-            React.createElement(Donut as any, { pct: qtyPct, label: 'Stk' })
-          ),
-          React.createElement(View, { style: { width: '24%' as any, alignItems: 'center' as any } },
-            React.createElement(Text, { style: styles.boxTitle }, 'Omsætning (DKK)'),
-            React.createElement(Text, { style: styles.boxNums }, `${fmt(row.s1Price)} DKK vs ${fmt(row.s2Price)} DKK`),
-            React.createElement(Donut as any, { pct: pricePct, label: 'Omsætning' })
-          ),
-          React.createElement(View, { style: { width: '52%' as any } },
-            React.createElement(Text, { style: styles.boxTitle }, 'Per sælger'),
-            spTable
+        // Header full width, then row: [Antal] [Omsætning] [Per sælger]
+        return React.createElement(View, { style: { flexDirection: 'column', gap: s(6), marginBottom: s(10) } },
+          React.createElement(Text, { style: styles.h1 }, `${cName} (${s1Code} vs ${s2Code})`),
+          React.createElement(View, { style: { flexDirection: 'row', gap: s(16) } },
+            React.createElement(View, { style: { width: '24%' as any, alignItems: 'center' as any } },
+              React.createElement(Text, { style: styles.boxTitle }, 'Antal stk'),
+              React.createElement(Text, { style: styles.boxNums }, `${row.s1Qty} vs ${row.s2Qty}`),
+              React.createElement(Donut as any, { pct: qtyPct, label: 'Stk' })
+            ),
+            React.createElement(View, { style: { width: '24%' as any, alignItems: 'center' as any } },
+              React.createElement(Text, { style: styles.boxTitle }, 'Omsætning (DKK)'),
+              React.createElement(Text, { style: styles.boxNums }, `${fmt(row.s1Price)} DKK vs ${fmt(row.s2Price)} DKK`),
+              React.createElement(Donut as any, { pct: pricePct, label: 'Omsætning' })
+            ),
+            React.createElement(View, { style: { width: '52%' as any } },
+              spTable
+            )
           )
         );
       });
