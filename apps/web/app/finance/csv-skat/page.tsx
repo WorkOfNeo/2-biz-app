@@ -44,6 +44,7 @@ export default function CsvSkatPage() {
 	const [rowsOut, setRowsOut] = React.useState<any[][]>([]);
 	const [busy, setBusy] = React.useState(false);
 	const [error, setError] = React.useState<string | null>(null);
+	const [showAll, setShowAll] = React.useState(false);
 
 	async function onFilesSelected(files: File[]) {
 		setError(null);
@@ -101,8 +102,18 @@ export default function CsvSkatPage() {
 	}
 
 	function buildOutput(src: InRow[], dateStrParam: string) {
-		// Exclude rows where country code equals 'NO'
-		const filtered = src.filter((r) => String(r.landekode || '').toUpperCase() !== 'NO');
+		// Filter rules:
+		// - Exclude rows where country code equals 'NO'
+		// - Exclude rows missing Lande-/områdekode
+		// - Exclude rows missing Debitors momsregistreringsnr (after stripping letters)
+		const filtered = src.filter((r) => {
+			const land = String(r.landekode || '').trim();
+			const moms = String(r.momsnr || '').replace(/[A-Za-z]/g, '').trim();
+			if (!land) return false;
+			if (land.toUpperCase() === 'NO') return false;
+			if (!moms) return false;
+			return true;
+		});
 		// Keep incoming order; we'll compute Linjenr sequentially starting at 1
 		const header = [0, 27492185, 'LISTE', '', '', '', '', '', ''];
 		const out: any[][] = [header];
@@ -218,15 +229,21 @@ export default function CsvSkatPage() {
 					<CardContent className="overflow-auto">
 						<table className="min-w-full text-xs">
 							<tbody>
-								{rowsOut.slice(0, 25).map((r, i) => (
+								{(showAll ? rowsOut : rowsOut.slice(0, 25)).map((r, i) => (
 									<tr key={i}>
 										{r.map((c, j) => (
 											<td key={j} className="p-1 border">{String(c ?? '')}</td>
 										))}
 									</tr>
 								))}
-								{rowsOut.length > 25 && (
-									<tr><td className="p-1 text-gray-500" colSpan={rowsOut[0]?.length || 9}>… {rowsOut.length - 25} more rows</td></tr>
+								{!showAll && rowsOut.length > 25 && (
+									<tr>
+										<td className="p-1 text-blue-700 underline cursor-pointer" colSpan={rowsOut[0]?.length || 9}
+											onClick={() => setShowAll(true)}
+										>
+											… {rowsOut.length - 25} more rows (click to expand)
+										</td>
+									</tr>
 								)}
 							</tbody>
 						</table>
