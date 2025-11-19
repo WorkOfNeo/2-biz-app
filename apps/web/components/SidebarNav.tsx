@@ -32,6 +32,7 @@ export function SidebarNav() {
     styles: startsWith('/styles'),
     purchase: startsWith('/purchase'),
     sales: startsWith('/sales'),
+    finance: startsWith('/finance'),
     settings: startsWith('/settings'),
     admin: startsWith('/admin')
   }));
@@ -55,6 +56,16 @@ export function SidebarNav() {
           {!has('salesman') && has('admin') && <NavLink href="/statistics/vendors/top10" label="Top 10 Vendors" />}
           {!has('salesman') && has('admin') && <NavLink href="/statistics/exports" label="Exports" />}
           {!has('salesman') && <NavLink href="/statistics/downloads" label="Downloads" />}
+        </div>
+        )}
+      </div>
+      <div>
+        <button onClick={() => toggle('finance')} className="mt-4 mb-1 w-full text-left text-xs uppercase tracking-wider text-slate-400">
+          Finance
+        </button>
+        {open.finance && (
+        <div className="ml-2 space-y-1">
+          {!has('salesman') && has('admin') && <NavLink href="/finance/csv-skat" label="CSV - Skat" />}
         </div>
         )}
       </div>
