@@ -179,6 +179,8 @@ export async function exportOverview(ctx: Ctx) {
       };
       const s1Info = await getSeason(s1);
       const s2Info = await getSeason(s2);
+      const s1Name = s1Info ? `${s1Info.name}${s1Info.year ? ' ' + s1Info.year : ''}` : 'S1';
+      const s2Name = s2Info ? `${s2Info.name}${s2Info.year ? ' ' + s2Info.year : ''}` : 'S2';
       const total = list.length;
       const zip = new JSZip();
       const filesList: Array<{ name: string; path: string; publicUrl: string | null; salesperson_id: string }> = [];
@@ -366,6 +368,24 @@ export async function exportOverview(ctx: Ctx) {
       const { s1, s2 } = await getSeasonCompare();
       if (!s1 || !s2) throw new Error('Missing season compare (s1/s2)');
       const countries = ['Denmark', 'Norway', 'Sweden', 'Finland'];
+      // Season info for codes
+      const getSeason = async (id: string | null): Promise<{ name: string; year: number | null; code: string } | null> => {
+        if (!id) return null;
+        try {
+          const { data } = await supabase.from('seasons').select('name, year').eq('id', id).maybeSingle();
+          const n = (data as any)?.name as string | null;
+          const y = (data as any)?.year as number | null;
+          const code = (() => {
+            const words = String(n || '').trim().split(/\s+/).filter(Boolean);
+            const letters = words.map(w => w[0]?.toUpperCase() || '').join('');
+            const yy = typeof y === 'number' ? String(y).slice(-2) : '';
+            return `${letters}${yy}`;
+          })();
+          return { name: n || '', year: y ?? null, code };
+        } catch { return null; }
+      };
+      const s1Info = await getSeason(s1);
+      const s2Info = await getSeason(s2);
       // Data loads
       const { data: stats } = await supabase.from('sales_stats').select('season_id, qty, price, currency, account_no, customer_id, customers(country)').in('season_id', [s1, s2]).limit(200000);
       const { data: customers } = await supabase.from('customers').select('customer_id, country, salesperson_id, nulled, excluded, permanently_closed');
