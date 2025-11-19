@@ -549,23 +549,22 @@ export async function exportOverview(ctx: Ctx) {
           ))
         );
         return React.createElement(PdfPage, { size: 'A4', orientation: 'landscape', style: styles.page },
-          React.createElement(View, { style: { flexDirection: 'column', gap: s(24) } },
-            React.createElement(View, { style: { width: '100%' as any } },
-              React.createElement(Text, { style: styles.h1 }, `${cName} (${s1Code} vs ${s2Code})`),
-              React.createElement(View, { style: styles.section },
-                React.createElement(View, { style: styles.box },
-                  React.createElement(Text, { style: styles.boxTitle }, 'Antal stk'),
-                  React.createElement(Text, { style: styles.boxNums }, `${row.s1Qty} vs ${row.s2Qty}`),
-                  React.createElement(Donut as any, { pct: qtyPct, label: 'Stk' })
-                ),
-                React.createElement(View, { style: styles.box },
-                  React.createElement(Text, { style: styles.boxTitle }, 'Omsætning'),
-                  React.createElement(Text, { style: styles.boxNums }, `${fmt(s1Local)} ${cur} vs ${fmt(s2Local)} ${cur}`),
-                  React.createElement(Text, { style: styles.boxSub }, `${fmt(row.s1Price)} DKK vs ${fmt(row.s2Price)} DKK`),
-                  React.createElement(Donut as any, { pct: pricePct, label: 'Omsætning' })
-                )
+          React.createElement(View, { style: { flexDirection: 'column', gap: s(12) } },
+            React.createElement(Text, { style: styles.h1 }, `${cName} (${s1Code} vs ${s2Code})`),
+            // Single row: [Antal stk] [Omsætning] [Per sælger table]
+            React.createElement(View, { style: { flexDirection: 'row', gap: s(16) } },
+              React.createElement(View, { style: { width: '24%' as any, alignItems: 'center' as any } },
+                React.createElement(Text, { style: styles.boxTitle }, 'Antal stk'),
+                React.createElement(Text, { style: styles.boxNums }, `${row.s1Qty} vs ${row.s2Qty}`),
+                React.createElement(Donut as any, { pct: qtyPct, label: 'Stk' })
               ),
-              React.createElement(View, { style: { flexDirection: 'column', gap: s(10) } },
+              React.createElement(View, { style: { width: '24%' as any, alignItems: 'center' as any } },
+                React.createElement(Text, { style: styles.boxTitle }, 'Omsætning'),
+                React.createElement(Text, { style: styles.boxNums }, `${fmt(s1Local)} ${cur} vs ${fmt(s2Local)} ${cur}`),
+                React.createElement(Text, { style: styles.boxSub }, `${fmt(row.s1Price)} DKK vs ${fmt(row.s2Price)} DKK`),
+                React.createElement(Donut as any, { pct: pricePct, label: 'Omsætning' })
+              ),
+              React.createElement(View, { style: { width: '52%' as any } },
                 React.createElement(Text, { style: styles.boxTitle }, 'Per sælger'),
                 spTable
               )
