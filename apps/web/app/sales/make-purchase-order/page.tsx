@@ -152,8 +152,7 @@ function NielsensPanel() {
         'Phone',
         'Price',
         'Discount',
-        'Order',
-        'Comment',
+        'Order Comment',
       ];
       // We only fill a subset of columns; others remain blank
       const data = rowsOut.map(r => ([
@@ -173,8 +172,7 @@ function NielsensPanel() {
         '',                      // Phone
         '',                      // Price
         '',                      // Discount
-        '',                      // Order
-        '',                      // Comment
+        '',                      // Order Comment
       ]));
       const wb = XLSX.utils.book_new();
       const ws = XLSX.utils.aoa_to_sheet([header, ...data]);
