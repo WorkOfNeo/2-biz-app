@@ -103,18 +103,17 @@ export default function CsvSkatPage() {
 	function buildOutput(src: InRow[], dateStrParam: string) {
 		// Exclude rows where country code equals 'NO'
 		const filtered = src.filter((r) => String(r.landekode || '').toUpperCase() !== 'NO');
-		// Sort by original linjenr to keep stable ordering
-		filtered.sort((a, b) => (a.linjenr || 0) - (b.linjenr || 0));
+		// Keep incoming order; we'll compute Linjenr sequentially starting at 1
 		const header = ['0', '27492185', 'LISTE', '', '', '', '', '', ''];
 		const out: any[][] = [header];
 		let sum = 0;
-		let lastLineNo = 0;
+		let seq = 0;
 		for (const r of filtered) {
-			lastLineNo = r.linjenr || lastLineNo;
+			seq += 1; // calculated Linjenr (no relation to file's Linjenr)
 			sum += r.vaerdi || 0;
 			out.push([
 				2,                           // col1
-				r.linjenr,                   // col2
+				seq,                         // col2 (calculated Linjenr starting from 1)
 				dateStrParam,                // col3 YYYY-MM-DD
 				27492185,                    // col4
 				r.landekode || '',           // col5
@@ -127,7 +126,7 @@ export default function CsvSkatPage() {
 		// Last summary row
 		out.push([
 			10,                 // col1
-			Number(lastLineNo || 0) + 1, // col2
+			seq + 1,           // col2: last calculated Linjenr + 1
 			sum,                // col3: sum of "Samlede værdi af forsyninger" of present rows
 			'', '', '', '', '', '',
 		]);
