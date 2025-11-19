@@ -162,12 +162,23 @@ export async function exportOverview(ctx: Ctx) {
       const list = (people ?? []) as Array<{ id: string; name: string; currency?: string | null }>;
       let rates: Record<string, number> = { DKK: 1 };
       try { const { data: rateRow } = await supabase.from('app_settings').select('value').eq('key', 'currency_rates').maybeSingle(); rates = { DKK: 1, ...((rateRow?.value as any) ?? {}) } as Record<string, number>; } catch {}
-      const seasonNames = async (id: string | null): Promise<string | null> => {
+      const getSeason = async (id: string | null): Promise<{ name: string; year: number | null; code: string } | null> => {
         if (!id) return null;
-        try { const { data } = await supabase.from('seasons').select('name, year').eq('id', id).maybeSingle(); const n = (data as any)?.name as string | null; const y = (data as any)?.year as number | null; return n ? (y ? `${n} ${y}` : n) : null; } catch { return null; }
+        try {
+          const { data } = await supabase.from('seasons').select('name, year').eq('id', id).maybeSingle();
+          const n = (data as any)?.name as string | null;
+          const y = (data as any)?.year as number | null;
+          const code = (() => {
+            const words = String(n || '').trim().split(/\s+/).filter(Boolean);
+            const letters = words.map(w => w[0]?.toUpperCase() || '').join('');
+            const yy = typeof y === 'number' ? String(y).slice(-2) : '';
+            return `${letters}${yy}`;
+          })();
+          return { name: n || '', year: y ?? null, code };
+        } catch { return null; }
       };
-      const s1Name = await seasonNames(s1);
-      const s2Name = await seasonNames(s2);
+      const s1Info = await getSeason(s1);
+      const s2Info = await getSeason(s2);
       const total = list.length;
       const zip = new JSZip();
       const filesList: Array<{ name: string; path: string; publicUrl: string | null; salesperson_id: string }> = [];
@@ -465,7 +476,7 @@ export async function exportOverview(ctx: Ctx) {
       const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
       function Donut({ pct, label }: { pct: number; label: string }) {
         const visualPct = clamp(pct, 0, 100);
-        const r = s(90); const cx = s(100); const cy = s(100); const restW = s(8); const progW = s(16);
+        const r = s(70); const cx = s(90); const cy = s(90); const restW = s(8); const progW = s(14);
         const endAngle = (-90 + (visualPct / 100) * 360) * (Math.PI / 180);
         const x = cx + r * Math.cos(endAngle);
         const y = cy + r * Math.sin(endAngle);
@@ -483,12 +494,10 @@ export async function exportOverview(ctx: Ctx) {
       }
       // Map country -> currency like on page
       const countryCurrency: Record<string, string> = { Denmark: 'DKK', Norway: 'NOK', Sweden: 'SEK', Finland: 'EUR' };
-      const seasonNames = async (id: string | null): Promise<string | null> => {
-        if (!id) return null;
-        try { const { data } = await supabase.from('seasons').select('name, year').eq('id', id).maybeSingle(); const n = (data as any)?.name as string | null; const y = (data as any)?.year as number | null; return n ? (y ? `${n} ${y}` : n) : null; } catch { return null; }
-      };
-      const s1Name = await seasonNames(s1);
-      const s2Name = await seasonNames(s2);
+      const s1Name = s1Info ? `${s1Info.name}${s1Info.year ? ' ' + s1Info.year : ''}` : null;
+      const s2Name = s2Info ? `${s2Info.name}${s2Info.year ? ' ' + s2Info.year : ''}` : null;
+      const s1Code = s1Info?.code || 'S1';
+      const s2Code = s2Info?.code || 'S2';
       // Build one full page per country
       const pages = countries.map((cName) => {
         const row = totals[cName] || { s1Qty: 0, s2Qty: 0, s1Price: 0, s2Price: 0 };
@@ -502,26 +511,27 @@ export async function exportOverview(ctx: Ctx) {
           .sort((a,b) => (b.s1Price + b.s2Price) - (a.s1Price + a.s2Price));
         const T = (txt: string, w: string, align: 'left' | 'right' = 'left', bold = false) =>
           React.createElement(Text, { style: [{ width: w, textAlign: align }, bold ? { fontWeight: 700 as any } : {}] }, txt);
-        const qtyTable = React.createElement(View, { style: { marginTop: s(8) } },
-          React.createElement(View, { style: styles.row },
-            T('Name','40%','left',true), T(s1Name || 'Season 1','30%','right',true), T(s2Name || 'Season 2','30%','right',true)
-          ),
-          ...spRows.map(r => React.createElement(View, { style: styles.row },
-            T(r.name,'40%','left'), T(String(r.s1Qty),'30%','right'), T(String(r.s2Qty),'30%','right')
-          ))
+        const spHeader = React.createElement(View, { style: styles.row },
+          T('Name','34%','left',true),
+          T(`${s1Code} Stk`,'11%','right',true),
+          T(`${s1Code} Oms`,'22%','right',true),
+          T(`${s2Code} Stk`,'11%','right',true),
+          T(`${s2Code} Oms`,'22%','right',true)
         );
-        const priceTable = React.createElement(View, { style: { marginTop: s(8) } },
-          React.createElement(View, { style: styles.row },
-            T('Name','40%','left',true), T((s1Name || 'Season 1') + ' (DKK)','30%','right',true), T((s2Name || 'Season 2') + ' (DKK)','30%','right',true)
-          ),
+        const spTable = React.createElement(View, { style: { marginTop: s(8) } },
+          spHeader,
           ...spRows.map(r => React.createElement(View, { style: styles.row },
-            T(r.name,'40%','left'), T(fmt(r.s1Price),'30%','right'), T(fmt(r.s2Price),'30%','right')
+            T(r.name,'34%','left'),
+            T(String(r.s1Qty),'11%','right'),
+            T(fmt(r.s1Price),'22%','right'),
+            T(String(r.s2Qty),'11%','right'),
+            T(fmt(r.s2Price),'22%','right')
           ))
         );
         return React.createElement(PdfPage, { size: 'A4', orientation: 'landscape', style: styles.page },
           React.createElement(View, { style: { flexDirection: 'column', gap: s(24) } },
             React.createElement(View, { style: { width: '100%' as any } },
-              React.createElement(Text, { style: styles.h1 }, `Countries · ${cName}`),
+              React.createElement(Text, { style: styles.h1 }, `${cName} (${s1Code} vs ${s2Code})`),
               React.createElement(View, { style: styles.section },
                 React.createElement(View, { style: styles.box },
                   React.createElement(Text, { style: styles.boxTitle }, 'Antal stk'),
@@ -535,15 +545,9 @@ export async function exportOverview(ctx: Ctx) {
                   React.createElement(Donut as any, { pct: pricePct, label: 'Omsætning' })
                 )
               ),
-              React.createElement(View, { style: { flexDirection: 'row', gap: s(16) } },
-                React.createElement(View, { style: { width: '50%' as any } }, 
-                  React.createElement(Text, { style: styles.boxTitle }, 'Per sælger - stk'),
-                  qtyTable
-                ),
-                React.createElement(View, { style: { width: '50%' as any } }, 
-                  React.createElement(Text, { style: styles.boxTitle }, 'Per sælger - omsætning (DKK)'),
-                  priceTable
-                )
+              React.createElement(View, { style: { flexDirection: 'column', gap: s(10) } },
+                React.createElement(Text, { style: styles.boxTitle }, 'Per sælger'),
+                spTable
               )
             )
           )
