@@ -484,13 +484,14 @@ export async function exportOverview(ctx: Ctx) {
       const s = (n: number) => Math.max(0.5, n * SCALE);
       const styles = StyleSheet.create({
         page: { padding: s(16), fontSize: s(12), color: '#0f172a' },
-        h1: { fontSize: s(18), marginBottom: s(10) },
+        h1: { fontSize: s(14), marginBottom: s(10), textAlign: 'center' as any },
+        docHeader: { fontSize: s(10), color: '#6b7280', textAlign: 'center' as any, marginBottom: s(8) },
         row: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: s(8) },
-        section: { flexDirection: 'row', gap: s(16) },
+        section: { flexDirection: 'row', gap: s(10) },
         box: { width: '50%' as any, padding: s(8), alignItems: 'center' as any },
-        boxTitle: { fontSize: s(12), marginBottom: s(2) },
-        boxSub: { fontSize: s(10), color: '#64748b', marginBottom: s(4) },
-        boxNums: { fontSize: s(12), fontWeight: 700 as any, marginBottom: s(6) }
+        boxTitle: { fontSize: s(10), marginBottom: s(2) },
+        boxSub: { fontSize: s(8), color: '#64748b', marginBottom: s(4) },
+        boxNums: { fontSize: s(8), fontWeight: 700 as any, marginBottom: s(6) }
       });
       const fmt = (n: number) => new Intl.NumberFormat('da-DK').format(Math.round(n));
       const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
@@ -534,12 +535,7 @@ export async function exportOverview(ctx: Ctx) {
           .sort((a,b) => (b.s1Price + b.s2Price) - (a.s1Price + a.s2Price));
         const T = (txt: string, w: string, align: 'left' | 'right' = 'left', bold = false) =>
           React.createElement(Text, { style: [{ width: w, textAlign: align }, bold ? { fontWeight: 700 as any } : {}] }, txt);
-        // Two-level header for salesperson table
-        const spHeaderTop = React.createElement(View, { style: styles.row },
-          T('Name','34%','left',true),
-          T(`${s1Code}`,'33%','center' as any,true),
-          T(`${s2Code}`,'33%','center' as any,true)
-        );
+        // Single-level header for salesperson table (season codes shown only once at top of document)
         const spHeaderBottom = React.createElement(View, { style: styles.row },
           T('','34%','left',false),
           T('Stk','11%','right',true),
@@ -548,7 +544,6 @@ export async function exportOverview(ctx: Ctx) {
           T('Oms','22%','right',true)
         );
         const spTable = React.createElement(View, { style: { marginTop: s(6) } },
-          spHeaderTop,
           spHeaderBottom,
           ...spRows.map(r => React.createElement(View, { style: styles.row },
             T(r.name,'34%','left'),
@@ -558,9 +553,9 @@ export async function exportOverview(ctx: Ctx) {
             T(fmt(r.s2Price),'22%','right')
           ))
         );
-        // Header full width, then row: [Antal] [Omsætning] [Per sælger]
-        return React.createElement(View, { style: { flexDirection: 'column', gap: s(6), marginBottom: s(10) } },
-          React.createElement(Text, { style: styles.h1 }, `${cName} (${s1Code} vs ${s2Code})`),
+        // Country block with bottom separator
+        return React.createElement(View, { style: { flexDirection: 'column', gap: s(6), marginBottom: s(10), paddingBottom: s(8), borderBottomWidth: s(1), borderBottomColor: '#e5e7eb' } },
+          React.createElement(Text, { style: styles.h1 }, `${cName}`),
           React.createElement(View, { style: { flexDirection: 'row', gap: s(16) } },
             React.createElement(View, { style: { width: '24%' as any, alignItems: 'center' as any } },
               React.createElement(Text, { style: styles.boxTitle }, 'Antal stk'),
@@ -581,7 +576,10 @@ export async function exportOverview(ctx: Ctx) {
       // Single page document; react-pdf will flow to additional pages if needed, but we don't create a page per country manually
       const combined = React.createElement(Document, null,
         React.createElement(PdfPage, { size: 'A4', orientation: 'landscape', style: styles.page },
-          React.createElement(View, { style: { flexDirection: 'column', gap: s(6) } }, ...sections)
+          React.createElement(View, { style: { flexDirection: 'column', gap: s(6) } },
+            React.createElement(Text, { style: styles.docHeader }, `${s1Code} vs ${s2Code}`),
+            ...sections
+          )
         )
       );
       const combinedOut = await pdf(combined).toBuffer();
