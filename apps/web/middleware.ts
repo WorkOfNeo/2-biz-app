@@ -68,7 +68,7 @@ export async function middleware(req: NextRequest) {
     if (pathname === '/') {
       let dest = '/statistics/overview';
       if (roles.has('finance')) dest = '/finance/csv-skat';
-      else if (roles.has('sales')) dest = '/sales';
+      else if (roles.has('sales')) dest = '/sales/nielsens';
       else if (roles.has('purchase')) dest = '/statistics/overview';
       // If chosen dest is not allowed, pick first allowed path (other than '/'), else do nothing
       const ok = Array.from(allow).some((p) => dest === p || dest.startsWith(p + '/'));
@@ -76,6 +76,7 @@ export async function middleware(req: NextRequest) {
         const firstAllowed = Array.from(allow).find((p) => p !== '/');
         if (firstAllowed) {
           dest = firstAllowed === '/finance' ? '/finance/csv-skat'
+            : firstAllowed === '/sales' ? '/sales/nielsens'
             : firstAllowed === '/statistics' ? '/statistics/overview'
             : firstAllowed;
         } else {
@@ -96,6 +97,7 @@ export async function middleware(req: NextRequest) {
         const firstAllowed = Array.from(allow).find((p) => p !== '/');
         if (firstAllowed) {
           const dest = firstAllowed === '/finance' ? '/finance/csv-skat'
+            : firstAllowed === '/sales' ? '/sales/nielsens'
             : firstAllowed === '/statistics' ? '/statistics/overview'
             : firstAllowed;
           if (dest !== pathname) return NextResponse.redirect(new URL(dest, req.url));
