@@ -73,7 +73,7 @@ const allowedOrigins = WEB_ORIGIN.split(',').map((s) => s.trim()).filter(Boolean
 const corsOrigins: '*' | string[] = allowedOrigins.includes('*') ? '*' : allowedOrigins;
 app.use('*', cors({
   origin: corsOrigins as any,
-  allowMethods: ['GET', 'POST', 'OPTIONS'],
+  allowMethods: ['GET', 'POST', 'PATCH', 'OPTIONS'],
   // Allow all request headers to satisfy preflight Access-Control-Request-Headers
   allowHeaders: ['*']
 }));
