@@ -190,8 +190,8 @@ export async function exportOverview(ctx: Ctx) {
       for (const sp of list) {
         idx++;
         await log(job.id, 'info', 'STEP:export_general_progress', { index: idx, total, name: sp.name });
-        const { data: customers } = await supabase.from('customers').select('customer_id, company, city, nulled, excluded, permanently_closed').eq('salesperson_id', sp.id);
-        const items = (customers ?? []) as Array<{ customer_id: string; company: string | null; city: string | null; nulled?: boolean | null; excluded?: boolean | null; permanently_closed?: boolean | null }>;
+        const { data: customers } = await supabase.from('customers').select('customer_id, company, city, group_name, nulled, excluded, permanently_closed').eq('salesperson_id', sp.id);
+        const items = (customers ?? []) as Array<{ customer_id: string; company: string | null; city: string | null; group_name?: string | null; nulled?: boolean | null; excluded?: boolean | null; permanently_closed?: boolean | null }>;
         let hiddenSet = new Set<string>(); let nulledSet = new Set<string>();
         try {
           const key = `season_overrides:${s1}`;
@@ -241,6 +241,8 @@ export async function exportOverview(ctx: Ctx) {
           headerCell: { padding: 4, fontSize: 9, fontWeight: 700 },
           row: { flexDirection: 'row', borderBottom: 0.5, borderColor: '#e2e8f0' },
           rowAlt: { backgroundColor: '#f1f5f9' },
+          subtotalRow: { backgroundColor: '#e5e7eb' },
+          subtotalStrong: { fontWeight: 700 },
           mutedRow: { opacity: 0.5 },
           cell: { padding: 4, fontSize: 8 },
           left: { textAlign: 'left' },
@@ -267,13 +269,54 @@ export async function exportOverview(ctx: Ctx) {
           Cell('Stk', '7%', 'right', styles.headerCell),
           Cell('Oms', '8%', 'right', styles.headerCell)
         );
-        const body = rows.map((r, i) => {
+        // Respect group_name: sort by group then company, and add a subtotal row at the end of each group
+        const sorted = [...rows].sort((a,b) => {
+          const ga = String((items.find(it=>it.customer_id===a.account)?.group_name || '')).toLowerCase();
+          const gb = String((items.find(it=>it.customer_id===b.account)?.group_name || '')).toLowerCase();
+          if (ga !== gb) return ga < gb ? -1 : 1;
+          return a.company.localeCompare(b.company);
+        });
+        type RowExt = typeof rows[number] & { isGroupTotal?: boolean; groupName?: string | null };
+        const withSubtotals: RowExt[] = [];
+        let curGroup: string | null = null;
+        let accTotals = { s1Qty: 0, s1Price: 0, s2Qty: 0, s2Price: 0 };
+        const groupOf = (acc: string): string | null => {
+          const it = items.find(it => it.customer_id === acc);
+          return (it?.group_name ?? null) as any;
+        };
+        function flushSubtotal() {
+          if (!curGroup) return;
+          withSubtotals.push({
+            account: `__group_total:${curGroup}`,
+            company: `Group total — ${curGroup}`,
+            city: '',
+            nulled: false,
+            s1Qty: accTotals.s1Qty,
+            s1Price: accTotals.s1Price,
+            s2Qty: accTotals.s2Qty,
+            s2Price: accTotals.s2Price,
+            isGroupTotal: true,
+            groupName: curGroup
+          } as any);
+        }
+        for (const r of sorted) {
+          const g = groupOf(r.account);
+          if (g && curGroup && g !== curGroup) { flushSubtotal(); accTotals = { s1Qty: 0, s1Price: 0, s2Qty: 0, s2Price: 0 }; }
+          if (g && !curGroup) { accTotals = { s1Qty: 0, s1Price: 0, s2Qty: 0, s2Price: 0 }; }
+          if (g) curGroup = g;
+          withSubtotals.push({ ...r, groupName: g } as any);
+          if (g) {
+            accTotals.s1Qty += r.s1Qty; accTotals.s1Price += r.s1Price; accTotals.s2Qty += r.s2Qty; accTotals.s2Price += r.s2Price;
+          }
+        }
+        if (curGroup) flushSubtotal();
+        const body = withSubtotals.map((r, i) => {
           const devQty = r.s1Qty - r.s2Qty; const devPrice = r.s1Price - r.s2Price;
           const devQtyStyle = devQty >= 0 ? styles.green : styles.red;
           const devPriceStyle = devPrice >= 0 ? styles.green : styles.red;
-          const baseRow = i % 2 === 1 ? [styles.row, styles.rowAlt] : [styles.row];
+          const baseRow = r.isGroupTotal ? [styles.row, styles.subtotalRow] : (i % 2 === 1 ? [styles.row, styles.rowAlt] : [styles.row]);
           const rowStyle = r.nulled ? [...baseRow, styles.mutedRow] : baseRow;
-          const nameStyle = r.nulled ? styles.strike : undefined;
+          const nameStyle = r.isGroupTotal ? styles.subtotalStrong : (r.nulled ? styles.strike : undefined);
           const s1QtyStyle = r.s1Qty === 0 ? undefined : (r.s1Qty > r.s2Qty ? styles.green : r.s1Qty < r.s2Qty ? styles.red : undefined);
           const s1PriceStyle = r.s1Price === 0 ? undefined : (r.s1Price > r.s2Price ? styles.green : r.s1Price < r.s2Price ? styles.red : undefined);
           return React.createElement(View, { style: rowStyle },
