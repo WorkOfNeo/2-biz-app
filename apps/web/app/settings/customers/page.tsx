@@ -26,7 +26,7 @@ export default function CustomersSettingsPage() {
   const { data: customers, mutate } = useSWR('customers', async () => {
     const { data, error } = await supabase
       .from('customers')
-      .select('id, company, city, country, phone, priority, customer_id, salespersons(name)')
+      .select('id, company, city, country, phone, priority, customer_id, stats_display_name, group_name, email, postal, currency, excluded, nulled, permanently_closed, salespersons(name)')
       .order('company', { ascending: true })
       .limit(5000);
     if (error) throw new Error(error.message);
@@ -47,6 +47,38 @@ export default function CustomersSettingsPage() {
   ], []);
 
   const preview = useMemo(() => rows.slice(0, 5), [rows]);
+  // Per-row edit modal state
+  const [editOpen, setEditOpen] = useState(false);
+  const [editRow, setEditRow] = useState<any | null>(null);
+  const [e_company, setECompany] = useState('');
+  const [e_stats, setEStats] = useState('');
+  const [e_group, setEGroup] = useState('');
+  const [e_spName, setESPName] = useState('');
+  const [e_email, setEEmail] = useState('');
+  const [e_city, setECity] = useState('');
+  const [e_postal, setEPostal] = useState('');
+  const [e_country, setECountry] = useState('');
+  const [e_currency, setECurrency] = useState('');
+  const [e_excluded, setEExcluded] = useState(false);
+  const [e_nulled, setENulled] = useState(false);
+  const [e_closed, setEClosed] = useState(false);
+  const [e_saving, setESaving] = useState(false);
+  function openEdit(row: any) {
+    setEditRow(row);
+    setECompany(row.company ?? '');
+    setEStats(row.stats_display_name ?? '');
+    setEGroup(row.group_name ?? '');
+    setESPName(row.salespersons?.name ?? '');
+    setEEmail(row.email ?? '');
+    setECity(row.city ?? '');
+    setEPostal(row.postal ?? '');
+    setECountry(row.country ?? '');
+    setECurrency(row.currency ?? '');
+    setEExcluded(!!row.excluded);
+    setENulled(!!row.nulled);
+    setEClosed(!!row.permanently_closed);
+    setEditOpen(true);
+  }
 
   const parseFile = useCallback((file: File) => {
     const reader = new FileReader();
@@ -152,6 +184,7 @@ export default function CustomersSettingsPage() {
                 <th className="text-left p-2 border-b">Phone</th>
                 <th className="text-left p-2 border-b">Priority</th>
                 <th className="text-left p-2 border-b">Sales Person</th>
+                <th className="text-left p-2 border-b">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -163,6 +196,9 @@ export default function CustomersSettingsPage() {
                   <td className="p-2 border-b">{c.phone || '-'}</td>
                   <td className="p-2 border-b">{c.priority || '-'}</td>
                   <td className="p-2 border-b text-sm">{c.salespersons?.name || '—'}</td>
+                  <td className="p-2 border-b">
+                    <button className="text-blue-600 hover:underline" onClick={()=>openEdit(c)}>Edit</button>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -268,6 +304,74 @@ export default function CustomersSettingsPage() {
           )}
 
           {resultMsg && <div className="text-sm">{resultMsg}</div>}
+        </div>
+      </Modal>
+      <Modal
+        open={editOpen}
+        onClose={()=>setEditOpen(false)}
+        title="Edit Customer"
+        footer={(
+          <>
+            <button className="px-3 py-1.5 text-sm" onClick={()=>setEditOpen(false)}>Cancel</button>
+            <button
+              disabled={e_saving || !editRow}
+              className="inline-flex items-center rounded-md bg-slate-900 text-white px-3 py-1.5 text-sm hover:bg-slate-800 disabled:opacity-50"
+              onClick={async ()=>{
+                if (!editRow) return;
+                try {
+                  setESaving(true);
+                  const { data: { session } } = await supabase.auth.getSession();
+                  if (!session) throw new Error('Not signed in');
+                  const token = session.access_token;
+                  const res = await fetch(`${process.env.NEXT_PUBLIC_ORCHESTRATOR_URL}/customers/${editRow.id}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                    body: JSON.stringify({
+                      company: e_company,
+                      stats_display_name: e_stats,
+                      group_name: e_group,
+                      salesperson_name: e_spName,
+                      email: e_email,
+                      city: e_city,
+                      postal: e_postal,
+                      country: e_country,
+                      currency: e_currency,
+                      excluded: e_excluded,
+                      nulled: e_nulled,
+                      permanently_closed: e_closed
+                    })
+                  });
+                  if (!res.ok) throw new Error(await res.text());
+                  setEditOpen(false);
+                  mutate();
+                } catch (e: any) {
+                  alert(e?.message || 'Failed to save');
+                } finally {
+                  setESaving(false);
+                }
+              }}
+            >
+              {e_saving ? 'Saving…' : 'Save'}
+            </button>
+          </>
+        )}
+      >
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <label className="text-sm">Company<input className="mt-1 w-full border rounded p-1 text-sm" value={e_company} onChange={(e)=>setECompany(e.target.value)} /></label>
+          <label className="text-sm">Stats Display<input className="mt-1 w-full border rounded p-1 text-sm" value={e_stats} onChange={(e)=>setEStats(e.target.value)} /></label>
+          <label className="text-sm">Group<input className="mt-1 w-full border rounded p-1 text-sm" value={e_group} onChange={(e)=>setEGroup(e.target.value)} /></label>
+          <label className="text-sm">Salesperson
+            <input list="sp-edit" className="mt-1 w-full border rounded p-1 text-sm" value={e_spName} onChange={(e)=>setESPName(e.target.value)} placeholder="Salesperson name" />
+          </label>
+          <datalist id="sp-edit">{(salespersons ?? []).map((sp)=> (<option key={sp.id} value={sp.name} />))}</datalist>
+          <label className="text-sm">Email<input className="mt-1 w-full border rounded p-1 text-sm" value={e_email} onChange={(e)=>setEEmail(e.target.value)} /></label>
+          <label className="text-sm">City<input className="mt-1 w-full border rounded p-1 text-sm" value={e_city} onChange={(e)=>setECity(e.target.value)} /></label>
+          <label className="text-sm">Postal<input className="mt-1 w-full border rounded p-1 text-sm" value={e_postal} onChange={(e)=>setEPostal(e.target.value)} /></label>
+          <label className="text-sm">Country<input className="mt-1 w-full border rounded p-1 text-sm" value={e_country} onChange={(e)=>setECountry(e.target.value)} /></label>
+          <label className="text-sm">Currency<input className="mt-1 w-full border rounded p-1 text-sm" value={e_currency} onChange={(e)=>setECurrency(e.target.value)} /></label>
+          <label className="text-sm flex items-center gap-2"><input type="checkbox" checked={e_excluded} onChange={(e)=>setEExcluded(e.target.checked)} /> Excluded</label>
+          <label className="text-sm flex items-center gap-2"><input type="checkbox" checked={e_nulled} onChange={(e)=>setENulled(e.target.checked)} /> Nulled</label>
+          <label className="text-sm flex items-center gap-2"><input type="checkbox" checked={e_closed} onChange={(e)=>setEClosed(e.target.checked)} /> Permanently Closed</label>
         </div>
       </Modal>
     </div>
