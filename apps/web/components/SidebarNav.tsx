@@ -2,7 +2,7 @@
 import Link from 'next/link';
 import type { Route } from 'next';
 import { usePathname } from 'next/navigation';
-import { useRoles } from '../lib/supabaseClient';
+import { useRoles, useRoleAccess } from '../lib/supabaseClient';
 import { useState, useMemo } from 'react';
 
 function NavLink({ href, label }: { href: Route; label: string }) {
@@ -25,6 +25,7 @@ function NavLink({ href, label }: { href: Route; label: string }) {
 
 export function SidebarNav() {
   const { has } = useRoles();
+  const { can } = useRoleAccess();
   const pathname = usePathname();
   const startsWith = (p: string) => pathname === p || pathname.startsWith(p + '/');
   const [open, setOpen] = useState(() => ({
@@ -39,6 +40,49 @@ export function SidebarNav() {
   function toggle(key: keyof typeof open) {
     setOpen((o) => ({ ...o, [key]: !o[key] }));
   }
+  // Build per-section link lists based on access
+  const statLinks = [
+    can('/statistics/dashboard') ? <NavLink key="sd" href="/statistics/dashboard" label="Dashboard" /> : null,
+    can('/statistics/general') ? <NavLink key="sg" href="/statistics/general" label="General" /> : null,
+    can('/statistics/overview') ? <NavLink key="so" href="/statistics/overview" label="Overview" /> : null,
+    can('/statistics/countries') ? <NavLink key="sc" href="/statistics/countries" label="Countries" /> : null,
+    can('/statistics/styles/top10') ? <NavLink key="st" href="/statistics/styles/top10" label="Top 10 Styles" /> : null,
+    can('/statistics/vendors/top10') ? <NavLink key="sv" href="/statistics/vendors/top10" label="Top 10 Vendors" /> : null,
+    can('/statistics/exports') ? <NavLink key="se" href="/statistics/exports" label="Exports" /> : null,
+    can('/statistics/downloads') ? <NavLink key="sdw" href="/statistics/downloads" label="Downloads" /> : null,
+  ].filter(Boolean) as any[];
+  const financeLinks = [
+    can('/finance/csv-skat') ? <NavLink key="fin-skat" href="/finance/csv-skat" label="CSV - Skat" /> : null,
+  ].filter(Boolean) as any[];
+  const stylesLinks = [
+    can('/styles') ? <NavLink key="s" href="/styles" label="Styles" /> : null,
+    can('/styles/settings') ? <NavLink key="ss" href="/styles/settings" label="Settings" /> : null,
+    can('/styles/stock-list') ? <NavLink key="ssl" href="/styles/stock-list" label="Stock List" /> : null,
+    can('/styles/statistics') ? <NavLink key="sst" href="/styles/statistics" label="Statistics" /> : null,
+    can('/styles/scraper') ? <NavLink key="sscr" href="/styles/scraper" label="Stock Scraper" /> : null,
+    can('/styles/movements') ? <NavLink key="sm" href="/styles/movements" label="Movements" /> : null,
+  ].filter(Boolean) as any[];
+  const purchaseLinks = [
+    can('/purchase/orders') ? <NavLink key="po" href="/purchase/orders" label="Purchase Orders" /> : null,
+    can('/purchase/make-order') ? <NavLink key="pmo" href="/purchase/make-order" label="Make order" /> : null,
+  ].filter(Boolean) as any[];
+  const salesLinks = [
+    can('/sales/nielsens') ? <NavLink key="sn" href="/sales/nielsens" label="Nielsens" /> : null,
+    can('/sales/make-purchase-order') ? <NavLink key="smpo" href="/sales/make-purchase-order" label="Make Purchase Order" /> : null,
+  ].filter(Boolean) as any[];
+  const settingsLinks = [
+    can('/settings/seasons') ? <NavLink key="set-seasons" href="/settings/seasons" label="SEASONS" /> : null,
+    can('/settings/salespersons') ? <NavLink key="set-sp" href="/settings/salespersons" label="SALESPERSONS" /> : null,
+    can('/settings/customers') ? <NavLink key="set-cust" href="/settings/customers" label="CUSTOMERS" /> : null,
+    can('/settings/misc') ? <NavLink key="set-misc" href="/settings/misc" label="MISC" /> : null,
+    can('/settings/jobs') ? <NavLink key="set-jobs" href="/settings/jobs" label="JOBS" /> : null,
+    can('/settings/runs') ? <NavLink key="set-runs" href="/settings/runs" label="RUNS" /> : null,
+  ].filter(Boolean) as any[];
+  const adminLinks = [
+    can('/admin') ? <NavLink key="ad" href="/admin" label="Dashboard" /> : null,
+    can('/admin/users') ? <NavLink key="ad-users" href="/admin/users" label="Users" /> : null,
+    can('/admin/roles') ? <NavLink key="ad-roles" href="/admin/roles" label="Roles" /> : null,
+  ].filter(Boolean) as any[];
   return (
     <nav className="space-y-2">
       <NavLink href="/" label="Home" />
@@ -46,95 +90,46 @@ export function SidebarNav() {
         <button onClick={() => toggle('statistics')} className="mt-4 mb-1 w-full text-left text-xs uppercase tracking-wider text-slate-400">
           Statistics
         </button>
-        {open.statistics && (
-        <div className="ml-2 space-y-1">
-          {!has('salesman') && has('admin') && <NavLink href="/statistics/dashboard" label="Dashboard" />}
-          {!has('salesman') && <NavLink href="/statistics/general" label="General" />}
-          {!has('salesman') && <NavLink href="/statistics/overview" label="Overview" />}
-          {!has('salesman') && <NavLink href="/statistics/countries" label="Countries" />}
-          {!has('salesman') && <NavLink href="/statistics/styles/top10" label="Top 10 Styles" />}
-          {!has('salesman') && has('admin') && <NavLink href="/statistics/vendors/top10" label="Top 10 Vendors" />}
-          {!has('salesman') && has('admin') && <NavLink href="/statistics/exports" label="Exports" />}
-          {!has('salesman') && <NavLink href="/statistics/downloads" label="Downloads" />}
-        </div>
-        )}
+        {open.statistics && statLinks.length > 0 && (<div className="ml-2 space-y-1">{statLinks}</div>)}
       </div>
       <div>
         <button onClick={() => toggle('finance')} className="mt-4 mb-1 w-full text-left text-xs uppercase tracking-wider text-slate-400">
           Finance
         </button>
-        {open.finance && (
-        <div className="ml-2 space-y-1">
-          {!has('salesman') && has('admin') && <NavLink href="/finance/csv-skat" label="CSV - Skat" />}
-        </div>
-        )}
+        {open.finance && financeLinks.length > 0 && (<div className="ml-2 space-y-1">{financeLinks}</div>)}
       </div>
       <div>
         <button onClick={() => toggle('styles')} className="mt-4 mb-1 w-full text-left text-xs uppercase tracking-wider text-slate-400">
           Styles
         </button>
-        {open.styles && (
-        <div className="ml-2 space-y-1">
-          {!has('salesman') && <NavLink href="/styles" label="Styles" />}
-          {!has('salesman') && has('admin') && <NavLink href="/styles/settings" label="Settings" />}
-          <NavLink href="/styles/stock-list" label="Stock List" />
-          {!has('salesman') && has('admin') && <NavLink href="/styles/statistics" label="Statistics" />}
-          {!has('salesman') && has('admin') && <NavLink href="/styles/scraper" label="Stock Scraper" />}
-          {!has('salesman') && has('admin') && <NavLink href="/styles/movements" label="Movements" />}
-        </div>
-        )}
+        {open.styles && stylesLinks.length > 0 && (<div className="ml-2 space-y-1">{stylesLinks}</div>)}
       </div>
       <div>
         <button onClick={() => toggle('purchase')} className="mt-4 mb-1 w-full text-left text-xs uppercase tracking-wider text-slate-400">
           Purchase
         </button>
-        {open.purchase && (
-        <div className="ml-2 space-y-1">
-          {!has('salesman') && has('admin') && (
-            <NavLink href="/purchase/orders" label="Purchase Orders" />
-          )}
-          {!has('salesman') && has('admin') && (
-            <NavLink href="/purchase/make-order" label="Make order" />
-          )}
-        </div>
-        )}
+        {open.purchase && purchaseLinks.length > 0 && (<div className="ml-2 space-y-1">{purchaseLinks}</div>)}
       </div>
       <div>
         <button onClick={() => toggle('sales')} className="mt-4 mb-1 w-full text-left text-xs uppercase tracking-wider text-slate-400">
           Sales
         </button>
-        {open.sales && (
-        <div className="ml-2 space-y-1">
-          {!has('salesman') && has('admin') && <NavLink href="/sales/nielsens" label="Nielsens" />}
-          {!has('salesman') && has('admin') && <NavLink href="/sales/make-purchase-order" label="Make Purchase Order" />}
-        </div>
-        )}
+        {open.sales && salesLinks.length > 0 && (<div className="ml-2 space-y-1">{salesLinks}</div>)}
       </div>
       <div>
         <button onClick={() => toggle('settings')} className="mt-4 mb-1 w-full text-left text-xs uppercase tracking-wider text-slate-400">
           Settings
         </button>
-        {open.settings && (
-        <div className="ml-2 space-y-1">
-          {!has('salesman') && has('admin') && <NavLink href="/settings/seasons" label="SEASONS" />}
-          {!has('salesman') && has('admin') && <NavLink href="/settings/salespersons" label="SALESPERSONS" />}
-          {!has('salesman') && has('admin') && <NavLink href="/settings/customers" label="CUSTOMERS" />}
-          {!has('salesman') && has('admin') && <NavLink href="/settings/misc" label="MISC" />}
-          {!has('salesman') && has('admin') && <NavLink href="/settings/jobs" label="JOBS" />}
-          {!has('salesman') && has('admin') && <NavLink href="/settings/runs" label="RUNS" />}
-        </div>
-        )}
+        {open.settings && settingsLinks.length > 0 && (<div className="ml-2 space-y-1">{settingsLinks}</div>)}
       </div>
-      {(!has('salesman') && has('admin')) && (
+      {(has('admin')) && (
         <div>
           <button onClick={() => toggle('admin')} className="mt-4 mb-1 w-full text-left text-xs uppercase tracking-wider text-slate-400">
             Admin
           </button>
-          {open.admin && (
+          {open.admin && adminLinks.length > 0 && (
             <div className="ml-2 space-y-1">
-              <NavLink href="/admin" label="Dashboard" />
-              <NavLink href="/admin/users" label="Users" />
-              <NavLink href="/admin/roles" label="Roles" />
+              {adminLinks}
             </div>
           )}
         </div>

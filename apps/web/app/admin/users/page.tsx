@@ -15,7 +15,7 @@ export default function UsersAdminPage() {
   const [name, setName] = React.useState('');
   const [email, setEmail] = React.useState('');
   const [password, setPassword] = React.useState('');
-  const [role, setRole] = React.useState('viewer');
+  const [role, setRole] = React.useState('sales');
   const [creating, setCreating] = React.useState(false);
   const [saving, setSaving] = React.useState<string | null>(null);
 
@@ -58,7 +58,7 @@ export default function UsersAdminPage() {
             <label className="text-sm">
               <div className="font-medium">Role</div>
               <select className="mt-1 w-full border rounded px-2 py-1 text-sm" value={role} onChange={(e)=>setRole(e.target.value)}>
-                {['admin','viewer','salesman'].map((r)=> (<option key={r} value={r}>{r}</option>))}
+                {['admin','purchase','finance','sales'].map((r)=> (<option key={r} value={r}>{r}</option>))}
               </select>
             </label>
             <div className="flex items-end">
@@ -161,7 +161,7 @@ function InlineEditable({ value, onSave, placeholder }:{ value: string; onSave: 
 
 function AddRole({ userId, onAdded }:{ userId: string; onAdded: ()=>void }){
   const React = require('react') as typeof import('react');
-  const [r, setR] = React.useState('viewer');
+  const [r, setR] = React.useState('sales');
   const [busy, setBusy] = React.useState(false);
   return (
     <form
@@ -176,7 +176,7 @@ function AddRole({ userId, onAdded }:{ userId: string; onAdded: ()=>void }){
       }}
     >
       <select className="border rounded px-2 py-1 text-sm" value={r} onChange={(e)=>setR(e.target.value)}>
-        {['admin','viewer','salesman'].map((x)=> (<option key={x} value={x}>{x}</option>))}
+        {['admin','purchase','finance','sales'].map((x)=> (<option key={x} value={x}>{x}</option>))}
       </select>
       <button disabled={busy} className="text-xs rounded border px-2 py-1 bg-slate-900 text-white disabled:opacity-50">Add role</button>
     </form>

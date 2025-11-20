@@ -29,30 +29,36 @@ export async function middleware(req: NextRequest) {
     return NextResponse.redirect(signinUrl);
   }
 
-  // Enforce admin-only access to /admin routes
+  // Enforce access by roles
   try {
     const { data } = await supabase.from('user_roles').select('role');
     const roles = new Set<string>((data || []).map((r: any) => String(r.role || '')));
 
     // Redirect root depending on role
     if (pathname === '/') {
-      if (roles.has('salesman')) {
-        return NextResponse.redirect(new URL('/styles/stock-list', req.url));
-      } else {
-        return NextResponse.redirect(new URL('/statistics/overview', req.url));
-      }
+      if (roles.has('finance')) return NextResponse.redirect(new URL('/finance/csv-skat', req.url));
+      if (roles.has('sales')) return NextResponse.redirect(new URL('/sales', req.url));
+      if (roles.has('purchase')) return NextResponse.redirect(new URL('/statistics/overview', req.url));
+      return NextResponse.redirect(new URL('/statistics/overview', req.url));
     }
 
     if (pathname.startsWith('/admin') && !roles.has('admin')) {
       return NextResponse.redirect(new URL('/', req.url));
     }
-    // Restrict salesman to stock list only (and root)
-    if (roles.has('salesman')) {
-      const allowed = new Set<string>(['/', '/styles/stock-list']);
-      const ok = Array.from(allowed).some((p) => pathname === p || pathname.startsWith(p + '/'));
-      if (!ok) {
-        return NextResponse.redirect(new URL('/styles/stock-list', req.url));
+    // If not admin, restrict by role allowlists
+    if (!roles.has('admin')) {
+      const allow: string[] = ['/'];
+      if (roles.has('purchase')) {
+        allow.push('/statistics', '/styles', '/settings/seasons', '/settings/salespersons', '/settings/customers', '/settings/misc');
       }
+      if (roles.has('finance')) {
+        allow.push('/finance');
+      }
+      if (roles.has('sales')) {
+        allow.push('/sales');
+      }
+      const ok = allow.some((p) => pathname === p || pathname.startsWith(p + '/'));
+      if (!ok) return NextResponse.redirect(new URL('/', req.url));
     }
   } catch {}
 

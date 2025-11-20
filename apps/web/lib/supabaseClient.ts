@@ -2,7 +2,7 @@ import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 
 export const supabase = createClientComponentClient();
 
-export type UserRole = 'admin' | 'viewer' | 'salesman';
+export type UserRole = 'admin' | 'purchase' | 'finance' | 'sales';
 
 export async function fetchUserRoles(): Promise<Set<UserRole>> {
   try {
@@ -55,7 +55,14 @@ export function useRoleAccess() {
       try {
         const { data, error } = await supabase.from('app_settings').select('value').eq('key', 'role_page_access').maybeSingle();
         if (error) throw error;
-        const val = (data?.value as any) || {};
+        // Fallback defaults if not configured in DB
+        const defaults: Record<string, string[]> = {
+          admin: ['/'],
+          purchase: ['/statistics', '/styles', '/settings/seasons', '/settings/salespersons', '/settings/customers', '/settings/misc'],
+          finance: ['/finance'],
+          sales: ['/sales']
+        };
+        const val = Object.keys((data?.value as any) || {}).length ? ((data?.value as any) || {}) : defaults;
         if (!mounted) return;
         setMap(val as Record<string, string[]>);
         // Build allowlist for current user's roles
