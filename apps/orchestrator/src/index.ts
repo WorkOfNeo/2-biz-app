@@ -214,6 +214,22 @@ app.post('/enqueue', async (c) => {
 
     const body = enqueueSchema.parse(await c.req.json<EnqueueRequestBody>());
 
+    // Safety: do not allow deep General scrape without spy_season_id on target season
+    try {
+      if (body.type === 'scrape_statistics') {
+        const toggles = (body.payload?.toggles as any) || {};
+        const isDeep = Boolean(toggles.deep);
+        const seasonId = (body.payload as any)?.seasonId as string | undefined;
+        if (isDeep && seasonId) {
+          const { data: s } = await supabase.from('seasons').select('spy_season_id').eq('id', seasonId).maybeSingle();
+          const spy = (s as any)?.spy_season_id;
+          if (!spy || String(spy).trim().length === 0) {
+            return c.json({ error: 'Selected season has no SPY season id. Set it in Settings → Seasons before running deep scrape.' }, 400);
+          }
+        }
+      }
+    } catch {}
+
     const isStock = body.type === 'update_style_stock' || body.type === 'scrape_eans';
     const insertBody = {
       type: body.type,

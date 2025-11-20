@@ -1628,7 +1628,12 @@ async function runJob(job: JobRow) {
         } catch {}
       }
       await log(job.id, 'info', 'STEP:invoiced_call', { targetSeasonId, spySeasonId: spySeasonId ?? null });
-      const invoicedLines: Array<{ customerName: string; qty: number; userCurrencyAmount: { amount: number; currency: string | null } | null; customerCurrencyAmount: { amount: number; currency: string | null } | null; invoiceNo?: string; invoiceDate?: string; matchedCustomerId?: string | null; matchedAccount?: string | null; salespersonName?: string | null; }> = await scrapeInvoicedLines(targetSeasonId, spySeasonId);
+      let invoicedLines: Array<{ customerName: string; qty: number; userCurrencyAmount: { amount: number; currency: string | null } | null; customerCurrencyAmount: { amount: number; currency: string | null } | null; invoiceNo?: string; invoiceDate?: string; matchedCustomerId?: string | null; matchedAccount?: string | null; salespersonName?: string | null; }>= [];
+      if (!spySeasonId) {
+        await log(job.id, 'info', 'STEP:invoiced_skipped_no_spy_id', { targetSeasonId });
+      } else {
+        invoicedLines = await scrapeInvoicedLines(targetSeasonId, spySeasonId);
+      }
 
       // Persist invoices idempotently: UPDATE existing unless frozen, else INSERT; add detailed logging
       try {

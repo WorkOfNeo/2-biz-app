@@ -35,6 +35,8 @@ export default function SeasonsSettingsPage() {
   const [s2, setS2] = useState<string>('');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState<string>('');
+  const [spyEditId, setSpyEditId] = useState<string | null>(null);
+  const [spyValue, setSpyValue] = useState<string>('');
   const [notice, setNotice] = useState<string | null>(null);
   const [savingCompare, setSavingCompare] = useState(false);
   const [settingCurrentId, setSettingCurrentId] = useState<string | null>(null);
@@ -244,7 +246,39 @@ export default function SeasonsSettingsPage() {
                 </td>
                 <td className="p-2 border-b">{s.year ?? '-'}</td>
                 <td className="p-2 border-b text-xs text-gray-700">{displayCode(s.name, s.year)}</td>
-                <td className="p-2 border-b">{(s as any).spy_season_id ?? '—'}</td>
+                <td className="p-2 border-b">
+                  {spyEditId === s.id ? (
+                    <div className="flex items-center gap-2">
+                      <input
+                        className="border rounded px-2 py-1 text-sm w-28"
+                        value={spyValue}
+                        onChange={(e)=>setSpyValue(e.target.value)}
+                        placeholder="e.g. 12345"
+                      />
+                      <button
+                        className="rounded bg-slate-900 text-white px-2 py-1 text-xs"
+                        onClick={async ()=>{
+                          const val = spyValue.trim();
+                          const next: any = { spy_season_id: val ? val : null };
+                          const { error } = await supabase.from('seasons').update(next).eq('id', s.id);
+                          if (error) { alert(error.message); return; }
+                          setSpyEditId(null); setSpyValue('');
+                          mutate();
+                          showNotice('Spy season ID saved');
+                        }}
+                      >Save</button>
+                      <button className="rounded border px-2 py-1 text-xs" onClick={()=>{ setSpyEditId(null); setSpyValue(''); }}>Cancel</button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <span>{(s as any).spy_season_id ?? '—'}</span>
+                      <button
+                        className="rounded border px-2 py-1 text-xs"
+                        onClick={()=>{ setSpyEditId(s.id); setSpyValue(String((s as any).spy_season_id ?? '')); }}
+                      >Edit</button>
+                    </div>
+                  )}
+                </td>
                 <td className="p-2 border-b">
                   {(() => {
                     const n = Number(statsBySeason?.get(s.id) || 0);
