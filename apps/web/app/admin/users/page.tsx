@@ -9,7 +9,7 @@ export default function UsersAdminPage() {
     if (!res.ok) throw new Error(await res.text());
     return res.json();
   });
-  const users = data?.users as { user_id: string; name: string; email: string; roles: string[] }[] | undefined;
+  const users = data?.users as { user_id: string; name: string; email: string; roles: string[]; last_active?: string | null }[] | undefined;
   const React = require('react') as typeof import('react');
   const [open, setOpen] = React.useState(false);
   const [name, setName] = React.useState('');
@@ -74,6 +74,7 @@ export default function UsersAdminPage() {
               <th className="p-2 text-left border-b">User ID</th>
               <th className="p-2 text-left border-b">Name</th>
               <th className="p-2 text-left border-b">Email</th>
+              <th className="p-2 text-left border-b">Last active</th>
               <th className="p-2 text-left border-b">Roles</th>
               <th className="p-2 text-left border-b">Actions</th>
             </tr>
@@ -106,6 +107,7 @@ export default function UsersAdminPage() {
                     }}
                   />
                 </td>
+                <td className="p-2 border-b text-xs text-gray-600">{u.last_active ? new Date(u.last_active).toLocaleString() : '—'}</td>
                 <td className="p-2 border-b">
                   <div className="flex flex-wrap gap-1">
                     {u.roles.map((r)=> (

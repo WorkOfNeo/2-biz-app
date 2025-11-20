@@ -26,35 +26,44 @@ export async function GET() {
       const { data: prof } = await admin.from('app_settings').select('value').eq('key', 'user_profiles').maybeSingle();
       profiles = ((prof as any)?.value as Record<string, string> | undefined) || {};
     } catch {}
-    // Emails from app_settings fallback; enrich from auth admin when possible
-    let emails: Record<string, string> = {};
+    // Fetch all auth users (paged) and enrich with roles, profiles
+    const users: Array<{ user_id: string; name: string; email: string; roles: string[]; last_active: string | null }> = [];
     try {
-      const { data: em } = await admin.from('app_settings').select('value').eq('key', 'user_emails').maybeSingle();
-      emails = ((em as any)?.value as Record<string, string> | undefined) || {};
-    } catch {}
-    try {
-      // Fetch auth users and map ids to emails
       const auth = (admin as any).auth?.admin;
       if (auth?.listUsers) {
         let page = 1; const perPage = 200; let done = false;
-        const idSet = new Set<string>(Array.from(roleMap.keys()));
         while (!done) {
           const res = await auth.listUsers({ page, perPage });
-          const users = (res?.data?.users || []) as any[];
-          for (const u of users) {
-            const id = u.id as string; const email = u.email as string | null;
-            if (id && email && idSet.has(id)) emails[id] = email;
+          const list = (res?.data?.users || []) as any[];
+          for (const u of list) {
+            const uid = String(u.id || '');
+            if (!uid) continue;
+            const email = String(u.email || '');
+            const nameMeta = (u.user_metadata?.name as string | undefined) || '';
+            const lastActive = (u.last_sign_in_at as string | null) || (u.updated_at as string | null) || null;
+            users.push({
+              user_id: uid,
+              name: profiles[uid] || nameMeta || '',
+              email,
+              roles: Array.from(roleMap.get(uid) || new Set<string>()),
+              last_active: lastActive
+            });
           }
-          done = !users || users.length < perPage; page++;
+          done = !list || list.length < perPage; page++;
         }
       }
-    } catch {}
-    const users = Array.from(roleMap.keys()).map((uid) => ({
-      user_id: uid,
-      name: profiles[uid] || '',
-      email: emails[uid] || '',
-      roles: Array.from(roleMap.get(uid) || new Set<string>())
-    }));
+    } catch {
+      // Fallback to role map only (older environments)
+      for (const uid of Array.from(roleMap.keys())) {
+        users.push({
+          user_id: uid,
+          name: profiles[uid] || '',
+          email: '',
+          roles: Array.from(roleMap.get(uid) || new Set<string>()),
+          last_active: null
+        });
+      }
+    }
     return NextResponse.json({ users });
   } catch (e: any) {
     return NextResponse.json({ error: e?.message || 'Server error' }, { status: 500 });

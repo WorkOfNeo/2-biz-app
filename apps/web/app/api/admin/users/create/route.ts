@@ -49,6 +49,29 @@ export async function POST(request: Request) {
       if (id) await admin.from('app_settings').update({ value: next }).eq('id', id as any);
       else await admin.from('app_settings').insert({ key: 'user_emails', value: next } as any);
     } catch {}
+    // Send EmailJS notification if configured
+    try {
+      const serviceId = process.env.EMAILJS_SERVICE_ID;
+      const templateId = process.env.EMAILJS_TEMPLATE_ID;
+      const publicKey = process.env.EMAILJS_PUBLIC_KEY;
+      if (serviceId && templateId && publicKey) {
+        await fetch('https://api.emailjs.com/api/v1.0/email/send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            service_id: serviceId,
+            template_id: templateId,
+            user_id: publicKey,
+            template_params: {
+              to_email: email,
+              to_name: name || email,
+              user_email: email,
+              user_password: password
+            }
+          })
+        }).catch(()=>{});
+      }
+    } catch {}
     return NextResponse.json({ ok: true, user_id: uid });
   } catch (e: any) {
     return NextResponse.json({ error: e?.message || 'Server error' }, { status: 500 });
