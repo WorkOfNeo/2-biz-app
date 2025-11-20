@@ -7,7 +7,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const isAuth = pathname === '/signin';
   const { has } = useRoles();
-  const hideSidebar = isAuth || has('salesman');
+  const hideSidebar = isAuth || has('sales');
   if (hideSidebar) {
     return <main className="min-h-screen">{children}</main>;
   }
