@@ -495,10 +495,15 @@ export async function exportOverview(ctx: Ctx) {
       const fmt = (n: number) => new Intl.NumberFormat('da-DK').format(Math.round(n));
       const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
       function Donut({ pct, label }: { pct: number; label: string }) {
-        // Filled pie: gray base, blue filled sector; circles at 60% of original size
+        // Filled pie: gray base, blue filled sector; circles 40% smaller than current (overall ~36% of original)
         const visualPct = clamp(pct, 0, 100);
-        const sizeScale = 0.6;
-        const r = s(90 * sizeScale); const cx = s(100 * sizeScale + 20); const cy = s(100 * sizeScale + 20);
+        const sizeScale = 0.36;
+        // Geometry with padding to avoid clipping
+        const r = s(90 * sizeScale);
+        const pad = s(8);
+        const dim = r * 2 + pad * 2;
+        const cx = r + pad;
+        const cy = r + pad;
         const endAngle = (-90 + (visualPct / 100) * 360) * (Math.PI / 180);
         const largeArc = visualPct > 50 ? 1 : 0;
         const x = cx + r * Math.cos(endAngle);
@@ -508,7 +513,7 @@ export async function exportOverview(ctx: Ctx) {
         // Sector path from top, arc to angle, and back to center
         const sectorPath = `M ${cx} ${cy} L ${cx} ${cy - r} A ${r} ${r} 0 ${largeArc} 1 ${x} ${y} Z`;
         return React.createElement(View, { style: { alignItems: 'center' } },
-          React.createElement(Svg, { width: s(220 * sizeScale), height: s(220 * sizeScale) },
+          React.createElement(Svg, { width: dim, height: dim },
             React.createElement(Circle, { cx, cy, r, fill: gray }),
             visualPct > 0 ? React.createElement(Path, { d: sectorPath, fill: blue }) : null
           ),
