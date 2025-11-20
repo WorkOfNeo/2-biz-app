@@ -453,8 +453,16 @@ function CustomerRowItem({ row, salespersons, onSaved }: { row: any; salesperson
             <label className="text-sm">Company<input className="mt-1 w-full border rounded p-1 text-sm" value={company} onChange={(e) => setCompany(e.target.value)} /></label>
             <label className="text-sm">Stats Display<input className="mt-1 w-full border rounded p-1 text-sm" value={statsName} onChange={(e) => setStatsName(e.target.value)} /></label>
             <label className="text-sm">Group<input className="mt-1 w-full border rounded p-1 text-sm" value={groupName} onChange={(e) => setGroupName(e.target.value)} /></label>
-            <label className="text-sm">Salesperson<input list={`sp-${row.id}`} className="mt-1 w-full border rounded p-1 text-sm" value={salespersonName} onChange={(e) => setSalespersonName(e.target.value)} placeholder="Salesperson name" /></label>
-            <datalist id={`sp-${row.id}`}>{salespersons.map((sp) => (<option key={sp.id} value={sp.name} />))}</datalist>
+            <div className="text-sm">
+              <div className="font-medium">Salesperson</div>
+              <SearchSelect
+                className="mt-1"
+                items={salespersons.map((sp) => ({ value: sp.name, label: sp.name }))}
+                value={salespersonName}
+                onChange={(v) => setSalespersonName(v)}
+                placeholder="Select salesperson"
+              />
+            </div>
             <label className="text-sm">Email<input className="mt-1 w-full border rounded p-1 text-sm" value={email} onChange={(e) => setEmail(e.target.value)} /></label>
             <label className="text-sm">City<input className="mt-1 w-full border rounded p-1 text-sm" value={city} onChange={(e) => setCity(e.target.value)} /></label>
             <label className="text-sm">Postal<input className="mt-1 w-full border rounded p-1 text-sm" value={postal} onChange={(e) => setPostal(e.target.value)} /></label>
