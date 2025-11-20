@@ -489,8 +489,8 @@ export async function exportOverview(ctx: Ctx) {
         row: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: s(8) },
         section: { flexDirection: 'row', gap: s(10) },
         box: { width: '50%' as any, padding: s(8), alignItems: 'center' as any },
-        boxTitle: { fontSize: s(10), marginBottom: s(2) },
-        boxSub: { fontSize: s(8), color: '#64748b', marginBottom: s(4) },
+        boxTitle: { fontSize: s(12), marginBottom: s(2) },
+        boxSub: { fontSize: s(10), color: '#64748b', marginBottom: s(4) },
         boxNums: { fontSize: s(8), fontWeight: 700 as any, marginBottom: s(6) }
       });
       const fmt = (n: number) => new Intl.NumberFormat('da-DK').format(Math.round(n));

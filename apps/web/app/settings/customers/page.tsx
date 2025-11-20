@@ -180,6 +180,7 @@ export default function CustomersSettingsPage() {
             <thead className="bg-gray-50">
               <tr>
                 <th className="text-left p-2 border-b">Customer</th>
+                <th className="text-left p-2 border-b">Group</th>
                 <th className="text-left p-2 border-b">City</th>
                 <th className="text-left p-2 border-b">Country</th>
                 <th className="text-left p-2 border-b">Phone</th>
@@ -192,6 +193,7 @@ export default function CustomersSettingsPage() {
               {(customers ?? []).map((c) => (
                 <tr key={c.id}>
                   <td className="p-2 border-b"><a href={`/settings/customers/${c.id}`} className="text-blue-700 hover:underline">{c.company || '-'}</a></td>
+                  <td className="p-2 border-b">{(c as any).group_name || '—'}</td>
                   <td className="p-2 border-b">{c.city || '-'}</td>
                   <td className="p-2 border-b">{c.country || '-'}</td>
                   <td className="p-2 border-b">{c.phone || '-'}</td>
