@@ -6,6 +6,7 @@ import useSWR from 'swr';
 import type { CustomerRow, SalespersonRow } from '@shared/types';
 import { Modal } from '../../../components/Modal';
 import { ProgressBar } from '../../../components/ProgressBar';
+import { SearchSelect } from '../../../components/SearchSelect';
 
 // Import moved to /settings/customers/import
 
@@ -360,10 +361,16 @@ export default function CustomersSettingsPage() {
           <label className="text-sm">Company<input className="mt-1 w-full border rounded p-1 text-sm" value={e_company} onChange={(e)=>setECompany(e.target.value)} /></label>
           <label className="text-sm">Stats Display<input className="mt-1 w-full border rounded p-1 text-sm" value={e_stats} onChange={(e)=>setEStats(e.target.value)} /></label>
           <label className="text-sm">Group<input className="mt-1 w-full border rounded p-1 text-sm" value={e_group} onChange={(e)=>setEGroup(e.target.value)} /></label>
-          <label className="text-sm">Salesperson
-            <input list="sp-edit" className="mt-1 w-full border rounded p-1 text-sm" value={e_spName} onChange={(e)=>setESPName(e.target.value)} placeholder="Salesperson name" />
-          </label>
-          <datalist id="sp-edit">{(salespersons ?? []).map((sp)=> (<option key={sp.id} value={sp.name} />))}</datalist>
+          <div className="text-sm">
+            <div className="font-medium">Salesperson</div>
+            <SearchSelect
+              className="mt-1"
+              items={(salespersons ?? []).map((sp)=> ({ value: sp.name, label: sp.name }))}
+              value={e_spName}
+              onChange={(v)=>setESPName(v)}
+              placeholder="Select salesperson"
+            />
+          </div>
           <label className="text-sm">Email<input className="mt-1 w-full border rounded p-1 text-sm" value={e_email} onChange={(e)=>setEEmail(e.target.value)} /></label>
           <label className="text-sm">City<input className="mt-1 w-full border rounded p-1 text-sm" value={e_city} onChange={(e)=>setECity(e.target.value)} /></label>
           <label className="text-sm">Postal<input className="mt-1 w-full border rounded p-1 text-sm" value={e_postal} onChange={(e)=>setEPostal(e.target.value)} /></label>
