@@ -331,6 +331,16 @@ export default function StatisticsGeneralPage() {
       if (statsRes.error) throw new Error(statsRes.error.message);
       if (invoicesRes.error) throw new Error(invoicesRes.error.message);
       const statsData = statsRes.data ?? [];
+      // Debug: surface salesperson mapping issues and season filters
+      try {
+        const bySp = new Map<string, number>();
+        for (const r of statsData as any[]) {
+          const id = String(r.salesperson_id || 'null');
+          bySp.set(id, (bySp.get(id) || 0) + 1);
+        }
+        console.log('[stats] salesperson_id counts', Object.fromEntries(bySp));
+        console.log('[stats] selectedSalespersonId', selectedSalespersonId, 'seasons', s1, s2);
+      } catch {}
       const invoicesData = invoicesRes.data ?? [];
       console.log('[stats] fetched raw rows', statsData.length, 'invoices', invoicesData.length);
 
@@ -701,7 +711,9 @@ export default function StatisticsGeneralPage() {
         {/* Single section for selected salesperson */}
         {(() => {
           const visibleRows = (rows ?? []).filter(r => !isHidden(r.account_no));
-          const items = activePerson ? visibleRows.filter(r => r.salespersonName === activePerson) : visibleRows;
+          const items = activePerson && selectedSalespersonId
+            ? visibleRows.filter(r => r.salespersonId === selectedSalespersonId)
+            : visibleRows;
           console.log('[stats] table items', items.length);
           const tableCurrency = activePerson && selectedSalespersonId ? (spCurrencyById[selectedSalespersonId] ?? 'DKK') : 'DKK';
           return (
