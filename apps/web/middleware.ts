@@ -33,6 +33,12 @@ export async function middleware(req: NextRequest) {
   try {
     const { data } = await supabase.from('user_roles').select('role');
     const roles = new Set<string>((data || []).map((r: any) => String(r.role || '')));
+    // Load role_page_access mapping to compute allowed paths
+    let roleAccess: Record<string, string[]> = {};
+    try {
+      const { data: acc } = await supabase.from('app_settings').select('value').eq('key', 'role_page_access').maybeSingle();
+      roleAccess = ((acc?.value as any) || {}) as Record<string, string[]>;
+    } catch {}
 
     // Redirect root depending on role
     if (pathname === '/') {
@@ -47,17 +53,25 @@ export async function middleware(req: NextRequest) {
     }
     // If not admin, restrict by role allowlists
     if (!roles.has('admin')) {
-      const allow: string[] = ['/'];
-      if (roles.has('purchase')) {
-        allow.push('/statistics', '/styles', '/settings/seasons', '/settings/salespersons', '/settings/customers', '/settings/misc');
+      let allow: Set<string> | null = null;
+      if (roleAccess && Object.keys(roleAccess).length > 0) {
+        allow = new Set<string>();
+        for (const role of Array.from(roles)) {
+          const list = roleAccess[role] || [];
+          for (const p of list) allow.add(p);
+        }
       }
-      if (roles.has('finance')) {
-        allow.push('/finance');
+      if (!allow) {
+        // Fallback allow lists
+        const tmp = new Set<string>(['/']);
+        if (roles.has('purchase')) {
+          ['/statistics', '/styles', '/settings/seasons', '/settings/salespersons', '/settings/customers', '/settings/misc'].forEach((p) => tmp.add(p));
+        }
+        if (roles.has('finance')) tmp.add('/finance');
+        if (roles.has('sales')) tmp.add('/sales');
+        allow = tmp;
       }
-      if (roles.has('sales')) {
-        allow.push('/sales');
-      }
-      const ok = allow.some((p) => pathname === p || pathname.startsWith(p + '/'));
+      const ok = Array.from(allow).some((p) => pathname === p || pathname.startsWith(p + '/'));
       if (!ok) return NextResponse.redirect(new URL('/', req.url));
     }
   } catch {}

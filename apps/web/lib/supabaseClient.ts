@@ -81,7 +81,8 @@ export function useRoleAccess() {
   function can(path: string): boolean {
     // Admins always allowed when explicitly set in roles
     if ((roles as any as Set<string>).has('admin')) return true;
-    if (allowedSet.size === 0) return true; // default allow if no mapping
+    // Default deny if no mapping for current roles
+    if (allowedSet.size === 0) return false;
     // Exact match or parent-allow (e.g., '/settings' allows '/settings/seasons')
     if (allowedSet.has(path)) return true;
     for (const p of Array.from(allowedSet)) {

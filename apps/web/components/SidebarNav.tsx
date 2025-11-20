@@ -86,42 +86,42 @@ export function SidebarNav() {
   return (
     <nav className="space-y-2">
       <NavLink href="/" label="Home" />
-      <div>
+      {statLinks.length > 0 && <div>
         <button onClick={() => toggle('statistics')} className="mt-4 mb-1 w-full text-left text-xs uppercase tracking-wider text-slate-400">
           Statistics
         </button>
         {open.statistics && statLinks.length > 0 && (<div className="ml-2 space-y-1">{statLinks}</div>)}
-      </div>
-      <div>
+      </div>}
+      {financeLinks.length > 0 && <div>
         <button onClick={() => toggle('finance')} className="mt-4 mb-1 w-full text-left text-xs uppercase tracking-wider text-slate-400">
           Finance
         </button>
         {open.finance && financeLinks.length > 0 && (<div className="ml-2 space-y-1">{financeLinks}</div>)}
-      </div>
-      <div>
+      </div>}
+      {stylesLinks.length > 0 && <div>
         <button onClick={() => toggle('styles')} className="mt-4 mb-1 w-full text-left text-xs uppercase tracking-wider text-slate-400">
           Styles
         </button>
         {open.styles && stylesLinks.length > 0 && (<div className="ml-2 space-y-1">{stylesLinks}</div>)}
-      </div>
-      <div>
+      </div>}
+      {purchaseLinks.length > 0 && <div>
         <button onClick={() => toggle('purchase')} className="mt-4 mb-1 w-full text-left text-xs uppercase tracking-wider text-slate-400">
           Purchase
         </button>
         {open.purchase && purchaseLinks.length > 0 && (<div className="ml-2 space-y-1">{purchaseLinks}</div>)}
-      </div>
-      <div>
+      </div>}
+      {salesLinks.length > 0 && <div>
         <button onClick={() => toggle('sales')} className="mt-4 mb-1 w-full text-left text-xs uppercase tracking-wider text-slate-400">
           Sales
         </button>
         {open.sales && salesLinks.length > 0 && (<div className="ml-2 space-y-1">{salesLinks}</div>)}
-      </div>
-      <div>
+      </div>}
+      {settingsLinks.length > 0 && <div>
         <button onClick={() => toggle('settings')} className="mt-4 mb-1 w-full text-left text-xs uppercase tracking-wider text-slate-400">
           Settings
         </button>
         {open.settings && settingsLinks.length > 0 && (<div className="ml-2 space-y-1">{settingsLinks}</div>)}
-      </div>
+      </div>}
       {(has('admin')) && (
         <div>
           <button onClick={() => toggle('admin')} className="mt-4 mb-1 w-full text-left text-xs uppercase tracking-wider text-slate-400">
