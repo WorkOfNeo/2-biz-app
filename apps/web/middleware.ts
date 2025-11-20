@@ -33,6 +33,7 @@ export async function middleware(req: NextRequest) {
   try {
     const { data } = await supabase.from('user_roles').select('role');
     const roles = new Set<string>((data || []).map((r: any) => String(r.role || '')));
+    console.log('[mw] pathname', pathname, 'roles', Array.from(roles));
     // Load role_page_access mapping to compute allowed paths
     let roleAccess: Record<string, string[]> = {};
     try {
@@ -63,6 +64,7 @@ export async function middleware(req: NextRequest) {
       return allow;
     };
     const allow = buildAllow();
+    console.log('[mw] allow', Array.from(allow));
 
     // Redirect root depending on role, but only to an allowed destination to avoid loops
     if (pathname === '/') {
@@ -80,9 +82,11 @@ export async function middleware(req: NextRequest) {
             : firstAllowed === '/statistics' ? '/statistics/overview'
             : firstAllowed;
         } else {
+          console.log('[mw] no allowed paths; staying on /');
           return res;
         }
       }
+      console.log('[mw] redirecting / ->', dest);
       if (dest !== pathname) return NextResponse.redirect(new URL(dest, req.url));
       return res;
     }
@@ -100,8 +104,10 @@ export async function middleware(req: NextRequest) {
             : firstAllowed === '/sales' ? '/sales/nielsens'
             : firstAllowed === '/statistics' ? '/statistics/overview'
             : firstAllowed;
+          console.log('[mw] disallowed path; redirecting to', dest);
           if (dest !== pathname) return NextResponse.redirect(new URL(dest, req.url));
         }
+        console.log('[mw] disallowed but no redirect target; allowing to avoid loop');
         return res;
       }
     }
