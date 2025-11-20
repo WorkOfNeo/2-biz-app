@@ -26,6 +26,18 @@ function NavLink({ href, label }: { href: Route; label: string }) {
 export function SidebarNav() {
   const { has } = useRoles();
   const { can } = useRoleAccess();
+  const React = require('react') as typeof import('react');
+  const { createClientComponentClient } = require('@supabase/auth-helpers-nextjs');
+  const supabase = createClientComponentClient();
+  const [userName, setUserName] = React.useState<string>('');
+  React.useEffect(() => {
+    (async () => {
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        setUserName(((user?.user_metadata as any)?.name as string) || (user?.email as string) || '');
+      } catch {}
+    })();
+  }, []);
   const pathname = usePathname();
   const startsWith = (p: string) => pathname === p || pathname.startsWith(p + '/');
   const [open, setOpen] = useState(() => ({
@@ -85,6 +97,7 @@ export function SidebarNav() {
   ].filter(Boolean) as any[];
   return (
     <nav className="space-y-2">
+      {userName && <div className="px-3 py-2 text-xs text-slate-300">Signed in as<br/><span className="text-white font-medium">{userName}</span></div>}
       <NavLink href="/" label="Home" />
       {statLinks.length > 0 && <div>
         <button onClick={() => toggle('statistics')} className="mt-4 mb-1 w-full text-left text-xs uppercase tracking-wider text-slate-400">
