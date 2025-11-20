@@ -28,23 +28,25 @@ export default function StatisticsGeneralPage() {
   });
   // Customer city index to ensure city is shown even if missing on stats rows
   const { data: customerIndex } = useSWR('customers-index', async () => {
-    const { data, error } = await supabase.from('customers').select('customer_id, company, city');
+    const { data, error } = await supabase.from('customers').select('customer_id, company, city, group_name');
     if (error) throw new Error(error.message);
     const byId: Record<string, string> = {};
     const byName: Record<string, string> = {};
+    const groupById: Record<string, string> = {};
     for (const c of (data ?? []) as any[]) {
       if (c.customer_id) byId[c.customer_id] = c.city ?? '';
       if (c.company) byName[c.company] = c.city ?? '';
+      if (c.customer_id) groupById[c.customer_id] = c.group_name ?? '';
     }
-    return { byId, byName } as { byId: Record<string, string>; byName: Record<string, string> };
+    return { byId, byName, groupById } as { byId: Record<string, string>; byName: Record<string, string>; groupById: Record<string, string> };
   }, { refreshInterval: 0 });
   // Full customers list to allow showing baseline rows even when no stats exist for a season
   const { data: allCustomers } = useSWR('general:customers', async () => {
     const { data, error } = await supabase
       .from('customers')
-      .select('customer_id, company, city, salesperson_id');
+      .select('customer_id, company, city, salesperson_id, group_name');
     if (error) throw new Error(error.message);
-    return (data ?? []) as Array<{ customer_id: string; company: string | null; city: string | null; salesperson_id: string | null }>;
+    return (data ?? []) as Array<{ customer_id: string; company: string | null; city: string | null; salesperson_id: string | null; group_name?: string | null }>;
   });
   // Global currency rates (fallback) and season-specific rates
   const { data: currencyRatesRow } = useSWR('app-settings:currency-rates', async () => {
@@ -242,12 +244,14 @@ export default function StatisticsGeneralPage() {
     account_no: string;
     customer: string;
     city: string;
+    groupName?: string | null;
     s1Qty: number;
     s1Price: number;
     s2Qty: number;
     s2Price: number;
     salespersonId: string | null;
     salespersonName: string;
+    isGroupTotal?: boolean;
   };
 
   // Details modal state
@@ -356,6 +360,7 @@ export default function StatisticsGeneralPage() {
             account_no: c.customer_id || key,
             customer: c.company ?? '-',
             city: (c.city && c.city !== '-') ? c.city : (c.customer_id ? (customerIndex?.byId?.[c.customer_id] ?? '-') : (c.company ? (customerIndex?.byName?.[c.company] ?? '-') : '-')),
+            groupName: (c as any).group_name ?? (c.customer_id ? (customerIndex as any)?.groupById?.[c.customer_id] ?? null : null),
             s1Qty: 0,
             s1Price: 0,
             s2Qty: 0,
@@ -377,6 +382,7 @@ export default function StatisticsGeneralPage() {
           account_no: r.account_no ?? key,
           customer: r.customer_name ?? '-',
           city: itemCity,
+          groupName: r.account_no ? (customerIndex as any)?.groupById?.[r.account_no] ?? null : null,
           s1Qty: 0,
           s1Price: 0,
           s2Qty: 0,
@@ -408,6 +414,7 @@ export default function StatisticsGeneralPage() {
           account_no: inv.account_no ?? key,
           customer: inv.customer_name ?? '-',
           city: itemCity,
+          groupName: inv.account_no ? (customerIndex as any)?.groupById?.[inv.account_no] ?? null : null,
           s1Qty: 0,
           s1Price: 0,
           s2Qty: 0,
@@ -716,6 +723,42 @@ export default function StatisticsGeneralPage() {
             : visibleRows;
           console.log('[stats] table items', items.length);
           const tableCurrency = activePerson && selectedSalespersonId ? (spCurrencyById[selectedSalespersonId] ?? 'DKK') : 'DKK';
+          // Grouped view: sort by group then customer, insert subtotal rows per group
+          const sorted = [...items].sort((a, b) => {
+            const ga = (a.groupName || '').toLowerCase(); const gb = (b.groupName || '').toLowerCase();
+            if (ga !== gb) return ga < gb ? -1 : 1;
+            return a.customer.localeCompare(b.customer);
+          });
+          const withSubtotals: RowOut[] = [];
+          let curGroup: string | null = null;
+          let acc = { s1Qty: 0, s1Price: 0, s2Qty: 0, s2Price: 0 };
+          function flushSubtotal() {
+            if (!curGroup) return;
+            withSubtotals.push({
+              account_no: `__group_total:${curGroup}`,
+              customer: `Group total — ${curGroup}`,
+              city: '',
+              groupName: curGroup,
+              s1Qty: acc.s1Qty,
+              s1Price: acc.s1Price,
+              s2Qty: acc.s2Qty,
+              s2Price: acc.s2Price,
+              salespersonId: null,
+              salespersonName: '',
+              isGroupTotal: true
+            });
+          }
+          for (const r of sorted) {
+            const g = (r.groupName || '').trim();
+            if (g && curGroup && g !== curGroup) { flushSubtotal(); acc = { s1Qty: 0, s1Price: 0, s2Qty: 0, s2Price: 0 }; }
+            if (g && !curGroup) { acc = { s1Qty: 0, s1Price: 0, s2Qty: 0, s2Price: 0 }; }
+            if (g) curGroup = g;
+            withSubtotals.push(r);
+            if (g) {
+              acc.s1Qty += r.s1Qty; acc.s1Price += r.s1Price; acc.s2Qty += r.s2Qty; acc.s2Price += r.s2Price;
+            }
+          }
+          if (curGroup) flushSubtotal();
           return (
             <>
               <div className="rounded-lg border bg-white">
@@ -743,7 +786,7 @@ export default function StatisticsGeneralPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {items.map((row) => {
+                    {withSubtotals.map((row) => {
                       const devQty = row.s1Qty - row.s2Qty;
                       const devPrice = row.s1Price - row.s2Price;
                       const nulled = isNulled(row.account_no);
@@ -751,7 +794,7 @@ export default function StatisticsGeneralPage() {
                       const s1QtyClass = row.s1Qty === 0 ? '' : (row.s1Qty > row.s2Qty ? 'text-green-600' : row.s1Qty < row.s2Qty ? 'text-red-600' : '');
                       const s1PriceClass = row.s1Price === 0 ? '' : (row.s1Price > row.s2Price ? 'text-green-600' : row.s1Price < row.s2Price ? 'text-red-600' : '');
                       return (
-                        <tr key={row.account_no} className={"border-t hover:bg-slate-50 " + (nulled ? 'opacity-80' : '')}>
+                        <tr key={row.account_no} className={(row.isGroupTotal ? 'bg-slate-100 font-semibold ' : '') + "border-t hover:bg-slate-50 " + (nulled ? 'opacity-80' : '')}>
                           <td className={"relative p-2 font-medium " + (nulled ? '' : '')}>
                             {row.customer}
                             {nulled && <div className="pointer-events-none absolute inset-x-0 top-1/2 -translate-y-1/2 h-px bg-gray-500/70" />}
@@ -788,10 +831,12 @@ export default function StatisticsGeneralPage() {
                           </td>
                           <td className="p-2">
                             <div className="relative flex items-center justify-center gap-1.5">
-                              <button
-                                className="rounded border px-2 py-0.5 text-xs"
-                                onClick={() => openDetails(row)}
-                              >Details</button>
+                              {!row.isGroupTotal && (
+                                <button
+                                  className="rounded border px-2 py-0.5 text-xs"
+                                  onClick={() => openDetails(row)}
+                                >Details</button>
+                              )}
                               <ActionBtn label="Hide" onClick={() => toggleHide(row.account_no)}>
                                 <Ban className="h-4 w-4" />
                               </ActionBtn>
