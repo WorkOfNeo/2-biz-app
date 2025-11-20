@@ -460,7 +460,7 @@ export default function StockListPage() {
                               {labels.map((s) => (
                                 <span key={s.id} className="inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] sl-season-chip">
                                   <span>{s.name}{s.year ? ` ${s.year}` : ''}</span>
-                                  {!has('salesman') && (
+                                  {!has('sales') && (
                                     <button
                                       className="text-gray-500 hover:text-black sl-season-remove"
                                       onClick={async () => {
@@ -473,7 +473,7 @@ export default function StockListPage() {
                                   )}
                                 </span>
                               ))}
-                              {!has('salesman') && scId && (
+                              {!has('sales') && scId && (
                                 <SeasonAdder
                                   // @ts-ignore
                                   className="sl-season-adder"
