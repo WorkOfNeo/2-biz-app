@@ -62,13 +62,15 @@ export function useRoleAccess() {
           finance: ['/finance'],
           sales: ['/sales']
         };
-        const val = Object.keys((data?.value as any) || {}).length ? ((data?.value as any) || {}) : defaults;
+        const raw = ((data?.value as any) || {}) as Record<string, string[]>;
+        const val = Object.keys(raw).length ? { ...defaults, ...raw } : defaults;
         if (!mounted) return;
         setMap(val as Record<string, string[]>);
         // Build allowlist for current user's roles
         const set = new Set<string>();
         for (const role of Array.from(roles as any as Set<string>)) {
-          const list = (val?.[role] as string[] | undefined) || [];
+          // fallback to defaults for roles missing in val
+          const list = (val?.[role] as string[] | undefined) || defaults[role] || [];
           for (const p of list) set.add(p);
         }
         setAllowedSet(set);

@@ -147,7 +147,33 @@ export function SidebarNav() {
           )}
         </div>
       )}
+      <div className="mt-6 px-3">
+        <SignOutButton />
+      </div>
     </nav>
+  );
+}
+
+function SignOutButton() {
+  const React = require('react') as typeof import('react');
+  const { createClientComponentClient } = require('@supabase/auth-helpers-nextjs');
+  const supabase = createClientComponentClient();
+  const [busy, setBusy] = React.useState(false);
+  return (
+    <button
+      className={"w-full text-left text-sm rounded-md border px-3 py-2 " + (busy ? 'opacity-70' : 'hover:bg-slate-800 text-slate-200')}
+      onClick={async () => {
+        try {
+          setBusy(true);
+          await supabase.auth.signOut();
+          window.location.href = '/signin';
+        } finally {
+          setBusy(false);
+        }
+      }}
+    >
+      Sign out
+    </button>
   );
 }
 

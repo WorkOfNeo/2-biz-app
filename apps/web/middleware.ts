@@ -43,11 +43,17 @@ export async function middleware(req: NextRequest) {
 
     // Build allow set (union of paths per role); admin is handled below
     const buildAllow = (): Set<string> => {
+      const defaults: Record<string, string[]> = {
+        admin: ['/'],
+        purchase: ['/statistics', '/styles', '/settings/seasons', '/settings/salespersons', '/settings/customers', '/settings/misc'],
+        finance: ['/finance'],
+        sales: ['/sales']
+      };
       let allow: Set<string> | null = null;
       if (roleAccess && Object.keys(roleAccess).length > 0) {
         allow = new Set<string>();
         for (const role of Array.from(roles)) {
-          const list = roleAccess[role] || [];
+          const list = roleAccess[role] || defaults[role] || [];
           for (const p of list) allow.add(p);
         }
       }

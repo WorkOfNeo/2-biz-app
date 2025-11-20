@@ -18,6 +18,8 @@ export default function UsersAdminPage() {
   const [role, setRole] = React.useState('sales');
   const [creating, setCreating] = React.useState(false);
   const [saving, setSaving] = React.useState<string | null>(null);
+  const [flash, setFlash] = React.useState<string | null>(null);
+  function flashMsg(msg: string) { setFlash(msg); setTimeout(()=>setFlash(null), 2000); }
 
   return (
     <div className="space-y-4">
@@ -26,6 +28,7 @@ export default function UsersAdminPage() {
         <div className="text-xs text-gray-500">Assign roles to control access</div>
       </div>
       <div>
+        {flash && <div className="mb-2 rounded border bg-green-50 text-green-700 text-sm px-3 py-2">{flash}</div>}
         <button className="rounded border px-3 py-1.5 text-sm bg-slate-900 text-white" onClick={()=>setOpen((v)=>!v)}>{open ? 'Close' : 'Create user'}</button>
         {open && (
           <form
@@ -118,6 +121,7 @@ export default function UsersAdminPage() {
                           title="Remove role"
                           onClick={async ()=>{
                             await fetch('/api/admin/users/roles/remove', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: u.user_id, role: r }) });
+                            flashMsg('Role removed');
                             mutate();
                           }}
                         >×</button>
@@ -126,7 +130,7 @@ export default function UsersAdminPage() {
                   </div>
                 </td>
                 <td className="p-2 border-b">
-                  <AddRole userId={u.user_id} onAdded={()=>mutate()} />
+                  <AddRole userId={u.user_id} onAdded={()=>{ flashMsg('Role added'); mutate(); }} />
                 </td>
               </tr>
             ))}
@@ -166,6 +170,7 @@ function AddRole({ userId, onAdded }:{ userId: string; onAdded: ()=>void }){
   const [r, setR] = React.useState('sales');
   const [busy, setBusy] = React.useState(false);
   const [err, setErr] = React.useState<string | null>(null);
+  const [ok, setOk] = React.useState(false);
   return (
     <form
       className="flex items-center gap-2"
@@ -175,6 +180,7 @@ function AddRole({ userId, onAdded }:{ userId: string; onAdded: ()=>void }){
           setBusy(true);
           setErr(null);
           await fetch('/api/admin/users/roles/add', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: userId, role: r }) });
+          setOk(true); setTimeout(()=>setOk(false), 1500);
           onAdded();
         } catch (e: any) {
           try {
@@ -191,6 +197,7 @@ function AddRole({ userId, onAdded }:{ userId: string; onAdded: ()=>void }){
         {['admin','purchase','finance','sales'].map((x)=> (<option key={x} value={x}>{x}</option>))}
       </select>
       <button disabled={busy} className="text-xs rounded border px-2 py-1 bg-slate-900 text-white disabled:opacity-50">Add role</button>
+      {ok && <span className="text-[11px] text-green-700">Added</span>}
       {err && <span className="text-[11px] text-red-700">{err}</span>}
     </form>
   );
