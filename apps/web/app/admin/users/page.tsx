@@ -165,6 +165,7 @@ function AddRole({ userId, onAdded }:{ userId: string; onAdded: ()=>void }){
   const React = require('react') as typeof import('react');
   const [r, setR] = React.useState('sales');
   const [busy, setBusy] = React.useState(false);
+  const [err, setErr] = React.useState<string | null>(null);
   return (
     <form
       className="flex items-center gap-2"
@@ -172,8 +173,17 @@ function AddRole({ userId, onAdded }:{ userId: string; onAdded: ()=>void }){
         e.preventDefault();
         try {
           setBusy(true);
+          setErr(null);
           await fetch('/api/admin/users/roles/add', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: userId, role: r }) });
           onAdded();
+        } catch (e: any) {
+          try {
+            const res = await fetch('/api/admin/users/roles/add', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: userId, role: r }) });
+            const js = await res.json().catch(()=>({}));
+            setErr(js?.error || 'Failed to add role');
+          } catch {
+            setErr('Failed to add role');
+          }
         } finally { setBusy(false); }
       }}
     >
@@ -181,6 +191,7 @@ function AddRole({ userId, onAdded }:{ userId: string; onAdded: ()=>void }){
         {['admin','purchase','finance','sales'].map((x)=> (<option key={x} value={x}>{x}</option>))}
       </select>
       <button disabled={busy} className="text-xs rounded border px-2 py-1 bg-slate-900 text-white disabled:opacity-50">Add role</button>
+      {err && <span className="text-[11px] text-red-700">{err}</span>}
     </form>
   );
 }
