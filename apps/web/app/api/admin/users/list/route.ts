@@ -15,9 +15,16 @@ export async function GET() {
     if (rolesErr) return NextResponse.json({ error: rolesErr.message }, { status: 500 });
     // Build map
     const roleMap = new Map<string, Set<string>>();
+    const allowed = new Set(['admin','purchase','finance','sales']);
     for (const r of (rolesRows ?? []) as any[]) {
       const set = roleMap.get(r.user_id) || new Set<string>();
-      set.add(r.role);
+      const normalized = String(r.role || '').trim().toLowerCase();
+      if (!allowed.has(normalized)) {
+        // Skip legacy or unknown roles (e.g., 'viewer')
+        roleMap.set(r.user_id, set);
+        continue;
+      }
+      set.add(normalized);
       roleMap.set(r.user_id, set);
     }
     // Profiles
