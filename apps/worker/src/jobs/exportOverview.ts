@@ -351,9 +351,32 @@ export async function exportOverview(ctx: Ctx) {
         }
         pagesAll.push(pageEl);
       }
-      // Insert a record pointing to the folder (no zip). Main link left empty; files are listed in meta.files
+      // Build a single combined PDF with all salespersons (one page per salesperson)
+      let combinedPath: string | null = null;
+      let combinedPublicUrl: string | null = null;
+      try {
+        const combinedDoc = React.createElement(Document, null, ...pagesAll);
+        const combinedOut = await pdf(combinedDoc).toBuffer();
+        const combinedBuf = await ensureBuffer(combinedOut);
+        combinedPath = `General/${job.id}/salesmen/all.pdf`;
+        const ab = combinedBuf.buffer.slice(combinedBuf.byteOffset, combinedBuf.byteOffset + combinedBuf.byteLength);
+        await supabase.storage.from('exports').upload(combinedPath, ab as ArrayBuffer, { contentType: 'application/pdf', upsert: true });
+        try { const { data: pub } = supabase.storage.from('exports').getPublicUrl(combinedPath); combinedPublicUrl = pub?.publicUrl ?? null; } catch {}
+      } catch (e: any) {
+        await log(job.id, 'error', 'STEP:export_general_combined_failed', { error: e?.message || String(e) });
+      }
+      // Insert a record pointing to the folder (no zip). Include meta.files and meta.all for combined
       const folderPath = `General/${job.id}/salesmen/`;
-      try { await supabase.from('exports').insert({ kind: 'general_salesmen_pdfs', title: 'General · Salesmen', path: folderPath, public_url: null, job_id: job.id, meta: { files: filesList } }); } catch {}
+      try {
+        await supabase.from('exports').insert({
+          kind: 'general_salesmen_pdfs',
+          title: 'General · Salesmen',
+          path: folderPath,
+          public_url: null,
+          job_id: job.id,
+          meta: { files: filesList, all: { path: combinedPath, publicUrl: combinedPublicUrl } }
+        });
+      } catch {}
       await log(job.id, 'info', 'STEP:export_general_singles_uploaded', { uploaded: uploadedSingles, total: list.length });
       await saveResult(job.id, 'export_general_salesmen_pdfs', { singles: uploadedSingles, folder: folderPath });
       await setJobSucceeded(job.id);
