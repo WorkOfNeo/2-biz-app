@@ -40,19 +40,8 @@ export async function middleware(req: NextRequest) {
       roleAccess = ((acc?.value as any) || {}) as Record<string, string[]>;
     } catch {}
 
-    // Redirect root depending on role
-    if (pathname === '/') {
-      if (roles.has('finance')) return NextResponse.redirect(new URL('/finance/csv-skat', req.url));
-      if (roles.has('sales')) return NextResponse.redirect(new URL('/sales', req.url));
-      if (roles.has('purchase')) return NextResponse.redirect(new URL('/statistics/overview', req.url));
-      return NextResponse.redirect(new URL('/statistics/overview', req.url));
-    }
-
-    if (pathname.startsWith('/admin') && !roles.has('admin')) {
-      return NextResponse.redirect(new URL('/', req.url));
-    }
-    // If not admin, restrict by role allowlists
-    if (!roles.has('admin')) {
+    // Build allow set (union of paths per role); admin is handled below
+    const buildAllow = (): Set<string> => {
       let allow: Set<string> | null = null;
       if (roleAccess && Object.keys(roleAccess).length > 0) {
         allow = new Set<string>();
@@ -71,8 +60,48 @@ export async function middleware(req: NextRequest) {
         if (roles.has('sales')) tmp.add('/sales');
         allow = tmp;
       }
+      return allow;
+    };
+    const allow = buildAllow();
+
+    // Redirect root depending on role, but only to an allowed destination to avoid loops
+    if (pathname === '/') {
+      let dest = '/statistics/overview';
+      if (roles.has('finance')) dest = '/finance/csv-skat';
+      else if (roles.has('sales')) dest = '/sales';
+      else if (roles.has('purchase')) dest = '/statistics/overview';
+      // If chosen dest is not allowed, pick first allowed path (other than '/'), else do nothing
+      const ok = Array.from(allow).some((p) => dest === p || dest.startsWith(p + '/'));
+      if (!ok) {
+        const firstAllowed = Array.from(allow).find((p) => p !== '/');
+        if (firstAllowed) {
+          dest = firstAllowed === '/finance' ? '/finance/csv-skat'
+            : firstAllowed === '/statistics' ? '/statistics/overview'
+            : firstAllowed;
+        } else {
+          return res;
+        }
+      }
+      if (dest !== pathname) return NextResponse.redirect(new URL(dest, req.url));
+      return res;
+    }
+
+    if (pathname.startsWith('/admin') && !roles.has('admin')) {
+      return NextResponse.redirect(new URL('/', req.url));
+    }
+    // If not admin, restrict by role allowlists
+    if (!roles.has('admin')) {
       const ok = Array.from(allow).some((p) => pathname === p || pathname.startsWith(p + '/'));
-      if (!ok) return NextResponse.redirect(new URL('/', req.url));
+      if (!ok) {
+        const firstAllowed = Array.from(allow).find((p) => p !== '/');
+        if (firstAllowed) {
+          const dest = firstAllowed === '/finance' ? '/finance/csv-skat'
+            : firstAllowed === '/statistics' ? '/statistics/overview'
+            : firstAllowed;
+          if (dest !== pathname) return NextResponse.redirect(new URL(dest, req.url));
+        }
+        return res;
+      }
     }
   } catch {}
 
