@@ -83,6 +83,9 @@ function InnerSignIn() {
             className="w-full rounded-md border bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:opacity-95 disabled:opacity-60"
           >{loading ? 'Signing in…' : 'Sign in'}</button>
         </form>
+        <div className="mt-3 text-right">
+          <a href="/signin/reset" className="text-xs text-blue-700 hover:underline">Forgot password?</a>
+        </div>
       </div>
     </div>
   );

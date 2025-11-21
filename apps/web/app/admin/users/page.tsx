@@ -130,7 +130,18 @@ export default function UsersAdminPage() {
                   </div>
                 </td>
                 <td className="p-2 border-b">
-                  <AddRole userId={u.user_id} onAdded={()=>{ flashMsg('Role added'); mutate(); }} />
+                  <div className="flex items-center gap-2">
+                    <AddRole userId={u.user_id} onAdded={()=>{ flashMsg('Role added'); mutate(); }} />
+                    <button
+                      className="rounded border px-2 py-1 text-xs text-red-700"
+                      onClick={async ()=>{
+                        if (!confirm('Delete this user? This will remove roles and delete the auth user.')) return;
+                        await fetch('/api/admin/users/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: u.user_id }) });
+                        flashMsg('User deleted');
+                        mutate();
+                      }}
+                    >Delete user</button>
+                  </div>
                 </td>
               </tr>
             ))}
