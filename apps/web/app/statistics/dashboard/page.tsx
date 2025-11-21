@@ -98,7 +98,7 @@ export default function StatisticsDashboardPage() {
           console.log('[email:salesperson] prepared: using template params', {
             recipient,
             includeCountries: !!(includeCountries && countries?.public_url),
-            includeTop10Salesmen: !!(includeTop10Salesmen && top10Salesmen?.public_url),
+            includeTop15Salesmen: !!(includeTop15Salesmen && top15Salesmen?.public_url),
             params: summarize(dynamicParams)
           });
         } catch {}
