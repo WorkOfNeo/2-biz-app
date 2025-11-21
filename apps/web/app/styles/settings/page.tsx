@@ -41,6 +41,12 @@ export default function StylesSettingsPage() {
 function StockListsTab({ supabase }: { supabase: any }) {
   const ReactNS = React as typeof import('react');
   const [innerTab, setInnerTab] = ReactNS.useState<'add' | 'edit'>(() => 'edit');
+  // Feedback notice
+  const [notice, setNotice] = ReactNS.useState<{ kind: 'success' | 'error'; text: string } | null>(null);
+  function flash(text: string, kind: 'success' | 'error' = 'success') {
+    setNotice({ text, kind });
+    setTimeout(() => setNotice(null), 1800);
+  }
   // Load stock lists
   const { data: stockLists, mutate: mutateLists } = useSWR('stock-lists:settings', async () => {
     const { data, error } = await supabase.from('stock_lists').select('id, name').order('name', { ascending: true });
@@ -131,11 +137,11 @@ function StockListsTab({ supabase }: { supabase: any }) {
     if (!listId) { alert('Create or select a stock list first'); return; }
     const existing = (listStyles as Set<string>) || new Set<string>();
     const toInsert = Array.from(new Set(styleIds.filter((id) => id && !existing.has(String(id))))).map((id) => ({ list_id: listId, style_id: id }));
-    if (toInsert.length === 0) return;
-    const { error } = await supabase.from('stock_list_styles').insert(toInsert);
+    if (toInsert.length === 0) { flash('No new styles to add', 'error'); return; }
+    const { error } = await supabase.from('stock_list_styles').upsert(toInsert as any, { onConflict: 'list_id,style_id' } as any);
     if (error) { alert(error.message); return; }
     try { await (useSWR as any).mutate?.(['stock-list-styles:ids', listId]); } catch {}
-    alert(`Added ${toInsert.length} styles to list`);
+    flash(`Added ${toInsert.length} styles`);
   }
   // Colors for styles in the active list
   const { data: styleColors } = useSWR(activeListId && styleIdsInList.length ? ['style_colors:forList', activeListId, styleIdsInList.join(',')] : null, async () => {
@@ -188,33 +194,44 @@ function StockListsTab({ supabase }: { supabase: any }) {
   }, { refreshInterval: 0 });
   async function toggleColorInclude(styleId: string, colorId: string) {
     if (!activeListId) return;
-    const idToKey = styleColors?.invByStyle.get(styleId) || new Map<string, string>();
-    const key = idToKey.get(colorId) || '';
-    const curSet = new Set<string>((listColorRules?.includeMap.get(styleId) || new Set<string>()) as Set<string>);
-    const hasAny = Boolean(listColorRules?.hasAnyMap.get(styleId));
-    const isOn = hasAny ? curSet.has(key) : true;
-    if (!hasAny) {
-      const colors = styleColors?.byStyle.get(styleId) || [];
-      const toOn = new Set<string>(colors.map(c => (c.color || '').trim().toLowerCase()));
-      toOn.delete((key || '').trim().toLowerCase());
-      const fwd = styleColors?.fwdByStyle.get(styleId) || new Map<string, string>();
-      const rows = Array.from(toOn).map((ck) => ({ list_id: activeListId, style_id: styleId, style_color_id: fwd.get(ck) || '', include: true }));
-      const rowsValid = rows.filter(r => r.style_color_id);
-      if (rowsValid.length) await supabase.from('stock_list_colors').insert(rowsValid);
+    try {
+      const idToKey = styleColors?.invByStyle.get(styleId) || new Map<string, string>();
+      const key = idToKey.get(colorId) || '';
+      const curSet = new Set<string>((listColorRules?.includeMap.get(styleId) || new Set<string>()) as Set<string>);
+      const hasAny = Boolean(listColorRules?.hasAnyMap.get(styleId));
+      const isOn = hasAny ? curSet.has(key) : true;
+      if (!hasAny) {
+        const colors = styleColors?.byStyle.get(styleId) || [];
+        const toOn = new Set<string>(colors.map(c => (c.color || '').trim().toLowerCase()));
+        toOn.delete((key || '').trim().toLowerCase());
+        const fwd = styleColors?.fwdByStyle.get(styleId) || new Map<string, string>();
+        const rows = Array.from(toOn).map((ck) => ({ list_id: activeListId, style_id: styleId, style_color_id: fwd.get(ck) || '', include: true }));
+        const rowsValid = rows.filter(r => r.style_color_id);
+        if (rowsValid.length) await supabase.from('stock_list_colors').upsert(rowsValid as any, { onConflict: 'list_id,style_id,style_color_id' } as any);
+        await mutateColorRules();
+        flash('Saved');
+        return;
+      }
+      if (isOn) {
+        await supabase.from('stock_list_colors').delete().eq('list_id', activeListId).eq('style_id', styleId).eq('style_color_id', colorId);
+      } else {
+        await supabase.from('stock_list_colors').upsert({ list_id: activeListId, style_id: styleId, style_color_id: colorId, include: true } as any, { onConflict: 'list_id,style_id,style_color_id' } as any);
+      }
       await mutateColorRules();
-      return;
+      flash('Saved');
+    } catch (e: any) {
+      flash(e?.message || 'Failed to save', 'error');
     }
-    if (isOn) {
-      await supabase.from('stock_list_colors').delete().eq('list_id', activeListId).eq('style_id', styleId).eq('style_color_id', colorId);
-    } else {
-      await supabase.from('stock_list_colors').insert({ list_id: activeListId, style_id: styleId, style_color_id: colorId, include: true });
-    }
-    await mutateColorRules();
   }
   async function allowAllColors(styleId: string) {
     if (!activeListId) return;
-    await supabase.from('stock_list_colors').delete().eq('list_id', activeListId).eq('style_id', styleId);
-    await mutateColorRules();
+    try {
+      await supabase.from('stock_list_colors').delete().eq('list_id', activeListId).eq('style_id', styleId);
+      await mutateColorRules();
+      flash('All colors allowed');
+    } catch (e: any) {
+      flash(e?.message || 'Failed to update', 'error');
+    }
   }
   // Paste input
   const [pasted, setPasted] = ReactNS.useState<string>('');
@@ -253,6 +270,11 @@ function StockListsTab({ supabase }: { supabase: any }) {
           <TabButton active={innerTab==='edit'} onClick={()=>setInnerTab('edit')}>Edit List</TabButton>
         </div>
       </div>
+      {notice && (
+        <div className={(notice.kind==='success' ? 'bg-green-50 text-green-700 border-green-200' : 'bg-red-50 text-red-700 border-red-200') + ' mb-2 rounded border px-3 py-2 text-xs'}>
+          {notice.text}
+        </div>
+      )}
       {!activeListId && (
         <div className="mb-3 text-xs text-gray-600">Create and select a list to start adding styles.</div>
       )}
