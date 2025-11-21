@@ -93,17 +93,19 @@ export default function StatisticsDashboardPage() {
         if (!my || !my.publicUrl) continue;
         const recipient = byId[sp.id]?.email || '';
         if (!recipient) continue;
+        // Use template variable names the email expects:
+        // salesman_pdf (per-salesperson), top15_salesmen_pdf, countries_pdf_url
         const dynamicParams: Record<string, string> = {
-          salesman_pdf_url: '',
+          salesman_pdf: '',
           countries_pdf_url: '',
-          top15_salesmen_pdf_url: ''
+          top15_salesmen_pdf: ''
         };
-        dynamicParams.salesman_pdf_url = my.publicUrl || '';
+        dynamicParams.salesman_pdf = my.publicUrl || '';
         if (includeCountries && countries?.public_url) {
           dynamicParams.countries_pdf_url = countries.public_url;
         }
         if (includeTop15Salesmen && top15Salesmen?.public_url) {
-          dynamicParams.top15_salesmen_pdf_url = top15Salesmen.public_url;
+          dynamicParams.top15_salesmen_pdf = top15Salesmen.public_url;
         }
         try {
           const summarize = (p: Record<string, string>) => Object.fromEntries(Object.entries(p).map(([k, v]) => [k, { len: (v || '').length, head: (v || '').slice(0, 32) }]));
@@ -115,9 +117,9 @@ export default function StatisticsDashboardPage() {
           });
         } catch {}
         const anyParam =
-          Boolean(dynamicParams.salesman_pdf_url) ||
+          Boolean(dynamicParams.salesman_pdf) ||
           Boolean(dynamicParams.countries_pdf_url) ||
-          Boolean(dynamicParams.top15_salesmen_pdf_url);
+          Boolean(dynamicParams.top15_salesmen_pdf);
         if (!anyParam) continue;
         const subject = 'Din statistik';
         const firstName = String(byId[sp.id]?.name || '');
