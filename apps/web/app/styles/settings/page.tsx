@@ -30,9 +30,173 @@ export default function StylesSettingsPage() {
         </CardHeader>
         <CardContent>
           {tab === 'scraping' && <ScrapingTab supabase={supabase} />}
-          {tab === 'stock-lists' && <div className="text-sm text-gray-700">Placeholder — Stock Lists management will live here.</div>}
+          {tab === 'stock-lists' && <StockListsTab supabase={supabase} />}
         </CardContent>
       </Card>
+    </div>
+  );
+}
+
+function StockListsTab({ supabase }: { supabase: any }) {
+  const ReactNS = React as typeof import('react');
+  // Load stock lists
+  const { data: stockLists, mutate: mutateLists } = useSWR('stock-lists:settings', async () => {
+    const { data, error } = await supabase.from('stock_lists').select('id, name').order('name', { ascending: true });
+    if (error) throw error;
+    return (data ?? []) as Array<{ id: string; name: string }>;
+  }, { refreshInterval: 0 });
+  const [activeListId, setActiveListId] = ReactNS.useState<string>('');
+  ReactNS.useEffect(() => {
+    if (!activeListId && (stockLists ?? []).length) setActiveListId((stockLists as any[])[0].id as string);
+  }, [stockLists && (stockLists as any[]).length]);
+  async function ensureDefaultList(): Promise<string> {
+    if (activeListId) return activeListId;
+    // Create a default list if none exists
+    const name = 'Default';
+    const exists = (stockLists ?? []).find((l: any) => String(l.name).toLowerCase() === 'default');
+    if (exists) { setActiveListId(exists.id); return exists.id; }
+    const { data, error } = await supabase.from('stock_lists').insert({ name }).select('id').single();
+    if (error) throw error;
+    await mutateLists();
+    setActiveListId((data as any).id as string);
+    return (data as any).id as string;
+  }
+  // Load styles and seasons for filtering
+  type StyleRow = { id: string; style_no: string; style_name: string | null; supplier: string | null; image_url: string | null };
+  const { data: styles } = useSWR('styles:all:stocklists', async () => {
+    const { data, error } = await supabase
+      .from('styles')
+      .select('id, style_no, style_name, supplier, image_url')
+      .order('style_no', { ascending: true })
+      .limit(4000);
+    if (error) throw error;
+    return (data ?? []) as StyleRow[];
+  }, { refreshInterval: 0 });
+  const { data: seasons } = useSWR('seasons:list:stocklists', async () => {
+    const { data, error } = await supabase.from('seasons').select('id, name, year, hidden').order('year', { ascending: false });
+    if (error) throw error;
+    return (data ?? []) as Array<{ id: string; name: string | null; year: number | null; hidden?: boolean | null }>;
+  }, { refreshInterval: 0 });
+  const seasonCodeById = ReactNS.useMemo(() => {
+    const m = new Map<string, string>();
+    for (const s of (seasons ?? [])) {
+      const parts = String(s.name || '').trim().split(/\s+/).filter(Boolean);
+      const letters = parts.map((w) => w[0]?.toUpperCase() ?? '').join('');
+      const yy = s.year != null ? String(s.year).slice(-2) : '';
+      m.set(String(s.id), `${letters}${yy}`);
+    }
+    return m;
+  }, [seasons && seasons.length]);
+  const { data: styleSeasons } = useSWR('style_seasons:byStyle:stocklists', async () => {
+    const { data, error } = await supabase.from('style_seasons').select('style_no, seasons').limit(8000);
+    if (error) throw error;
+    const byStyle = new Map<string, string[]>();
+    for (const r of (data ?? []) as any[]) {
+      const arr = Array.isArray(r.seasons) ? (r.seasons as string[]) : [];
+      byStyle.set(r.style_no, arr);
+    }
+    return byStyle as Map<string, string[]>;
+  }, { refreshInterval: 0 });
+  const [seasonId, setSeasonId] = ReactNS.useState<string>('');
+  const [query, setQuery] = ReactNS.useState<string>('');
+  const seasonSelectItems = ReactNS.useMemo(() => {
+    return (seasons ?? [])
+      .filter((s) => !(s as any).hidden)
+      .map((s) => ({ value: String(s.id), label: seasonCodeById.get(String(s.id)) || String(s.id) }));
+  }, [seasons && seasons.length, seasonCodeById && Array.from(seasonCodeById.keys()).length]);
+  const filtered = ReactNS.useMemo(() => {
+    let list = (styles ?? []) as StyleRow[];
+    if (seasonId) {
+      const target = (() => {
+        const s = (seasons ?? []).find((x) => String(x.id) === String(seasonId));
+        if (!s) return '';
+        const yy = s.year != null ? String(s.year).slice(-2) : '';
+        const name = String(s.name || '').toUpperCase();
+        return yy && name ? `${yy} ${name}` : '';
+      })();
+      if (target) list = list.filter((st) => (styleSeasons?.get(st.style_no) || []).includes(target));
+    }
+    const q = query.trim().toLowerCase();
+    if (!q) return list;
+    return list.filter((s) => (s.style_no || '').toLowerCase().includes(q) || (s.style_name || '').toLowerCase().includes(q));
+  }, [styles, seasonId, styleSeasons, query, seasons && seasons.length]);
+  // Manage adding to list
+  const { data: listStyles } = useSWR(activeListId ? ['stock-list-styles:ids', activeListId] : null, async () => {
+    const { data, error } = await supabase.from('stock_list_styles').select('style_id').eq('list_id', activeListId);
+    if (error) throw error;
+    return new Set(((data ?? []) as any[]).map(r => String(r.style_id)));
+  }, { refreshInterval: 0 });
+  async function addStylesToList(styleIds: string[]) {
+    const listId = await ensureDefaultList();
+    const existing = (listStyles as Set<string>) || new Set<string>();
+    const toInsert = Array.from(new Set(styleIds.filter((id) => id && !existing.has(String(id))))).map((id) => ({ list_id: listId, style_id: id }));
+    if (toInsert.length === 0) return;
+    const { error } = await supabase.from('stock_list_styles').insert(toInsert);
+    if (error) { alert(error.message); return; }
+    try { await (useSWR as any).mutate?.(['stock-list-styles:ids', listId]); } catch {}
+    alert(`Added ${toInsert.length} styles to list`);
+  }
+  // Paste input
+  const [pasted, setPasted] = ReactNS.useState<string>('');
+  const onAddPasted = async () => {
+    try {
+      const lines = pasted.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+      if (lines.length === 0) return;
+      // Lookup style ids by style_no
+      const uniqueNos = Array.from(new Set(lines)).slice(0, 2000);
+      const { data, error } = await supabase.from('styles').select('id, style_no').in('style_no', uniqueNos);
+      if (error) throw error;
+      const ids = ((data ?? []) as any[]).map(r => String(r.id)).filter(Boolean);
+      if (ids.length === 0) { alert('No matching styles found'); return; }
+      await addStylesToList(ids);
+      setPasted('');
+    } catch (e: any) { alert(e?.message || 'Failed to add'); }
+  };
+  return (
+    <div className="text-sm text-gray-700">
+      <div className="mb-3 flex items-center gap-2">
+        <div className="text-xs text-gray-600">Active list</div>
+        <select className="rounded border px-2 py-1 text-xs" value={activeListId} onChange={(e)=>setActiveListId(e.target.value)}>
+          {(stockLists ?? []).map((l: any) => (<option key={l.id} value={l.id}>{l.name}</option>))}
+        </select>
+        <Button size="sm" variant="outline" onClick={async ()=>{ try { await ensureDefaultList(); alert('Default list ensured/selected'); } catch(e:any){ alert(e?.message||'Failed'); } }}>Use Default</Button>
+      </div>
+      <div className="mb-3 flex items-center gap-2">
+        <Input className="w-56" placeholder="Search style no / name" value={query} onChange={(e)=>setQuery(e.target.value)} />
+        <SearchSelect items={seasonSelectItems} value={seasonId} onChange={setSeasonId} placeholder="All seasons" clearable />
+        <Button size="sm" onClick={async () => { const ids = filtered.map(s => s.id); await addStylesToList(ids); }}>Add All</Button>
+      </div>
+      <div className="mb-3">
+        <div className="text-xs text-gray-600 mb-1">Paste style numbers (one per line)</div>
+        <textarea className="w-full h-28 rounded border p-2 text-sm" placeholder="e.g.\n12345\n23456\n..." value={pasted} onChange={(e)=>setPasted(e.target.value)} />
+        <div className="mt-2">
+          <Button size="sm" onClick={onAddPasted}>Add pasted</Button>
+        </div>
+      </div>
+      <div className="max-h-80 overflow-auto border rounded">
+        <table className="min-w-full text-sm">
+          <thead className="bg-gray-50">
+            <tr>
+              <th className="p-2 text-left">Image</th>
+              <th className="p-2 text-left">Style no</th>
+              <th className="p-2 text-left">Name</th>
+              <th className="p-2 text-left">Add</th>
+            </tr>
+          </thead>
+          <tbody>
+            {(filtered ?? []).map((s) => (
+              <tr key={s.id} className="border-t">
+                <td className="p-2"><Thumb src={s.image_url || ''} /></td>
+                <td className="p-2 font-medium">{s.style_no}</td>
+                <td className="p-2">{s.style_name || '—'}</td>
+                <td className="p-2">
+                  <Button size="sm" variant="outline" onClick={async ()=> addStylesToList([s.id])}>Add</Button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
