@@ -4,7 +4,7 @@ import { supabase, useRoles } from '../../../../lib/supabaseClient';
 import { ProgressBar } from '../../../../components/ProgressBar';
 import React from 'react';
 import { MoreHorizontal } from 'lucide-react';
-export default function Top10StylesPage() {
+export default function Top15StylesPage() {
   const { data: seasons } = useSWR('seasons-all', async () => {
     const { data } = await supabase.from('seasons').select('id, name, year, is_current').order('created_at', { ascending: false });
     return (data ?? []) as Array<{ id: string; name: string; year: number | null; is_current?: boolean }>;
@@ -154,7 +154,7 @@ export default function Top10StylesPage() {
                   className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50"
                   onClick={enqueueScrapeTopStyles}
                 >
-                  Scrape Top 10
+                  Scrape Top 15
                 </button>
                 <button className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50" onClick={() => { setExcludeModalOpen(true); setMenuOpen(false); }}>
                   Exclude Styles

@@ -24,14 +24,26 @@ export async function exportTopStyles(ctx: Ctx) {
     }
     if (!seasonId) throw new Error('No current season set');
     await log(job.id, 'info', 'STEP:top_styles_export_season', { season_id: seasonId });
-    // Fetch top 15 and suppliers
+    // Fetch top 15 (we will filter exclusions from settings below) and suppliers
     const { data: rows } = await supabase
       .from('top_styles')
       .select('id, style_no, style_name, image_url, color, type, quality, qty, dg')
       .eq('season_id', seasonId)
       .order('qty', { ascending: false })
       .limit(15);
-    const list = (rows ?? []) as Array<{ id: string; style_no: string; style_name?: string | null; image_url?: string | null; color?: string | null; type?: string | null; quality?: string | null; qty: number; dg?: string | null }>;
+    let list = (rows ?? []) as Array<{ id: string; style_no: string; style_name?: string | null; image_url?: string | null; color?: string | null; type?: string | null; quality?: string | null; qty: number; dg?: string | null }>;
+    // Apply exclusions from settings
+    try {
+      const exKey = `top_styles_excluded:${seasonId}`;
+      const { data: exSeason } = await supabase.from('app_settings').select('value').eq('key', exKey).maybeSingle();
+      const { data: exGlobal } = await supabase.from('app_settings').select('value').eq('key', 'top_styles_excluded_global').maybeSingle();
+      const seasonList = (((exSeason?.value as any)?.styleNos as string[] | undefined) ?? []).map(String);
+      const globalList = (((exGlobal?.value as any)?.styleNos as string[] | undefined) ?? []).map(String);
+      const exSet = new Set<string>([...seasonList, ...globalList]);
+      if (exSet.size > 0) {
+        list = list.filter((r) => !exSet.has(String(r.style_no)));
+      }
+    } catch {}
     await log(job.id, 'info', 'STEP:top_styles_export_rows', { count: list.length });
     // Season display name
     let seasonName = 'Season';

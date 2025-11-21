@@ -58,7 +58,7 @@ export function SidebarNav() {
     can('/statistics/general') ? <NavLink key="sg" href="/statistics/general" label="General" /> : null,
     can('/statistics/overview') ? <NavLink key="so" href="/statistics/overview" label="Overview" /> : null,
     can('/statistics/countries') ? <NavLink key="sc" href="/statistics/countries" label="Countries" /> : null,
-    can('/statistics/styles/top10') ? <NavLink key="st" href="/statistics/styles/top10" label="Top 10 Styles" /> : null,
+    can('/statistics/styles/top10') ? <NavLink key="st" href="/statistics/styles/top10" label="Top 15 Styles" /> : null,
     can('/statistics/vendors/top10') ? <NavLink key="sv" href="/statistics/vendors/top10" label="Top 10 Vendors" /> : null,
     can('/statistics/exports') ? <NavLink key="se" href="/statistics/exports" label="Exports" /> : null,
     can('/statistics/downloads') ? <NavLink key="sdw" href="/statistics/downloads" label="Downloads" /> : null,
