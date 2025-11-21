@@ -55,13 +55,16 @@ export async function exportStockList(ctx: Ctx) {
           styleColorIdMap.get(sid)!.set(key, c.id as string);
         }
       }
-      // Load per-list color includes; build whitelist per style when any rule exists
-      const includeMap = new Map<string, boolean>(); // style_color_id -> include (true = include)
-      const hasAnyMap = new Map<string, boolean>();   // style_id -> has any rule rows
-      const { data: inclRows } = await supabase.from('stock_list_colors').select('style_id, style_color_id, include').eq('list_id', listId);
-      for (const r of (inclRows ?? []) as any[]) {
+      // Load per-list color rules; support blacklist (include=false) and legacy whitelist (include=true)
+      const includeMap = new Map<string, boolean>(); // style_color_id -> include flag
+      const byStyleFlags = new Map<string, { hasIncludeTrue: boolean; hasIncludeFalse: boolean }>();
+      const { data: ruleRows } = await supabase.from('stock_list_colors').select('style_id, style_color_id, include').eq('list_id', listId);
+      for (const r of (ruleRows ?? []) as any[]) {
+        const sid = String(r.style_id || '');
         includeMap.set(r.style_color_id as string, r.include === true);
-        if (r.style_id) hasAnyMap.set(String(r.style_id), true);
+        const prev = byStyleFlags.get(sid) || { hasIncludeTrue: false, hasIncludeFalse: false };
+        if (r.include === true) prev.hasIncludeTrue = true; else prev.hasIncludeFalse = true;
+        byStyleFlags.set(sid, prev);
       }
       // Fetch stock rows
       const { data: stockRows } = await supabase
@@ -88,13 +91,18 @@ export async function exportStockList(ctx: Ctx) {
         const metaEntry = metaByNo.get(style_no) || { id: null, name: null, image: null, supplier: null };
         const sid = metaEntry.id || null;
         for (const [color, rows] of byColor.entries()) {
-          // Respect per-list include flag when present (default include if missing)
+          // Respect per-list color include/hide rules
           if (sid) {
             const cmap = styleColorIdMap.get(sid) || new Map<string, string>();
             const scId = cmap.get(String(color || '').trim().toLowerCase()) || null;
-            const hasAny = hasAnyMap.get(sid) === true;
-            if (hasAny) {
-              // Whitelist mode: only include if explicitly included
+            const flags = byStyleFlags.get(sid) || { hasIncludeTrue: false, hasIncludeFalse: false };
+            if (flags.hasIncludeFalse) {
+              // Blacklist: hide colors that have include=false rows
+              if (!scId) continue;
+              const allow = includeMap.get(scId) !== false; // explicit false hides
+              if (!allow) continue;
+            } else if (flags.hasIncludeTrue) {
+              // Legacy whitelist: show only include=true
               if (!scId) continue;
               const allow = includeMap.get(scId) === true;
               if (!allow) continue;
@@ -160,15 +168,13 @@ export async function exportStockList(ctx: Ctx) {
         block: { marginBottom: s(10), borderBottom: 0.5, borderColor: '#e5e7eb', paddingBottom: s(6) },
         row: { flexDirection: 'row', gap: s(8) },
         left: { width: s(84) },
-        leftPanel: { width: s(120) }, // left column (image + meta) for the whole style
-        // Use contain to avoid cutting images in the PDF
+        leftPanel: { width: s(120) },
+        // Ensure images never get cut off
         img: { width: s(80), height: s(80), objectFit: 'contain' as any },
         meta: { fontSize: s(9), marginBottom: s(4) },
-        // Color table container (adds spacing between colors)
         colorTable: { marginBottom: s(22) },
         tableHeader: { flexDirection: 'row', backgroundColor: '#f7f7f7', color: '#000', borderBottom: 0.5, borderColor: '#cbd5e1' },
         tableRow: { flexDirection: 'row', borderBottom: 0.5, borderColor: '#e2e8f0' },
-        // Make headers/cells a bit smaller so many sizes fit comfortably
         th: { padding: s(3), fontSize: s(8), fontWeight: 700 as any },
         cell: { padding: s(3), fontSize: s(8) },
         leftCell: { textAlign: 'left' as any },
