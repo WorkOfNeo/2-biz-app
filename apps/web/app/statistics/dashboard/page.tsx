@@ -75,7 +75,7 @@ export default function StatisticsDashboardPage() {
         const dynamicParams: Record<string, string> = {
           salesman_pdf: '',
           countries_pdf: '',
-          top10_salesmen_pdf: ''
+          top15_salesmen_pdf: ''
         };
         try {
           const dataUrl = await fetchToDataUrl(my.publicUrl);
@@ -90,7 +90,7 @@ export default function StatisticsDashboardPage() {
         if (includeTop15Salesmen && top15Salesmen?.public_url) {
           try {
             const dataUrl = await fetchToDataUrl(top15Salesmen.public_url);
-            dynamicParams.top10_salesmen_pdf = dataUrl; // param key stays for template compatibility
+            dynamicParams.top15_salesmen_pdf = dataUrl;
           } catch {}
         }
         try {
@@ -105,7 +105,7 @@ export default function StatisticsDashboardPage() {
         const anyParam =
           Boolean(dynamicParams.salesman_pdf) ||
           Boolean(dynamicParams.countries_pdf) ||
-          Boolean(dynamicParams.top10_salesmen_pdf);
+          Boolean(dynamicParams.top15_salesmen_pdf);
         if (!anyParam) continue;
         const subject = 'Din statistik';
         const firstName = String(byId[sp.id]?.name || '');
@@ -154,7 +154,7 @@ export default function StatisticsDashboardPage() {
       const to = receivers.split(',').map(s => s.trim()).filter(Boolean);
       if (to.length === 0) { alert('Enter at least one receiver email.'); return; }
       // Use URL params (not base64) to avoid EmailJS 50KB variables limit
-      const dynamicParams: Record<string, string> = { all_salesmen_pdf_url: '', countries_pdf_url: '', top15_overall_pdf_url: '' };
+      const dynamicParams: Record<string, string> = { all_salesmen_pdf_url: '', countries_pdf_url: '', top15_overall_pdf: '' };
       if (overallOpts.all) {
         const salesmen = latestByKind.get('general_salesmen_pdfs');
         const allUrl = salesmen?.meta?.all?.publicUrl || null;
@@ -166,7 +166,7 @@ export default function StatisticsDashboardPage() {
       }
       if (overallOpts.top10overall) {
         const row = latestByKind.get('top_styles_pdf_overall');
-        if (row?.public_url) { dynamicParams.top15_overall_pdf_url = row.public_url; }
+        if (row?.public_url) { dynamicParams.top15_overall_pdf = row.public_url; }
       }
       if (!overallOpts.all && !overallOpts.countries && !overallOpts.top10overall) { alert('No options selected.'); return; }
       try {
