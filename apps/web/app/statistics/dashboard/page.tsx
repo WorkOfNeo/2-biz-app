@@ -32,6 +32,27 @@ export default function StatisticsDashboardPage() {
     for (const row of (latestExports ?? [])) { if (!map.has(row.kind)) map.set(row.kind, row); }
     return map;
   }, [latestExports]);
+  // Build latest stock list exports by list name (unique per schema)
+  const latestStockListByName = React.useMemo(() => {
+    const map = new Map<string, any>(); // name -> export row
+    for (const row of (latestExports ?? [])) {
+      if (row.kind === 'stock_list_pdf') {
+        const name = String(row?.meta?.list || row?.title || '').replace(/^Stock List ·\s*/i, '');
+        if (name && !map.has(name)) map.set(name, row);
+      }
+    }
+    return map;
+  }, [latestExports]);
+  // Available stock lists from DB
+  const { data: stockListsAll } = useSWR('stock-lists:names', async () => {
+    const { data, error } = await supabase.from('stock_lists').select('id, name').order('name', { ascending: true });
+    if (error) throw new Error(error.message);
+    return (data ?? []) as Array<{ id: string; name: string }>
+  });
+  const [selectedStockLists, setSelectedStockLists] = React.useState<Set<string>>(new Set());
+  function toggleStockList(name: string) {
+    setSelectedStockLists((prev) => { const n = new Set(prev); if (n.has(name)) n.delete(name); else n.add(name); return n; });
+  }
 
   // Box #1 - Salesperson Statistics
   const [selected, setSelected] = React.useState<Record<string, boolean>>({});
@@ -144,8 +165,7 @@ export default function StatisticsDashboardPage() {
     try {
       const to = receivers.split(',').map(s => s.trim()).filter(Boolean);
       if (to.length === 0) { alert('Enter at least one receiver email.'); return; }
-      // Use URL params (not base64) to avoid EmailJS 50KB variables limit
-      const dynamicParams: Record<string, string> = { all_salesmen_pdf_url: '', countries_pdf_url: '', top15_overall_pdf: '' };
+      const dynamicParams: Record<string, string> = { all_salesmen_pdf_url: '', countries_pdf_url: '', top15_overall_pdf: '', stock_lists_urls: '' };
       if (overallOpts.all) {
         const salesmen = latestByKind.get('general_salesmen_pdfs');
         const allUrl = salesmen?.meta?.all?.publicUrl || null;
@@ -159,12 +179,21 @@ export default function StatisticsDashboardPage() {
         const row = latestByKind.get('top_styles_pdf_overall');
         if (row?.public_url) { dynamicParams.top15_overall_pdf = row.public_url; }
       }
+      // Add selected stock lists as a newline-separated list of "Name: URL"
+      if (selectedStockLists.size > 0) {
+        const lines: string[] = [];
+        for (const name of Array.from(selectedStockLists)) {
+          const exp = latestStockListByName.get(name);
+          if (exp?.public_url) lines.push(`${name}: ${exp.public_url}`);
+        }
+        dynamicParams.stock_lists_urls = lines.join('\n');
+      }
       if (!overallOpts.all && !overallOpts.countries && !overallOpts.top10overall) { alert('No options selected.'); return; }
       try {
         const summarize = (p: Record<string, string>) => Object.fromEntries(Object.entries(p).map(([k, v]) => [k, { len: (v || '').length, head: (v || '').slice(0, 32) }]));
         console.log('[email:overall] prepared', {
           to,
-          include: { all: overallOpts.all, countries: overallOpts.countries, top10overall: overallOpts.top10overall },
+          include: { all: overallOpts.all, countries: overallOpts.countries, top10overall: overallOpts.top10overall, stockLists: Array.from(selectedStockLists) },
           params: summarize(dynamicParams)
         });
       } catch {}
@@ -395,7 +424,24 @@ export default function StatisticsDashboardPage() {
                 <span>{opt.label}</span>
               </div>
             ))}
+          {/* Stock lists toggles */}
+          <div className="mt-3">
+            <div className="text-xs text-gray-600 mb-1">Stock Lists</div>
+            <div className="flex flex-wrap gap-2">
+              {(stockListsAll ?? []).map((l) => {
+                const on = selectedStockLists.has(l.name);
+                const available = Boolean(latestStockListByName.get(l.name)?.public_url);
+                return (
+                  <label key={l.id} className={"inline-flex items-center gap-1 px-2 py-1 rounded border " + (on ? 'bg-slate-900 text-white border-slate-900' : '')}>
+                    <input type="checkbox" className="h-3 w-3" checked={on} disabled={!available} onChange={() => toggleStockList(l.name)} />
+                    <span className="text-xs">{l.name}</span>
+                    {!available && <span className="text-[10px] text-gray-500 ml-1">(no export)</span>}
+                  </label>
+                );
+              })}
+            </div>
           </div>
+        </div>
           <label className="block text-sm">
             <div className="text-gray-600 mb-1">Email body</div>
             <textarea className="w-full rounded border px-2 py-1 text-sm h-28" placeholder="Write your message…" value={bodyText} onChange={(e)=>setBodyText(e.target.value)} />
