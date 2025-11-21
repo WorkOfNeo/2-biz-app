@@ -123,4 +123,6 @@ curl -i -X POST https://YOUR-ORCHESTRATOR/enqueue \
 
 Last updated: deploy bump to trigger Vercel/Railway (2025-11-18).
 
+Deploy bump: trigger Vercel redeploy at 2025-11-21.
+
 

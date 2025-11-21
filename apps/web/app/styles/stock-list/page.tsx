@@ -124,9 +124,16 @@ export default function StockListPage() {
   const { data: listColorRules } = useSWR(activeListId ? ['stock_list_colors:byList', activeListId] : null, async () => {
     const { data, error } = await supabase.from('stock_list_colors').select('style_id, style_color_id, include').eq('list_id', activeListId);
     if (error) throw new Error(error.message);
-    // Build: includeMap (style_id -> set of included colorLower), and hasAnyMap (style_id -> boolean)
-    const includeMap = new Map<string, Set<string>>();
-    const hasAnyMap = new Map<string, boolean>();
+    // Blacklist model: hiddenIdsMap holds color IDs where include === false
+    const hiddenIdsMap = new Map<string, Set<string>>(); // style_id -> set(style_color_id)
+    for (const r of (data ?? []) as any[]) {
+      const sid = String(r.style_id || '');
+      if (r.include === false) {
+        const set = hiddenIdsMap.get(sid) || new Set<string>();
+        set.add(String(r.style_color_id || ''));
+        hiddenIdsMap.set(sid, set);
+      }
+    }
     // Build reverse map: style_id -> (style_color_id -> colorLower)
     const invertByStyle = new Map<string, Map<string, string>>();
     for (const sid of styleIds) {
@@ -135,27 +142,7 @@ export default function StockListPage() {
       for (const [ck, id] of Array.from(cmap.entries())) inv.set(id, ck);
       invertByStyle.set(sid, inv);
     }
-    for (const r of (data ?? []) as any[]) {
-      const sid = String(r.style_id || '');
-      const scId = String(r.style_color_id || '');
-      const inv = invertByStyle.get(sid) || new Map<string, string>();
-      const ckey = inv.get(scId) || null;
-      if (!ckey) continue;
-      hasAnyMap.set(sid, true);
-      if (r.include === true) {
-        const set = includeMap.get(sid) || new Set<string>();
-        set.add(ckey);
-        includeMap.set(sid, set);
-      }
-    }
-    // eslint-disable-next-line no-console
-    console.log('[stock-list] listColorRules loaded', {
-      listId: activeListId,
-      listColorRows: (data ?? []).length,
-      includeStyles: includeMap.size,
-      hasAnyStyles: hasAnyMap.size
-    });
-    return { includeMap, hasAnyMap } as { includeMap: Map<string, Set<string>>; hasAnyMap: Map<string, boolean> };
+    return { hiddenIdsMap, invertByStyle } as { hiddenIdsMap: Map<string, Set<string>>; invertByStyle: Map<string, Map<string, string>> };
   }, { refreshInterval: 0 });
 
   // Removed per-user selection and view toggles
@@ -283,30 +270,29 @@ export default function StockListPage() {
         presentStyleNos.add(styleNo);
       }
     }
-    // Apply whitelist rules and add placeholder colors when needed
+    // Blacklist rules: hide only the explicitly hidden colors; all others visible
     const filtered = out.map((row) => {
       const sid = styleMetaByNo[row.styleNo]?.id || null;
       if (!sid) return row;
-      const includeSet = (listColorRules?.includeMap?.get(sid) as Set<string> | undefined) || new Set<string>();
-      const hasAny = Boolean(listColorRules?.hasAnyMap?.get(sid));
-      // Compute allowed color keys for this style
+      const hiddenIds = (listColorRules as any)?.hiddenIdsMap?.get(sid) as Set<string> | undefined;
+      // Collect colorLower -> style_color_id map for this style
       const allColorKeysMap = styleColors?.get(sid) || new Map<string, string>(); // colorLower -> style_color_id
-      const allowedKeys = hasAny ? includeSet : new Set<string>(Array.from(allColorKeysMap.keys()));
-      // Start from current colors and keep only allowed when whitelist exists
-      const current = hasAny
-        ? row.colors.filter((c) => allowedKeys.has(String(c.color || '').trim().toLowerCase()))
-        : row.colors.slice();
-      // Add placeholder entries for allowed colors that have no scraped data yet
+      // Filter current colors to remove hidden
+      const current = row.colors.filter((c) => {
+        const key = String(c.color || '').trim().toLowerCase();
+        const scId = allColorKeysMap.get(key) || '';
+        return !(hiddenIds?.has(String(scId)));
+      });
+      // Add placeholders for non-hidden colors that have no scraped data yet
       const existingKeys = new Set(current.map((c) => `${row.styleNo}|${String(c.color || '').trim().toLowerCase()}`));
       const placeholders: Group[] = [];
-      for (const ckey of Array.from(allowedKeys)) {
+      for (const [ckey, scId] of Array.from(allColorKeysMap.entries())) {
+        if (hiddenIds?.has(String(scId))) continue; // skip hidden
         const key = `${row.styleNo}|${ckey}`;
         if (!existingKeys.has(key)) {
-          // Create a zeroed placeholder; sizes left empty (table pads columns)
-          const colorLabel = ckey; // we only have lowercased; serve as label
           placeholders.push({
             styleNo: row.styleNo,
-            color: colorLabel,
+            color: ckey,
             sizes: [],
             stock: [],
             soldSum: [],
@@ -319,21 +305,10 @@ export default function StockListPage() {
         }
       }
       const colors = [...current, ...placeholders].sort((a, b) => a.color.localeCompare(b.color));
-      // eslint-disable-next-line no-console
-      if (activeListId && hasAny) {
-        console.log('[stock-list] style filter', {
-          listId: activeListId,
-          styleNo: row.styleNo,
-          styleId: sid,
-          allowedColorCount: allowedKeys.size,
-          presentColors: row.colors.map((c) => c.color),
-          keptColors: colors.map((c) => c.color)
-        });
-      }
       return { ...row, colors };
     });
     return filtered as Array<{ styleNo: string; colors: Group[] }>;
-  }, [groups, styleMetaByNo, activeListId, listColorRules?.includeMap, listColorRules?.hasAnyMap, styleRows, styleColors, styleIdsInList]);
+  }, [groups, styleMetaByNo, activeListId, listColorRules?.hiddenIdsMap, styleRows, styleColors, styleIdsInList]);
 
   // Log selection changes and high-level counts
   React.useEffect(() => {
