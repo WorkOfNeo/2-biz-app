@@ -73,25 +73,16 @@ export default function StatisticsDashboardPage() {
         const recipient = byId[sp.id]?.email || '';
         if (!recipient) continue;
         const dynamicParams: Record<string, string> = {
-          salesman_pdf: '',
-          countries_pdf: '',
-          top15_salesmen_pdf: ''
+          salesman_pdf_url: '',
+          countries_pdf_url: '',
+          top15_salesmen_pdf_url: ''
         };
-        try {
-          const dataUrl = await fetchToDataUrl(my.publicUrl);
-          dynamicParams.salesman_pdf = dataUrl;
-        } catch {}
+        dynamicParams.salesman_pdf_url = my.publicUrl || '';
         if (includeCountries && countries?.public_url) {
-          try {
-            const dataUrl = await fetchToDataUrl(countries.public_url);
-            dynamicParams.countries_pdf = dataUrl;
-          } catch {}
+          dynamicParams.countries_pdf_url = countries.public_url;
         }
         if (includeTop15Salesmen && top15Salesmen?.public_url) {
-          try {
-            const dataUrl = await fetchToDataUrl(top15Salesmen.public_url);
-            dynamicParams.top15_salesmen_pdf = dataUrl;
-          } catch {}
+          dynamicParams.top15_salesmen_pdf_url = top15Salesmen.public_url;
         }
         try {
           const summarize = (p: Record<string, string>) => Object.fromEntries(Object.entries(p).map(([k, v]) => [k, { len: (v || '').length, head: (v || '').slice(0, 32) }]));
@@ -103,9 +94,9 @@ export default function StatisticsDashboardPage() {
           });
         } catch {}
         const anyParam =
-          Boolean(dynamicParams.salesman_pdf) ||
-          Boolean(dynamicParams.countries_pdf) ||
-          Boolean(dynamicParams.top15_salesmen_pdf);
+          Boolean(dynamicParams.salesman_pdf_url) ||
+          Boolean(dynamicParams.countries_pdf_url) ||
+          Boolean(dynamicParams.top15_salesmen_pdf_url);
         if (!anyParam) continue;
         const subject = 'Din statistik';
         const firstName = String(byId[sp.id]?.name || '');
