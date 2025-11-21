@@ -153,19 +153,20 @@ export default function StatisticsDashboardPage() {
     try {
       const to = receivers.split(',').map(s => s.trim()).filter(Boolean);
       if (to.length === 0) { alert('Enter at least one receiver email.'); return; }
-      const dynamicParams: Record<string, string> = { all_salesmen_pdf: '', countries_pdf: '', top10_overall_pdf: '' };
+      // Use URL params (not base64) to avoid EmailJS 50KB variables limit
+      const dynamicParams: Record<string, string> = { all_salesmen_pdf_url: '', countries_pdf_url: '', top15_overall_pdf_url: '' };
       if (overallOpts.all) {
         const salesmen = latestByKind.get('general_salesmen_pdfs');
         const allUrl = salesmen?.meta?.all?.publicUrl || null;
-        if (allUrl) { try { const du = await fetchToDataUrl(allUrl); dynamicParams.all_salesmen_pdf = du; } catch {} }
+        if (allUrl) { dynamicParams.all_salesmen_pdf_url = allUrl; }
       }
       if (overallOpts.countries) {
         const row = latestByKind.get('countries_pdf');
-        if (row?.public_url) { try { const du = await fetchToDataUrl(row.public_url); dynamicParams.countries_pdf = du; } catch {} }
+        if (row?.public_url) { dynamicParams.countries_pdf_url = row.public_url; }
       }
       if (overallOpts.top10overall) {
         const row = latestByKind.get('top_styles_pdf_overall');
-        if (row?.public_url) { try { const du = await fetchToDataUrl(row.public_url); dynamicParams.top10_overall_pdf = du; } catch {} }
+        if (row?.public_url) { dynamicParams.top15_overall_pdf_url = row.public_url; }
       }
       if (!overallOpts.all && !overallOpts.countries && !overallOpts.top10overall) { alert('No options selected.'); return; }
       try {
