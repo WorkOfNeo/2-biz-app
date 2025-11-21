@@ -217,6 +217,21 @@ function StockListsTab({ supabase }: { supabase: any }) {
       flash(e?.message || 'Failed to update', 'error');
     }
   }
+  async function removeStyleFromList(styleId: string) {
+    if (!activeListId) return;
+    try {
+      // Remove all color rules for this style in this list
+      await supabase.from('stock_list_colors').delete().eq('list_id', activeListId).eq('style_id', styleId);
+      // Remove the style from the list
+      const { error } = await supabase.from('stock_list_styles').delete().eq('list_id', activeListId).eq('style_id', styleId);
+      if (error) throw error;
+      try { await (useSWR as any).mutate?.(['stock-list-styles:ids', activeListId]); } catch {}
+      await mutateColorRules();
+      flash('Removed from list');
+    } catch (e: any) {
+      flash(e?.message || 'Failed to remove', 'error');
+    }
+  }
   // Paste input
   const [pasted, setPasted] = ReactNS.useState<string>('');
   const [pasteOpen, setPasteOpen] = ReactNS.useState(false);
@@ -339,7 +354,7 @@ function StockListsTab({ supabase }: { supabase: any }) {
                       </div>
                     </td>
                     <td className="p-2">
-                      <Button size="sm" variant="outline" onClick={()=>allowAllColors(sid)}>Allow all colors</Button>
+                      <Button size="sm" variant="outline" onClick={()=>removeStyleFromList(sid)}>Remove</Button>
                     </td>
                   </tr>
                 );
