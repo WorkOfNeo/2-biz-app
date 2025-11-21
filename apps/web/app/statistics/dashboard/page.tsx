@@ -36,7 +36,7 @@ export default function StatisticsDashboardPage() {
   // Box #1 - Salesperson Statistics
   const [selected, setSelected] = React.useState<Record<string, boolean>>({});
   const [includeCountries, setIncludeCountries] = React.useState(true);
-  const [includeTop10Salesmen, setIncludeTop10Salesmen] = React.useState(false);
+  const [includeTop15Salesmen, setIncludeTop15Salesmen] = React.useState(false);
   const [sendingSp, setSendingSp] = React.useState(false);
   
 
@@ -49,7 +49,7 @@ export default function StatisticsDashboardPage() {
     setSendingSp(true);
     try {
       const spExport = latestByKind.get('general_salesmen_pdfs');
-      const top10Salesmen = latestByKind.get('top_styles_pdf_salesmen');
+      const top15Salesmen = latestByKind.get('top_styles_pdf_salesmen');
       const stockListRows = (latestExports ?? []).filter((r: any) => r.kind === 'stock_list_pdf');
       // Keep only the most recent entry per list name
       const seenLists = new Set<string>();
@@ -87,10 +87,10 @@ export default function StatisticsDashboardPage() {
             dynamicParams.countries_pdf = dataUrl;
           } catch {}
         }
-        if (includeTop10Salesmen && top10Salesmen?.public_url) {
+        if (includeTop15Salesmen && top15Salesmen?.public_url) {
           try {
-            const dataUrl = await fetchToDataUrl(top10Salesmen.public_url);
-            dynamicParams.top10_salesmen_pdf = dataUrl;
+            const dataUrl = await fetchToDataUrl(top15Salesmen.public_url);
+            dynamicParams.top10_salesmen_pdf = dataUrl; // param key stays for template compatibility
           } catch {}
         }
         try {
@@ -122,8 +122,30 @@ export default function StatisticsDashboardPage() {
 
   // Box #2 - Overall Statistics
   const [receivers, setReceivers] = React.useState('');
+  const [bodyText, setBodyText] = React.useState('Hermed statistik :)');
   const [overallOpts, setOverallOpts] = React.useState<{ all: boolean; overview: boolean; countries: boolean; top10overall: boolean; top10vendors: boolean }>({ all: false, overview: true, countries: true, top10overall: false, top10vendors: false });
   const [sendingOverall, setSendingOverall] = React.useState(false);
+  const [savingOverallPrefs, setSavingOverallPrefs] = React.useState(false);
+
+  // Load/save Overall email prefs
+  useSWR('dashboard:overall_email', async () => {
+    const { data } = await supabase.from('app_settings').select('id, value').eq('key', 'dashboard_overall_email').maybeSingle();
+    const val = ((data?.value as any) || {}) as { receivers?: string; body?: string };
+    if (val.receivers !== undefined) setReceivers(val.receivers);
+    if (val.body !== undefined) setBodyText(val.body);
+    return data;
+  });
+  async function saveOverallPrefs() {
+    setSavingOverallPrefs(true);
+    try {
+      const value = { receivers, body: bodyText };
+      const { data: existing } = await supabase.from('app_settings').select('id').eq('key', 'dashboard_overall_email').maybeSingle();
+      if (existing?.id) await supabase.from('app_settings').update({ value }).eq('id', existing.id);
+      else await supabase.from('app_settings').insert({ key: 'dashboard_overall_email', value } as any);
+    } finally {
+      setSavingOverallPrefs(false);
+    }
+  }
 
   async function sendOverall() {
     if (sendingOverall) return;
@@ -154,7 +176,7 @@ export default function StatisticsDashboardPage() {
         });
       } catch {}
       const subject = 'Statistik opdatering';
-      const bodyHtml = 'Hermed statistik :)';
+      const bodyHtml = bodyText || 'Hermed statistik :)';
       await sendEmailJs(to, subject, bodyHtml, undefined, dynamicParams);
       alert('Email sent');
     } finally {
@@ -257,7 +279,7 @@ export default function StatisticsDashboardPage() {
     return (data as any) || null;
   });
   const { data: top10Current } = useSWR(currentSeason ? ['top10:current', currentSeason.id] : null, async () => {
-    const { data, error } = await supabase.from('top_styles').select('style_no, dg, qty').eq('season_id', currentSeason.id).order('qty', { ascending: false }).limit(10);
+    const { data, error } = await supabase.from('top_styles').select('style_no, dg, qty').eq('season_id', currentSeason.id).order('qty', { ascending: false }).limit(15);
     if (error) throw new Error(error.message);
     return (data ?? []) as Array<{ style_no: string; dg?: string | null; qty: number }>;
   });
@@ -343,13 +365,13 @@ export default function StatisticsDashboardPage() {
           <label className="flex items-center gap-2 text-sm">
             <button
               type="button"
-              onClick={() => setIncludeTop10Salesmen((v) => !v)}
-              className={"relative inline-flex h-5 w-9 items-center rounded-full transition-colors " + (includeTop10Salesmen ? 'bg-slate-900' : 'bg-slate-200')}
-              aria-pressed={includeTop10Salesmen}
+              onClick={() => setIncludeTop15Salesmen((v) => !v)}
+              className={"relative inline-flex h-5 w-9 items-center rounded-full transition-colors " + (includeTop15Salesmen ? 'bg-slate-900' : 'bg-slate-200')}
+              aria-pressed={includeTop15Salesmen}
             >
-              <span className={"inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform " + (includeTop10Salesmen ? 'translate-x-4' : 'translate-x-0')} />
+              <span className={"inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform " + (includeTop15Salesmen ? 'translate-x-4' : 'translate-x-0')} />
             </button>
-            <span>Include Top 10 - Salesmen</span>
+            <span>Include Top 15 - Salesmen</span>
           </label>
           <div>
             <button className="rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-50" disabled={sendingSp} onClick={sendSalespersonEmails}>Send</button>
@@ -367,8 +389,8 @@ export default function StatisticsDashboardPage() {
               { key: 'all', label: 'All salespeople' },
               { key: 'overview', label: 'Overview' },
               { key: 'countries', label: 'Countries' },
-              { key: 'top10overall', label: 'Top 10 - Overall' },
-              { key: 'top10vendors', label: 'Top 10 Vendors' }
+              { key: 'top10overall', label: 'Top 15 - Overall' },
+              { key: 'top10vendors', label: 'Top 15 Vendors' }
             ].map((opt: any) => (
               <div key={opt.key} className="flex items-center gap-2">
                 <button
@@ -383,7 +405,12 @@ export default function StatisticsDashboardPage() {
               </div>
             ))}
           </div>
-          <div>
+          <label className="block text-sm">
+            <div className="text-gray-600 mb-1">Email body</div>
+            <textarea className="w-full rounded border px-2 py-1 text-sm h-28" placeholder="Write your message…" value={bodyText} onChange={(e)=>setBodyText(e.target.value)} />
+          </label>
+          <div className="flex items-center gap-2">
+            <button className="rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-50" disabled={savingOverallPrefs} onClick={saveOverallPrefs}>{savingOverallPrefs ? 'Saving…' : 'Save recipients + body'}</button>
             <button className="rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-50" disabled={sendingOverall} onClick={sendOverall}>Send</button>
           </div>
         </div>
@@ -399,7 +426,7 @@ export default function StatisticsDashboardPage() {
           <div className="text-xs text-gray-700">
             {(missingDgList && missingDgList.length > 0) ? (
               <div>
-                <div className="font-medium mb-1">Missing DG in Top 10 (Current Season):</div>
+                <div className="font-medium mb-1">Missing DG in Top 15 (Current Season):</div>
                 <ul className="list-disc pl-5">
                   {missingDgList.map((row) => (<li key={row.style_no}>{row.style_no}{row.name ? ` — ${row.name}` : ''}</li>))}
                 </ul>
