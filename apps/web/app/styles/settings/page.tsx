@@ -171,44 +171,34 @@ function StockListsTab({ supabase }: { supabase: any }) {
     }
     return { byStyle, invByStyle, fwdByStyle };
   }, { refreshInterval: 0 });
-  // Current include rules for this list
+  // Current include/hide rules for this list (blacklist model)
   const { data: listColorRules, mutate: mutateColorRules } = useSWR(activeListId ? ['stock_list_colors:byList:settings', activeListId] : null, async () => {
     const { data, error } = await supabase.from('stock_list_colors').select('style_id, style_color_id, include').eq('list_id', activeListId);
     if (error) throw error;
-    const includeIdsMap = new Map<string, Set<string>>(); // style_id -> set(style_color_id)
-    const hasAnyMap = new Map<string, boolean>(); // style_id -> has explicit rows
+    const hiddenIdsMap = new Map<string, Set<string>>(); // style_id -> set(style_color_id)
+    const hasAnyMap = new Map<string, boolean>();
     for (const r of (data ?? []) as any[]) {
       const sid = String(r.style_id || '');
       hasAnyMap.set(sid, true);
-      if (r.include === true) {
-        const set = includeIdsMap.get(sid) || new Set<string>();
+      if (r.include === false) {
+        const set = hiddenIdsMap.get(sid) || new Set<string>();
         set.add(String(r.style_color_id || ''));
-        includeIdsMap.set(sid, set);
+        hiddenIdsMap.set(sid, set);
       }
     }
-    return { includeIdsMap, hasAnyMap } as { includeIdsMap: Map<string, Set<string>>; hasAnyMap: Map<string, boolean> };
+    return { hiddenIdsMap, hasAnyMap } as { hiddenIdsMap: Map<string, Set<string>>; hasAnyMap: Map<string, boolean> };
   }, { refreshInterval: 0 });
   async function toggleColorInclude(styleId: string, colorId: string) {
     if (!activeListId) return;
     try {
-      const hasAny = Boolean(listColorRules?.hasAnyMap.get(styleId));
-      const includeIds = new Set<string>((listColorRules?.includeIdsMap.get(styleId) || new Set<string>()) as Set<string>);
-      const isOn = hasAny ? includeIds.has(colorId) : true;
-      if (!hasAny) {
-        // Create include rows for all colors except the toggled-off one
-        const colors = styleColors?.byStyle.get(styleId) || [];
-        const rows = colors
-          .filter(c => String(c.id) !== String(colorId))
-          .map(c => ({ list_id: activeListId, style_id: styleId, style_color_id: c.id, include: true }));
-        if (rows.length) await supabase.from('stock_list_colors').upsert(rows as any, { onConflict: 'list_id,style_color_id' } as any);
-        await mutateColorRules();
-        flash('Saved');
-        return;
-      }
-      if (isOn) {
+      const hiddenSet = new Set<string>((listColorRules?.hiddenIdsMap.get(styleId) || new Set<string>()) as Set<string>);
+      const isHidden = hiddenSet.has(String(colorId));
+      if (isHidden) {
+        // Unhide: delete the blacklist row
         await supabase.from('stock_list_colors').delete().eq('list_id', activeListId).eq('style_id', styleId).eq('style_color_id', colorId);
       } else {
-        await supabase.from('stock_list_colors').upsert({ list_id: activeListId, style_id: styleId, style_color_id: colorId, include: true } as any, { onConflict: 'list_id,style_color_id' } as any);
+        // Hide: insert blacklist row with include=false
+        await supabase.from('stock_list_colors').upsert({ list_id: activeListId, style_id: styleId, style_color_id: colorId, include: false } as any, { onConflict: 'list_id,style_color_id' } as any);
       }
       await mutateColorRules();
       flash('Saved');
@@ -219,6 +209,7 @@ function StockListsTab({ supabase }: { supabase: any }) {
   async function allowAllColors(styleId: string) {
     if (!activeListId) return;
     try {
+      // Clear all blacklist rows for this style
       await supabase.from('stock_list_colors').delete().eq('list_id', activeListId).eq('style_id', styleId);
       await mutateColorRules();
       flash('All colors allowed');
@@ -319,7 +310,7 @@ function StockListsTab({ supabase }: { supabase: any }) {
             <thead className="bg-gray-50">
               <tr>
                 <th className="p-2 text-left">Style</th>
-                <th className="p-2 text-left">Colors (toggle to include)</th>
+                <th className="p-2 text-left">Colors (toggle to show/hide)</th>
                 <th className="p-2 text-left"></th>
               </tr>
             </thead>
@@ -327,8 +318,7 @@ function StockListsTab({ supabase }: { supabase: any }) {
               {styleIdsInList.map((sid) => {
                 const row = (styles || []).find(s => String(s.id) === sid);
                 const colors = styleColors?.byStyle.get(sid) || [];
-                const hasAny = Boolean(listColorRules?.hasAnyMap.get(sid));
-                const includeIdsSet = (listColorRules?.includeIdsMap.get(sid) || new Set<string>()) as Set<string>;
+                const hiddenIdsSet = (listColorRules?.hiddenIdsMap.get(sid) || new Set<string>()) as Set<string>;
                 return (
                   <tr key={sid} className="border-t align-top">
                     <td className="p-2">
@@ -338,7 +328,7 @@ function StockListsTab({ supabase }: { supabase: any }) {
                     <td className="p-2">
                       <div className="flex flex-wrap gap-2">
                         {colors.map((c) => {
-                          const on = hasAny ? includeIdsSet.has(String(c.id)) : true;
+                          const on = !hiddenIdsSet.has(String(c.id));
                           return (
                             <label key={c.id} className={"inline-flex items-center gap-1 px-2 py-1 rounded border " + (on ? 'bg-slate-900 text-white border-slate-900' : '')}>
                               <input type="checkbox" className="h-3 w-3" checked={on} onChange={() => toggleColorInclude(sid, String(c.id))} />
