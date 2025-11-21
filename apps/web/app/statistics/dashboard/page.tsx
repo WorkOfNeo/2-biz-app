@@ -123,7 +123,7 @@ export default function StatisticsDashboardPage() {
   // Box #2 - Overall Statistics
   const [receivers, setReceivers] = React.useState('');
   const [bodyText, setBodyText] = React.useState('Hermed statistik :)');
-  const [overallOpts, setOverallOpts] = React.useState<{ all: boolean; overview: boolean; countries: boolean; top10overall: boolean; top10vendors: boolean }>({ all: false, overview: true, countries: true, top10overall: false, top10vendors: false });
+  const [overallOpts, setOverallOpts] = React.useState<{ all: boolean; countries: boolean; top10overall: boolean }>({ all: false, countries: true, top10overall: false });
   const [sendingOverall, setSendingOverall] = React.useState(false);
   const [savingOverallPrefs, setSavingOverallPrefs] = React.useState(false);
 
@@ -153,10 +153,11 @@ export default function StatisticsDashboardPage() {
     try {
       const to = receivers.split(',').map(s => s.trim()).filter(Boolean);
       if (to.length === 0) { alert('Enter at least one receiver email.'); return; }
-      const dynamicParams: Record<string, string> = { overview_pdf: '', countries_pdf: '', top10_overall_pdf: '' };
-      if (overallOpts.overview) {
-        const row = latestByKind.get('overview_pdf');
-        if (row?.public_url) { try { const du = await fetchToDataUrl(row.public_url); dynamicParams.overview_pdf = du; } catch {} }
+      const dynamicParams: Record<string, string> = { all_salesmen_pdf: '', countries_pdf: '', top10_overall_pdf: '' };
+      if (overallOpts.all) {
+        const salesmen = latestByKind.get('general_salesmen_pdfs');
+        const allUrl = salesmen?.meta?.all?.publicUrl || null;
+        if (allUrl) { try { const du = await fetchToDataUrl(allUrl); dynamicParams.all_salesmen_pdf = du; } catch {} }
       }
       if (overallOpts.countries) {
         const row = latestByKind.get('countries_pdf');
@@ -166,12 +167,12 @@ export default function StatisticsDashboardPage() {
         const row = latestByKind.get('top_styles_pdf_overall');
         if (row?.public_url) { try { const du = await fetchToDataUrl(row.public_url); dynamicParams.top10_overall_pdf = du; } catch {} }
       }
-      if (!overallOpts.overview && !overallOpts.countries && !overallOpts.top10overall) { alert('No options selected.'); return; }
+      if (!overallOpts.all && !overallOpts.countries && !overallOpts.top10overall) { alert('No options selected.'); return; }
       try {
         const summarize = (p: Record<string, string>) => Object.fromEntries(Object.entries(p).map(([k, v]) => [k, { len: (v || '').length, head: (v || '').slice(0, 32) }]));
         console.log('[email:overall] prepared', {
           to,
-          include: { overview: overallOpts.overview, countries: overallOpts.countries, top10overall: overallOpts.top10overall },
+          include: { all: overallOpts.all, countries: overallOpts.countries, top10overall: overallOpts.top10overall },
           params: summarize(dynamicParams)
         });
       } catch {}
@@ -387,19 +388,17 @@ export default function StatisticsDashboardPage() {
           <div className="text-sm space-y-2">
             {[
               { key: 'all', label: 'All salespeople' },
-              { key: 'overview', label: 'Overview' },
               { key: 'countries', label: 'Countries' },
-              { key: 'top10overall', label: 'Top 15 - Overall' },
-              { key: 'top10vendors', label: 'Top 15 Vendors' }
+              { key: 'top10overall', label: 'Top 15 - Overall' }
             ].map((opt: any) => (
               <div key={opt.key} className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => setOverallOpts((p) => ({ ...p, [opt.key]: !p[opt.key as keyof typeof p] }))}
-                  className={"relative inline-flex h-5 w-9 items-center rounded-full transition-colors " + (overallOpts[opt.key as keyof typeof overallOpts] ? 'bg-slate-900' : 'bg-slate-200')}
-                  aria-pressed={overallOpts[opt.key as keyof typeof overallOpts] as boolean}
+                  onClick={() => setOverallOpts((p: any) => ({ ...p, [opt.key]: !p[opt.key] }))}
+                  className={"relative inline-flex h-5 w-9 items-center rounded-full transition-colors " + ((overallOpts as any)[opt.key] ? 'bg-slate-900' : 'bg-slate-200')}
+                  aria-pressed={(overallOpts as any)[opt.key]}
                 >
-                  <span className={"inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform " + ((overallOpts[opt.key as keyof typeof overallOpts] as boolean) ? 'translate-x-4' : 'translate-x-0')} />
+                  <span className={"inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform " + (((overallOpts as any)[opt.key]) ? 'translate-x-4' : 'translate-x-0')} />
                 </button>
                 <span>{opt.label}</span>
               </div>
