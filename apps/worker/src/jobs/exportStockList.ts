@@ -292,7 +292,8 @@ export async function exportStockList(ctx: Ctx) {
           meta.supplier ? React.createElement(Text, { style: styles.meta }, meta.supplier) : null,
         );
         const rightColumn = React.createElement(View, { style: { flex: 1 } }, ...colorTables);
-        return React.createElement(View, { style: [styles.block, styles.row], key: style_no }, leftColumn, rightColumn);
+        // Keep a whole style block together on one page to avoid image/table splitting
+        return React.createElement(View, { style: [styles.block, styles.row], key: style_no, wrap: false as any }, leftColumn, rightColumn);
       });
       // Compute list-level totals for footer summary
       const totalsAll = ((): { stock: number; sold: number; purchase: number; available: number } => {
