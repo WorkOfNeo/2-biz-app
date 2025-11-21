@@ -441,7 +441,6 @@ export default function StatisticsDashboardPage() {
               })}
             </div>
           </div>
-        </div>
           <label className="block text-sm">
             <div className="text-gray-600 mb-1">Email body</div>
             <textarea className="w-full rounded border px-2 py-1 text-sm h-28" placeholder="Write your message…" value={bodyText} onChange={(e)=>setBodyText(e.target.value)} />
@@ -450,6 +449,7 @@ export default function StatisticsDashboardPage() {
             <button className="rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-50" disabled={savingOverallPrefs} onClick={saveOverallPrefs}>{savingOverallPrefs ? 'Saving…' : 'Save recipients + body'}</button>
             <button className="rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-50" disabled={sendingOverall} onClick={sendOverall}>Send</button>
           </div>
+        </div>
         </div>
       </div>
       {/* Info / Errors */}
