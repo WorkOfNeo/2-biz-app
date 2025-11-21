@@ -207,7 +207,7 @@ function StockListsTab({ supabase }: { supabase: any }) {
         const fwd = styleColors?.fwdByStyle.get(styleId) || new Map<string, string>();
         const rows = Array.from(toOn).map((ck) => ({ list_id: activeListId, style_id: styleId, style_color_id: fwd.get(ck) || '', include: true }));
         const rowsValid = rows.filter(r => r.style_color_id);
-        if (rowsValid.length) await supabase.from('stock_list_colors').upsert(rowsValid as any, { onConflict: 'list_id,style_id,style_color_id' } as any);
+        if (rowsValid.length) await supabase.from('stock_list_colors').upsert(rowsValid as any, { onConflict: 'list_id,style_color_id' } as any);
         await mutateColorRules();
         flash('Saved');
         return;
@@ -215,7 +215,7 @@ function StockListsTab({ supabase }: { supabase: any }) {
       if (isOn) {
         await supabase.from('stock_list_colors').delete().eq('list_id', activeListId).eq('style_id', styleId).eq('style_color_id', colorId);
       } else {
-        await supabase.from('stock_list_colors').upsert({ list_id: activeListId, style_id: styleId, style_color_id: colorId, include: true } as any, { onConflict: 'list_id,style_id,style_color_id' } as any);
+        await supabase.from('stock_list_colors').upsert({ list_id: activeListId, style_id: styleId, style_color_id: colorId, include: true } as any, { onConflict: 'list_id,style_color_id' } as any);
       }
       await mutateColorRules();
       flash('Saved');
