@@ -111,9 +111,9 @@ export default function StockListPage() {
 
   // DB-backed stock lists (lists, styles, and per-list color exclusions)
   const { data: stockLists } = useSWR('stock-lists:all', async () => {
-    const { data, error } = await supabase.from('stock_lists').select('id, name, sort_by').order('name', { ascending: true });
+    const { data, error } = await supabase.from('stock_lists').select('id, name').order('name', { ascending: true });
     if (error) throw new Error(error.message);
-    return (data ?? []) as Array<{ id: string; name: string; sort_by?: 'style_no' | 'style_name' | null }>;
+    return (data ?? []) as Array<{ id: string; name: string }>;
   });
   const { data: listStyles } = useSWR(activeListId ? ['stock-list-styles:byList', activeListId] : null, async () => {
     const { data, error } = await supabase.from('stock_list_styles').select('style_id').eq('list_id', activeListId);
@@ -239,8 +239,8 @@ export default function StockListPage() {
     // Sort styles based on list preference (default item number)
     const activeSortBy = (() => {
       if (!activeListId) return 'style_no' as 'style_no' | 'style_name';
-      const row = (stockLists || []).find((r) => r.id === activeListId);
-      return (row?.sort_by as any) === 'style_name' ? 'style_name' : 'style_no';
+      const row = (stockLists || []).find((r) => (r as any).id === activeListId);
+      return ((row as any)?.sort_by as any) === 'style_name' ? 'style_name' : 'style_no';
     })();
     out.sort((a, b) => {
       if (activeSortBy === 'style_name') {
