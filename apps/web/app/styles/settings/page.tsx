@@ -39,6 +39,7 @@ export default function StylesSettingsPage() {
 
 function StockListsTab({ supabase }: { supabase: any }) {
   const ReactNS = React as typeof import('react');
+  const [innerTab, setInnerTab] = ReactNS.useState<'add' | 'edit'>('add');
   // Load stock lists
   const { data: stockLists, mutate: mutateLists } = useSWR('stock-lists:settings', async () => {
     const { data, error } = await supabase.from('stock_lists').select('id, name').order('name', { ascending: true });
@@ -123,6 +124,98 @@ function StockListsTab({ supabase }: { supabase: any }) {
     if (error) throw error;
     return new Set(((data ?? []) as any[]).map(r => String(r.style_id)));
   }, { refreshInterval: 0 });
+  const styleIdsInList = ReactNS.useMemo(() => Array.from((listStyles as Set<string> | undefined) || new Set<string>()), [listStyles]);
+  // Colors for styles in the active list
+  const { data: styleColors } = useSWR(activeListId && styleIdsInList.length ? ['style_colors:forList', activeListId, styleIdsInList.join(',')] : null, async () => {
+    const { data, error } = await supabase.from('style_colors').select('id, style_id, color').in('style_id', styleIdsInList);
+    if (error) throw error;
+    // style_id -> [{id,color}]
+    const byStyle = new Map<string, Array<{ id: string; color: string }>>();
+    for (const r of (data ?? []) as any[]) {
+      const sid = String(r.style_id || '');
+      const list = byStyle.get(sid) || [];
+      list.push({ id: String(r.id), color: String(r.color || '') });
+      byStyle.set(sid, list);
+    }
+    // invert maps: style_id -> (style_color_id -> colorLower) and (colorLower -> style_color_id)
+    const invByStyle = new Map<string, Map<string, string>>();
+    const fwdByStyle = new Map<string, Map<string, string>>();
+    for (const [sid, list] of byStyle.entries()) {
+      const inv = new Map<string, string>();
+      const fwd = new Map<string, string>();
+      for (const row of list) {
+        const key = row.color.trim().toLowerCase();
+        inv.set(row.id, key);
+        fwd.set(key, row.id);
+      }
+      invByStyle.set(sid, inv);
+      fwdByStyle.set(sid, fwd);
+    }
+    return { byStyle, invByStyle, fwdByStyle } as {
+      byStyle: Map<string, Array<{ id: string; color: string }>>;
+      invByStyle: Map<string, Map<string, string>>;
+      fwdByStyle: Map<string, Map<string, string>>;
+    };
+  }, { refreshInterval: 0 });
+  // Current include rules for this list
+  const { data: listColorRules, mutate: mutateColorRules } = useSWR(activeListId ? ['stock_list_colors:byList:settings', activeListId] : null, async () => {
+    const { data, error } = await supabase.from('stock_list_colors').select('style_id, style_color_id, include').eq('list_id', activeListId);
+    if (error) throw error;
+    const includeMap = new Map<string, Set<string>>(); // style_id -> set(colorLower)
+    const hasAnyMap = new Map<string, boolean>(); // style_id -> has explicit rows
+    const inv = styleColors?.invByStyle || new Map<string, Map<string, string>>();
+    for (const r of (data ?? []) as any[]) {
+      const sid = String(r.style_id || '');
+      hasAnyMap.set(sid, true);
+      if (r.include === true) {
+        const idToKey = inv.get(sid) || new Map<string, string>();
+        const key = idToKey.get(String(r.style_color_id || '')) || null;
+        if (!key) continue;
+        const set = includeMap.get(sid) || new Set<string>();
+        set.add(key);
+        includeMap.set(sid, set);
+      }
+    }
+    return { includeMap, hasAnyMap } as { includeMap: Map<string, Set<string>>; hasAnyMap: Map<string, boolean> };
+  }, { refreshInterval: 0 });
+  async function toggleColorInclude(styleId: string, colorId: string) {
+    if (!activeListId) return;
+    // Resolve key for color
+    const idToKey = styleColors?.invByStyle.get(styleId) || new Map<string, string>();
+    const key = idToKey.get(colorId) || '';
+    const curSet = new Set<string>((listColorRules?.includeMap.get(styleId) || new Set<string>()) as Set<string>);
+    const hasAny = Boolean(listColorRules?.hasAnyMap.get(styleId));
+    const isOn = hasAny ? curSet.has(key) : true; // when no rules exist, all are implicitly included
+    if (!hasAny) {
+      // create first include rows: include all except toggled-off one, or simpler: insert includes for all current colors except the one we're turning off
+      const colors = styleColors?.byStyle.get(styleId) || [];
+      const toOn = new Set<string>(colors.map(c => (c.color || '').trim().toLowerCase()));
+      toOn.delete((key || '').trim().toLowerCase());
+      if (toOn.size === 0) {
+        // If user turns off the only color, insert nothing (list will show none)
+      }
+      const fwd = styleColors?.fwdByStyle.get(styleId) || new Map<string, string>();
+      const rows = Array.from(toOn).map((ck) => ({ list_id: activeListId, style_id: styleId, style_color_id: fwd.get(ck) || '', include: true }));
+      const rowsValid = rows.filter(r => r.style_color_id);
+      if (rowsValid.length) await supabase.from('stock_list_colors').insert(rowsValid);
+      await mutateColorRules();
+      return;
+    }
+    if (isOn) {
+      // remove include row for this color
+      await supabase.from('stock_list_colors').delete().eq('list_id', activeListId).eq('style_id', styleId).eq('style_color_id', colorId);
+    } else {
+      // add include row
+      await supabase.from('stock_list_colors').insert({ list_id: activeListId, style_id: styleId, style_color_id: colorId, include: true });
+    }
+    await mutateColorRules();
+  }
+  async function allowAllColors(styleId: string) {
+    if (!activeListId) return;
+    // Clear all rows for this style to allow all
+    await supabase.from('stock_list_colors').delete().eq('list_id', activeListId).eq('style_id', styleId);
+    await mutateColorRules();
+  }
   async function addStylesToList(styleIds: string[]) {
     const listId = activeListId;
     if (!listId) { alert('Create or select a stock list first'); return; }
@@ -168,11 +261,16 @@ function StockListsTab({ supabase }: { supabase: any }) {
       {!activeListId && (
         <div className="mb-3 text-xs text-gray-600">Create and select a list to start adding styles.</div>
       )}
-      <div className="mb-3 flex items-center gap-2">
+      <div className="mb-2 flex items-center gap-2">
         <Input className="w-56" placeholder="Search style no / name" value={query} onChange={(e)=>setQuery(e.target.value)} />
         <SearchSelect items={seasonSelectItems} value={seasonId} onChange={setSeasonId} placeholder="All seasons" clearable />
         <Button size="sm" disabled={!activeListId} onClick={async () => { const ids = filtered.map(s => s.id); await addStylesToList(ids); }}>Add All</Button>
       </div>
+      <div className="mb-3 flex items-center gap-1">
+        <TabButton active={innerTab==='add'} onClick={()=>setInnerTab('add')}>Add Styles</TabButton>
+        <TabButton active={innerTab==='edit'} onClick={()=>setInnerTab('edit')}>Edit List</TabButton>
+      </div>
+      {innerTab === 'add' && (
       <div className="mb-3">
         <div className="text-xs text-gray-600 mb-1">Paste style numbers (one per line)</div>
         <textarea className="w-full h-28 rounded border p-2 text-sm" placeholder="e.g.\n12345\n23456\n..." value={pasted} onChange={(e)=>setPasted(e.target.value)} disabled={!activeListId} />
@@ -180,6 +278,8 @@ function StockListsTab({ supabase }: { supabase: any }) {
           <Button size="sm" disabled={!activeListId} onClick={onAddPasted}>Add pasted</Button>
         </div>
       </div>
+      )}
+      {innerTab === 'add' && (
       <div className="max-h-80 overflow-auto border rounded">
         <table className="min-w-full text-sm">
           <thead className="bg-gray-50">
@@ -204,6 +304,61 @@ function StockListsTab({ supabase }: { supabase: any }) {
           </tbody>
         </table>
       </div>
+      )}
+      {innerTab === 'edit' && activeListId && (
+        <div className="max-h-96 overflow-auto border rounded">
+          <table className="min-w-full text-sm">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="p-2 text-left">Style</th>
+                <th className="p-2 text-left">Colors (toggle to include)</th>
+                <th className="p-2 text-left"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {styleIdsInList.map((sid) => {
+                const row = (styles || []).find(s => String(s.id) === sid);
+                const colors = styleColors?.byStyle.get(sid) || [];
+                const hasAny = Boolean(listColorRules?.hasAnyMap.get(sid));
+                const includeSet = (listColorRules?.includeMap.get(sid) || new Set<string>()) as Set<string>;
+                return (
+                  <tr key={sid} className="border-t align-top">
+                    <td className="p-2">
+                      <div className="font-medium">{row?.style_no || '—'}</div>
+                      <div className="text-xs text-gray-600">{row?.style_name || '—'}</div>
+                    </td>
+                    <td className="p-2">
+                      <div className="flex flex-wrap gap-2">
+                        {colors.map((c) => {
+                          const key = (c.color || '').trim().toLowerCase();
+                          const on = hasAny ? includeSet.has(key) : true;
+                          return (
+                            <label key={c.id} className={"inline-flex items-center gap-1 px-2 py-1 rounded border " + (on ? 'bg-slate-900 text-white border-slate-900' : '')}>
+                              <input
+                                type="checkbox"
+                                className="h-3 w-3"
+                                checked={on}
+                                onChange={() => toggleColorInclude(sid, c.id)}
+                              />
+                              <span className="text-xs">{c.color}</span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </td>
+                    <td className="p-2">
+                      <Button size="sm" variant="outline" onClick={()=>allowAllColors(sid)}>Allow all colors</Button>
+                    </td>
+                  </tr>
+                );
+              })}
+              {styleIdsInList.length === 0 && (
+                <tr><td className="p-2 text-xs text-gray-600" colSpan={3}>No styles in this list yet.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
