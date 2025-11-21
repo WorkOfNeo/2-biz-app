@@ -46,20 +46,17 @@ function StockListsTab({ supabase }: { supabase: any }) {
     return (data ?? []) as Array<{ id: string; name: string }>;
   }, { refreshInterval: 0 });
   const [activeListId, setActiveListId] = ReactNS.useState<string>('');
-  ReactNS.useEffect(() => {
-    if (!activeListId && (stockLists ?? []).length) setActiveListId((stockLists as any[])[0].id as string);
-  }, [stockLists && (stockLists as any[]).length]);
-  async function ensureDefaultList(): Promise<string> {
-    if (activeListId) return activeListId;
-    // Create a default list if none exists
-    const name = 'Default';
-    const exists = (stockLists ?? []).find((l: any) => String(l.name).toLowerCase() === 'default');
-    if (exists) { setActiveListId(exists.id); return exists.id; }
+  // Persist selection for editor page convenience
+  ReactNS.useEffect(() => { try { if (activeListId) localStorage.setItem('activeStockListId', activeListId); } catch {} }, [activeListId]);
+  const [newListName, setNewListName] = ReactNS.useState<string>('');
+  async function createList() {
+    const name = newListName.trim();
+    if (!name) return;
     const { data, error } = await supabase.from('stock_lists').insert({ name }).select('id').single();
-    if (error) throw error;
+    if (error) { alert(error.message); return; }
     await mutateLists();
     setActiveListId((data as any).id as string);
-    return (data as any).id as string;
+    setNewListName('');
   }
   // Load styles and seasons for filtering
   type StyleRow = { id: string; style_no: string; style_name: string | null; supplier: string | null; image_url: string | null };
@@ -127,7 +124,8 @@ function StockListsTab({ supabase }: { supabase: any }) {
     return new Set(((data ?? []) as any[]).map(r => String(r.style_id)));
   }, { refreshInterval: 0 });
   async function addStylesToList(styleIds: string[]) {
-    const listId = await ensureDefaultList();
+    const listId = activeListId;
+    if (!listId) { alert('Create or select a stock list first'); return; }
     const existing = (listStyles as Set<string>) || new Set<string>();
     const toInsert = Array.from(new Set(styleIds.filter((id) => id && !existing.has(String(id))))).map((id) => ({ list_id: listId, style_id: id }));
     if (toInsert.length === 0) return;
@@ -154,23 +152,32 @@ function StockListsTab({ supabase }: { supabase: any }) {
   };
   return (
     <div className="text-sm text-gray-700">
+      <div className="mb-2 flex items-center gap-2">
+        <div className="text-xs text-gray-600">Create list</div>
+        <Input className="w-56" placeholder="e.g. Outlet Week 12" value={newListName} onChange={(e)=>setNewListName(e.target.value)} />
+        <Button size="sm" onClick={createList}>Create</Button>
+      </div>
       <div className="mb-3 flex items-center gap-2">
         <div className="text-xs text-gray-600">Active list</div>
         <select className="rounded border px-2 py-1 text-xs" value={activeListId} onChange={(e)=>setActiveListId(e.target.value)}>
+          <option value="">—</option>
           {(stockLists ?? []).map((l: any) => (<option key={l.id} value={l.id}>{l.name}</option>))}
         </select>
-        <Button size="sm" variant="outline" onClick={async ()=>{ try { await ensureDefaultList(); alert('Default list ensured/selected'); } catch(e:any){ alert(e?.message||'Failed'); } }}>Use Default</Button>
+        <a className="text-xs underline" href="/styles/stock-list" target="_blank" rel="noopener">Open Stock List editor</a>
       </div>
+      {!activeListId && (
+        <div className="mb-3 text-xs text-gray-600">Create and select a list to start adding styles.</div>
+      )}
       <div className="mb-3 flex items-center gap-2">
         <Input className="w-56" placeholder="Search style no / name" value={query} onChange={(e)=>setQuery(e.target.value)} />
         <SearchSelect items={seasonSelectItems} value={seasonId} onChange={setSeasonId} placeholder="All seasons" clearable />
-        <Button size="sm" onClick={async () => { const ids = filtered.map(s => s.id); await addStylesToList(ids); }}>Add All</Button>
+        <Button size="sm" disabled={!activeListId} onClick={async () => { const ids = filtered.map(s => s.id); await addStylesToList(ids); }}>Add All</Button>
       </div>
       <div className="mb-3">
         <div className="text-xs text-gray-600 mb-1">Paste style numbers (one per line)</div>
-        <textarea className="w-full h-28 rounded border p-2 text-sm" placeholder="e.g.\n12345\n23456\n..." value={pasted} onChange={(e)=>setPasted(e.target.value)} />
+        <textarea className="w-full h-28 rounded border p-2 text-sm" placeholder="e.g.\n12345\n23456\n..." value={pasted} onChange={(e)=>setPasted(e.target.value)} disabled={!activeListId} />
         <div className="mt-2">
-          <Button size="sm" onClick={onAddPasted}>Add pasted</Button>
+          <Button size="sm" disabled={!activeListId} onClick={onAddPasted}>Add pasted</Button>
         </div>
       </div>
       <div className="max-h-80 overflow-auto border rounded">
@@ -190,7 +197,7 @@ function StockListsTab({ supabase }: { supabase: any }) {
                 <td className="p-2 font-medium">{s.style_no}</td>
                 <td className="p-2">{s.style_name || '—'}</td>
                 <td className="p-2">
-                  <Button size="sm" variant="outline" onClick={async ()=> addStylesToList([s.id])}>Add</Button>
+                  <Button size="sm" variant="outline" disabled={!activeListId} onClick={async ()=> addStylesToList([s.id])}>Add</Button>
                 </td>
               </tr>
             ))}

@@ -18,6 +18,14 @@ type Row = {
 export default function StockListPage() {
   const supabase = createClientComponentClient();
   const { has } = useRoles();
+  // Preselect previously active list if stored by Settings → Stock Lists tab
+  const [activeListId, setActiveListId] = React.useState<string>('');
+  React.useEffect(() => {
+    try {
+      const v = localStorage.getItem('activeStockListId') || '';
+      if (v) setActiveListId(v);
+    } catch {}
+  }, []);
   const [searchQuery, setSearchQuery] = React.useState<string>('');
   const [scrapeBusy, setScrapeBusy] = React.useState<string | null>(null);
   const { data } = useSWR('style_stock:list', async () => {
@@ -107,7 +115,6 @@ export default function StockListPage() {
     if (error) throw new Error(error.message);
     return (data ?? []) as Array<{ id: string; name: string; sort_by?: 'style_no' | 'style_name' | null }>;
   });
-  const [activeListId, setActiveListId] = React.useState<string>('');
   const { data: listStyles } = useSWR(activeListId ? ['stock-list-styles:byList', activeListId] : null, async () => {
     const { data, error } = await supabase.from('stock_list_styles').select('style_id').eq('list_id', activeListId);
     if (error) throw new Error(error.message);
