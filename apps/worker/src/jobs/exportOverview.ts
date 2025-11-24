@@ -37,7 +37,6 @@ export async function exportOverview(ctx: Ctx) {
       const spCurrencyById: Record<string, string> = Object.fromEntries(list.map((p) => [p.id, (p.currency || 'DKK').toUpperCase()]));
       const { data: stats } = await supabase.from('sales_stats').select('account_no, qty, price, season_id, salesperson_id').in('season_id', [s1, s2]).limit(200000);
       const { data: invoices } = await supabase.from('sales_invoices').select('account_no, qty, amount, currency, season_id').in('season_id', [s1, s2]).limit(200000);
-      const { data: adjustments } = await supabase.from('sales_stats_adjustments').select('account_no, qty_delta, price_delta, season_id').in('season_id', [s1, s2]).limit(200000);
       const customerById = new Map<string, { salesperson_id: string | null; nulled?: boolean | null; excluded?: boolean | null; permanently_closed?: boolean | null }>();
       for (const c of custs) customerById.set(c.customer_id, c);
       const targetsBySp = new Map<string, Set<string>>();
@@ -62,17 +61,6 @@ export async function exportOverview(ctx: Ctx) {
         const row = agg.get(spId)!; const rate = rates[(String(inv.currency || 'DKK').toUpperCase())] ?? 1; const amountDkk = Number(inv.amount || 0) * rate; const qty = Number(inv.qty || 0) || 0;
         if (inv.season_id === s1) { row.s1Qty += qty; row.s1Price += amountDkk; }
         else if (inv.season_id === s2) { row.s2Qty += qty; row.s2Price += amountDkk; }
-      }
-      // Apply adjustments (assumed DKK)
-      for (const a of (adjustments ?? []) as any[]) {
-        const acc = String(a.account_no || ''); if (!acc) continue;
-        const c = customerById.get(acc); const spId = c?.salesperson_id ?? ''; if (!spId) continue;
-        const set = targetsBySp.get(spId); if (!set || !set.has(acc)) continue;
-        const row = agg.get(spId)!;
-        const qty = Number(a.qty_delta || 0) || 0;
-        const dkk = Number(a.price_delta || 0) || 0;
-        if (a.season_id === s1) { row.s1Qty += qty; row.s1Price += dkk; }
-        else if (a.season_id === s2) { row.s2Qty += qty; row.s2Price += dkk; }
       }
       const styles = StyleSheet.create({ page: { padding: 16, fontSize: 9, color: '#0f172a' }, h1: { fontSize: 14, marginBottom: 6 }, header: { flexDirection: 'row', backgroundColor: '#1d4ed8', color: '#ffffff' }, cell: { padding: 4, fontSize: 8 }, row: { flexDirection: 'row', borderBottom: 0.5, borderColor: '#e2e8f0' }, left: { textAlign: 'left' }, right: { textAlign: 'right' } });
       const Cell = (txt: string, w: string | number, align: 'left' | 'right' = 'left', extra?: any) => React.createElement(Text, { style: [{ width: w }, styles.cell, align === 'left' ? styles.left : styles.right, extra || {}] }, txt);
@@ -469,7 +457,6 @@ export async function exportOverview(ctx: Ctx) {
       const { data: customers } = await supabase.from('customers').select('customer_id, country, salesperson_id, nulled, excluded, permanently_closed');
       const { data: people } = await supabase.from('salespersons').select('id, name');
       const { data: invoices } = await supabase.from('sales_invoices').select('account_no, qty, amount, currency, season_id').in('season_id', [s1, s2]).limit(200000);
-      const { data: adjustments } = await supabase.from('sales_stats_adjustments').select('account_no, qty_delta, price_delta, season_id').in('season_id', [s1, s2]).limit(200000);
       // Global and season-specific currency rates
       let globalRates: Record<string, number> = { DKK: 1 };
       try { const { data: rateRow } = await supabase.from('app_settings').select('value').eq('key', 'currency_rates').maybeSingle(); globalRates = { DKK: 1, ...((rateRow?.value as any) ?? {}) } as Record<string, number>; } catch {}
@@ -555,29 +542,6 @@ export async function exportOverview(ctx: Ctx) {
           const row = m.get(spId) || { s1Qty: 0, s1Price: 0, s2Qty: 0, s2Price: 0 };
           if (inv.season_id === s1) { if (!isNullS1) { row.s1Qty += qty; row.s1Price += amount * rate1; } }
           else if (inv.season_id === s2) { row.s2Qty += qty; row.s2Price += amount * rate2; }
-          m.set(spId, row);
-        }
-      }
-      // Adjustments mapped via customer country (assumed DKK)
-      for (const a of (adjustments ?? []) as any[]) {
-        const acc = String(a.account_no || ''); if (!acc) continue;
-        if (seasonalHidden.has(acc)) continue;
-        if (excludedSet.has(acc)) continue;
-        const ctry = String(customerCountryById.get(acc) || '').trim();
-        if (!countries.includes(ctry)) continue;
-        let bucket = totals[ctry];
-        if (!bucket) { bucket = totals[ctry] = { s1Qty: 0, s2Qty: 0, s1Price: 0, s2Price: 0 }; }
-        const qty = Number(a.qty_delta || 0) || 0;
-        const dkk = Number(a.price_delta || 0) || 0;
-        const isNullS1 = seasonalNulled.has(acc) || closedSet.has(acc) || nulledSet.has(acc);
-        if (a.season_id === s1) { if (!isNullS1) { bucket.s1Qty += qty; bucket.s1Price += dkk; } }
-        else if (a.season_id === s2) { bucket.s2Qty += qty; bucket.s2Price += dkk; }
-        const spId = (customerSpById.get(acc) ?? null) as string | null;
-        if (spId) {
-          const m = (perSp[ctry] ||= new Map());
-          const row = m.get(spId) || { s1Qty: 0, s1Price: 0, s2Qty: 0, s2Price: 0 };
-          if (a.season_id === s1) { if (!isNullS1) { row.s1Qty += qty; row.s1Price += dkk; } }
-          else if (a.season_id === s2) { row.s2Qty += qty; row.s2Price += dkk; }
           m.set(spId, row);
         }
       }

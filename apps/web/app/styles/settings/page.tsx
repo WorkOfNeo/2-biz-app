@@ -387,18 +387,18 @@ function ScrapingTab({ supabase }: { supabase: any }) {
   const { data: colorsByStyle } = useSWR('style_colors:map', async () => {
     const pageSize = 1000;
     const rows: any[] = [];
-    let from = 0;
-    while (true) {
-      const to = from + pageSize - 1;
+      let from = 0;
+      while (true) {
+        const to = from + pageSize - 1;
       const { data, error } = await supabase.from('style_colors').select('id, style_id, color').order('color').range(from, to);
       if (error) throw error;
       const batch = data ?? [];
       rows.push(...batch);
-      if (batch.length < pageSize) break;
-      from += pageSize;
-    }
+        if (batch.length < pageSize) break;
+        from += pageSize;
+      }
     const map = new Map<string, Array<{ id: string; color: string }>>();
-    for (const r of rows) {
+        for (const r of rows) {
       const arr = map.get(r.style_id) || [];
       arr.push({ id: r.id, color: r.color });
       map.set(r.style_id, arr);
@@ -618,7 +618,7 @@ function ScrapingTab({ supabase }: { supabase: any }) {
                       <div className="text-gray-700 truncate">{s.style_name ?? '—'}</div>
                       <ColorsLine styleId={s.id} colorsByStyle={colorsByStyle} colorSeasons={colorSeasons} seasonCodeById={seasonCodeById} hiddenSeasonSet={hiddenSeasonSet} />
                     </div>
-                  </div>
+                      </div>
                   <Button size="sm" variant={added ? 'secondary' : 'default'} onClick={()=>toggle(s.style_no)}>{added ? 'Added' : 'Add'}</Button>
                   </div>
                 );
