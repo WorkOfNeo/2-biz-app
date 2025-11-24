@@ -36,12 +36,12 @@ export async function exportStockList(ctx: Ctx) {
         await log(job.id, 'info', 'STEP:export_stock_list_skip_empty', { listName });
         continue;
       }
-      // Fetch style meta
-      const { data: styleRows } = await supabase.from('styles').select('id, style_no, style_name, image_url, supplier').in('id', styleIds);
-      const metaByNo = new Map<string, { id: string | null; name: string | null; image: string | null; supplier: string | null }>();
+      // Fetch style meta (no DG/Supplier; only id, number, name, image)
+      const { data: styleRows } = await supabase.from('styles').select('id, style_no, style_name, image_url').in('id', styleIds);
+      const metaByNo = new Map<string, { id: string | null; name: string | null; image: string | null }>();
       const finalStyleNos: string[] = [];
       for (const r of (styleRows ?? []) as any[]) {
-        metaByNo.set(r.style_no, { id: (r.id as string) || null, name: r.style_name ?? null, image: r.image_url ?? null, supplier: r.supplier ?? null });
+        metaByNo.set(r.style_no, { id: (r.id as string) || null, name: r.style_name ?? null, image: r.image_url ?? null });
         if (r.style_no) finalStyleNos.push(r.style_no as string);
       }
       // Map colors per style_id -> colorLower -> style_color_id
@@ -88,7 +88,7 @@ export async function exportStockList(ctx: Ctx) {
       }
       const out: Array<{ style_no: string; color: string; sizes: string[]; stockArr: number[]; soldArr: number[]; purchaseArr: number[]; availableArr: number[]; stock: number; sold: number; purchase: number; available: number }> = [];
       for (const [style_no, byColor] of byStyle.entries()) {
-        const metaEntry = metaByNo.get(style_no) || { id: null, name: null, image: null, supplier: null };
+        const metaEntry = metaByNo.get(style_no) || { id: null, name: null, image: null };
         const sid = metaEntry.id || null;
         for (const [color, rows] of byColor.entries()) {
           // Respect per-list color include/hide rules
@@ -195,7 +195,7 @@ export async function exportStockList(ctx: Ctx) {
       }
       const orderedStyles = Array.from(grouped.keys()).sort((a, b) => (stylesOrder.get(a)! - stylesOrder.get(b)!));
       const blocks = orderedStyles.map((style_no) => {
-        const meta = metaByNo.get(style_no) || { name: null, image: null, supplier: null };
+        const meta = metaByNo.get(style_no) || { name: null, image: null };
         const colors = (grouped.get(style_no) || []).sort((a, b) => a.color.localeCompare(b.color));
         const header = React.createElement(View, { style: styles.row },
           React.createElement(View, { style: styles.left },
@@ -204,7 +204,6 @@ export async function exportStockList(ctx: Ctx) {
           React.createElement(View, { style: { flex: 1 } },
             React.createElement(Text, { style: styles.meta }, style_no),
             React.createElement(Text, { style: [styles.meta, { fontSize: 11, fontWeight: 700 as any }] }, meta.name || '—'),
-            meta.supplier ? React.createElement(Text, { style: styles.meta }, meta.supplier) : null,
           )
         );
         // Column widths (percentages) - keep sizes compact
@@ -289,7 +288,6 @@ export async function exportStockList(ctx: Ctx) {
           // meta (style no, name, supplier)
           React.createElement(Text, { style: styles.meta }, style_no),
           React.createElement(Text, { style: [styles.meta, { fontSize: 11, fontWeight: 700 as any }] }, meta.name || '—'),
-          meta.supplier ? React.createElement(Text, { style: styles.meta }, meta.supplier) : null,
         );
         const rightColumn = React.createElement(View, { style: { flex: 1 } }, ...colorTables);
         // Keep a whole style block together on one page to avoid image/table splitting
