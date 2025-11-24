@@ -1286,6 +1286,13 @@ async function runJob(job: JobRow) {
             }
             const { name, year } = normalizeSeasonLabel(seasonInfo.text);
             const displayName = `${name} ${year}`;
+            // Skip non-season buckets like PACKSHOTS or NOOS entirely (never create/match)
+            const upperName = name.toUpperCase();
+            const isNonSeason = upperName.includes('PACKSHOTS') || upperName === 'NOOS';
+            if (isNonSeason) {
+              await log(job.id, 'info', 'STEP:season_skip_nonseason', { label: seasonInfo.text, value: seasonInfo.value });
+              return;
+            }
             // Try to resolve season robustly without creating duplicates
             let resolvedId: string | null = null;
             // 1) spy_season_id from page value (preferred)
@@ -1328,10 +1335,25 @@ async function runJob(job: JobRow) {
             }
             if (resolvedId) {
               targetSeasonId = resolvedId;
+              // If we have a spySeasonId and the matched season lacks it, set it now to lock future matches
+              try {
+                if (spySeasonId && Number(spySeasonId)) {
+                  const spyNum = Number(spySeasonId);
+                  const { data: cur } = await supabase.from('seasons').select('spy_season_id, source_name').eq('id', resolvedId).maybeSingle();
+                  const curSpy = (cur?.spy_season_id as number | null) ?? null;
+                  if (!curSpy) {
+                    const updates: Record<string, any> = { spy_season_id: spyNum };
+                    updates.source_name = displayName;
+                    await supabase.from('seasons').update(updates).eq('id', resolvedId);
+                  }
+                }
+              } catch {}
             } else {
               // Only create if we have a spy_season_id to map uniquely; otherwise skip creation
               if (spySeasonId && Number(spySeasonId)) {
-                const insertRow: any = { name: displayName, year, spy_season_id: Number(spySeasonId) };
+                const insertRow: any = { name: displayName, year, spy_season_id: Number(spySeasonId), source_name: displayName };
+                // Mark BASIC seasons hidden by default when created
+                if (/^BASIC\s*-/i.test(name)) insertRow.hidden = true;
                 try {
                   const { data: ins, error: insErr } = await supabase.from('seasons').insert(insertRow).select('id').single();
                   if (!insErr) targetSeasonId = (ins as any)?.id as string;
