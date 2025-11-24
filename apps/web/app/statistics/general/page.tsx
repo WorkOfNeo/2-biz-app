@@ -4,6 +4,7 @@ import useSWR from 'swr';
 import { supabase } from '../../../lib/supabaseClient';
 import Link from 'next/link';
 import { Menu, EyeOff, Trash2, Ban } from 'lucide-react';
+import { SearchSelect } from '../../../components/SearchSelect';
 import { ProgressBar } from '../../../components/ProgressBar';
 import { Modal } from '../../../components/Modal';
 
@@ -91,6 +92,17 @@ export default function StatisticsGeneralPage() {
   const [mapNulled, setMapNulled] = useState<string>('');
   const [importBusy, setImportBusy] = useState(false);
   const [importResult, setImportResult] = useState<any | null>(null);
+  // Manual entry modal state
+  const [manualOpen, setManualOpen] = useState(false);
+  const [manualSeasonId, setManualSeasonId] = useState<string>('');
+  const [manualCustomerId, setManualCustomerId] = useState<string>('');
+  const [manualQty, setManualQty] = useState<string>('');
+  const [manualPrice, setManualPrice] = useState<string>('');
+  const { data: customersAll } = useSWR('general:customers-all', async () => {
+    const { data, error } = await supabase.from('customers').select('customer_id, company').order('company', { ascending: true });
+    if (error) throw new Error(error.message);
+    return (data ?? []) as Array<{ customer_id: string; company: string | null }>;
+  });
   const spNameById = useMemo(() => Object.fromEntries(((salespersons ?? []) as { id: string; name: string }[]).map(s => [s.id, s.name])), [salespersons]);
   const spCurrencyById = useMemo(() => Object.fromEntries(((salespersons ?? []) as { id: string; currency?: string | null }[]).map(s => [s.id, s.currency ?? 'DKK'])), [salespersons]);
   useEffect(() => {
@@ -671,6 +683,10 @@ export default function StatisticsGeneralPage() {
                   className="block w-full px-3 py-2 text-left hover:bg-gray-50"
                   onClick={() => { setImportOpen(true); }}
                 >Import Statistic</button>
+                <button
+                  className="block w-full px-3 py-2 text-left hover:bg-gray-50"
+                  onClick={() => { setManualOpen(true); }}
+                >Add manual entry</button>
                 <button className="block w-full px-3 py-2 text-left hover:bg-gray-50" onClick={() => { setNullByInputText(''); setNullByInputResult(null); setNullByInputOpen(true); }}>Null Customers by Input</button>
               </div>
             </div>
@@ -1393,6 +1409,79 @@ export default function StatisticsGeneralPage() {
                 {importRows.length > 0 && (
                   <div className="text-xs text-gray-600">Loaded {importRows.length} rows.</div>
                 )}
+              </div>
+            </Modal>
+            {/* Add manual entry modal */}
+            <Modal
+              open={manualOpen}
+              onClose={() => setManualOpen(false)}
+              title="Add manual entry"
+              footer={(
+                <div className="flex items-center gap-2">
+                  <button className="rounded border px-3 py-1.5 text-sm" onClick={() => setManualOpen(false)}>Close</button>
+                  <button
+                    className="inline-flex items-center rounded-md bg-slate-900 text-white px-3 py-1.5 text-sm hover:bg-slate-800 disabled:opacity-50"
+                    disabled={!manualSeasonId || !manualCustomerId || (!Number(manualQty) && !Number(manualPrice))}
+                    onClick={async () => {
+                      try {
+                        if (!manualSeasonId || !manualCustomerId) { alert('Select season and customer'); return; }
+                        const qty = Number(manualQty) || 0;
+                        const price = Number(manualPrice) || 0;
+                        if (!qty && !price) { alert('Enter Qty or Price'); return; }
+                        const cust = (customersAll ?? []).find(c => c.customer_id === manualCustomerId);
+                        const customer_name = cust?.company || '';
+                        const invoice_no = `2BIZ-${new Date().toISOString().slice(0,10).replace(/-/g,'')}-${Date.now().toString().slice(-6)}`;
+                        const ins = await supabase.from('sales_invoices').insert({
+                          invoice_no,
+                          account_no: manualCustomerId,
+                          customer_name,
+                          qty,
+                          amount: price,
+                          season_id: manualSeasonId,
+                          manual_edited: true
+                        } as any);
+                        if (ins.error) throw new Error(ins.error.message);
+                        setManualOpen(false);
+                        setManualSeasonId(''); setManualCustomerId(''); setManualQty(''); setManualPrice('');
+                        try { await mutateGeneralRows(); } catch {}
+                      } catch (e: any) {
+                        alert(e?.message || 'Failed to add entry');
+                      }
+                    }}
+                  >Add</button>
+                </div>
+              )}
+            >
+              <div className="space-y-3">
+                <label className="block text-sm">
+                  <div className="text-gray-600 mb-1">Season</div>
+                  <select className="w-full rounded border px-2 py-1 text-sm" value={manualSeasonId} onChange={(e)=>setManualSeasonId(e.target.value)}>
+                    <option value="">Select…</option>
+                    {(seasons ?? []).map((s:any) => (
+                      <option key={s.id} value={s.id}>{s.name}{s.year ? ' ' + s.year : ''}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block text-sm">
+                  <div className="text-gray-600 mb-1">Customer</div>
+                  <select className="w-full rounded border px-2 py-1 text-sm" value={manualCustomerId} onChange={(e)=>setManualCustomerId(e.target.value)}>
+                    <option value="">Select…</option>
+                    {(customersAll ?? []).map((c:any) => (
+                      <option key={c.customer_id} value={c.customer_id}>{c.company || c.customer_id}</option>
+                    ))}
+                  </select>
+                </label>
+                <div className="grid grid-cols-2 gap-3">
+                  <label className="block text-sm">
+                    <div className="text-gray-600 mb-1">Qty</div>
+                    <input type="number" className="w-full rounded border px-2 py-1 text-sm" value={manualQty} onChange={(e)=>setManualQty(e.target.value)} />
+                  </label>
+                  <label className="block text-sm">
+                    <div className="text-gray-600 mb-1">Price</div>
+                    <input type="number" className="w-full rounded border px-2 py-1 text-sm" value={manualPrice} onChange={(e)=>setManualPrice(e.target.value)} />
+                  </label>
+                </div>
+                <div className="text-xs text-gray-500">Invoice number will be generated with 2BIZ- prefix.</div>
               </div>
             </Modal>
             </>
