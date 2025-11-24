@@ -59,7 +59,26 @@ export default function StatisticsDashboardPage() {
   const [includeCountries, setIncludeCountries] = React.useState(true);
   const [includeTop15Salesmen, setIncludeTop15Salesmen] = React.useState(false);
   const [sendingSp, setSendingSp] = React.useState(false);
-  
+  const [salesmenBodyText, setSalesmenBodyText] = React.useState('Hermed statistik :)');
+  const [savingSalesmenPrefs, setSavingSalesmenPrefs] = React.useState(false);
+  // Load/save Salesmen email prefs (body only)
+  useSWR('dashboard:salesmen_email', async () => {
+    const { data } = await supabase.from('app_settings').select('id, value').eq('key', 'dashboard_salesmen_email').maybeSingle();
+    const val = ((data?.value as any) || {}) as { body?: string };
+    if (val.body !== undefined) setSalesmenBodyText(val.body);
+    return data;
+  });
+  async function saveSalesmenPrefs() {
+    setSavingSalesmenPrefs(true);
+    try {
+      const value = { body: salesmenBodyText };
+      const { data: existing } = await supabase.from('app_settings').select('id').eq('key', 'dashboard_salesmen_email').maybeSingle();
+      if (existing?.id) await supabase.from('app_settings').update({ value }).eq('id', existing.id);
+      else await supabase.from('app_settings').insert({ key: 'dashboard_salesmen_email', value } as any);
+    } finally {
+      setSavingSalesmenPrefs(false);
+    }
+  }
 
   function toggleSp(id: string) {
     setSelected((p) => ({ ...p, [id]: !p[id] }));
@@ -94,11 +113,12 @@ export default function StatisticsDashboardPage() {
         const recipient = byId[sp.id]?.email || '';
         if (!recipient) continue;
         // Use template variable names the email expects:
-        // salesman_pdf (per-salesperson), top15_salesmen_pdf, countries_pdf_url
+        // salesman_pdf (per-salesperson), top15_salesmen_pdf, countries_pdf_url, stock_lists_urls
         const dynamicParams: Record<string, string> = {
           salesman_pdf: '',
           countries_pdf_url: '',
-          top15_salesmen_pdf: ''
+          top15_salesmen_pdf: '',
+          stock_lists_urls: ''
         };
         dynamicParams.salesman_pdf = my.publicUrl || '';
         if (includeCountries && countries?.public_url) {
@@ -106,6 +126,15 @@ export default function StatisticsDashboardPage() {
         }
         if (includeTop15Salesmen && top15Salesmen?.public_url) {
           dynamicParams.top15_salesmen_pdf = top15Salesmen.public_url;
+        }
+        // Include selected stock lists (same selection for all recipients)
+        if (selectedStockLists.size > 0) {
+          const lines: string[] = [];
+          for (const name of Array.from(selectedStockLists)) {
+            const exp = latestStockListByName.get(name);
+            if (exp?.public_url) lines.push(`${name}: ${exp.public_url}`);
+          }
+          dynamicParams.stock_lists_urls = lines.join('\n');
         }
         try {
           const summarize = (p: Record<string, string>) => Object.fromEntries(Object.entries(p).map(([k, v]) => [k, { len: (v || '').length, head: (v || '').slice(0, 32) }]));
@@ -124,7 +153,7 @@ export default function StatisticsDashboardPage() {
         const subject = 'Din statistik';
         const firstName = String(byId[sp.id]?.name || '');
         const hej = firstName ? `Hej ${firstName.split(' ')[0]},` : 'Hej,';
-        const bodyHtml = `${hej}\n\nHermed statistik :)`;
+        const bodyHtml = `${hej}\n\n${salesmenBodyText || 'Hermed statistik :)'}`;
         // Send with dynamic template params (EmailJS)
         await sendEmailJs([recipient], subject, bodyHtml, undefined, dynamicParams);
       }
@@ -334,7 +363,7 @@ export default function StatisticsDashboardPage() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <div className="rounded-md border p-3 space-y-3">
-          <div className="text-sm font-semibold">Send out statistics</div>
+          <div className="text-sm font-semibold">Salesmen Statistics</div>
           <div className="text-sm font-medium">Salesperson Statistics</div>
           <div className="flex items-center justify-between text-sm">
             <div className="flex items-center gap-2">
@@ -397,7 +426,30 @@ export default function StatisticsDashboardPage() {
             </button>
             <span>Include Top 15 - Salesmen</span>
           </label>
+          {/* Stock lists toggles for Salesmen emails */}
+          <div className="mt-3">
+            <div className="text-xs text-gray-600 mb-1">Stock Lists</div>
+            <div className="flex flex-wrap gap-2">
+              {(stockListsAll ?? []).map((l) => {
+                const on = selectedStockLists.has(l.name);
+                const available = Boolean(latestStockListByName.get(l.name)?.public_url);
+                return (
+                  <label key={l.id} className={"inline-flex items-center gap-1 px-2 py-1 rounded border " + (on ? 'bg-slate-900 text-white border-slate-900' : '')}>
+                    <input type="checkbox" className="h-3 w-3" checked={on} disabled={!available} onChange={() => toggleStockList(l.name)} />
+                    <span className="text-xs">{l.name}</span>
+                    {!available && <span className="text-[10px] text-gray-500 ml-1">(no export)</span>}
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+          {/* Salesmen email body */}
+          <label className="block text-sm">
+            <div className="text-gray-600 mb-1">Email body</div>
+            <textarea className="w-full rounded border px-2 py-1 text-sm h-28" placeholder="Write your message…" value={salesmenBodyText} onChange={(e)=>setSalesmenBodyText(e.target.value)} />
+          </label>
           <div>
+            <button className="rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-50 mr-2" disabled={savingSalesmenPrefs} onClick={saveSalesmenPrefs}>{savingSalesmenPrefs ? 'Saving…' : 'Save body'}</button>
             <button className="rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-50" disabled={sendingSp} onClick={sendSalespersonEmails}>Send</button>
           </div>
         </div>
