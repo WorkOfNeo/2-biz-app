@@ -260,6 +260,8 @@ export default function StatisticsGeneralPage() {
   const [detailsLoading, setDetailsLoading] = useState(false);
   const [detailsS1, setDetailsS1] = useState<any[]>([]);
   const [detailsS2, setDetailsS2] = useState<any[]>([]);
+  const [adjFormS1, setAdjFormS1] = useState<{ qty: string; price: string; note: string }>({ qty: '', price: '', note: '' });
+  const [adjFormS2, setAdjFormS2] = useState<{ qty: string; price: string; note: string }>({ qty: '', price: '', note: '' });
 
   async function openDetails(row: RowOut) {
     if (!s1 && !s2) return;
@@ -286,9 +288,19 @@ export default function StatisticsGeneralPage() {
         }
         return Promise.all([stats.limit(10000), invoices.limit(10000)]);
       };
-      const [r1, r2] = await Promise.all([
+      const [r1, r2, adj] = await Promise.all([
         s1 ? buildQuery(s1) : Promise.resolve([{ data: [], error: null }, { data: [], error: null }] as any),
-        s2 ? buildQuery(s2) : Promise.resolve([{ data: [], error: null }, { data: [], error: null }] as any)
+        s2 ? buildQuery(s2) : Promise.resolve([{ data: [], error: null }, { data: [], error: null }] as any),
+        (async () => {
+          const hasAcc = !!row.account_no && !row.account_no.includes(':');
+          const q = supabase.from('sales_stats_adjustments').select('id, season_id, account_no, qty_delta, price_delta, note, created_at');
+          if (hasAcc) q.eq('account_no', row.account_no);
+          else q.eq('account_no', row.customer); // fallback by name if no account_no
+          if (s1 && s2) q.in('season_id', [s1, s2]);
+          else if (s1) q.eq('season_id', s1);
+          else if (s2) q.eq('season_id', s2);
+          return await q.order('created_at', { ascending: true });
+        })()
       ]);
       const [s1Stats, s1Invoices] = r1 as any[];
       const [s2Stats, s2Invoices] = r2 as any[];
@@ -302,6 +314,25 @@ export default function StatisticsGeneralPage() {
       const s2Combined = [...(s2Stats.data ?? [])];
       for (const inv of (s2Invoices?.data ?? [])) {
         s2Combined.push({ id: inv.id, account_no: inv.account_no, customer_name: inv.customer_name, city: '-', qty: Number(inv.qty||0), price: Number(inv.amount||0), season_id: s2, salesperson_id: row.salespersonId, updated_at: inv.created_at, invoice_no: inv.invoice_no, manual_edited: inv.manual_edited });
+      }
+      // Merge adjustments as virtual rows
+      const adjs = (adj?.data ?? []) as Array<{ id: string; season_id: string; account_no: string; qty_delta: number; price_delta: number; note?: string; created_at: string }>;
+      const toRow = (a: any) => ({
+        id: a.id,
+        account_no: a.account_no,
+        customer_name: detailsRow?.customer || '-',
+        city: '-',
+        qty: Number(a.qty_delta || 0),
+        price: Number(a.price_delta || 0),
+        season_id: a.season_id,
+        salesperson_id: detailsRow?.salespersonId || null,
+        updated_at: a.created_at,
+        invoice_no: 'ADJ',
+        note: a.note || ''
+      });
+      for (const a of adjs) {
+        if (a.season_id === s1) s1Combined.push(toRow(a));
+        else if (a.season_id === s2) s2Combined.push(toRow(a));
       }
       setDetailsS1(s1Combined as any[]);
       setDetailsS2(s2Combined as any[]);
@@ -327,13 +358,19 @@ export default function StatisticsGeneralPage() {
         .from('sales_invoices')
         .select('account_no, customer_name, qty, amount, season_id')
         .in('season_id', [s1, s2]);
+      const adjustmentsQuery = supabase
+        .from('sales_stats_adjustments')
+        .select('account_no, qty_delta, price_delta, season_id')
+        .in('season_id', [s1, s2]);
 
-      const [statsRes, invoicesRes] = await Promise.all([
+      const [statsRes, invoicesRes, adjRes] = await Promise.all([
         statsQuery.limit(100000),
-        invoicesQuery.limit(100000)
+        invoicesQuery.limit(100000),
+        adjustmentsQuery.limit(100000)
       ]);
       if (statsRes.error) throw new Error(statsRes.error.message);
       if (invoicesRes.error) throw new Error(invoicesRes.error.message);
+      if (adjRes.error) throw new Error(adjRes.error.message);
       const statsData = statsRes.data ?? [];
       // Debug: surface salesperson mapping issues and season filters
       try {
@@ -346,6 +383,7 @@ export default function StatisticsGeneralPage() {
         console.log('[stats] selectedSalespersonId', selectedSalespersonId, 'seasons', s1, s2);
       } catch {}
       const invoicesData = invoicesRes.data ?? [];
+      const adjustmentsData = adjRes.data ?? [];
       console.log('[stats] fetched raw rows', statsData.length, 'invoices', invoicesData.length);
 
       const map = new Map<string, RowOut>();
@@ -432,6 +470,26 @@ export default function StatisticsGeneralPage() {
           item.s2Price += amount;
         }
         map.set(key, item);
+      }
+      // Aggregate adjustments into totals
+      for (const a of adjustmentsData as any[]) {
+        const key: string = a.account_no ?? '';
+        if (!key) continue;
+        const itemExisting = map.get(key);
+        if (!itemExisting) {
+          // Skip creating new customers from adjustments alone
+          continue;
+        }
+        const qty = Number(a.qty_delta ?? 0) || 0;
+        const price = Number(a.price_delta ?? 0) || 0;
+        if (a.season_id === s1) {
+          itemExisting.s1Qty += qty;
+          itemExisting.s1Price += price;
+        } else if (a.season_id === s2) {
+          itemExisting.s2Qty += qty;
+          itemExisting.s2Price += price;
+        }
+        map.set(key, itemExisting);
       }
 
       const out = Array.from(map.values()).sort((a, b) => a.customer.localeCompare(b.customer));
@@ -1153,6 +1211,55 @@ export default function StatisticsGeneralPage() {
                         })()}
                       </tfoot>
                     </table>
+                  </div>
+          {/* Add adjustment for Season 1 */}
+          <div className="mt-2 border rounded p-2">
+            <div className="text-xs text-gray-600 mb-1">Add adjustment (Season 1)</div>
+            <div className="flex items-center gap-2">
+              <input className="w-24 border rounded px-2 py-1 text-sm" placeholder="Qty Δ" value={adjFormS1.qty} onChange={(e)=>setAdjFormS1(f=>({...f, qty:e.target.value}))} />
+              <input className="w-32 border rounded px-2 py-1 text-sm" placeholder="Price Δ" value={adjFormS1.price} onChange={(e)=>setAdjFormS1(f=>({...f, price:e.target.value}))} />
+              <input className="flex-1 border rounded px-2 py-1 text-sm" placeholder="Note" value={adjFormS1.note} onChange={(e)=>setAdjFormS1(f=>({...f, note:e.target.value}))} />
+              <button
+                className="rounded border px-2 py-1 text-xs hover:bg-slate-50"
+                onClick={async ()=> {
+                  try {
+                    if (!s1 || !detailsRow) return;
+                    const qty = Number(adjFormS1.qty || 0) || 0;
+                    const price = Number(adjFormS1.price || 0) || 0;
+                    const account = detailsRow.account_no || detailsRow.customer;
+                    await supabase.from('sales_stats_adjustments').insert({ season_id: s1, account_no: account, qty_delta: qty, price_delta: price, note: adjFormS1.note || null } as any);
+                    setAdjFormS1({ qty:'', price:'', note:'' });
+                    // Refresh details and main totals
+                    if (detailsRow) await openDetails(detailsRow);
+                    await mutateGeneralRows();
+                  } catch (e:any) { alert(e?.message || 'Failed to add adjustment'); }
+                }}
+              >Add</button>
+            </div>
+          </div>
+                  {/* Add adjustment for Season 2 */}
+                  <div className="mt-2 border rounded p-2">
+                    <div className="text-xs text-gray-600 mb-1">Add adjustment (Season 2)</div>
+                    <div className="flex items-center gap-2">
+                      <input className="w-24 border rounded px-2 py-1 text-sm" placeholder="Qty Δ" value={adjFormS2.qty} onChange={(e)=>setAdjFormS2(f=>({...f, qty:e.target.value}))} />
+                      <input className="w-32 border rounded px-2 py-1 text-sm" placeholder="Price Δ" value={adjFormS2.price} onChange={(e)=>setAdjFormS2(f=>({...f, price:e.target.value}))} />
+                      <input className="flex-1 border rounded px-2 py-1 text-sm" placeholder="Note" value={adjFormS2.note} onChange={(e)=>setAdjFormS2(f=>({...f, note:e.target.value}))} />
+                      <button
+                        className="rounded border px-2 py-1 text-xs hover:bg-slate-50"
+                        onClick={async ()=> {
+                          try {
+                            if (!s2 || !detailsRow) return;
+                            const qty = Number(adjFormS2.qty || 0) || 0;
+                            const price = Number(adjFormS2.price || 0) || 0;
+                            const account = detailsRow.account_no || detailsRow.customer;
+                            await supabase.from('sales_stats_adjustments').insert({ season_id: s2, account_no: account, qty_delta: qty, price_delta: price, note: adjFormS2.note || null } as any);
+                            setAdjFormS2({ qty:'', price:'', note:'' });
+                            if (detailsRow) await openDetails(detailsRow);
+                            await mutateGeneralRows();
+                          } catch (e:any) { alert(e?.message || 'Failed to add adjustment'); }
+                        }}
+                      >Add</button>
+                    </div>
                   </div>
                 </div>
               )}
