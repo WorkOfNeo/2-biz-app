@@ -1286,17 +1286,57 @@ async function runJob(job: JobRow) {
             }
             const { name, year } = normalizeSeasonLabel(seasonInfo.text);
             const displayName = `${name} ${year}`;
-            // Find or create season by display name
-            const { data: found } = await supabase.from('seasons').select('id').ilike('name', displayName).maybeSingle();
-            if (found?.id) {
-              targetSeasonId = found.id as string;
+            // Try to resolve season robustly without creating duplicates
+            let resolvedId: string | null = null;
+            // 1) spy_season_id from page value (preferred)
+            if (spySeasonId) {
+              try {
+                const spyNum = Number(spySeasonId) || null;
+                if (spyNum) {
+                  const { data: bySpy } = await supabase.from('seasons').select('id').eq('spy_season_id', spyNum).maybeSingle();
+                  resolvedId = (bySpy?.id as string | undefined) || null;
+                }
+              } catch {}
+            }
+            // 2) name ilike "NAME YEAR"
+            if (!resolvedId) {
+              try {
+                const { data: byName } = await supabase.from('seasons').select('id').ilike('name', displayName).maybeSingle();
+                resolvedId = (byName?.id as string | undefined) || null;
+              } catch {}
+            }
+            // 3) name ilike "NAME" AND year=YYYY
+            if (!resolvedId) {
+              try {
+                const { data: byNameYear } = await supabase.from('seasons').select('id').ilike('name', name).eq('year', year).maybeSingle();
+                resolvedId = (byNameYear?.id as string | undefined) || null;
+              } catch {}
+            }
+            // 4) source_name ilike "NAME YEAR"
+            if (!resolvedId) {
+              try {
+                const { data: bySource } = await supabase.from('seasons').select('id').ilike('source_name', displayName).maybeSingle();
+                resolvedId = (bySource?.id as string | undefined) || null;
+              } catch {}
+            }
+            // 5) source_name ilike "NAME" AND year=YYYY
+            if (!resolvedId) {
+              try {
+                const { data: bySourceYear } = await supabase.from('seasons').select('id').ilike('source_name', name).eq('year', year).maybeSingle();
+                resolvedId = (bySourceYear?.id as string | undefined) || null;
+              } catch {}
+            }
+            if (resolvedId) {
+              targetSeasonId = resolvedId;
             } else {
-              const { data: ins, error: insErr } = await supabase
-                .from('seasons')
-                .insert({ name: displayName, year })
-                .select('id')
-                .single();
-              if (!insErr) targetSeasonId = ins!.id as string;
+              // Only create if we have a spy_season_id to map uniquely; otherwise skip creation
+              if (spySeasonId && Number(spySeasonId)) {
+                const insertRow: any = { name: displayName, year, spy_season_id: Number(spySeasonId) };
+                try {
+                  const { data: ins, error: insErr } = await supabase.from('seasons').insert(insertRow).select('id').single();
+                  if (!insErr) targetSeasonId = (ins as any)?.id as string;
+                } catch {}
+              }
             }
             await log(job.id, 'info', 'STEP:season_selected', { label: seasonInfo.text, seasonName: displayName, seasonId: targetSeasonId });
           }
