@@ -1172,17 +1172,58 @@ async function runJob(job: JobRow) {
           const { data: byName } = await supabase.from('seasons').select('id').ilike('name', displayName).maybeSingle();
           existingId = (byName?.id as string | undefined) || null;
         }
+        // Fallback: match by plain name + year (handles overridden names without year suffix)
+        if (!existingId) {
+          try {
+            const baseName = String(r.parsed.name || '').trim();
+            if (baseName && year) {
+              const { data: byNameYear } = await supabase
+                .from('seasons')
+                .select('id')
+                .ilike('name', baseName)
+                .eq('year', year)
+                .maybeSingle();
+              existingId = (byNameYear?.id as string | undefined) || null;
+            }
+          } catch {}
+        }
+        // Fallback: match by source_name (scraped) either full display or base name + year
+        if (!existingId) {
+          try {
+            const { data: bySourceFull } = await supabase.from('seasons').select('id').ilike('source_name', displayName).maybeSingle();
+            existingId = (bySourceFull?.id as string | undefined) || null;
+          } catch {}
+        }
+        if (!existingId) {
+          try {
+            const baseName = String(r.parsed.name || '').trim();
+            if (baseName && year) {
+              const { data: bySourceNameYear } = await supabase
+                .from('seasons')
+                .select('id')
+                .ilike('source_name', baseName)
+                .eq('year', year)
+                .maybeSingle();
+              existingId = (bySourceNameYear?.id as string | undefined) || null;
+            }
+          } catch {}
+        }
 
         const start_date = (r as any).start || null;
         const end_date = (r as any).end || null;
 
         if (!existingId) {
-          const insertRow: Record<string, any> = { name: displayName, source_name: sourceName, year, spy_season_id: spyIdNum };
-          if (start_date) insertRow.start_date = start_date;
-          if (end_date) insertRow.end_date = end_date;
-          const { error: insErr } = await supabase.from('seasons').insert(insertRow);
-          if (insErr) throw insErr;
-          upserted++;
+          // Safety: do not create new season rows when we don't have a spy_season_id; just log and skip
+          if (!spyIdNum) {
+            await log(job.id, 'info', 'STEP:seasons_skip_insert_no_spy_id', { displayName, year });
+          } else {
+            const insertRow: Record<string, any> = { name: displayName, source_name: sourceName, year, spy_season_id: spyIdNum };
+            if (start_date) insertRow.start_date = start_date;
+            if (end_date) insertRow.end_date = end_date;
+            const { error: insErr } = await supabase.from('seasons').insert(insertRow);
+            if (insErr) throw insErr;
+            upserted++;
+          }
         } else {
           // Update spy_season_id if missing, and keep source_name up to date
           const updates: Record<string, any> = {};
