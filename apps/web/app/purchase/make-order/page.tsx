@@ -705,6 +705,10 @@ function Step3EnterQuantities({
 
   // State for bulk order amounts per color
   const [bulkOrderAmounts, setBulkOrderAmounts] = React.useState<Record<string, string>>({});
+  
+  // State for historical sales data per color
+  const [historicalDataOpen, setHistoricalDataOpen] = React.useState<Record<string, boolean>>({});
+  const [historicalData, setHistoricalData] = React.useState<Record<string, number[]>>({});
 
   const applyBulkOrder = (key: string, colorGroup: any) => {
     const total = Number(bulkOrderAmounts[key] || 0);
@@ -717,6 +721,63 @@ function Step3EnterQuantities({
       ...prev,
       [key]: distributed
     }));
+    
+    // Clear the input
+    setBulkOrderAmounts((prev) => ({ ...prev, [key]: '' }));
+  };
+
+  const fillGaps = (key: string, colorGroup: any) => {
+    const total = Number(bulkOrderAmounts[key] || 0);
+    if (total <= 0) return;
+
+    const historical = historicalData[key];
+    if (!historical || historical.length !== colorGroup.sizes.length) {
+      // Fallback to normal distribution if no historical data
+      applyBulkOrder(key, colorGroup);
+      return;
+    }
+
+    // Calculate current net need per size
+    const netNeed = colorGroup.stock.map((stock: number, i: number) => 
+      stock + (colorGroup.purchase[i] ?? 0) - (colorGroup.sold[i] ?? 0)
+    );
+
+    // Calculate historical pressure
+    const historicalTotal = historical.reduce((a, b) => a + b, 0);
+    const historicalPressure = historical.map((h) => 
+      historicalTotal > 0 ? h / historicalTotal : 0
+    );
+
+    // Target distribution: total amount distributed by historical pressure
+    const targetDistribution = historicalPressure.map((p) => Math.round(p * total));
+    
+    // Calculate what each size needs to reach its target from current net need
+    // If net need is -10 and we want target of 20, we need to add 30
+    const orderNeeded = targetDistribution.map((target, i) => 
+      Math.max(0, target - netNeed[i])
+    );
+
+    // Adjust to match exact total
+    let currentSum = orderNeeded.reduce((a, b) => a + b, 0);
+    const diff = total - currentSum;
+    
+    if (diff !== 0) {
+      // Distribute difference based on historical pressure
+      const adjustment = distributeBySoldPressure(Math.abs(diff), historical);
+      const finalOrder = orderNeeded.map((o, i) => 
+        diff > 0 ? o + adjustment[i] : Math.max(0, o - adjustment[i])
+      );
+      
+      setInputsByKey((prev) => ({
+        ...prev,
+        [key]: finalOrder
+      }));
+    } else {
+      setInputsByKey((prev) => ({
+        ...prev,
+        [key]: orderNeeded
+      }));
+    }
     
     // Clear the input
     setBulkOrderAmounts((prev) => ({ ...prev, [key]: '' }));
@@ -764,25 +825,83 @@ function Step3EnterQuantities({
                 // Calculate New Net Need = Net Need + Order (what you'll have after ordering)
                 const newNetNeed = netNeed.map((n, i) => n + (inputs[i] ?? 0));
 
+                const historical = historicalData[key] || [];
+                const hasHistorical = historical.length === colorGroup.sizes.length;
+                const historicalTotal = hasHistorical ? historical.reduce((a, b) => a + b, 0) : 0;
+                const historicalPressure = hasHistorical && historicalTotal > 0
+                  ? historical.map((h) => ((h / historicalTotal) * 100).toFixed(1))
+                  : [];
+
                 return (
                   <div key={key} className="space-y-3 pb-4 border-b last:border-b-0">
-                    <div className="flex items-start gap-3">
-                      {meta?.image ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={meta.image}
-                          alt={colorGroup.style_no}
-                          className="h-16 w-16 object-cover rounded border"
-                        />
-                      ) : (
-                        <div className="h-16 w-16 rounded border bg-gray-100" />
-                      )}
-                      <div>
-                        <div className="text-sm font-semibold">{colorGroup.style_no}</div>
-                        <div className="text-xs text-slate-600">{meta?.name || '—'}</div>
-                        <div className="text-xs text-slate-600">Color: {colorGroup.color}</div>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-start gap-3">
+                        {meta?.image ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={meta.image}
+                            alt={colorGroup.style_no}
+                            className="h-16 w-16 object-cover rounded border"
+                          />
+                        ) : (
+                          <div className="h-16 w-16 rounded border bg-gray-100" />
+                        )}
+                        <div>
+                          <div className="text-sm font-semibold">{colorGroup.style_no}</div>
+                          <div className="text-xs text-slate-600">{meta?.name || '—'}</div>
+                          <div className="text-xs text-slate-600">Color: {colorGroup.color}</div>
+                        </div>
                       </div>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setHistoricalDataOpen((prev) => ({ ...prev, [key]: !prev[key] }))}
+                      >
+                        {historicalDataOpen[key] ? 'Hide' : 'Historical Sales Data'}
+                      </Button>
                     </div>
+
+                    {/* Historical Sales Data Input */}
+                    {historicalDataOpen[key] && (
+                      <div className="bg-purple-50 border border-purple-200 rounded-lg p-3 space-y-2">
+                        <div className="text-xs font-semibold text-purple-900">Historical Sales Data</div>
+                        <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${colorGroup.sizes.length}, minmax(0, 1fr))` }}>
+                          {colorGroup.sizes.map((size, i) => (
+                            <div key={i} className="space-y-1">
+                              <label className="text-[10px] text-slate-600 font-medium block text-center">
+                                {size}
+                              </label>
+                              <Input
+                                type="number"
+                                inputMode="numeric"
+                                className="h-8 text-xs text-center"
+                                value={historical[i] ?? ''}
+                                onChange={(e) => {
+                                  const val = Number(e.target.value || 0);
+                                  setHistoricalData((prev) => {
+                                    const base = prev[key] || Array(colorGroup.sizes.length).fill(0);
+                                    const updated = [...base];
+                                    updated[i] = val;
+                                    return { ...prev, [key]: updated };
+                                  });
+                                }}
+                                min={0}
+                              />
+                              {hasHistorical && historicalPressure[i] && (
+                                <div className="text-[10px] text-purple-700 text-center font-medium">
+                                  {historicalPressure[i]}%
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                        {hasHistorical && (
+                          <div className="text-xs text-purple-900 pt-1">
+                            Total: <strong>{historicalTotal}</strong>
+                          </div>
+                        )}
+                      </div>
+                    )}
 
                     <div className="overflow-x-auto">
                       <table className="min-w-full text-xs border">
@@ -883,7 +1002,7 @@ function Step3EnterQuantities({
                     </div>
 
                     {/* Bulk Order Distribution Tool */}
-                    <div className="flex items-center gap-2 pt-2">
+                    <div className="flex items-center gap-2 pt-2 flex-wrap">
                       <label className="text-xs text-slate-600 font-medium">Total Order Amount:</label>
                       <Input
                         type="number"
@@ -901,8 +1020,18 @@ function Step3EnterQuantities({
                       >
                         ADD
                       </Button>
-                      <span className="text-xs text-slate-500 ml-2">
-                        (Distributes by sold pressure across sizes)
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => fillGaps(key, colorGroup)}
+                        disabled={!bulkOrderAmounts[key] || Number(bulkOrderAmounts[key]) <= 0 || !hasHistorical}
+                      >
+                        Fill Gaps
+                      </Button>
+                      <span className="text-xs text-slate-500">
+                        {hasHistorical 
+                          ? '(ADD: by current sold | Fill Gaps: by historical pressure)' 
+                          : '(Distributes by sold pressure - add historical data for Fill Gaps)'}
                       </span>
                     </div>
                   </div>
