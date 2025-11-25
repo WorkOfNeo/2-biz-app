@@ -37,6 +37,15 @@ export async function checkPurchaseOrders(ctx: Ctx) {
       targets = ((data ?? []) as any[]).map((r) => ({ po_no: r.po_no as string, po_link: r.po_link as string | null }));
     }
     await log(job.id, 'info', 'STEP:check_po_targets', { count: targets.length });
+    // Clear previous state for these POs so we always start fresh
+    try {
+      const poList = targets.map((t) => t.po_no);
+      if (poList.length > 0) {
+        await supabase.from('purchase_order_items').delete().in('po_no', poList as any);
+        await supabase.from('purchase_orders').update({ category: null }).in('po_no', poList as any);
+        await log(job.id, 'info', 'STEP:check_po_cleared', { po_nos: poList.length });
+      }
+    } catch {}
     let processed = 0;
     for (const t of targets) {
       await ensureNotCancelled(job.id);
@@ -51,8 +60,12 @@ export async function checkPurchaseOrders(ctx: Ctx) {
       // Read internal comment for NOOS CALL OFF marker
       let category: string | null = null;
       try {
-        const ta = await page.$('textarea[name="POrder[strInternalComment]"]');
-        const val = ta ? ((await ta.inputValue().catch(async () => (await ta.textContent()) || '')) || '') : '';
+        // Wait for the textarea to be present (if exists)
+        await page.waitForSelector('textarea[name="POrder[strInternalComment]"]', { timeout: 30_000 }).catch(() => null);
+        const val = await page.$eval('textarea[name="POrder[strInternalComment]"]', (el) => {
+          const t = el as HTMLTextAreaElement;
+          return (t.value || t.textContent || '') as string;
+        }).catch(() => '');
         if (/#NOOS_CALL_OFF_ORDER/i.test(val || '')) category = 'NOOS CALL OFF';
       } catch {}
       if (category) {
@@ -60,9 +73,9 @@ export async function checkPurchaseOrders(ctx: Ctx) {
       }
       // Parse items table
       try {
-        await page.waitForSelector('.pagesMiddle table.standardList tbody tr, .pagesMiddle .standardList tbody tr', { timeout: 60_000 });
+        await page.waitForSelector('#table1 tbody tr, .pagesMiddle table.standardList tbody tr, .pagesMiddle .standardList tbody tr', { timeout: 60_000 });
       } catch {}
-      const items = await page.$$eval('.pagesMiddle table.standardList tbody tr', (trs) => {
+      const items = await page.$$eval('#table1 tbody tr, .pagesMiddle table.standardList tbody tr', (trs) => {
         const out: Array<{ style_no: string | null; style_name: string | null; color: string | null; qty: number | null; style_link: string | null }> = [];
         function txt(el?: Element | null): string { return ((el as HTMLElement | null)?.textContent || '').replace(/\s+/g, ' ').trim(); }
         let lastStyleNo: string | null = null;
@@ -90,10 +103,18 @@ export async function checkPurchaseOrders(ctx: Ctx) {
           if (style_no) lastStyleNo = style_no;
           if (style_name) lastStyleName = style_name;
         }
-        return out;
+        // Deduplicate rows by key to avoid double lines (sticky clones etc.)
+        const seen = new Set<string>();
+        const dedup: typeof out = [];
+        for (const r of out) {
+          const key = [r.style_no || '', r.style_name || '', r.color || '', String(r.qty ?? ''), r.style_link || ''].join('|');
+          if (seen.has(key)) continue;
+          seen.add(key);
+          dedup.push(r);
+        }
+        return dedup;
       });
-      // Refresh items for this PO
-      try { await supabase.from('purchase_order_items').delete().eq('po_no', t.po_no); } catch {}
+      // Items for this PO are already cleared in bulk above
       if (items.length) {
         const rows = items.map((r) => ({
           po_no: t.po_no,
