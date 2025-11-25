@@ -48,7 +48,7 @@ async function handle(req: Request) {
     .from('jobs')
     .select('id, type, payload, created_at')
     .gte('created_at', boundary.toISOString())
-    .in('type', ['export_overview', 'export_top_styles']);
+    .in('type', ['export_overview', 'export_top_styles', 'export_stock_list']);
   const alreadyRan = (existingExports ?? []).some((j: any) => j?.payload?.requestedBy === 'cron_after_deep');
   if (alreadyRan) {
     const res = { skipped: true, reason: 'exports already enqueued today after deep', count: (existingExports ?? []).length };
@@ -61,6 +61,7 @@ async function handle(req: Request) {
     { type: 'export_overview', payload: { mode: 'overview_react_pdf', requestedBy: 'cron_after_deep' }, status: 'queued' as const, max_attempts: 3 },
     { type: 'export_overview', payload: { mode: 'countries_react_pdf', requestedBy: 'cron_after_deep' }, status: 'queued' as const, max_attempts: 3 },
     { type: 'export_top_styles', payload: { requestedBy: 'cron_after_deep' }, status: 'queued' as const, max_attempts: 3 },
+    { type: 'export_stock_list', payload: { requestedBy: 'cron_after_deep' }, status: 'queued' as const, max_attempts: 3 },
   ];
   const { error: insErr } = await supabase.from('jobs').insert(inserts as any);
   if (insErr) {

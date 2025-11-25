@@ -199,6 +199,10 @@ export default function StatisticsExportsPage() {
       id = await createJob({ type: 'export_top_styles', payload: {} });
       setJobId(id);
       await waitForJob(id);
+      // 5) Stock Lists PDF(s)
+      id = await createJob({ type: 'export_stock_list', payload: {} });
+      setJobId(id);
+      await waitForJob(id);
       setJobId(null);
       setRunning(false);
       setJobDone(true);
