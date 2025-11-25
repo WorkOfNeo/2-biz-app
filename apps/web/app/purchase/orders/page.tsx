@@ -190,7 +190,7 @@ export default function PurchaseOrdersPage() {
                                   <td className="p-2 border-b text-right">{it.qty ?? '—'}</td>
                                 </tr>
                               ))}
-                              {(!itemsByPo[r.po_no] || itemsByPo[r.po_no].length === 0) && (
+                              {((itemsByPo[r.po_no] ?? []).length === 0) && (
                                 <tr>
                                   <td className="p-2 border-b text-slate-500" colSpan={4}>No items yet. Click "Check Orders" to fetch details.</td>
                                 </tr>
