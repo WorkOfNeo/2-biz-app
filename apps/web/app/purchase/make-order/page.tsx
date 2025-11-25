@@ -748,7 +748,7 @@ function Step3EnterQuantities({
                     : Array(colorGroup.sizes.length).fill(0);
 
                 // Calculate Net Need = Sold - Available
-                const netNeed = colorGroup.sold.map((s, i) => s - colorGroup.available[i]);
+                const netNeed = colorGroup.sold.map((s, i) => s - (colorGroup.available[i] ?? 0));
                 const netNeedTotal = sum(netNeed);
                 
                 // Calculate pressure % for Net Need (based on sold)
@@ -758,7 +758,7 @@ function Step3EnterQuantities({
                 );
 
                 // Calculate New Net Need = Net Need - Order
-                const newNetNeed = netNeed.map((n, i) => n - inputs[i]);
+                const newNetNeed = netNeed.map((n, i) => n - (inputs[i] ?? 0));
 
                 return (
                   <div key={key} className="space-y-3 pb-4 border-b last:border-b-0">
