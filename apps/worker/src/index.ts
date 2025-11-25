@@ -13,6 +13,7 @@ import { scrapeTopStyles as scrapeTopStylesJob } from './jobs/scrapeTopStyles.js
 import { scrapeStatisticsPerSize } from './jobs/scrapeStatisticsPerSize.js';
 import { fixInvoices as fixInvoicesJob } from './jobs/fixInvoices.js';
 import { scrapePurchaseOrders as scrapePurchaseOrdersJob } from './jobs/scrapePurchaseOrders.js';
+import { checkPurchaseOrders as checkPurchaseOrdersJob } from './jobs/checkPurchaseOrders.js';
 import { scrapeEans as scrapeEansJob } from './jobs/scrapeEans.js';
 // (imported with .js extension above)
 
@@ -776,6 +777,10 @@ async function runJob(job: JobRow) {
   }
   if ((job.type as any) === 'scrape_purchase_orders') {
     await scrapePurchaseOrdersJob({ job, page: page!, log, saveResult, setJobFailedOrRequeue, setJobSucceeded, ensureNotCancelled, supabase });
+    return;
+  }
+  if ((job.type as any) === 'check_purchase_orders') {
+    await checkPurchaseOrdersJob({ job, page: page!, log, saveResult, setJobFailedOrRequeue, setJobSucceeded, ensureNotCancelled, supabase });
     return;
   }
   /* LEGACY export_overview handler (disabled)

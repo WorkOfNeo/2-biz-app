@@ -140,7 +140,7 @@ async function verifySupabaseJWT(authorization?: string): Promise<JWTPayload | n
 }
 
 const enqueueSchema = z.object({
-  type: z.enum(['scrape_statistics','scrape_styles','update_style_stock','export_overview','scrape_customers','deep_scrape_styles','scrape_top_styles','export_top_styles','scrape_purchase_orders','scrape_eans']),
+  type: z.enum(['scrape_statistics','scrape_styles','update_style_stock','export_overview','scrape_customers','deep_scrape_styles','scrape_top_styles','export_top_styles','scrape_purchase_orders','fix_invoices','scrape_eans','export_stock_list','check_purchase_orders']),
   payload: z.record(z.any())
 });
 
