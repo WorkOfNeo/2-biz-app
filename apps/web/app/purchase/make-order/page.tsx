@@ -207,7 +207,7 @@ function Step1ChooseStyles({
   onContinue
 }: {
   selectedStyles: string[];
-  setSelectedStyles: (styles: string[]) => void;
+  setSelectedStyles: React.Dispatch<React.SetStateAction<string[]>>;
   onContinue: () => void;
 }) {
   const [q, setQ] = React.useState('');
@@ -336,7 +336,7 @@ function Step2ChooseColors({
 }: {
   selectedStyles: string[];
   selections: Array<{ style_no: string; color: string }>;
-  setSelections: (selections: Array<{ style_no: string; color: string }>) => void;
+  setSelections: React.Dispatch<React.SetStateAction<Array<{ style_no: string; color: string }>>>;
   onBack: () => void;
   onContinue: () => void;
 }) {
@@ -498,7 +498,7 @@ function Step3EnterQuantities({
 }: {
   selections: Array<{ style_no: string; color: string }>;
   inputsByKey: Record<string, number[]>;
-  setInputsByKey: (inputs: Record<string, number[]>) => void;
+  setInputsByKey: React.Dispatch<React.SetStateAction<Record<string, number[]>>>;
   onBack: () => void;
   onContinue: () => void;
 }) {
@@ -680,7 +680,7 @@ function Step3EnterQuantities({
             <div key={supplierGroup.supplier} className="space-y-4">
               <div className="flex items-center gap-2 pb-2 border-b-2 border-slate-900">
                 <h3 className="text-lg font-semibold">{supplierGroup.supplier}</h3>
-                <Badge variant="outline">{supplierGroup.colors.length} item{supplierGroup.colors.length !== 1 ? 's' : ''}</Badge>
+                <Badge>{supplierGroup.colors.length} item{supplierGroup.colors.length !== 1 ? 's' : ''}</Badge>
               </div>
 
               {supplierGroup.colors.map((colorGroup) => {
