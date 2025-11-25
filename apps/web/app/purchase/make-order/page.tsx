@@ -765,7 +765,7 @@ function Step3EnterQuantities({
       // Distribute difference based on historical pressure
       const adjustment = distributeBySoldPressure(Math.abs(diff), historical);
       const finalOrder = orderNeeded.map((o, i) => 
-        diff > 0 ? o + adjustment[i] : Math.max(0, o - adjustment[i])
+        diff > 0 ? o + (adjustment[i] ?? 0) : Math.max(0, o - (adjustment[i] ?? 0))
       );
       
       setInputsByKey((prev) => ({
