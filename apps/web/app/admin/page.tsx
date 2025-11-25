@@ -1,164 +1,187 @@
+/* eslint-disable @next/next/no-img-element */
 'use client';
 import useSWR from 'swr';
-import Link from 'next/link';
 import { supabase } from '../../lib/supabaseClient';
 import type { JobRow } from '@shared/types';
-import { useState } from 'react';
 
-const ORCH_URL = (process.env.NEXT_PUBLIC_ORCHESTRATOR_URL || '').replace(/\/$/, '');
+type ExportRow = { id: string; kind: string; title: string | null; public_url: string | null; path: string; job_id: string | null; created_at: string; meta: any };
 
-async function fetchJobs(): Promise<JobRow[]> {
+async function fetchRunningJob(): Promise<JobRow | null> {
   const { data, error } = await supabase
     .from('jobs')
     .select('*')
+    .eq('status', 'running')
+    .order('started_at', { ascending: false })
+    .limit(1);
+  if (error) throw new Error(error.message);
+  const list = (data as JobRow[]) || [];
+  return list[0] || null;
+}
+
+async function fetchLastJob(type: JobRow['type']): Promise<JobRow | null> {
+  const { data, error } = await supabase
+    .from('jobs')
+    .select('*')
+    .eq('type', type)
+    .eq('status', 'succeeded')
+    .order('finished_at', { ascending: false })
+    .limit(1);
+  if (error) throw new Error(error.message);
+  const list = (data as JobRow[]) || [];
+  return list[0] || null;
+}
+
+async function fetchStatsSummary(jobId: string): Promise<{ created: number; updated: number; when: string } | null> {
+  const { data, error } = await supabase
+    .from('job_results')
+    .select('summary, data, created_at')
+    .eq('job_id', jobId)
+    .order('created_at', { ascending: false })
+    .limit(5);
+  if (error) throw new Error(error.message);
+  const rows = (data as Array<{ summary: string; data: any; created_at: string }>) || [];
+  const deep = rows.find(r => (r.summary || '').toLowerCase().includes('deep scrape'));
+  const target = deep || rows[0];
+  if (!target) return null;
+  try {
+    const per = ((target.data as any)?.perSalesperson as Array<{ created: number; updated: number }> | undefined) || [];
+    const created = per.reduce((a, r) => a + (Number(r.created || 0) || 0), 0);
+    const updated = per.reduce((a, r) => a + (Number(r.updated || 0) || 0), 0);
+    return { created, updated, when: target.created_at };
+  } catch {
+    return null;
+  }
+}
+
+async function fetchStockChanges(jobId: string): Promise<{ stylesChanged: number; when: string } | null> {
+  const { data, error } = await supabase
+    .from('style_stock_movements')
+    .select('style_no, created_at')
+    .eq('job_id', jobId);
+  if (error) throw new Error(error.message);
+  const rows = (data as Array<{ style_no: string; created_at: string }>) || [];
+  const set = new Set(rows.map(r => r.style_no));
+  const when = rows[0]?.created_at || '';
+  return { stylesChanged: set.size, when };
+}
+
+async function fetchLatestExports(): Promise<ExportRow[]> {
+  const { data, error } = await supabase
+    .from('exports')
+    .select('id, kind, title, public_url, path, job_id, created_at, meta')
     .order('created_at', { ascending: false })
     .limit(50);
   if (error) throw new Error(error.message);
-  return data as JobRow[];
+  return (data as any[]) as ExportRow[];
 }
 
-async function enqueue(deep: boolean) {
-  const {
-    data: { session }
-  } = await supabase.auth.getSession();
-  if (!session) throw new Error('No session');
-  const token = session.access_token;
-  const res = await fetch(`${ORCH_URL}/enqueue`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ type: 'scrape_statistics', payload: { toggles: { deep }, requestedBy: session.user.email } })
-  });
-  if (!res.ok) throw new Error(await res.text());
-  const json = await res.json();
-  return json.jobId as string;
+function Card({ title, children, right }: { title: string; children?: any; right?: any }) {
+  return (
+    <div className="border rounded-md p-4">
+      <div className="flex items-center justify-between">
+        <h2 className="text-base font-semibold">{title}</h2>
+        {right ? <div>{right}</div> : null}
+      </div>
+      <div className="mt-3">{children}</div>
+    </div>
+  );
 }
 
-function Status({ status }: { status: JobRow['status'] }) {
-  const color = { queued: '#999', running: '#2980b9', succeeded: '#27ae60', failed: '#e74c3c', cancelled: '#7f8c8d' }[status];
-  return <span style={{ padding: '2px 8px', borderRadius: 6, background: color, color: 'white', fontSize: 12 }}>{status}</span>;
+function Row({ label, value, sub }: { label: string; value: string | number | JSX.Element; sub?: string }) {
+  return (
+    <div className="flex items-baseline justify-between py-1 border-b last:border-b-0">
+      <div className="text-sm text-slate-600">{label}</div>
+      <div className="text-sm font-medium">{value}</div>
+      {sub ? <div className="ml-2 text-xs text-slate-400">{sub}</div> : null}
+    </div>
+  );
 }
 
 export default function AdminPage() {
-  const { data: jobs, mutate, isLoading, error } = useSWR('jobs', fetchJobs, { refreshInterval: 5000 });
-  const { data: seasons } = useSWR('seasons-simple', async () => {
-    const { data, error } = await supabase.from('seasons').select('*').order('created_at', { ascending: false });
-    if (error) throw new Error(error.message);
-    return data as { id: string; name: string; year: number | null }[];
-  });
-  const [s1, setS1] = useState<string>('');
-  const [s2, setS2] = useState<string>('');
+  const { data: runningJob } = useSWR('admin-running-job', fetchRunningJob, { refreshInterval: 3000 });
+  const { data: lastStatsJob } = useSWR('admin-last-stats', () => fetchLastJob('scrape_statistics'), { refreshInterval: 10000 });
+  const { data: lastStockJob } = useSWR('admin-last-stock', () => fetchLastJob('update_style_stock'), { refreshInterval: 10000 });
+  const statsJobId = lastStatsJob?.id || null;
+  const stockJobId = lastStockJob?.id || null;
+  const { data: statsSummary } = useSWR(statsJobId ? `stats-summary-${statsJobId}` : null, () => fetchStatsSummary(statsJobId!), { refreshInterval: 15000 });
+  const { data: stockChanges } = useSWR(stockJobId ? `stock-changes-${stockJobId}` : null, () => fetchStockChanges(stockJobId!), { refreshInterval: 15000 });
+  const { data: exportsList } = useSWR('admin-latest-exports', fetchLatestExports, { refreshInterval: 20000 });
+
+  const latestByKind = (() => {
+    const map = new Map<string, ExportRow>();
+    for (const r of (exportsList || [])) {
+      if (!map.has(r.kind)) map.set(r.kind, r);
+    }
+    return map;
+  })();
 
   return (
-    <div>
-      <div className="flex items-center justify-between">
-        <h1>Admin Dashboard</h1>
-        <div className="relative flex items-center gap-2">
-          <Link className="rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50" href="/admin/users">Users</Link>
-          <Link className="rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50" href="/admin/roles">Roles</Link>
-          <details className="cursor-pointer">
-            <summary className="list-none inline-flex items-center gap-2 px-3 py-1.5 rounded-md border text-sm">☰ Menu</summary>
-            <div className="absolute right-0 mt-2 w-56 bg-white border rounded-md shadow">
-              <Link className="block px-3 py-2 hover:bg-gray-50" href="/settings/customers/import">Import Statistic</Link>
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="space-y-4">
+        <Card title="Messages">
+          <div className="text-sm text-slate-500">No messages.</div>
+        </Card>
+      </div>
+      <div className="space-y-4">
+        <Card title="Current Job Progress">
+          {runningJob ? (
+            <div className="text-sm space-y-1">
+              <Row label="Type" value={String(runningJob.type).replace(/_/g, ' ')} />
+              <Row label="Started" value={runningJob.started_at ? new Date(runningJob.started_at).toLocaleString() : '—'} />
+              <Row label="Attempts" value={`${runningJob.attempts}/${runningJob.max_attempts}`} />
+              <Row label="Status" value={<span className="px-2 py-0.5 rounded text-white" style={{ background: '#2980b9' }}>running</span>} />
             </div>
-          </details>
-        </div>
-      </div>
-      {/* Job controls removed per request */}
+          ) : (
+            <div className="text-sm text-slate-500">No job is currently running.</div>
+          )}
+        </Card>
 
-      <div className="border rounded-md p-4 mt-4">
-        <div className="flex items-end gap-3">
-          <div>
-            <label className="text-sm">Season 1</label>
-            <select className="mt-1 border rounded p-1 text-sm" value={s1} onChange={(e) => setS1(e.target.value)}>
-              <option value="">—</option>
-              {(seasons ?? []).map((s) => (
-                <option key={s.id} value={s.id}>{s.name} {s.year ?? ''}</option>
-              ))}
-            </select>
+        <Card title="Scrape Statistics">
+          <div className="text-sm space-y-1">
+            <Row label="Last run" value={lastStatsJob?.finished_at ? new Date(lastStatsJob.finished_at).toLocaleString() : '—'} />
+            <Row label="Created" value={statsSummary ? statsSummary.created : '—'} />
+            <Row label="Updated" value={statsSummary ? statsSummary.updated : '—'} />
           </div>
-          <div>
-            <label className="text-sm">Season 2</label>
-            <select className="mt-1 border rounded p-1 text-sm" value={s2} onChange={(e) => setS2(e.target.value)}>
-              <option value="">—</option>
-              {(seasons ?? []).map((s) => (
-                <option key={s.id} value={s.id}>{s.name} {s.year ?? ''}</option>
-              ))}
-            </select>
-          </div>
-        </div>
-        <div className="mt-4 overflow-auto border rounded-md">
-          <table className="min-w-full text-sm">
-            <thead>
-              <tr>
-                <th className="text-left p-2 border-b">Customer</th>
-                <th className="text-left p-2 border-b">City</th>
-                <th className="text-left p-2 border-b">Season 1</th>
-                <th className="text-left p-2 border-b">Season 2</th>
-                <th className="text-left p-2 border-b">Development</th>
-                <th className="text-left p-2 border-b">Actions</th>
-              </tr>
-              <tr className="bg-gray-50">
-                <th className="text-left p-2 border-b"></th>
-                <th className="text-left p-2 border-b"></th>
-                <th className="text-left p-2 border-b">Qty · Price</th>
-                <th className="text-left p-2 border-b">Qty · Price</th>
-                <th className="text-left p-2 border-b">Qty · Price</th>
-                <th className="text-left p-2 border-b">—</th>
-              </tr>
-            </thead>
-            <tbody>
-              {/* Placeholder rows; later populate by joining season_statistics */}
-              <tr>
-                <td className="p-2 border-b">—</td>
-                <td className="p-2 border-b">—</td>
-                <td className="p-2 border-b">0 · 0</td>
-                <td className="p-2 border-b">0 · 0</td>
-                <td className="p-2 border-b">0 · 0</td>
-                <td className="p-2 border-b">—</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
+        </Card>
 
-      {isLoading && <p>Loading…</p>}
-      {error && <p style={{ color: 'red' }}>{String(error)}</p>}
-      <table cellPadding={8} style={{ width: '100%', borderCollapse: 'collapse' }}>
-        <thead>
-          <tr>
-            <th align="left">ID</th>
-            <th align="left">Type</th>
-            <th align="left">Status</th>
-            <th align="left">Attempts</th>
-            <th align="left">Duration</th>
-          </tr>
-        </thead>
-        <tbody>
-          {(jobs ?? []).map((j) => {
-            const duration = j.started_at && j.finished_at ? (new Date(j.finished_at).getTime() - new Date(j.started_at).getTime()) / 1000 : null;
-            const label = (() => {
-              const t = (j.type || '').toString();
-              if (!t) return '—';
-              return t
-                .replace(/_/g, ' ')
-                .replace(/^scrape statistics$/i, 'Scrape statistics')
-                .replace(/^scrape styles$/i, 'Scrape styles')
-                .replace(/^update style stock$/i, 'Scrape stock')
-                .replace(/^export overview$/i, 'Export overview')
-                .replace(/\b\w/g, (m) => m.toUpperCase());
-            })();
-            return (
-              <tr key={j.id} style={{ borderTop: '1px solid #eee' }}>
-                <td><Link href={`/admin/jobs/${j.id}`}>{j.id.slice(0, 8)}…</Link></td>
-                <td>{label}</td>
-                <td><Status status={j.status} /></td>
-                <td>{j.attempts}/{j.max_attempts}</td>
-                <td>{duration ? `${duration.toFixed(1)}s` : '-'}</td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+        <Card title="Scrape Stock">
+          <div className="text-sm space-y-1">
+            <Row label="Last run" value={lastStockJob?.finished_at ? new Date(lastStockJob.finished_at).toLocaleString() : '—'} />
+            <Row label="Styles changed" value={stockChanges ? stockChanges.stylesChanged : '—'} />
+          </div>
+        </Card>
+
+        <Card title="Exports">
+          <div className="grid grid-cols-1 gap-2">
+            {Array.from(latestByKind.values()).length === 0 ? (
+              <div className="text-sm text-slate-500">No exports yet.</div>
+            ) : null}
+            {Array.from(latestByKind.entries()).map(([kind, row]) => {
+              let url = row.public_url || '';
+              if (kind === 'general_salesmen_pdfs') {
+                const maybe = (row.meta?.all?.publicUrl || row.meta?.all?.public_url) as string | undefined;
+                if (maybe) url = maybe;
+              }
+              const title = row.title || kind.replace(/_/g, ' ');
+              return (
+                <div key={row.id} className="flex items-center justify-between rounded border p-2">
+                  <div className="text-sm">
+                    <div className="font-medium">{title}</div>
+                    <div className="text-xs text-slate-500">{new Date(row.created_at).toLocaleString()}</div>
+                  </div>
+                  {url ? (
+                    <a className="text-sm px-3 py-1.5 rounded border hover:bg-slate-50" href={url} target="_blank" rel="noopener noreferrer">
+                      Open PDF
+                    </a>
+                  ) : (
+                    <span className="text-xs text-slate-400">No public URL</span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+      </div>
     </div>
   );
 }
