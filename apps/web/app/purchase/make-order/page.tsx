@@ -747,7 +747,7 @@ function Step3EnterQuantities({
                     ? inputsByKey[key]
                     : Array(colorGroup.sizes.length).fill(0);
 
-                // Calculate Net Need = Sold - Available
+                // Calculate Net Need = Sold - Available (negative = surplus, positive = shortage)
                 const netNeed = colorGroup.sold.map((s, i) => s - (colorGroup.available[i] ?? 0));
                 const netNeedTotal = sum(netNeed);
                 
@@ -757,8 +757,9 @@ function Step3EnterQuantities({
                   soldTotal > 0 ? ((s / soldTotal) * 100).toFixed(1) : '0.0'
                 );
 
-                // Calculate New Available = Available + Order (what you'll have after ordering)
-                const newAvailable = colorGroup.available.map((a, i) => a + (inputs[i] ?? 0));
+                // Calculate New Net Need = Net Need - Order (what you'll still need after ordering)
+                // Negative means surplus after order, positive means still short
+                const newNetNeed = netNeed.map((n, i) => n - (inputs[i] ?? 0));
 
                 return (
                   <div key={key} className="space-y-3 pb-4 border-b last:border-b-0">
@@ -875,14 +876,14 @@ function Step3EnterQuantities({
                             </td>
                           </tr>
                           <tr className="border-t bg-green-50">
-                            <td className="p-2 font-medium border-r">New Available</td>
-                            {newAvailable.map((v, i) => (
-                              <td key={i} className="p-2 text-right font-mono tabular-nums border-r font-semibold">
+                            <td className="p-2 font-medium border-r">New Net Need</td>
+                            {newNetNeed.map((v, i) => (
+                              <td key={i} className={`p-2 text-right font-mono tabular-nums border-r font-semibold ${v < 0 ? 'text-green-700' : v > 0 ? 'text-red-700' : ''}`}>
                                 {v}
                               </td>
                             ))}
-                            <td className="p-2 text-right font-mono tabular-nums font-bold">
-                              {sum(newAvailable)}
+                            <td className={`p-2 text-right font-mono tabular-nums font-bold ${sum(newNetNeed) < 0 ? 'text-green-700' : sum(newNetNeed) > 0 ? 'text-red-700' : ''}`}>
+                              {sum(newNetNeed)}
                             </td>
                           </tr>
                         </tbody>
