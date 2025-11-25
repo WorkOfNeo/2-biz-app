@@ -512,9 +512,10 @@ function distributeBySoldPressure(total: number, soldArray: number[]): number[] 
   fractional.sort((a, b) => b.frac - a.frac);
   
   // Add 1 to the sizes with largest fractional parts
-  for (let k = 0; k < remaining; k++) {
-    if (fractional[k]) {
-      floored[fractional[k].i]++;
+  for (let k = 0; k < remaining && k < fractional.length; k++) {
+    const item = fractional[k];
+    if (item && item.i < floored.length) {
+      floored[item.i]++;
     }
   }
   
