@@ -219,12 +219,12 @@ function Step1ChooseStyles({
         .select('id, style_no, style_name, supplier, image_url')
         .order('style_no', { ascending: true })
         .limit(200);
-      const qq = q.trim();
-      if (qq) {
-        query = query.or(`style_no.ilike.%${qq}%,style_name.ilike.%${qq}%`);
-      }
-      const { data, error } = await query;
-      if (error) throw new Error(error.message);
+    const qq = q.trim();
+    if (qq) {
+      query = query.or(`style_no.ilike.%${qq}%,style_name.ilike.%${qq}%`);
+    }
+    const { data, error } = await query;
+    if (error) throw new Error(error.message);
       return (data ?? []) as Array<{
         id: string;
         style_no: string;
@@ -375,7 +375,7 @@ function Step2ChooseColors({
         .in('style_id', styleIds.map((s: any) => s.id))
         .order('color', { ascending: true });
       
-      if (error) throw new Error(error.message);
+    if (error) throw new Error(error.message);
 
       // Map style_id back to style_no
       const idToNo = new Map(styleIds.map((s: any) => [s.id, s.style_no]));
@@ -488,6 +488,39 @@ function Step2ChooseColors({
   );
 }
 
+// Helper function to distribute total by sold pressure
+function distributeBySoldPressure(total: number, soldArray: number[]): number[] {
+  const soldTotal = soldArray.reduce((a, b) => a + b, 0);
+  
+  if (soldTotal === 0) {
+    // If no sold data, distribute evenly
+    const perSize = Math.floor(total / soldArray.length);
+    const remainder = total % soldArray.length;
+    return soldArray.map((_, i) => perSize + (i < remainder ? 1 : 0));
+  }
+
+  // Calculate pressure percentages
+  const pressures = soldArray.map((s) => s / soldTotal);
+  
+  // Distribute with largest remainder method
+  const exact = pressures.map((p) => p * total);
+  const floored = exact.map((v) => Math.floor(v));
+  let remaining = total - floored.reduce((a, b) => a + b, 0);
+  
+  // Sort indices by fractional part (descending)
+  const fractional = exact.map((v, i) => ({ i, frac: v - Math.floor(v) }));
+  fractional.sort((a, b) => b.frac - a.frac);
+  
+  // Add 1 to the sizes with largest fractional parts
+  for (let k = 0; k < remaining; k++) {
+    if (fractional[k]) {
+      floored[fractional[k].i]++;
+    }
+  }
+  
+  return floored;
+}
+
 // ==================== STEP 3: Enter Quantities (Grouped by Supplier) ====================
 function Step3EnterQuantities({
   selections,
@@ -539,13 +572,13 @@ function Step3EnterQuantities({
     selectedStyleNos.length ? ['makeOrder:stock', selectedStyleNos.join(',')] : null,
     async () => {
       const selectedColors = Array.from(new Set(selections.map((s) => s.color)));
-      const { data, error } = await supabase
-        .from('style_stock')
-        .select('style_no, color, sizes, section, row_label, values, scraped_at')
-        .in('style_no', selectedStyleNos)
-        .in('color', selectedColors);
-      if (error) throw new Error(error.message);
-      return (data ?? []) as StockRow[];
+    const { data, error } = await supabase
+      .from('style_stock')
+      .select('style_no, color, sizes, section, row_label, values, scraped_at')
+      .in('style_no', selectedStyleNos)
+      .in('color', selectedColors);
+    if (error) throw new Error(error.message);
+    return (data ?? []) as StockRow[];
     }
   );
 
@@ -594,7 +627,7 @@ function Step3EnterQuantities({
         const current = latestBySection.get(sectionKey);
         if (!current || new Date(r.scraped_at) > new Date(current.scraped_at)) {
           latestBySection.set(sectionKey, r);
-        }
+      }
       });
 
       const latestRows = Array.from(latestBySection.values());
@@ -666,6 +699,25 @@ function Step3EnterQuantities({
 
   const sum = (arr: number[]) => arr.reduce((a, b) => a + b, 0);
 
+  // State for bulk order amounts per color
+  const [bulkOrderAmounts, setBulkOrderAmounts] = React.useState<Record<string, string>>({});
+
+  const applyBulkOrder = (key: string, colorGroup: any) => {
+    const total = Number(bulkOrderAmounts[key] || 0);
+    if (total <= 0) return;
+
+    // Distribute based on sold pressure
+    const distributed = distributeBySoldPressure(total, colorGroup.sold);
+    
+    setInputsByKey((prev) => ({
+      ...prev,
+      [key]: distributed
+    }));
+    
+    // Clear the input
+    setBulkOrderAmounts((prev) => ({ ...prev, [key]: '' }));
+  };
+
   return (
     <div className="space-y-4">
       <Card>
@@ -690,6 +742,19 @@ function Step3EnterQuantities({
                   inputsByKey[key]?.length === colorGroup.sizes.length
                     ? inputsByKey[key]
                     : Array(colorGroup.sizes.length).fill(0);
+
+                // Calculate Net Need = Sold - Available
+                const netNeed = colorGroup.sold.map((s, i) => s - colorGroup.available[i]);
+                const netNeedTotal = sum(netNeed);
+                
+                // Calculate pressure % for Net Need (based on sold)
+                const soldTotal = sum(colorGroup.sold);
+                const soldPressure = colorGroup.sold.map((s) => 
+                  soldTotal > 0 ? ((s / soldTotal) * 100).toFixed(1) : '0.0'
+                );
+
+                // Calculate New Net Need = Net Need - Order
+                const newNetNeed = netNeed.map((n, i) => n - inputs[i]);
 
                 return (
                   <div key={key} className="space-y-3 pb-4 border-b last:border-b-0">
@@ -769,6 +834,22 @@ function Step3EnterQuantities({
                               {sum(colorGroup.available)}
                             </td>
                           </tr>
+                          <tr className="border-t bg-amber-50">
+                            <td className="p-2 font-medium border-r">Net Need</td>
+                            {netNeed.map((v, i) => (
+                              <td key={i} className="p-2 text-right border-r">
+                                <div className="font-mono tabular-nums font-semibold">
+                                  {v}
+                                </div>
+                                <div className="text-[10px] text-slate-500 mt-0.5">
+                                  {soldPressure[i]}%
+                                </div>
+                              </td>
+                            ))}
+                            <td className="p-2 text-right font-mono tabular-nums font-bold">
+                              {netNeedTotal}
+                            </td>
+                          </tr>
                           <tr className="border-t bg-blue-50">
                             <td className="p-2 font-medium border-r">Order</td>
                             {colorGroup.sizes.map((_, i) => (
@@ -789,13 +870,48 @@ function Step3EnterQuantities({
                               {sum(inputs)}
                             </td>
                           </tr>
+                          <tr className="border-t bg-green-50">
+                            <td className="p-2 font-medium border-r">New Net Need</td>
+                            {newNetNeed.map((v, i) => (
+                              <td key={i} className="p-2 text-right font-mono tabular-nums border-r font-semibold">
+                                {v}
+                              </td>
+                            ))}
+                            <td className="p-2 text-right font-mono tabular-nums font-bold">
+                              {sum(newNetNeed)}
+                            </td>
+                          </tr>
                         </tbody>
                       </table>
+                    </div>
+
+                    {/* Bulk Order Distribution Tool */}
+                    <div className="flex items-center gap-2 pt-2">
+                      <label className="text-xs text-slate-600 font-medium">Total Order Amount:</label>
+                      <Input
+                        type="number"
+                        inputMode="numeric"
+                        className="w-24 h-8 text-sm"
+                        placeholder="0"
+                        value={bulkOrderAmounts[key] || ''}
+                        onChange={(e) => setBulkOrderAmounts((prev) => ({ ...prev, [key]: e.target.value }))}
+                        min={0}
+                      />
+                      <Button
+                        size="sm"
+                        onClick={() => applyBulkOrder(key, colorGroup)}
+                        disabled={!bulkOrderAmounts[key] || Number(bulkOrderAmounts[key]) <= 0}
+                      >
+                        ADD
+                      </Button>
+                      <span className="text-xs text-slate-500 ml-2">
+                        (Distributes by sold pressure across sizes)
+                      </span>
                     </div>
                   </div>
                 );
               })}
-            </div>
+                  </div>
           ))}
 
           <div className="flex items-center justify-between pt-4 border-t">
@@ -837,7 +953,7 @@ function Step4Review({
       const total = quantities.reduce((a, b) => a + b, 0);
       if (total > 0) {
         items.push({ style_no, color, quantities, total });
-      }
+    }
     });
 
     return items;
@@ -884,8 +1000,8 @@ function Step4Review({
                 <div className="flex items-center justify-between text-lg font-bold">
                   <span>Grand Total:</span>
                   <span>{grandTotal}</span>
-                </div>
-              </div>
+        </div>
+      </div>
 
               <div className="flex items-center justify-between pt-4 border-t">
                 <Button variant="outline" onClick={onBack}>
@@ -896,8 +1012,8 @@ function Step4Review({
                     Start New Order
                   </Button>
                   <Button>Finalize Order</Button>
-                </div>
-              </div>
+      </div>
+            </div>
             </>
           )}
         </CardContent>
