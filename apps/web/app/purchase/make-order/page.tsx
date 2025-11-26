@@ -865,38 +865,38 @@ function Step3EnterQuantities({
             };
             
             return (
-            <div key={supplierGroup.supplier} className="space-y-4">
-              <div className="flex items-center justify-between pb-3 border-b-2 border-slate-900">
-                <div className="flex items-center gap-2">
-                  <h3 className="text-lg font-semibold">{supplierGroup.supplier}</h3>
-                  <Badge>{totalItems} item{totalItems !== 1 ? 's' : ''}</Badge>
+              <div key={supplierGroup.supplier} className="space-y-4">
+                <div className="flex items-center justify-between pb-3 border-b-2 border-slate-900">
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-lg font-semibold">{supplierGroup.supplier}</h3>
+                    <Badge>{totalItems} item{totalItems !== 1 ? 's' : ''}</Badge>
       </div>
 
-                {/* Pagination controls */}
-                <div className="flex items-center gap-3">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={goToPrevious}
-                    disabled={currentIndex === 0}
-                  >
-                    ← Previous
-                  </Button>
-                  <div className="text-sm font-semibold px-3 py-1 bg-slate-100 rounded">
-                    {currentIndex + 1} / {totalItems}
+                  {/* Pagination controls */}
+                  <div className="flex items-center gap-3">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={goToPrevious}
+                      disabled={currentIndex === 0}
+                    >
+                      ← Previous
+                    </Button>
+                    <div className="text-sm font-semibold px-3 py-1 bg-slate-100 rounded">
+                      {currentIndex + 1} / {totalItems}
         </div>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={goToNext}
-                    disabled={currentIndex === totalItems - 1}
-                  >
-                    Next →
-                  </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={goToNext}
+                      disabled={currentIndex === totalItems - 1}
+                    >
+                      Next →
+                    </Button>
           </div>
           </div>
 
-              {(() => {
+                {(() => {
                 const key = `${colorGroup.style_no}|${colorGroup.color}`.toLowerCase();
                 const meta = styleMetadata?.get(colorGroup.style_no);
                 const inputs =
