@@ -90,11 +90,12 @@ export default function AppPoDetailPage() {
     async () => {
       const { data, error } = await supabase
         .from('seasons')
-        .select('id, name')
+        .select('id, name, year')
+        .order('year', { ascending: false })
         .order('name', { ascending: false });
       
       if (error) throw error;
-      return data as Array<{ id: string; name: string }>;
+      return data as Array<{ id: string; name: string; year: number | null }>;
     }
   );
 
@@ -103,14 +104,10 @@ export default function AppPoDetailPage() {
     if (!seasons) return [];
     
     return seasons.map((season) => {
-      // Extract year from season name (e.g., "25 WINTER" -> "2025")
-      const match = season.name.match(/^(\d{2})\s/);
-      const year = match ? `20${match[1]}` : '';
-      
       return {
         value: season.id,
         label: season.name,
-        description: year ? `Year ${year}` : undefined
+        description: season.year ? `Year ${season.year}` : undefined
       };
     });
   }, [seasons]);
