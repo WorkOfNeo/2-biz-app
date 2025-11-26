@@ -160,7 +160,9 @@ export async function pushAppPoToSpy(ctx: Ctx) {
     // Process each supplier
     for (let supplierIdx = 0; supplierIdx < suppliers.length; supplierIdx++) {
       const supplier = suppliers[supplierIdx];
-      const items = itemsBySupplier.get(supplier)!;
+      if (!supplier) continue;
+      const items = itemsBySupplier.get(supplier);
+      if (!items || items.length === 0) continue;
       
       await ensureNotCancelled(job.id);
       await log(job.id, 'progress', 'STAGE:supplier_start', { 
@@ -255,6 +257,7 @@ export async function pushAppPoToSpy(ctx: Ctx) {
       // Now we should be on the PO edit page - add styles
       for (let itemIdx = 0; itemIdx < items.length; itemIdx++) {
         const item = items[itemIdx];
+        if (!item) continue;
         
         await ensureNotCancelled(job.id);
         await log(job.id, 'progress', 'STAGE:style_adding', { 
@@ -288,11 +291,11 @@ export async function pushAppPoToSpy(ctx: Ctx) {
         }
         
         // Click on the style in the results table
-        const styleClicked = await page.evaluate((styleNo) => {
+        const styleClicked = await page.evaluate((styleNo: string) => {
           const rows = document.querySelectorAll('table.standardList tbody tr');
           for (const row of Array.from(rows)) {
             const cells = row.querySelectorAll('td');
-            if (cells.length > 0 && cells[0].textContent?.trim() === styleNo) {
+            if (cells.length > 0 && cells[0] && cells[0].textContent?.trim() === styleNo) {
               (row as HTMLElement).click();
               return true;
             }
@@ -313,7 +316,7 @@ export async function pushAppPoToSpy(ctx: Ctx) {
         await log(job.id, 'info', 'STEP:push_po_adding_color', { style_no: item.style_no, color: item.color });
         
         // Find FREE STOCK row for this color
-        const quantitiesSet = await page.evaluate((color, quantities) => {
+        const quantitiesSet = await page.evaluate((color: string, quantities: number[]) => {
           // Find all tables on the page
           const tables = document.querySelectorAll('table');
           
@@ -327,7 +330,7 @@ export async function pushAppPoToSpy(ctx: Ctx) {
                 // Found the color, now find FREE STOCK row in the same table
                 for (const checkRow of Array.from(rows)) {
                   const cells = checkRow.querySelectorAll('td');
-                  if (cells.length > 0 && cells[0].textContent?.trim() === 'FREE STOCK') {
+                  if (cells.length > 0 && cells[0] && cells[0].textContent?.trim() === 'FREE STOCK') {
                     // Found FREE STOCK row, fill in quantities
                     const inputs = checkRow.querySelectorAll('input[type="number"], input[type="text"]');
                     

@@ -139,6 +139,7 @@ export default function AppPoDetailPage() {
         
         if (progressLogs.length > 0) {
           const latestProgress = progressLogs[0];
+          if (!latestProgress) return;
           const stage = latestProgress.message;
 
           // Calculate progress based on stage
