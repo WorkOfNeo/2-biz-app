@@ -348,7 +348,7 @@ function Step2ChooseColors({
         .from('styles')
         .select('style_no, style_name, supplier, image_url')
         .in('style_no', selectedStyles);
-      if (error) throw new Error(error.message);
+    if (error) throw new Error(error.message);
       return (data ?? []) as Array<{
         style_no: string;
         style_name: string | null;
@@ -550,6 +550,9 @@ function Step3EnterQuantities({
   // State for historical sales data per color
   const [historicalDataOpen, setHistoricalDataOpen] = React.useState<Record<string, boolean>>({});
   const [historicalData, setHistoricalData] = React.useState<Record<string, number[]>>({});
+  
+  // State for current item index per supplier
+  const [currentIndexBySupplier, setCurrentIndexBySupplier] = React.useState<Record<string, number>>({});
 
   // Fetch style metadata (including supplier)
   const { data: styleMetadata } = useSWR(
@@ -840,14 +843,60 @@ function Step3EnterQuantities({
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-8">
-          {groupedBySupplier.map((supplierGroup) => (
+          {groupedBySupplier.map((supplierGroup) => {
+            const currentIndex = currentIndexBySupplier[supplierGroup.supplier] ?? 0;
+            const totalItems = supplierGroup.colors.length;
+            const colorGroup = supplierGroup.colors[currentIndex];
+            
+            if (!colorGroup) return null;
+            
+            const goToPrevious = () => {
+              setCurrentIndexBySupplier((prev) => ({
+                ...prev,
+                [supplierGroup.supplier]: Math.max(0, currentIndex - 1)
+              }));
+            };
+            
+            const goToNext = () => {
+              setCurrentIndexBySupplier((prev) => ({
+                ...prev,
+                [supplierGroup.supplier]: Math.min(totalItems - 1, currentIndex + 1)
+              }));
+            };
+            
+            return (
             <div key={supplierGroup.supplier} className="space-y-4">
-              <div className="flex items-center gap-2 pb-2 border-b-2 border-slate-900">
-                <h3 className="text-lg font-semibold">{supplierGroup.supplier}</h3>
-                <Badge>{supplierGroup.colors.length} item{supplierGroup.colors.length !== 1 ? 's' : ''}</Badge>
-              </div>
+              <div className="flex items-center justify-between pb-3 border-b-2 border-slate-900">
+                <div className="flex items-center gap-2">
+                  <h3 className="text-lg font-semibold">{supplierGroup.supplier}</h3>
+                  <Badge>{totalItems} item{totalItems !== 1 ? 's' : ''}</Badge>
+      </div>
 
-              {supplierGroup.colors.map((colorGroup) => {
+                {/* Pagination controls */}
+                <div className="flex items-center gap-3">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={goToPrevious}
+                    disabled={currentIndex === 0}
+                  >
+                    ← Previous
+                  </Button>
+                  <div className="text-sm font-semibold px-3 py-1 bg-slate-100 rounded">
+                    {currentIndex + 1} / {totalItems}
+        </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={goToNext}
+                    disabled={currentIndex === totalItems - 1}
+                  >
+                    Next →
+                  </Button>
+          </div>
+          </div>
+
+              {(() => {
                 const key = `${colorGroup.style_no}|${colorGroup.color}`.toLowerCase();
                 const meta = styleMetadata?.get(colorGroup.style_no);
                 const inputs =
@@ -911,10 +960,10 @@ function Step3EnterQuantities({
                               <Badge className="bg-purple-100 text-purple-900 border-purple-300">
                                 Historical data loaded (90 days)
                               </Badge>
-                            </div>
+            </div>
                           )}
-                        </div>
-                      </div>
+            </div>
+          </div>
                       <Button
                         size="sm"
                         variant="outline"
@@ -922,7 +971,7 @@ function Step3EnterQuantities({
                       >
                         {historicalDataOpen[key] ? 'Hide' : hasHistoricalFromDB ? 'View/Edit Data' : 'Add Historical Data'}
                       </Button>
-                    </div>
+            </div>
 
                     {/* Historical Sales Data Input */}
                     {historicalDataOpen[key] && (
@@ -953,139 +1002,139 @@ function Step3EnterQuantities({
                               {hasHistorical && historicalPressure[i] && (
                                 <div className="text-[10px] text-purple-700 text-center font-medium">
                                   {historicalPressure[i]}%
-                                </div>
-                              )}
-                            </div>
+        </div>
+      )}
+          </div>
                           ))}
-                        </div>
+          </div>
                         {hasHistorical && (
                           <div className="text-xs text-purple-900 pt-1">
                             Total: <strong>{historicalTotal}</strong>
-                          </div>
-                        )}
-                      </div>
+                    </div>
+                              )}
+                            </div>
                     )}
 
                     <div className="overflow-x-auto">
-                      <table className="min-w-full text-xs border">
-                        <thead className="bg-slate-50">
+                      <table className="min-w-full text-sm border border-slate-300">
+                        <thead className="bg-slate-100">
                           <tr>
-                            <th className="p-2 text-left font-semibold border-r">Size</th>
+                            <th className="p-3 text-left font-semibold border-r border-slate-300 w-32">Metric</th>
                             {colorGroup.sizes.map((size, i) => (
-                              <th key={i} className="p-2 text-right font-semibold border-r">
+                              <th key={i} className="p-3 text-center font-semibold border-r border-slate-300 min-w-[80px]">
                                 {size}
-                              </th>
-                            ))}
-                            <th className="p-2 text-right font-semibold">Total</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          <tr className="border-t">
-                            <td className="p-2 font-medium border-r bg-slate-50">Stock</td>
+                                    </th>
+                                  ))}
+                            <th className="p-3 text-center font-semibold min-w-[90px]">Total</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                          <tr className="border-t border-slate-300 hover:bg-slate-50">
+                            <td className="p-3 font-medium border-r border-slate-300 bg-slate-50">Stock</td>
                             {colorGroup.stock.map((v, i) => (
-                              <td key={i} className="p-2 text-right border-r">
-                                <div className="font-mono tabular-nums">
+                              <td key={i} className="p-3 text-center border-r border-slate-300">
+                                <div className="font-semibold text-slate-900">
                                   {v}
                                 </div>
-                                <div className="text-[10px] text-slate-400 mt-0.5">
+                                <div className="text-[10px] text-slate-400 mt-1">
                                   {stockPressure[i]}%
                                 </div>
-                              </td>
-                            ))}
-                            <td className="p-2 text-right font-mono tabular-nums font-semibold">
+                                    </td>
+                                  ))}
+                            <td className="p-3 text-center font-bold text-slate-900">
                               {sum(colorGroup.stock)}
                             </td>
-                          </tr>
-                          <tr className="border-t">
-                            <td className="p-2 font-medium border-r bg-slate-50">Sold</td>
+                                </tr>
+                          <tr className="border-t border-slate-300 hover:bg-slate-50">
+                            <td className="p-3 font-medium border-r border-slate-300 bg-slate-50">Sold</td>
                             {colorGroup.sold.map((v, i) => (
-                              <td key={i} className="p-2 text-right border-r">
-                                <div className="font-mono tabular-nums">
+                              <td key={i} className="p-3 text-center border-r border-slate-300">
+                                <div className="font-semibold text-slate-900">
                                   {v}
                                 </div>
-                                <div className="text-[10px] text-slate-400 mt-0.5">
+                                <div className="text-[10px] text-slate-400 mt-1">
                                   {soldPressure[i]}%
                                 </div>
-                              </td>
-                            ))}
-                            <td className="p-2 text-right font-mono tabular-nums font-semibold">
+                                      </td>
+                                    ))}
+                            <td className="p-3 text-center font-bold text-slate-900">
                               {sum(colorGroup.sold)}
                             </td>
-                          </tr>
-                          <tr className="border-t">
-                            <td className="p-2 font-medium border-r bg-slate-50">Purchase</td>
+                                  </tr>
+                          <tr className="border-t border-slate-300 hover:bg-slate-50">
+                            <td className="p-3 font-medium border-r border-slate-300 bg-slate-50">Purchase</td>
                             {colorGroup.purchase.map((v, i) => (
-                              <td key={i} className="p-2 text-right border-r">
-                                <div className="font-mono tabular-nums">
+                              <td key={i} className="p-3 text-center border-r border-slate-300">
+                                <div className="font-semibold text-slate-900">
                                   {v}
                                 </div>
-                                <div className="text-[10px] text-slate-400 mt-0.5">
+                                <div className="text-[10px] text-slate-400 mt-1">
                                   {purchasePressure[i]}%
-                                </div>
-                              </td>
-                            ))}
-                            <td className="p-2 text-right font-mono tabular-nums font-semibold">
+                                          </div>
+                                        </td>
+                                      ))}
+                            <td className="p-3 text-center font-bold text-slate-900">
                               {sum(colorGroup.purchase)}
-                            </td>
-                          </tr>
-                          <tr className="border-t bg-amber-50">
-                            <td className="p-2 font-medium border-r">Net Need</td>
+                                      </td>
+                                    </tr>
+                          <tr className="border-t border-slate-300 bg-amber-50">
+                            <td className="p-3 font-medium border-r border-slate-300 bg-amber-100">Net Need</td>
                             {netNeed.map((v, i) => (
-                              <td key={i} className="p-2 text-right border-r">
-                                <div className={`font-mono tabular-nums font-semibold ${v < 0 ? 'text-red-700' : v > 0 ? 'text-green-700' : ''}`}>
+                              <td key={i} className="p-3 text-center border-r border-slate-300">
+                                <div className={`font-semibold ${v < 0 ? 'text-red-700' : v > 0 ? 'text-green-700' : 'text-slate-900'}`}>
                                   {v}
                                 </div>
-                                <div className="text-[10px] text-slate-400 mt-0.5">
+                                <div className="text-[10px] text-slate-400 mt-1">
                                   {netNeedPressure[i]}%
                                 </div>
                               </td>
                             ))}
-                            <td className={`p-2 text-right font-mono tabular-nums font-bold ${netNeedTotal < 0 ? 'text-red-700' : netNeedTotal > 0 ? 'text-green-700' : ''}`}>
+                            <td className={`p-3 text-center font-bold ${netNeedTotal < 0 ? 'text-red-700' : netNeedTotal > 0 ? 'text-green-700' : 'text-slate-900'}`}>
                               {netNeedTotal}
                             </td>
                           </tr>
-                          <tr className="border-t bg-blue-50">
-                            <td className="p-2 font-medium border-r">Order</td>
+                          <tr className="border-t border-slate-300 bg-blue-50">
+                            <td className="p-3 font-medium border-r border-slate-300 bg-blue-100">Order</td>
                             {colorGroup.sizes.map((_, i) => (
-                              <td key={i} className="p-2 border-r">
+                              <td key={i} className="p-3 border-r border-slate-300">
                                 <Input
-                                  type="number"
-                                  inputMode="numeric"
-                                  className="w-20 h-8 text-right font-mono tabular-nums mb-1"
+                                            type="number"
+                                            inputMode="numeric"
+                                  className="w-full h-9 text-center mb-1"
                                   value={inputs[i]}
                                   onChange={(e) =>
                                     setInput(key, i, Number(e.target.value || 0), colorGroup.sizes.length)
                                   }
-                                  min={0}
-                                />
-                                <div className="text-[10px] text-slate-400 text-right">
+                                            min={0}
+                                          />
+                                <div className="text-[10px] text-slate-400 text-center">
                                   {orderPressure[i]}%
-                                </div>
+                                        </div>
                               </td>
                             ))}
-                            <td className="p-2 text-right font-mono tabular-nums font-bold text-blue-900">
+                            <td className="p-3 text-center font-bold text-blue-900">
                               {sum(inputs)}
-                            </td>
-                          </tr>
-                          <tr className="border-t bg-green-50">
-                            <td className="p-2 font-medium border-r">New Net Need</td>
+                                      </td>
+                                    </tr>
+                          <tr className="border-t border-slate-300 bg-green-50">
+                            <td className="p-3 font-medium border-r border-slate-300 bg-green-100">New Net Need</td>
                             {newNetNeed.map((v, i) => (
-                              <td key={i} className="p-2 text-right border-r">
-                                <div className={`font-mono tabular-nums font-semibold ${v < 0 ? 'text-red-700' : v > 0 ? 'text-green-700' : ''}`}>
+                              <td key={i} className="p-3 text-center border-r border-slate-300">
+                                <div className={`font-semibold ${v < 0 ? 'text-red-700' : v > 0 ? 'text-green-700' : 'text-slate-900'}`}>
                                   {v}
                                 </div>
-                                <div className="text-[10px] text-slate-400 mt-0.5">
+                                <div className="text-[10px] text-slate-400 mt-1">
                                   {newNetNeedPressure[i]}%
-                                </div>
-                              </td>
-                            ))}
-                            <td className={`p-2 text-right font-mono tabular-nums font-bold ${sum(newNetNeed) < 0 ? 'text-red-700' : sum(newNetNeed) > 0 ? 'text-green-700' : ''}`}>
+                                        </div>
+                                    </td>
+                                  ))}
+                            <td className={`p-3 text-center font-bold ${sum(newNetNeed) < 0 ? 'text-red-700' : sum(newNetNeed) > 0 ? 'text-green-700' : 'text-slate-900'}`}>
                               {sum(newNetNeed)}
-                            </td>
-                          </tr>
-                        </tbody>
-                      </table>
-                    </div>
+                                  </td>
+                                </tr>
+                              </tbody>
+                            </table>
+                          </div>
 
                     {/* Bulk Order Distribution Tool */}
                     <div className="flex items-center gap-2 pt-2 flex-wrap">
@@ -1119,12 +1168,12 @@ function Step3EnterQuantities({
                           ? '(ADD: by current sold | Fill Gaps: by historical pressure)' 
                           : '(Distributes by sold pressure - add historical data for Fill Gaps)'}
                       </span>
-                    </div>
+                        </div>
                   </div>
-                );
-              })}
-                  </div>
-          ))}
+              })()}
+                </div>
+              );
+            })}
 
           <div className="flex items-center justify-between pt-4 border-t">
             <Button variant="outline" onClick={onBack}>
@@ -1189,7 +1238,7 @@ function Step4Review({
               <Button variant="outline" onClick={onBack}>
                 Go back to add quantities
               </Button>
-            </div>
+        </div>
           ) : (
             <>
               <div className="space-y-3">
@@ -1198,13 +1247,13 @@ function Step4Review({
                     <div>
                       <div className="font-semibold text-sm">
                         {item.style_no} - {item.color}
-                      </div>
+      </div>
                       <div className="text-xs text-slate-600">
                         Quantities: {item.quantities.join(', ')}
-                      </div>
-                    </div>
+      </div>
+            </div>
                     <div className="text-lg font-bold">{item.total}</div>
-                  </div>
+        </div>
                 ))}
               </div>
 
