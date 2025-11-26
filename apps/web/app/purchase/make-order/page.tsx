@@ -1200,6 +1200,9 @@ function Step4Review({
   onBack: () => void;
   onReset: () => void;
 }) {
+  const router = useRouter();
+  const [finalizing, setFinalizing] = React.useState(false);
+
   // Calculate order summary
   const orderItems = React.useMemo(() => {
     const items: Array<{
@@ -1222,6 +1225,52 @@ function Step4Review({
   }, [selections, inputsByKey]);
 
   const grandTotal = orderItems.reduce((sum, item) => sum + item.total, 0);
+
+  async function handleFinalizeOrder() {
+    if (orderItems.length === 0) return;
+    
+    setFinalizing(true);
+    try {
+      // Generate PO number (format: APP-YYYYMMDD-HHMMSS)
+      const now = new Date();
+      const poNo = `APP-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}-${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}${String(now.getSeconds()).padStart(2, '0')}`;
+      
+      // Prepare order data
+      const orderData = {
+        po_no: poNo,
+        status: 'Running',
+        category: 'app',
+        styles: orderItems.length,
+        ordered: grandTotal,
+        shipped: 0,
+        meta: {
+          items: orderItems,
+          created_from: 'make-order',
+          created_at: now.toISOString()
+        }
+      };
+
+      // Insert into database
+      const { data, error } = await supabase
+        .from('purchase_orders')
+        .insert(orderData)
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      // Reset the process
+      onReset();
+
+      // Navigate to the new PO detail page
+      router.push(`/purchase/app-pos/${data.id}`);
+    } catch (error) {
+      console.error('Failed to finalize order:', error);
+      alert('Failed to create purchase order. Please try again.');
+    } finally {
+      setFinalizing(false);
+    }
+  }
 
   return (
     <div className="space-y-4">
@@ -1266,14 +1315,16 @@ function Step4Review({
       </div>
 
               <div className="flex items-center justify-between pt-4 border-t">
-                <Button variant="outline" onClick={onBack}>
+                <Button variant="outline" onClick={onBack} disabled={finalizing}>
                   Back
                 </Button>
                 <div className="flex gap-2">
-                  <Button variant="secondary" onClick={onReset}>
+                  <Button variant="secondary" onClick={onReset} disabled={finalizing}>
                     Start New Order
                   </Button>
-                  <Button>Finalize Order</Button>
+                  <Button onClick={handleFinalizeOrder} disabled={finalizing}>
+                    {finalizing ? 'Creating Order...' : 'Finalize Order'}
+                  </Button>
       </div>
             </div>
             </>
