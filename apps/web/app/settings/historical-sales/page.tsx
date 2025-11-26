@@ -78,11 +78,11 @@ export default function HistoricalSalesPage() {
 
       // Map rows to expected format
       const mapped = rows.map((r) => ({
-        style_no: String(r[mapping.style_no] ?? '').trim(),
-        color: String(r[mapping.color] ?? '').trim(),
-        date: String(r[mapping.date] ?? '').trim(),
-        size: String(r[mapping.size] ?? '').trim(),
-        quantity: Number(r[mapping.quantity] ?? 0)
+        style_no: String(r[mapping['style_no'] || ''] ?? '').trim(),
+        color: String(r[mapping['color'] || ''] ?? '').trim(),
+        date: String(r[mapping['date'] || ''] ?? '').trim(),
+        size: String(r[mapping['size'] || ''] ?? '').trim(),
+        quantity: Number(r[mapping['quantity'] || ''] ?? 0)
       }));
 
       // Upload in batches
@@ -208,7 +208,7 @@ export default function HistoricalSalesPage() {
                         <tr key={i} className="border-t">
                           {REQUIRED_FIELDS.map((field) => (
                             <td key={field} className="p-2 border">
-                              {String(row[mapping[field]] ?? '')}
+                              {String(row[mapping[field] || ''] ?? '')}
                             </td>
                           ))}
                         </tr>
