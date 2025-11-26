@@ -67,14 +67,31 @@ export default function AppPoDetailPage() {
 
   return (
     <div className="p-4 space-y-4 max-w-7xl mx-auto">
+      {/* Back Button */}
+      <div>
+        <Button 
+          variant="ghost" 
+          size="sm"
+          onClick={() => router.push('/purchase/app-pos')}
+          className="hover:bg-slate-100"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+          </svg>
+        </Button>
+      </div>
+
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <div className="text-xs text-slate-500">Purchase / App PO's</div>
           <h1 className="text-2xl font-semibold">{po.po_no}</h1>
         </div>
-        <Button variant="outline" onClick={() => router.push('/purchase/app-pos')}>
-          Back to list
+        <Button onClick={() => {
+          // TODO: Implement push order logic
+          alert('Push Order functionality coming soon!');
+        }}>
+          Push Order
         </Button>
       </div>
 
