@@ -586,6 +586,53 @@ function Step3EnterQuantities({
     }
   );
 
+  // Fetch historical sales data
+  const { data: historicalSalesData } = useSWR(
+    selections.length ? ['makeOrder:historicalSales', selections.map(s => `${s.style_no}|${s.color}`).join(',')] : null,
+    async () => {
+      const response = await fetch('/api/historical-sales/query', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ selections, days: 90 })
+      });
+      if (!response.ok) throw new Error('Failed to fetch historical sales');
+      const json = await response.json();
+      return json.data as Record<string, Record<string, number>>; // { "style_no|color": { "34": 10, "36": 20 } }
+    }
+  );
+
+  // Auto-populate historical data when it loads
+  React.useEffect(() => {
+    if (!historicalSalesData) return;
+    
+    setHistoricalData((prev) => {
+      const updated = { ...prev };
+      
+      // For each selection, check if we have historical data
+      selections.forEach(({ style_no, color }) => {
+        const key = `${style_no}|${color}`.toLowerCase();
+        const histData = historicalSalesData[key];
+        
+        if (histData && !updated[key]) {
+          // Find the sizes for this style+color from stockData
+          const stockRows = stockData?.filter(
+            (r) => r.style_no === style_no && r.color === color
+          );
+          
+          if (stockRows && stockRows.length > 0) {
+            const sizes = (stockRows.find((r) => r.section === 'Stock') || stockRows[0])?.sizes || [];
+            
+            // Map historical data to size array
+            const histArray = sizes.map((size) => histData[size] || 0);
+            updated[key] = histArray;
+          }
+        }
+      });
+      
+      return updated;
+    });
+  }, [historicalSalesData, selections, stockData, setHistoricalData]);
+
   // Group data by supplier, then by style/color
   const groupedBySupplier = React.useMemo(() => {
     if (!styleMetadata || !stockData) return [];
@@ -827,6 +874,7 @@ function Step3EnterQuantities({
 
                 const historical = historicalData[key] || [];
                 const hasHistorical = historical.length === colorGroup.sizes.length;
+                const hasHistoricalFromDB = historicalSalesData && historicalSalesData[key] && Object.keys(historicalSalesData[key]).length > 0;
                 const historicalTotal = hasHistorical ? historical.reduce((a, b) => a + b, 0) : 0;
                 const historicalPressure = hasHistorical && historicalTotal > 0
                   ? historical.map((h) => ((h / historicalTotal) * 100).toFixed(1))
@@ -846,10 +894,17 @@ function Step3EnterQuantities({
                         ) : (
                           <div className="h-16 w-16 rounded border bg-gray-100" />
                         )}
-                        <div>
+                        <div className="flex-1">
                           <div className="text-sm font-semibold">{colorGroup.style_no}</div>
                           <div className="text-xs text-slate-600">{meta?.name || '—'}</div>
                           <div className="text-xs text-slate-600">Color: {colorGroup.color}</div>
+                          {hasHistoricalFromDB && (
+                            <div className="mt-1">
+                              <Badge className="bg-purple-100 text-purple-900 border-purple-300">
+                                Historical data loaded (90 days)
+                              </Badge>
+                            </div>
+                          )}
                         </div>
                       </div>
                       <Button
@@ -857,7 +912,7 @@ function Step3EnterQuantities({
                         variant="outline"
                         onClick={() => setHistoricalDataOpen((prev) => ({ ...prev, [key]: !prev[key] }))}
                       >
-                        {historicalDataOpen[key] ? 'Hide' : 'Historical Sales Data'}
+                        {historicalDataOpen[key] ? 'Hide' : hasHistoricalFromDB ? 'View/Edit Data' : 'Add Historical Data'}
                       </Button>
                     </div>
 
