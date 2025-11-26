@@ -870,7 +870,7 @@ function Step3EnterQuantities({
                   <div className="flex items-center gap-2">
                     <h3 className="text-lg font-semibold">{supplierGroup.supplier}</h3>
                     <Badge>{totalItems} item{totalItems !== 1 ? 's' : ''}</Badge>
-      </div>
+                  </div>
 
                   {/* Pagination controls */}
                   <div className="flex items-center gap-3">
@@ -884,7 +884,7 @@ function Step3EnterQuantities({
                     </Button>
                     <div className="text-sm font-semibold px-3 py-1 bg-slate-100 rounded">
                       {currentIndex + 1} / {totalItems}
-        </div>
+                    </div>
                     <Button
                       size="sm"
                       variant="outline"
@@ -893,8 +893,8 @@ function Step3EnterQuantities({
                     >
                       Next →
                     </Button>
-          </div>
-          </div>
+                  </div>
+                </div>
 
                 {(() => {
                 const key = `${colorGroup.style_no}|${colorGroup.color}`.toLowerCase();
