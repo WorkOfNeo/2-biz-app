@@ -23,29 +23,47 @@ create index if not exists idx_historical_sales_date on public.historical_sales(
 create unique index if not exists uq_historical_sales_key on public.historical_sales(style_no, color, date, size);
 
 -- RLS policies (match pattern from other tables)
-alter table public.historical_sales enable row level security;
+alter table if exists public.historical_sales enable row level security;
 
--- Allow authenticated users to read
-create policy if not exists "Allow authenticated read access to historical_sales"
-  on public.historical_sales for select
-  to authenticated
-  using (true);
+do $$ begin
+  -- Allow authenticated users to read
+  if not exists (
+    select 1 from pg_policies where schemaname = 'public' and tablename = 'historical_sales' and policyname = 'Allow authenticated read access to historical_sales'
+  ) then
+    create policy "Allow authenticated read access to historical_sales"
+      on public.historical_sales for select
+      to authenticated
+      using (true);
+  end if;
 
--- Allow authenticated users to insert
-create policy if not exists "Allow authenticated insert access to historical_sales"
-  on public.historical_sales for insert
-  to authenticated
-  with check (true);
+  -- Allow authenticated users to insert
+  if not exists (
+    select 1 from pg_policies where schemaname = 'public' and tablename = 'historical_sales' and policyname = 'Allow authenticated insert access to historical_sales'
+  ) then
+    create policy "Allow authenticated insert access to historical_sales"
+      on public.historical_sales for insert
+      to authenticated
+      with check (true);
+  end if;
 
--- Allow authenticated users to update
-create policy if not exists "Allow authenticated update access to historical_sales"
-  on public.historical_sales for update
-  to authenticated
-  using (true);
+  -- Allow authenticated users to update
+  if not exists (
+    select 1 from pg_policies where schemaname = 'public' and tablename = 'historical_sales' and policyname = 'Allow authenticated update access to historical_sales'
+  ) then
+    create policy "Allow authenticated update access to historical_sales"
+      on public.historical_sales for update
+      to authenticated
+      using (true);
+  end if;
 
--- Allow authenticated users to delete
-create policy if not exists "Allow authenticated delete access to historical_sales"
-  on public.historical_sales for delete
-  to authenticated
-  using (true);
+  -- Allow authenticated users to delete
+  if not exists (
+    select 1 from pg_policies where schemaname = 'public' and tablename = 'historical_sales' and policyname = 'Allow authenticated delete access to historical_sales'
+  ) then
+    create policy "Allow authenticated delete access to historical_sales"
+      on public.historical_sales for delete
+      to authenticated
+      using (true);
+  end if;
+end $$;
 
