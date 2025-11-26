@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../../../../components
 import { Input } from '../../../../components/ui/input';
 import { Button } from '../../../../components/ui/button';
 import { Badge } from '../../../../components/ui/badge';
+import { SearchSelect } from '../../../../components/SearchSelect';
 
 type AppPo = {
   id: number;
@@ -60,7 +61,7 @@ export default function AppPoDetailPage() {
   // Modal state
   const [showModal, setShowModal] = React.useState(false);
   const [modalStep, setModalStep] = React.useState<1 | 2>(1);
-  const [selectedSeason, setSelectedSeason] = React.useState<number | null>(null);
+  const [selectedSeason, setSelectedSeason] = React.useState<string>('');
   const [jobId, setJobId] = React.useState<number | null>(null);
   const [jobProgress, setJobProgress] = React.useState(0);
   const [jobStatus, setJobStatus] = React.useState('');
@@ -93,9 +94,26 @@ export default function AppPoDetailPage() {
         .order('name', { ascending: false });
       
       if (error) throw error;
-      return data as Array<{ id: number; name: string }>;
+      return data as Array<{ id: string; name: string }>;
     }
   );
+
+  // Format seasons for SearchSelect
+  const seasonItems = React.useMemo(() => {
+    if (!seasons) return [];
+    
+    return seasons.map((season) => {
+      // Extract year from season name (e.g., "25 WINTER" -> "2025")
+      const match = season.name.match(/^(\d{2})\s/);
+      const year = match ? `20${match[1]}` : '';
+      
+      return {
+        value: season.id,
+        label: season.name,
+        description: year ? `Year ${year}` : undefined
+      };
+    });
+  }, [seasons]);
 
   // Poll job progress
   React.useEffect(() => {
@@ -607,18 +625,14 @@ export default function AppPoDetailPage() {
                   <label className="block text-sm font-medium text-slate-700 mb-2">
                     Season
                   </label>
-                  <select
-                    className="w-full border border-slate-300 rounded-md px-3 py-2"
-                    value={selectedSeason || ''}
-                    onChange={(e) => setSelectedSeason(Number(e.target.value))}
-                  >
-                    <option value="">Select a season...</option>
-                    {(seasons || []).map((season) => (
-                      <option key={season.id} value={season.id}>
-                        {season.name}
-                      </option>
-                    ))}
-                  </select>
+                  <SearchSelect
+                    items={seasonItems}
+                    value={selectedSeason}
+                    onChange={setSelectedSeason}
+                    placeholder="Select a season..."
+                    clearable={false}
+                    className="w-full"
+                  />
                 </div>
                 <div className="p-6 border-t flex justify-end gap-3">
                   <Button
@@ -626,7 +640,7 @@ export default function AppPoDetailPage() {
                     onClick={() => {
                       setShowModal(false);
                       setModalStep(1);
-                      setSelectedSeason(null);
+                      setSelectedSeason('');
                     }}
                   >
                     Cancel
@@ -653,7 +667,7 @@ export default function AppPoDetailPage() {
                           },
                           body: JSON.stringify({
                             po_id: Number(id),
-                            season_id: selectedSeason
+                            season_id: selectedSeason // This is now the UUID string
                           })
                         });
                         
@@ -734,7 +748,7 @@ export default function AppPoDetailPage() {
                     onClick={() => {
                       setShowModal(false);
                       setModalStep(1);
-                      setSelectedSeason(null);
+                      setSelectedSeason('');
                       setJobId(null);
                       setJobProgress(0);
                       setJobStatus('');
