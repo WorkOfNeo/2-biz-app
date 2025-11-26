@@ -863,14 +863,22 @@ function Step3EnterQuantities({
                 );
                 const netNeedTotal = sum(netNeed);
                 
-                // Calculate pressure % (based on sold)
-                const soldTotal = sum(colorGroup.sold);
-                const soldPressure = colorGroup.sold.map((s) => 
-                  soldTotal > 0 ? ((s / soldTotal) * 100).toFixed(1) : '0.0'
-                );
+                // Helper function to calculate pressure percentages for any array
+                const calculatePressure = (arr: number[]) => {
+                  const total = sum(arr);
+                  return arr.map((v) => total > 0 ? ((v / total) * 100).toFixed(1) : '0.0');
+                };
 
+                // Calculate pressure for each row
+                const stockPressure = calculatePressure(colorGroup.stock);
+                const soldPressure = calculatePressure(colorGroup.sold);
+                const purchasePressure = calculatePressure(colorGroup.purchase);
+                const netNeedPressure = calculatePressure(netNeed.map(v => Math.abs(v))); // Use absolute for pressure calc
+                
                 // Calculate New Net Need = Net Need + Order (what you'll have after ordering)
                 const newNetNeed = netNeed.map((n, i) => n + (inputs[i] ?? 0));
+                const orderPressure = calculatePressure(inputs);
+                const newNetNeedPressure = calculatePressure(newNetNeed.map(v => Math.abs(v))); // Use absolute for pressure calc
 
                 const historical = historicalData[key] || [];
                 const hasHistorical = historical.length === colorGroup.sizes.length;
@@ -975,8 +983,13 @@ function Step3EnterQuantities({
                           <tr className="border-t">
                             <td className="p-2 font-medium border-r bg-slate-50">Stock</td>
                             {colorGroup.stock.map((v, i) => (
-                              <td key={i} className="p-2 text-right font-mono tabular-nums border-r">
-                                {v}
+                              <td key={i} className="p-2 text-right border-r">
+                                <div className="font-mono tabular-nums">
+                                  {v}
+                                </div>
+                                <div className="text-[10px] text-slate-400 mt-0.5">
+                                  {stockPressure[i]}%
+                                </div>
                               </td>
                             ))}
                             <td className="p-2 text-right font-mono tabular-nums font-semibold">
@@ -986,8 +999,13 @@ function Step3EnterQuantities({
                           <tr className="border-t">
                             <td className="p-2 font-medium border-r bg-slate-50">Sold</td>
                             {colorGroup.sold.map((v, i) => (
-                              <td key={i} className="p-2 text-right font-mono tabular-nums border-r">
-                                {v}
+                              <td key={i} className="p-2 text-right border-r">
+                                <div className="font-mono tabular-nums">
+                                  {v}
+                                </div>
+                                <div className="text-[10px] text-slate-400 mt-0.5">
+                                  {soldPressure[i]}%
+                                </div>
                               </td>
                             ))}
                             <td className="p-2 text-right font-mono tabular-nums font-semibold">
@@ -997,8 +1015,13 @@ function Step3EnterQuantities({
                           <tr className="border-t">
                             <td className="p-2 font-medium border-r bg-slate-50">Purchase</td>
                             {colorGroup.purchase.map((v, i) => (
-                              <td key={i} className="p-2 text-right font-mono tabular-nums border-r">
-                                {v}
+                              <td key={i} className="p-2 text-right border-r">
+                                <div className="font-mono tabular-nums">
+                                  {v}
+                                </div>
+                                <div className="text-[10px] text-slate-400 mt-0.5">
+                                  {purchasePressure[i]}%
+                                </div>
                               </td>
                             ))}
                             <td className="p-2 text-right font-mono tabular-nums font-semibold">
@@ -1012,8 +1035,8 @@ function Step3EnterQuantities({
                                 <div className={`font-mono tabular-nums font-semibold ${v < 0 ? 'text-red-700' : v > 0 ? 'text-green-700' : ''}`}>
                                   {v}
                                 </div>
-                                <div className="text-[10px] text-slate-500 mt-0.5">
-                                  {soldPressure[i]}%
+                                <div className="text-[10px] text-slate-400 mt-0.5">
+                                  {netNeedPressure[i]}%
                                 </div>
                               </td>
                             ))}
@@ -1028,13 +1051,16 @@ function Step3EnterQuantities({
                                 <Input
                                   type="number"
                                   inputMode="numeric"
-                                  className="w-20 h-8 text-right font-mono tabular-nums"
+                                  className="w-20 h-8 text-right font-mono tabular-nums mb-1"
                                   value={inputs[i]}
                                   onChange={(e) =>
                                     setInput(key, i, Number(e.target.value || 0), colorGroup.sizes.length)
                                   }
                                   min={0}
                                 />
+                                <div className="text-[10px] text-slate-400 text-right">
+                                  {orderPressure[i]}%
+                                </div>
                               </td>
                             ))}
                             <td className="p-2 text-right font-mono tabular-nums font-bold text-blue-900">
@@ -1044,8 +1070,13 @@ function Step3EnterQuantities({
                           <tr className="border-t bg-green-50">
                             <td className="p-2 font-medium border-r">New Net Need</td>
                             {newNetNeed.map((v, i) => (
-                              <td key={i} className={`p-2 text-right font-mono tabular-nums border-r font-semibold ${v < 0 ? 'text-red-700' : v > 0 ? 'text-green-700' : ''}`}>
-                                {v}
+                              <td key={i} className="p-2 text-right border-r">
+                                <div className={`font-mono tabular-nums font-semibold ${v < 0 ? 'text-red-700' : v > 0 ? 'text-green-700' : ''}`}>
+                                  {v}
+                                </div>
+                                <div className="text-[10px] text-slate-400 mt-0.5">
+                                  {newNetNeedPressure[i]}%
+                                </div>
                               </td>
                             ))}
                             <td className={`p-2 text-right font-mono tabular-nums font-bold ${sum(newNetNeed) < 0 ? 'text-red-700' : sum(newNetNeed) > 0 ? 'text-green-700' : ''}`}>
