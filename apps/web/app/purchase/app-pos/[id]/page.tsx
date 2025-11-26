@@ -139,7 +139,7 @@ export default function AppPoDetailPage() {
         // Fetch job logs for progress
         const { data: logs, error: logsErr } = await supabase
           .from('job_logs')
-          .select('level, message, data')
+          .select('level, msg, data')
           .eq('job_id', jobId)
           .order('created_at', { ascending: false })
           .limit(100);
@@ -155,7 +155,7 @@ export default function AppPoDetailPage() {
         if (progressLogs.length > 0) {
           const latestProgress = progressLogs[0];
           if (!latestProgress) return;
-          const stage = latestProgress.message;
+          const stage = latestProgress.msg;
 
           // Calculate progress based on stage
           const stages = [

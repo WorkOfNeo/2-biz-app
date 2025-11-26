@@ -104,10 +104,10 @@ export async function pushAppPoToSpy(ctx: Ctx) {
       throw new Error('APP PO has no items');
     }
     
-    // Fetch season name
+    // Fetch season data including spy_season_id
     const { data: seasonData, error: seasonError } = await supabase
       .from('seasons')
-      .select('name')
+      .select('id, name, spy_season_id')
       .eq('id', seasonId)
       .single();
     
@@ -115,8 +115,15 @@ export async function pushAppPoToSpy(ctx: Ctx) {
       throw new Error(`Failed to fetch season: ${seasonError?.message || 'not found'}`);
     }
     
-    const seasonName = seasonData.name;
-    await log(job.id, 'info', 'STEP:push_po_season', { season_name: seasonName });
+    if (!seasonData.spy_season_id) {
+      throw new Error(`Season "${seasonData.name}" (${seasonId}) has no spy_season_id mapping. Please set it in the database.`);
+    }
+    
+    const spySeasonId = seasonData.spy_season_id;
+    await log(job.id, 'info', 'STEP:push_po_season', { 
+      season_name: seasonData.name,
+      spy_season_id: spySeasonId 
+    });
     
     // Get unique style numbers to fetch metadata
     const styleNos = Array.from(new Set(po.meta.items.map(item => item.style_no)));
@@ -135,6 +142,26 @@ export async function pushAppPoToSpy(ctx: Ctx) {
     (styleMetaData || []).forEach((meta: any) => {
       styleMetaMap.set(meta.style_no, meta as StyleMeta);
     });
+    
+    // Validate that all items have valid style metadata with suppliers
+    const itemsWithoutMeta = po.meta.items.filter(item => !styleMetaMap.get(item.style_no));
+    if (itemsWithoutMeta.length > 0) {
+      await log(job.id, 'error', 'STEP:push_po_missing_styles', { 
+        missing_styles: itemsWithoutMeta.map(i => i.style_no) 
+      });
+      throw new Error(`${itemsWithoutMeta.length} items have no style metadata in database`);
+    }
+    
+    const itemsWithoutSupplier = po.meta.items.filter(item => {
+      const meta = styleMetaMap.get(item.style_no);
+      return !meta || !meta.supplier;
+    });
+    if (itemsWithoutSupplier.length > 0) {
+      await log(job.id, 'error', 'STEP:push_po_missing_suppliers', { 
+        styles: itemsWithoutSupplier.map(i => i.style_no) 
+      });
+      throw new Error(`${itemsWithoutSupplier.length} items have no supplier in database`);
+    }
     
     // Group items by supplier
     const itemsBySupplier = new Map<string, OrderItem[]>();
@@ -187,6 +214,20 @@ export async function pushAppPoToSpy(ctx: Ctx) {
         continue;
       }
       
+      // Get available suppliers from SPY
+      const availableSuppliers = await page.evaluate(() => {
+        const select = document.querySelector('#POrder\\[iSupplierID\\]') as HTMLSelectElement;
+        if (!select) return [];
+        return Array.from(select.options)
+          .filter(opt => opt.value !== '0')
+          .map(opt => opt.text.trim());
+      });
+      
+      await log(job.id, 'info', 'STEP:push_po_available_suppliers', { 
+        looking_for: supplier,
+        available: availableSuppliers
+      });
+      
       // Find supplier option by text
       const supplierSelected = await page.evaluate((supplierName) => {
         const select = document.querySelector('#POrder\\[iSupplierID\\]') as HTMLSelectElement;
@@ -204,8 +245,11 @@ export async function pushAppPoToSpy(ctx: Ctx) {
       }, supplier);
       
       if (!supplierSelected) {
-        await log(job.id, 'error', 'STEP:push_po_supplier_option_not_found', { supplier });
-        continue;
+        await log(job.id, 'error', 'STEP:push_po_supplier_option_not_found', { 
+          supplier,
+          available_suppliers: availableSuppliers
+        });
+        throw new Error(`Supplier "${supplier}" not found in SPY. Available: ${availableSuppliers.join(', ')}`);
       }
       
       await page.waitForTimeout(500); // Wait for any dynamic updates
@@ -216,24 +260,42 @@ export async function pushAppPoToSpy(ctx: Ctx) {
       // Set ETA
       await page.fill('#POrder\\[strETA\\]', eta);
       
-      // Select season
-      const seasonSelected = await page.evaluate((season) => {
+      // Log available seasons for debugging
+      const availableSeasons = await page.evaluate(() => {
+        const select = document.querySelector('#POrder\\[iSeasonID\\]') as HTMLSelectElement;
+        if (!select) return [];
+        return Array.from(select.options).map(opt => ({ 
+          value: opt.value, 
+          text: opt.text.trim() 
+        }));
+      });
+      await log(job.id, 'info', 'STEP:push_po_available_seasons', { 
+        seasons: availableSeasons,
+        looking_for_id: spySeasonId
+      });
+      
+      // Use spy_season_id to select season
+      const seasonSelected = await page.evaluate((seasonId) => {
         const select = document.querySelector('#POrder\\[iSeasonID\\]') as HTMLSelectElement;
         if (!select) return false;
         
-        const options = Array.from(select.options);
-        const option = options.find(opt => opt.text.trim() === season);
+        // SPY dropdown values are the spy_season_id integers
+        const option = Array.from(select.options).find(opt => opt.value === String(seasonId));
         
         if (option) {
-          select.value = option.value;
+          select.value = String(seasonId);
+          select.dispatchEvent(new Event('change', { bubbles: true }));
           return true;
         }
         return false;
-      }, seasonName);
+      }, spySeasonId);
       
       if (!seasonSelected) {
-        await log(job.id, 'error', 'STEP:push_po_season_not_found', { season: seasonName });
-        throw new Error(`Season "${seasonName}" not found in SPY dropdown`);
+        await log(job.id, 'error', 'STEP:push_po_season_not_found', { 
+          spy_season_id: spySeasonId,
+          available_seasons: availableSeasons
+        });
+        throw new Error(`Season ID ${spySeasonId} not found in SPY dropdown. Please verify spy_season_id mapping.`);
       }
       
       // Disable "Only Net Need" checkbox
@@ -245,7 +307,13 @@ export async function pushAppPoToSpy(ctx: Ctx) {
         }
       }
       
-      await log(job.id, 'info', 'STEP:push_po_form_filled', { supplier, etd, eta, season: seasonName });
+      await log(job.id, 'info', 'STEP:push_po_form_filled', { 
+        supplier, 
+        etd, 
+        eta, 
+        season_name: seasonData.name,
+        spy_season_id: spySeasonId 
+      });
       
       // Submit form to create PO
       await page.click('button[type="submit"][name="create"]');
