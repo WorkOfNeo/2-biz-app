@@ -316,7 +316,8 @@ export async function pushAppPoToSpy(ctx: Ctx) {
         await log(job.id, 'info', 'STEP:push_po_adding_color', { style_no: item.style_no, color: item.color });
         
         // Find FREE STOCK row for this color
-        const quantitiesSet = await page.evaluate((color: string, quantities: number[]) => {
+        const quantitiesSet = await page.evaluate((args: { color: string; quantities: number[] }) => {
+          const { color, quantities } = args;
           // Find all tables on the page
           const tables = document.querySelectorAll('table');
           
@@ -336,8 +337,9 @@ export async function pushAppPoToSpy(ctx: Ctx) {
                     
                     for (let i = 0; i < Math.min(inputs.length, quantities.length); i++) {
                       const input = inputs[i] as HTMLInputElement;
-                      if (input && quantities[i] > 0) {
-                        input.value = String(quantities[i]);
+                      const qty = quantities[i];
+                      if (input && qty !== undefined && qty > 0) {
+                        input.value = String(qty);
                         input.dispatchEvent(new Event('input', { bubbles: true }));
                         input.dispatchEvent(new Event('change', { bubbles: true }));
                       }
@@ -351,7 +353,7 @@ export async function pushAppPoToSpy(ctx: Ctx) {
           }
           
           return false;
-        }, item.color, item.quantities);
+        }, { color: item.color, quantities: item.quantities });
         
         if (!quantitiesSet) {
           await log(job.id, 'error', 'STEP:push_po_color_not_found', { 
