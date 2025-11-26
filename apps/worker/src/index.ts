@@ -15,6 +15,7 @@ import { fixInvoices as fixInvoicesJob } from './jobs/fixInvoices.js';
 import { scrapePurchaseOrders as scrapePurchaseOrdersJob } from './jobs/scrapePurchaseOrders.js';
 import { checkPurchaseOrders as checkPurchaseOrdersJob } from './jobs/checkPurchaseOrders.js';
 import { scrapeEans as scrapeEansJob } from './jobs/scrapeEans.js';
+import { pushAppPoToSpy } from './jobs/pushAppPoToSpy.js';
 // (imported with .js extension above)
 
 const SUPABASE_URL = process.env.SUPABASE_URL!;
@@ -41,7 +42,7 @@ async function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function log(jobId: string, level: 'info' | 'error', msg: string, data?: Record<string, any>) {
+async function log(jobId: string, level: 'info' | 'error' | 'progress', msg: string, data?: Record<string, any>) {
   // Mirror to console for Railway logs
   try {
     // eslint-disable-next-line no-console
@@ -239,6 +240,20 @@ async function runJob(job: JobRow) {
   if (job.type === 'scrape_customers') {
     await scrapeCustomers({ job, page: page!, log, saveResult, setJobFailedOrRequeue, setJobSucceeded, ensureNotCancelled, supabase, SPY_BASE_URL, findFirst });
       return;
+  }
+  if ((job.type as any) === 'push_app_po_to_spy') {
+    await pushAppPoToSpy({ 
+      job, 
+      page: page!, 
+      log, 
+      saveResult, 
+      setJobFailedOrRequeue: async (jobId: string, error: string) => setJobFailedOrRequeue(job, error), 
+      setJobSucceeded, 
+      ensureNotCancelled, 
+      supabase, 
+      SPY_BASE_URL 
+    });
+    return;
   }
 
   if (job.type === 'update_style_stock') {

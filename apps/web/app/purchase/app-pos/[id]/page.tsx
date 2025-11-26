@@ -57,7 +57,18 @@ export default function AppPoDetailPage() {
   const router = useRouter();
   const id = params?.id as string;
 
-  const { data: po, error, isLoading } = useSWR(
+  // Modal state
+  const [showModal, setShowModal] = React.useState(false);
+  const [modalStep, setModalStep] = React.useState<1 | 2>(1);
+  const [selectedSeason, setSelectedSeason] = React.useState<number | null>(null);
+  const [jobId, setJobId] = React.useState<number | null>(null);
+  const [jobProgress, setJobProgress] = React.useState(0);
+  const [jobStatus, setJobStatus] = React.useState('');
+  const [jobError, setJobError] = React.useState('');
+  const [isComplete, setIsComplete] = React.useState(false);
+  const [spyPoNumber, setSpyPoNumber] = React.useState('');
+
+  const { data: po, error, isLoading, mutate: mutatePo } = useSWR(
     id ? ['app-po', id] : null,
     async () => {
       const { data, error } = await supabase
@@ -71,6 +82,120 @@ export default function AppPoDetailPage() {
       return data as AppPo;
     }
   );
+
+  // Fetch seasons for dropdown
+  const { data: seasons } = useSWR(
+    'seasons',
+    async () => {
+      const { data, error } = await supabase
+        .from('seasons')
+        .select('id, name')
+        .order('name', { ascending: false });
+      
+      if (error) throw error;
+      return data as Array<{ id: number; name: string }>;
+    }
+  );
+
+  // Poll job progress
+  React.useEffect(() => {
+    if (!jobId || isComplete || jobError) return;
+
+    const interval = setInterval(async () => {
+      try {
+        // Fetch job status
+        const { data: job, error: jobErr } = await supabase
+          .from('jobs')
+          .select('status')
+          .eq('id', jobId)
+          .single();
+
+        if (jobErr) {
+          setJobError(jobErr.message);
+          return;
+        }
+
+        if (job.status === 'failed') {
+          setJobError('Job failed. Check job details for more information.');
+          setJobProgress(0);
+          return;
+        }
+
+        // Fetch job logs for progress
+        const { data: logs, error: logsErr } = await supabase
+          .from('job_logs')
+          .select('level, message, data')
+          .eq('job_id', jobId)
+          .order('created_at', { ascending: false })
+          .limit(100);
+
+        if (logsErr) {
+          console.error('Failed to fetch logs:', logsErr);
+          return;
+        }
+
+        // Parse progress from logs
+        const progressLogs = (logs || []).filter((log: any) => log.level === 'progress');
+        
+        if (progressLogs.length > 0) {
+          const latestProgress = progressLogs[0];
+          const stage = latestProgress.message;
+
+          // Calculate progress based on stage
+          const stages = [
+            'STAGE:init',
+            'STAGE:supplier_start',
+            'STAGE:po_created',
+            'STAGE:style_adding',
+            'STAGE:style_added',
+            'STAGE:po_confirmed',
+            'STAGE:complete'
+          ];
+
+          const currentStageIndex = stages.findIndex(s => stage.includes(s.split(':')[1]));
+          
+          if (currentStageIndex >= 0) {
+            const progress = ((currentStageIndex + 1) / stages.length) * 100;
+            setJobProgress(Math.min(progress, 100));
+
+            // Update status text
+            const data = latestProgress.data || {};
+            if (stage.includes('init')) {
+              setJobStatus(`Initializing... (${data.total_suppliers || 0} suppliers)`);
+            } else if (stage.includes('supplier_start')) {
+              setJobStatus(`Processing supplier ${data.current || 0}/${data.total || 0}: ${data.supplier || ''}`);
+            } else if (stage.includes('po_created')) {
+              setJobStatus(`PO created for ${data.supplier || ''}`);
+            } else if (stage.includes('style_adding')) {
+              setJobStatus(`Adding style ${data.current || 0}/${data.total || 0}: ${data.style_no || ''} - ${data.color || ''}`);
+            } else if (stage.includes('style_added')) {
+              setJobStatus(`Added style: ${data.style_no || ''} - ${data.color || ''}`);
+            } else if (stage.includes('po_confirmed')) {
+              setJobStatus(`PO confirmed: ${data.spy_po_no || ''}`);
+              if (data.spy_po_no) {
+                setSpyPoNumber(data.spy_po_no);
+              }
+            } else if (stage.includes('complete')) {
+              setJobStatus('Push to SPY completed!');
+              setJobProgress(100);
+              setIsComplete(true);
+            }
+          }
+        }
+
+        // Check if job succeeded
+        if (job.status === 'succeeded') {
+          setJobProgress(100);
+          setIsComplete(true);
+          setJobStatus('Push to SPY completed successfully!');
+        }
+      } catch (error: any) {
+        console.error('Polling error:', error);
+      }
+    }, 2000); // Poll every 2 seconds
+
+    return () => clearInterval(interval);
+  }, [jobId, isComplete, jobError]);
 
   // Extract order items from meta
   const orderItems: OrderItem[] = React.useMemo(() => {
@@ -255,10 +380,7 @@ export default function AppPoDetailPage() {
           <div className="text-xs text-slate-500">Purchase / App PO's</div>
           <h1 className="text-2xl font-semibold">{po.po_no}</h1>
         </div>
-        <Button onClick={() => {
-          // TODO: Implement push order logic
-          alert('Push Order functionality coming soon!');
-        }}>
+        <Button onClick={() => setShowModal(true)}>
           Push Order
         </Button>
       </div>
@@ -467,6 +589,168 @@ export default function AppPoDetailPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* Push Order Modal */}
+      {showModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4">
+            {modalStep === 1 ? (
+              <>
+                <div className="p-6 border-b">
+                  <h2 className="text-xl font-semibold">Push Order to SPY</h2>
+                  <p className="text-sm text-slate-600 mt-1">
+                    Select the season for this purchase order
+                  </p>
+                </div>
+                <div className="p-6">
+                  <label className="block text-sm font-medium text-slate-700 mb-2">
+                    Season
+                  </label>
+                  <select
+                    className="w-full border border-slate-300 rounded-md px-3 py-2"
+                    value={selectedSeason || ''}
+                    onChange={(e) => setSelectedSeason(Number(e.target.value))}
+                  >
+                    <option value="">Select a season...</option>
+                    {(seasons || []).map((season) => (
+                      <option key={season.id} value={season.id}>
+                        {season.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="p-6 border-t flex justify-end gap-3">
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setShowModal(false);
+                      setModalStep(1);
+                      setSelectedSeason(null);
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    onClick={async () => {
+                      if (!selectedSeason) return;
+                      
+                      setModalStep(2);
+                      setJobStatus('Starting push to SPY...');
+                      
+                      try {
+                        const { data: { session } } = await supabase.auth.getSession();
+                        if (!session) {
+                          setJobError('Not authenticated');
+                          return;
+                        }
+                        
+                        const res = await fetch('/api/push-app-po', {
+                          method: 'POST',
+                          headers: {
+                            'Content-Type': 'application/json',
+                            Authorization: `Bearer ${session.access_token}`
+                          },
+                          body: JSON.stringify({
+                            po_id: Number(id),
+                            season_id: selectedSeason
+                          })
+                        });
+                        
+                        if (!res.ok) {
+                          const error = await res.json();
+                          throw new Error(error.error || 'Failed to start job');
+                        }
+                        
+                        const { jobId: newJobId } = await res.json();
+                        setJobId(newJobId);
+                        setJobStatus('Job enqueued, waiting to start...');
+                      } catch (error: any) {
+                        setJobError(error.message);
+                        setJobStatus('Failed to start job');
+                      }
+                    }}
+                    disabled={!selectedSeason}
+                  >
+                    Next
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="p-6 border-b">
+                  <h2 className="text-xl font-semibold">Pushing Order to SPY</h2>
+                  <p className="text-sm text-slate-600 mt-1">
+                    {jobStatus}
+                  </p>
+                </div>
+                <div className="p-6">
+                  {jobError ? (
+                    <div className="bg-red-50 border border-red-200 rounded-md p-4">
+                      <div className="font-semibold text-red-900">Error</div>
+                      <div className="text-sm text-red-700 mt-1">{jobError}</div>
+                    </div>
+                  ) : (
+                    <>
+                      {/* Progress Bar */}
+                      <div className="mb-4">
+                        <div className="w-full bg-slate-200 rounded-full h-4">
+                          <div
+                            className="bg-blue-600 h-4 rounded-full transition-all duration-300"
+                            style={{ width: `${jobProgress}%` }}
+                          />
+                        </div>
+                        <div className="text-sm text-slate-600 mt-2 text-center">
+                          {Math.round(jobProgress)}%
+                        </div>
+                      </div>
+
+                      {isComplete && spyPoNumber && (
+                        <div className="bg-green-50 border border-green-200 rounded-md p-4 mb-4">
+                          <div className="font-semibold text-green-900">Success!</div>
+                          <div className="text-sm text-green-700 mt-1">
+                            SPY PO Number: <strong>{spyPoNumber}</strong>
+                          </div>
+                        </div>
+                      )}
+
+                      {jobId && (
+                        <div className="text-sm text-slate-500 mt-4">
+                          <a
+                            href={`/admin/jobs/${jobId}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="underline hover:text-slate-700"
+                          >
+                            View Job Details →
+                          </a>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+                <div className="p-6 border-t flex justify-end">
+                  <Button
+                    onClick={() => {
+                      setShowModal(false);
+                      setModalStep(1);
+                      setSelectedSeason(null);
+                      setJobId(null);
+                      setJobProgress(0);
+                      setJobStatus('');
+                      setJobError('');
+                      setIsComplete(false);
+                      setSpyPoNumber('');
+                      mutatePo(); // Refresh PO data
+                    }}
+                  >
+                    Close
+                  </Button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
