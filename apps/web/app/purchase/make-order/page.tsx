@@ -544,6 +544,13 @@ function Step3EnterQuantities({
     [selections]
   );
 
+  // State for bulk order amounts per color
+  const [bulkOrderAmounts, setBulkOrderAmounts] = React.useState<Record<string, string>>({});
+  
+  // State for historical sales data per color
+  const [historicalDataOpen, setHistoricalDataOpen] = React.useState<Record<string, boolean>>({});
+  const [historicalData, setHistoricalData] = React.useState<Record<string, number[]>>({});
+
   // Fetch style metadata (including supplier)
   const { data: styleMetadata } = useSWR(
     selectedStyleNos.length ? ['makeOrder:styleMeta', selectedStyleNos.join(',')] : null,
@@ -749,13 +756,6 @@ function Step3EnterQuantities({
   }
 
   const sum = (arr: number[]) => arr.reduce((a, b) => a + b, 0);
-
-  // State for bulk order amounts per color
-  const [bulkOrderAmounts, setBulkOrderAmounts] = React.useState<Record<string, string>>({});
-  
-  // State for historical sales data per color
-  const [historicalDataOpen, setHistoricalDataOpen] = React.useState<Record<string, boolean>>({});
-  const [historicalData, setHistoricalData] = React.useState<Record<string, number[]>>({});
 
   const applyBulkOrder = (key: string, colorGroup: any) => {
     const total = Number(bulkOrderAmounts[key] || 0);
