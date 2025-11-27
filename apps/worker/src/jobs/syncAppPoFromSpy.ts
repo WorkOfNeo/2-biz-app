@@ -13,8 +13,8 @@ type Ctx = {
   job: JobRow;
   page: Page;
   log: (jobId: string, level: 'info' | 'error' | 'progress', msg: string, data?: Record<string, any>) => Promise<void>;
-  saveResult: (jobId: string, data: Record<string, any>) => Promise<any>;
-  setJobFailedOrRequeue: (jobId: string, error?: string) => Promise<void>;
+  saveResult: (jobId: string, summary: string, data: Record<string, any>) => Promise<any>;
+  setJobFailedOrRequeue: (jobId: string, error: string) => Promise<void>;
   setJobSucceeded: (jobId: string) => Promise<void>;
   ensureNotCancelled: (jobId: string) => Promise<void>;
   supabase: any;
@@ -251,7 +251,7 @@ export async function syncAppPoFromSpy(ctx: Ctx) {
     }
     
     await log(job.id, 'progress', 'STAGE:sync_complete');
-    await saveResult(job.id, { 
+    await saveResult(job.id, 'Sync from SPY completed', { 
       status: 'success',
       spy_po_no: payload.spy_po_no,
       total_qty: spyOrderData.total,
@@ -264,7 +264,7 @@ export async function syncAppPoFromSpy(ctx: Ctx) {
       error: error.message,
       stack: error.stack
     });
-    await setJobFailedOrRequeue(job.id);
+    await setJobFailedOrRequeue(job.id, error?.message || String(error));
   }
 }
 
