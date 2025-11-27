@@ -322,156 +322,229 @@ export async function pushAppPoToSpy(ctx: Ctx) {
       
       await log(job.id, 'progress', 'STAGE:po_created', { supplier });
       
-      // Now we should be on the PO edit page - add styles
-      for (let itemIdx = 0; itemIdx < items.length; itemIdx++) {
-        const item = items[itemIdx];
-        if (!item) continue;
-        
+      // Wait for #MainContent to load
+      await page.waitForSelector('#MainContent', { timeout: 30_000 });
+      
+      // IMPORTANT: Set Net Need filter to "All"
+      await log(job.id, 'info', 'STEP:setting_net_need_filter');
+      const netNeedSelect = await page.$('select[name="Spy\\\\Model\\\\Purchase\\\\Edit\\\\Search\\\\ListReportSearch[strNetNeed]"]');
+      if (netNeedSelect) {
+        await page.selectOption('select[name="Spy\\\\Model\\\\Purchase\\\\Edit\\\\Search\\\\ListReportSearch[strNetNeed]"]', 'all');
+        await page.waitForTimeout(1000);
+        await log(job.id, 'info', 'STEP:net_need_filter_set_to_all');
+      }
+      
+      // Group items by style_no for this supplier
+      const itemsByStyle = new Map<string, OrderItem[]>();
+      items.forEach(item => {
+        if (!itemsByStyle.has(item.style_no)) {
+          itemsByStyle.set(item.style_no, []);
+        }
+        itemsByStyle.get(item.style_no)!.push(item);
+      });
+      
+      // Process each style
+      for (const [styleNo, styleItems] of itemsByStyle.entries()) {
         await ensureNotCancelled(job.id);
         await log(job.id, 'progress', 'STAGE:style_adding', { 
-          style_no: item.style_no, 
-          color: item.color,
-          current: itemIdx + 1, 
-          total: items.length 
+          style_no: styleNo, 
+          colors_count: styleItems.length
         });
         
-        // Wait for the page to be ready
-        await page.waitForSelector('[data-tab-name="search"]', { timeout: 30_000 });
+        // Find style link in table
+        await page.waitForSelector('#TableContainer table', { timeout: 30_000 });
         
-        // Click on "Add Styles" tab if not already active
-        await page.click('[data-tab-name="search"]');
-        await page.waitForTimeout(500);
-        
-        // Search for style by style number
-        const searchInput = await page.$('input[name="Spy\\\\Model\\\\Purchase\\\\Edit\\\\Search\\\\ListReportSearch[strStyleNo]"]');
-        if (!searchInput) {
-          await log(job.id, 'error', 'STEP:push_po_search_input_not_found', { style_no: item.style_no });
-          continue;
-        }
-        
-        await searchInput.fill(item.style_no);
-        
-        // Click search button
-        const searchButton = await page.$('button[name="search"]');
-        if (searchButton) {
-          await searchButton.click();
-          await page.waitForTimeout(1000);
-        }
-        
-        // Click on the style in the results table
-        const styleClicked = await page.evaluate((styleNo: string) => {
-          const rows = document.querySelectorAll('table.standardList tbody tr');
-          for (const row of Array.from(rows)) {
-            const cells = row.querySelectorAll('td');
-            if (cells.length > 0 && cells[0] && cells[0].textContent?.trim() === styleNo) {
-              (row as HTMLElement).click();
+        const styleLinkClicked = await page.evaluate((searchStyleNo) => {
+          const links = document.querySelectorAll('#TableContainer table a[href*="iStyleID"]');
+          for (const link of Array.from(links)) {
+            if (link.textContent?.trim() === searchStyleNo) {
+              (link as HTMLElement).click();
               return true;
             }
           }
           return false;
-        }, item.style_no);
+        }, styleNo);
         
-        if (!styleClicked) {
-          await log(job.id, 'error', 'STEP:push_po_style_not_found', { style_no: item.style_no });
+        if (!styleLinkClicked) {
+          await log(job.id, 'error', 'STEP:style_not_found_in_table', { style_no: styleNo });
           continue;
         }
         
-        await page.waitForLoadState('domcontentloaded', { timeout: 30_000 });
+        // Wait for add section to appear
+        await page.waitForSelector('[data-help_id="purchase_orders.add"]', { state: 'visible', timeout: 30_000 });
         await page.waitForTimeout(1000);
+        await log(job.id, 'info', 'STEP:style_add_section_loaded', { style_no: styleNo });
         
-        // Now on the add style page with color selection
-        // Find the color table and locate the specific color
-        await log(job.id, 'info', 'STEP:push_po_adding_color', { style_no: item.style_no, color: item.color });
+        // Clear all color inputs first
+        await log(job.id, 'info', 'STEP:clearing_color_inputs');
+        const clearButtons = await page.$$('div.clearButton');
+        for (const btn of clearButtons) {
+          try {
+            await btn.click();
+            await page.waitForTimeout(100);
+          } catch (e) {
+            // Button might not be clickable, continue
+          }
+        }
+        await page.waitForTimeout(500);
         
-        // Find FREE STOCK row for this color
-        const quantitiesSet = await page.evaluate((args: { color: string; quantities: number[] }) => {
-          const { color, quantities } = args;
-          // Find all tables on the page
-          const tables = document.querySelectorAll('table');
+        // Fetch sizes for this style from database to know the order
+        const { data: stockData, error: stockError } = await supabase
+          .from('style_stock')
+          .select('style_no, color, sizes')
+          .eq('style_no', styleNo)
+          .eq('section', 'Stock')
+          .limit(1);
+        
+        let sizeOrder: string[] = [];
+        if (stockData && stockData.length > 0) {
+          sizeOrder = stockData[0].sizes || [];
+        }
+        
+        // Process each color for this style
+        for (const colorItem of styleItems) {
+          await log(job.id, 'info', 'STEP:processing_color', { 
+            style_no: styleNo, 
+            color: colorItem.color 
+          });
           
-          for (const table of Array.from(tables)) {
-            const rows = table.querySelectorAll('tr');
-            
-            for (const row of Array.from(rows)) {
-              // Check if this row contains the color name
-              const colorCell = row.querySelector('td');
-              if (colorCell && colorCell.textContent?.trim().includes(color)) {
-                // Found the color, now find FREE STOCK row in the same table
-                for (const checkRow of Array.from(rows)) {
-                  const cells = checkRow.querySelectorAll('td');
-                  if (cells.length > 0 && cells[0] && cells[0].textContent?.trim() === 'FREE STOCK') {
-                    // Found FREE STOCK row, fill in quantities
-                    const inputs = checkRow.querySelectorAll('input[type="number"], input[type="text"]');
-                    
-                    for (let i = 0; i < Math.min(inputs.length, quantities.length); i++) {
-                      const input = inputs[i] as HTMLInputElement;
-                      const qty = quantities[i];
-                      if (input && qty !== undefined && qty > 0) {
-                        input.value = String(qty);
-                        input.dispatchEvent(new Event('input', { bubbles: true }));
-                        input.dispatchEvent(new Event('change', { bubbles: true }));
-                      }
-                    }
-                    
-                    return true;
-                  }
-                }
-              }
-            }
+          // Find color box by matching color name
+          const colorBoxId = await page.evaluate((colorText) => {
+            const spans = Array.from(document.querySelectorAll('.colorBox .color-name'));
+            const matchingSpan = spans.find(s => s.textContent?.trim() === colorText);
+            if (!matchingSpan) return null;
+            const colorBox = matchingSpan.closest('.colorBox');
+            return colorBox?.id || null;
+          }, colorItem.color);
+          
+          if (!colorBoxId) {
+            await log(job.id, 'error', 'STEP:color_box_not_found', { 
+              style_no: styleNo, 
+              color: colorItem.color 
+            });
+            continue;
           }
           
-          return false;
-        }, { color: item.color, quantities: item.quantities });
-        
-        if (!quantitiesSet) {
-          await log(job.id, 'error', 'STEP:push_po_color_not_found', { 
-            style_no: item.style_no, 
-            color: item.color 
+          await log(job.id, 'info', 'STEP:color_box_found', { 
+            style_no: styleNo, 
+            color: colorItem.color,
+            box_id: colorBoxId
           });
-          continue;
+          
+          // Get size mapping from table headers
+          const sizeMapping = await page.evaluate((boxId) => {
+            const box = document.getElementById(boxId);
+            if (!box) return [];
+            const headers = box.querySelectorAll('th[data-size_master_id]');
+            return Array.from(headers).map((h, idx) => ({
+              position: idx,
+              size: h.textContent?.trim() || '',
+              sizeMasterId: h.getAttribute('data-size_master_id')
+            }));
+          }, colorBoxId);
+          
+          await log(job.id, 'info', 'STEP:size_mapping_retrieved', { 
+            style_no: styleNo,
+            color: colorItem.color,
+            size_mapping: sizeMapping
+          });
+          
+          // Fill inputs by position
+          for (let i = 0; i < colorItem.quantities.length; i++) {
+            const qty = colorItem.quantities[i];
+            if (qty === undefined || qty === 0) continue;
+            
+            const sizeInfo = sizeMapping[i];
+            if (!sizeInfo) {
+              await log(job.id, 'error', 'STEP:size_info_missing', { 
+                position: i, 
+                quantity: qty 
+              });
+              continue;
+            }
+            
+            // Fill the input
+            const filled = await page.evaluate((args: { boxId: string; sizeMasterId: string | null; quantity: number }) => {
+              const box = document.getElementById(args.boxId);
+              if (!box || !args.sizeMasterId) return false;
+              
+              const input = box.querySelector(`tr.cBinputLine input[data-sizeset-size-id="${args.sizeMasterId}"]`) as HTMLInputElement;
+              if (input) {
+                input.value = String(args.quantity);
+                input.dispatchEvent(new Event('input', { bubbles: true }));
+                input.dispatchEvent(new Event('change', { bubbles: true }));
+                return true;
+              }
+              return false;
+            }, { boxId: colorBoxId, sizeMasterId: sizeInfo.sizeMasterId, quantity: qty });
+            
+            if (filled) {
+              await log(job.id, 'info', 'STEP:quantity_filled', { 
+                size: sizeInfo.size, 
+                quantity: qty 
+              });
+            }
+          }
         }
-        
-        await log(job.id, 'info', 'STEP:push_po_quantities_set', { 
-          style_no: item.style_no, 
-          color: item.color,
-          quantities: item.quantities
-        });
         
         // Click "Add & Exit" button
-        const addExitButton = await page.$('button:has-text("Add & Exit")');
+        await log(job.id, 'info', 'STEP:clicking_add_exit');
+        const addExitButton = await page.$('button[name="add_and_exit"]');
         if (addExitButton) {
           await addExitButton.click();
-          await page.waitForLoadState('domcontentloaded', { timeout: 30_000 });
+          
+          // Wait for loader to disappear
+          await page.waitForFunction(() => {
+            const loader = document.querySelector('.spy-view-loader--show');
+            return !loader;
+          }, { timeout: 30000 });
+          
           await page.waitForTimeout(1000);
+          await log(job.id, 'info', 'STEP:style_added_successfully', { style_no: styleNo });
+        } else {
+          await log(job.id, 'error', 'STEP:add_exit_button_not_found', { style_no: styleNo });
         }
         
-        await log(job.id, 'progress', 'STAGE:style_added', { style_no: item.style_no, color: item.color });
+        await log(job.id, 'progress', 'STAGE:style_added', { style_no: styleNo });
       }
       
-      // All styles added, click "Next" button
-      await page.click('[data-tab-name="confirm"]');
+      // All styles added, click "Next" button to go to confirm page
+      await log(job.id, 'info', 'STEP:clicking_next_to_confirm');
+      const nextButton = await page.$('button[name="next"]');
+      if (!nextButton) {
+        await log(job.id, 'error', 'STEP:next_button_not_found');
+        continue;
+      }
+      
+      await nextButton.click();
+      await page.waitForSelector('[data-tab-name="confirm"]', { state: 'visible', timeout: 30_000 });
       await page.waitForTimeout(1000);
       
-      // Capture SPY PO number from the page
+      // Extract PO number from confirm page
       const spyPoNo = await page.evaluate(() => {
-        // Look for PO number in the title or page content
-        const titleMatch = document.body.textContent?.match(/PO(\d+)/);
-        return titleMatch ? `PO${titleMatch[1]}` : null;
+        const title = document.querySelector('.pagesTitle');
+        if (!title) return null;
+        const match = title.textContent?.match(/PO(\d+)/);
+        return match ? `PO${match[1]}` : null;
       });
       
       if (spyPoNo) {
         spyPoNumbers.push(spyPoNo);
-        await log(job.id, 'progress', 'STAGE:po_confirmed', { supplier, spy_po_no: spyPoNo });
+        await log(job.id, 'info', 'STEP:po_number_extracted', { supplier, spy_po_no: spyPoNo });
       } else {
-        await log(job.id, 'error', 'STEP:push_po_no_not_captured', { supplier });
+        await log(job.id, 'error', 'STEP:po_number_not_found', { supplier });
       }
       
-      // Click "Confirm" button
+      // Click "Confirm" button to finalize
+      await log(job.id, 'info', 'STEP:clicking_confirm');
       const confirmButton = await page.$('button[name="confirm"]');
       if (confirmButton) {
         await confirmButton.click();
         await page.waitForLoadState('domcontentloaded', { timeout: 30_000 });
         await page.waitForTimeout(1000);
+        await log(job.id, 'progress', 'STAGE:po_confirmed', { supplier, spy_po_no: spyPoNo });
+      } else {
+        await log(job.id, 'error', 'STEP:confirm_button_not_found');
       }
     }
     
