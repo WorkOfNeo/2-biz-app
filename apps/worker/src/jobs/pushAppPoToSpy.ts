@@ -298,38 +298,6 @@ export async function pushAppPoToSpy(ctx: Ctx) {
         throw new Error(`Season ID ${spySeasonId} not found in SPY dropdown. Please verify spy_season_id mapping.`);
       }
       
-      // Check for and dismiss any sweet alert modals first
-      try {
-        const sweetAlertVisible = await page.isVisible('.sweet-alert.visible');
-        if (sweetAlertVisible) {
-          await log(job.id, 'info', 'STEP:dismissing_sweet_alert');
-          await page.click('.sweet-alert button', { timeout: 5000 });
-          await page.waitForTimeout(500);
-          await log(job.id, 'info', 'STEP:sweet_alert_dismissed');
-        }
-      } catch (e) {
-        // Alert might not exist or already dismissed, continue
-        await log(job.id, 'info', 'STEP:no_sweet_alert_or_already_dismissed');
-      }
-      
-      // Disable "Only Net Need" checkbox
-      await log(job.id, 'info', 'STEP:unchecking_net_need');
-      const netNeedCheckbox = await page.$('#POrder\\[bNetNeed\\]');
-      if (netNeedCheckbox) {
-        const isChecked = await netNeedCheckbox.isChecked();
-        if (isChecked) {
-          // Use evaluate to directly uncheck via JavaScript to avoid interception issues
-          await page.evaluate(() => {
-            const checkbox = document.querySelector('#POrder\\[bNetNeed\\]') as HTMLInputElement;
-            if (checkbox && checkbox.checked) {
-              checkbox.checked = false;
-              checkbox.dispatchEvent(new Event('change', { bubbles: true }));
-            }
-          });
-          await log(job.id, 'info', 'STEP:net_need_unchecked');
-        }
-      }
-      
       await log(job.id, 'info', 'STEP:push_po_form_filled', { 
         supplier, 
         etd, 
@@ -338,8 +306,48 @@ export async function pushAppPoToSpy(ctx: Ctx) {
         spy_season_id: spySeasonId 
       });
       
-      // Submit form to create PO
-      await page.click('button[type="submit"][name="create"]');
+      // Check for and dismiss any sweet alert modals before clicking Create
+      try {
+        // Wait a moment for any alerts to appear
+        await page.waitForTimeout(500);
+        
+        const sweetAlertVisible = await page.isVisible('.sweet-alert.visible, .sweet-alert.showSweetAlert');
+        if (sweetAlertVisible) {
+          await log(job.id, 'info', 'STEP:dismissing_sweet_alert_before_create');
+          
+          // Try multiple button selectors for Sweet Alert
+          const buttonSelectors = [
+            '.sweet-alert.visible button.confirm',
+            '.sweet-alert.showSweetAlert button',
+            '.sweet-alert button',
+            'button.confirm'
+          ];
+          
+          for (const selector of buttonSelectors) {
+            try {
+              if (await page.isVisible(selector)) {
+                await page.click(selector, { timeout: 3000 });
+                await page.waitForTimeout(500);
+                await log(job.id, 'info', 'STEP:sweet_alert_dismissed');
+                break;
+              }
+            } catch (e) {
+              continue;
+            }
+          }
+        }
+      } catch (e) {
+        await log(job.id, 'info', 'STEP:no_sweet_alert_or_already_dismissed');
+      }
+      
+      // Submit form to create PO using JavaScript to bypass any overlays
+      await log(job.id, 'info', 'STEP:clicking_create_button');
+      await page.evaluate(() => {
+        const createBtn = document.querySelector('button[type="submit"][name="create"]') as HTMLButtonElement;
+        if (createBtn) {
+          createBtn.click();
+        }
+      });
       await page.waitForLoadState('domcontentloaded', { timeout: 30_000 });
       await page.waitForTimeout(1000);
       
