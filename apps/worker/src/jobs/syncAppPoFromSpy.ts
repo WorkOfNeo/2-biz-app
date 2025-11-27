@@ -220,26 +220,26 @@ export async function syncAppPoFromSpy(ctx: Ctx) {
             files_count: downloadedFiles.length 
           });
         }
-      }
-    } else {
-      // Even if no files, save the SPY PO URL
-      const updatedMeta = {
-        ...appPO.meta,
-        spy_po_url: `${SPY_BASE_URL}${poRowData.poEditLink}`,
-        synced_at: new Date().toISOString()
-      };
-      
-      const { error: updateError } = await supabase
-        .from('purchase_orders')
-        .update({ meta: updatedMeta })
-        .eq('id', payload.po_id);
-        
-      if (updateError) {
-        await log(job.id, 'error', 'STEP:sync_meta_update_failed', { 
-          error: updateError.message 
-        });
       } else {
-        await log(job.id, 'info', 'STEP:sync_url_saved');
+        // Even if files were found but failed to download, still save the SPY PO URL
+        const updatedMeta = {
+          ...appPO.meta,
+          spy_po_url: `${SPY_BASE_URL}${poRowData.poEditLink}`,
+          synced_at: new Date().toISOString()
+        };
+        
+        const { error: updateError } = await supabase
+          .from('purchase_orders')
+          .update({ meta: updatedMeta })
+          .eq('id', payload.po_id);
+          
+        if (updateError) {
+          await log(job.id, 'error', 'STEP:sync_meta_update_failed', { 
+            error: updateError.message 
+          });
+        } else {
+          await log(job.id, 'info', 'STEP:sync_url_saved');
+        }
       }
     }
     
