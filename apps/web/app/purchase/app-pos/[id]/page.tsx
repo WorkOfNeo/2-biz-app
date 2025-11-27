@@ -72,7 +72,11 @@ export default function AppPoDetailPage() {
   
   // Sync state
   const [isSyncing, setIsSyncing] = React.useState(false);
+  const [syncJobId, setSyncJobId] = React.useState<string | null>(null);
+  const [syncProgress, setSyncProgress] = React.useState(0);
+  const [syncStatus, setSyncStatus] = React.useState('');
   const [syncError, setSyncError] = React.useState('');
+  const [syncComplete, setSyncComplete] = React.useState(false);
 
   const { data: po, error, isLoading, mutate: mutatePo } = useSWR(
     id ? ['app-po', id] : null,
@@ -217,6 +221,98 @@ export default function AppPoDetailPage() {
 
     return () => clearInterval(interval);
   }, [jobId, isComplete, jobError]);
+
+  // Poll sync job progress
+  React.useEffect(() => {
+    if (!syncJobId || syncComplete || syncError) return;
+
+    const interval = setInterval(async () => {
+      try {
+        // Fetch job status
+        const { data: job, error: jobErr } = await supabase
+          .from('jobs')
+          .select('status')
+          .eq('id', syncJobId)
+          .single();
+
+        if (jobErr) {
+          setSyncError(jobErr.message);
+          return;
+        }
+
+        if (job.status === 'failed') {
+          setSyncError('Sync failed. Check job details for more information.');
+          setSyncProgress(0);
+          setIsSyncing(false);
+          return;
+        }
+
+        // Fetch job logs for progress
+        const { data: logs, error: logsErr } = await supabase
+          .from('job_logs')
+          .select('level, msg, data')
+          .eq('job_id', syncJobId)
+          .order('ts', { ascending: false })
+          .limit(100);
+
+        if (logsErr) {
+          console.error('Failed to fetch sync logs:', logsErr);
+          return;
+        }
+
+        // Parse progress from logs
+        const progressLogs = (logs || []).filter((log: any) => log.level === 'progress');
+        
+        if (progressLogs.length > 0) {
+          const latestProgress = progressLogs[0];
+          if (!latestProgress) return;
+          const stage = latestProgress.msg;
+
+          // Calculate progress based on stage
+          const stages = [
+            'STAGE:navigating_to_running_orders',
+            'STAGE:downloading_files',
+            'STAGE:sync_complete'
+          ];
+
+          const currentStageIndex = stages.findIndex(s => stage.includes(s.split(':')[1]));
+          
+          if (currentStageIndex >= 0) {
+            const progress = ((currentStageIndex + 1) / stages.length) * 100;
+            setSyncProgress(Math.min(progress, 100));
+
+            // Update status text
+            if (stage.includes('navigating')) {
+              setSyncStatus('Finding PO in running orders...');
+            } else if (stage.includes('downloading')) {
+              setSyncStatus('Downloading files...');
+            } else if (stage.includes('complete')) {
+              setSyncStatus('Sync completed!');
+              setSyncProgress(100);
+              setSyncComplete(true);
+              setIsSyncing(false);
+              // Refresh PO data to get updated spy_po_no
+              mutatePo();
+            }
+          }
+        }
+
+        // Check if job succeeded
+        if (job.status === 'succeeded') {
+          setSyncProgress(100);
+          setSyncComplete(true);
+          setSyncStatus('Sync completed successfully!');
+          setIsSyncing(false);
+          // Refresh PO data
+          mutatePo();
+        }
+      } catch (error: any) {
+        console.error('Sync polling error:', error);
+      }
+    }, 2000); // Poll every 2 seconds
+
+    return () => clearInterval(interval);
+  }, [syncJobId, syncComplete, syncError, mutatePo]);
 
   // Extract order items from meta
   const orderItems: OrderItem[] = React.useMemo(() => {
@@ -385,13 +481,18 @@ export default function AppPoDetailPage() {
       return;
     }
     
+    // Reset state
     setIsSyncing(true);
     setSyncError('');
+    setSyncProgress(0);
+    setSyncStatus('Starting sync...');
+    setSyncComplete(false);
     
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) {
         setSyncError('Not authenticated');
+        setIsSyncing(false);
         return;
       }
       
@@ -412,12 +513,11 @@ export default function AppPoDetailPage() {
         throw new Error(error.error || 'Failed to sync order');
       }
       
-      // Refresh the PO data
-      await mutatePo();
-      alert('Sync started successfully!');
+      const { jobId } = await res.json();
+      setSyncJobId(jobId);
+      setSyncStatus('Job enqueued, waiting to start...');
     } catch (error: any) {
       setSyncError(error.message || 'Failed to sync order');
-    } finally {
       setIsSyncing(false);
     }
   };
@@ -465,6 +565,35 @@ export default function AppPoDetailPage() {
         <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-600">
           {syncError}
         </div>
+      )}
+
+      {/* Sync progress display */}
+      {isSyncing && (
+        <Card>
+          <CardContent className="pt-6">
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="font-semibold">Syncing Order...</h3>
+                <span className="text-sm text-slate-600">{Math.round(syncProgress)}%</span>
+              </div>
+              <div className="w-full bg-slate-200 rounded-full h-2">
+                <div 
+                  className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                  style={{ width: `${syncProgress}%` }}
+                />
+              </div>
+              <p className="text-sm text-slate-600">{syncStatus}</p>
+              {syncComplete && (
+                <div className="flex items-center gap-2 text-sm text-green-600">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                  Sync completed successfully!
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
       )}
 
       {/* PO Number & SPY PO No. */}
