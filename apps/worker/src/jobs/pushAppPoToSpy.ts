@@ -465,11 +465,11 @@ export async function pushAppPoToSpy(ctx: Ctx) {
             box_id: colorBoxId
           });
           
-          // Get size mapping from table headers
+          // Get size mapping from table headers (td elements, not th)
           const sizeMapping = await page.evaluate((boxId) => {
             const box = document.getElementById(boxId);
             if (!box) return [];
-            const headers = box.querySelectorAll('th[data-size_master_id]');
+            const headers = box.querySelectorAll('td[data-size_master_id]');
             return Array.from(headers).map((h, idx) => ({
               position: idx,
               size: h.textContent?.trim() || '',
@@ -544,13 +544,22 @@ export async function pushAppPoToSpy(ctx: Ctx) {
       
       // All styles added, click "Next" button to go to confirm page
       await log(job.id, 'info', 'STEP:clicking_next_to_confirm');
-      const nextButton = await page.$('button[name="next"]');
-      if (!nextButton) {
+      
+      // Use JavaScript click to bypass any visibility issues
+      const nextBtnExists = await page.evaluate(() => {
+        const nextBtn = document.querySelector('button[name="next"]') as HTMLButtonElement;
+        if (nextBtn) {
+          nextBtn.click();
+          return true;
+        }
+        return false;
+      });
+      
+      if (!nextBtnExists) {
         await log(job.id, 'error', 'STEP:next_button_not_found');
         continue;
       }
       
-      await nextButton.click();
       await page.waitForSelector('[data-tab-name="confirm"]', { state: 'visible', timeout: 30_000 });
       await page.waitForTimeout(1000);
       
