@@ -1,15 +1,14 @@
 -- Create storage bucket for APP PO documents (PDFs and Excel files)
-
--- Create the documents bucket (not public - requires authentication)
-INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
-VALUES (
-  'documents',
-  'documents',
-  false,
-  52428800, -- 50MB limit
-  ARRAY['application/pdf', 'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet']
-)
-ON CONFLICT (id) DO NOTHING;
+-- 
+-- IMPORTANT: The storage bucket must be created manually in Supabase Dashboard:
+-- 1. Go to Storage section in Supabase Dashboard
+-- 2. Click "New bucket"
+-- 3. Name: documents
+-- 4. Public: OFF (unchecked)
+-- 5. File size limit: 52428800 (50MB)
+-- 6. Allowed MIME types: application/pdf, application/vnd.ms-excel, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+--
+-- The bucket creation cannot be done via SQL migration due to permission restrictions.
 
 -- Allow authenticated users to upload files
 DO $$ BEGIN
