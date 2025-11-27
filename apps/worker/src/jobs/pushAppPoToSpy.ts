@@ -504,17 +504,21 @@ export async function pushAppPoToSpy(ctx: Ctx) {
               continue;
             }
             
-            // Fill the input
+            // Fill the input (data-sizeset-size-id is on the td, not the input)
             const filled = await page.evaluate((args: { boxId: string; sizeMasterId: string | null; quantity: number }) => {
               const box = document.getElementById(args.boxId);
               if (!box || !args.sizeMasterId) return false;
               
-              const input = box.querySelector(`tr.cBinputLine input[data-sizeset-size-id="${args.sizeMasterId}"]`) as HTMLInputElement;
-              if (input) {
-                input.value = String(args.quantity);
-                input.dispatchEvent(new Event('input', { bubbles: true }));
-                input.dispatchEvent(new Event('change', { bubbles: true }));
-                return true;
+              // Find the td with data-sizeset-size-id, then get the input inside it
+              const td = box.querySelector(`tr.cBinputLine td[data-sizeset-size-id="${args.sizeMasterId}"]`);
+              if (td) {
+                const input = td.querySelector('input[data-type="assortQty"]') as HTMLInputElement;
+                if (input) {
+                  input.value = String(args.quantity);
+                  input.dispatchEvent(new Event('input', { bubbles: true }));
+                  input.dispatchEvent(new Event('change', { bubbles: true }));
+                  return true;
+                }
               }
               return false;
             }, { boxId: colorBoxId, sizeMasterId: sizeInfo.sizeMasterId, quantity: qty });
