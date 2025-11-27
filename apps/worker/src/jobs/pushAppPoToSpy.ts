@@ -298,12 +298,29 @@ export async function pushAppPoToSpy(ctx: Ctx) {
         throw new Error(`Season ID ${spySeasonId} not found in SPY dropdown. Please verify spy_season_id mapping.`);
       }
       
+      // Check for and dismiss any sweet alert modals first
+      const sweetAlertButton = await page.$('.sweet-alert button');
+      if (sweetAlertButton) {
+        await log(job.id, 'info', 'STEP:dismissing_sweet_alert');
+        await sweetAlertButton.click();
+        await page.waitForTimeout(500);
+      }
+      
       // Disable "Only Net Need" checkbox
+      await log(job.id, 'info', 'STEP:unchecking_net_need');
       const netNeedCheckbox = await page.$('#POrder\\[bNetNeed\\]');
       if (netNeedCheckbox) {
         const isChecked = await netNeedCheckbox.isChecked();
         if (isChecked) {
-          await netNeedCheckbox.uncheck();
+          // Use evaluate to directly uncheck via JavaScript to avoid interception issues
+          await page.evaluate(() => {
+            const checkbox = document.querySelector('#POrder\\[bNetNeed\\]') as HTMLInputElement;
+            if (checkbox && checkbox.checked) {
+              checkbox.checked = false;
+              checkbox.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+          });
+          await log(job.id, 'info', 'STEP:net_need_unchecked');
         }
       }
       
