@@ -1,78 +1,69 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/utils/supabase/server';
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
 
-export async function POST(request: NextRequest) {
+export async function POST(req: Request) {
   try {
-    const supabase = await createClient();
-    
-    // Check authentication
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-    
     // Get request body
-    const body = await request.json();
-    const { po_id, spy_po_no } = body;
+    const { po_id, spy_po_no } = await req.json();
     
     if (!po_id || !spy_po_no) {
-      return NextResponse.json(
-        { error: 'Missing required fields: po_id, spy_po_no' },
-        { status: 400 }
+      return new Response(
+        JSON.stringify({ error: 'Missing po_id or spy_po_no' }), 
+        { status: 400, headers: { 'Content-Type': 'application/json' } }
       );
     }
     
-    // Enqueue job
-    const jobPayload = {
-      po_id,
-      spy_po_no
-    };
-    
-    const orchestratorUrl = process.env.ORCHESTRATOR_URL;
-    let jobId: string;
-    
-    if (orchestratorUrl) {
-      // Use orchestrator if available
-      const response = await fetch(`${orchestratorUrl}/enqueue`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          type: 'sync_app_po_from_spy',
-          payload: jobPayload
-        })
-      });
-      
-      if (!response.ok) {
-        throw new Error(`Orchestrator error: ${response.statusText}`);
-      }
-      
-      const data = await response.json();
-      jobId = data.jobId;
-    } else {
-      // Fallback to direct Supabase insert
-      const { data: jobData, error: jobError } = await supabase
-        .from('jobs')
-        .insert({
-          type: 'sync_app_po_from_spy',
-          payload: jobPayload,
-          status: 'queued'
-        })
-        .select('id')
-        .single();
-        
-      if (jobError || !jobData) {
-        throw new Error(`Failed to enqueue job: ${jobError?.message || 'Unknown error'}`);
-      }
-      
-      jobId = jobData.id;
+    // Get auth header
+    const auth = req.headers.get('authorization');
+    if (!auth) {
+      return new Response(
+        JSON.stringify({ error: 'Missing authorization' }),
+        { status: 401, headers: { 'Content-Type': 'application/json' } }
+      );
     }
     
-    return NextResponse.json({ jobId }, { status: 200 });
+    // Get Supabase credentials
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+    const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+    
+    if (!url || !anonKey) {
+      throw new Error('Missing Supabase environment variables');
+    }
+    
+    // Use anon key with the caller's JWT so RLS sees an authenticated user
+    const { createClient } = await import('@supabase/supabase-js');
+    const supabase = createClient(url, anonKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+      global: { headers: auth ? { Authorization: auth } : {} }
+    });
+    
+    // Enqueue job
+    const insertBody = {
+      type: 'sync_app_po_from_spy' as const,
+      payload: { po_id, spy_po_no },
+      status: 'queued' as const,
+      priority: 100
+    } as any;
+    
+    const { data, error } = await supabase
+      .from('jobs')
+      .insert(insertBody)
+      .select('id')
+      .single();
+    
+    if (error || !data) {
+      throw new Error(`Failed to enqueue job: ${error?.message || 'Unknown error'}`);
+    }
+    
+    return new Response(
+      JSON.stringify({ jobId: data.id }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } }
+    );
   } catch (error: any) {
     console.error('Error syncing APP PO:', error);
-    return NextResponse.json(
-      { error: error.message || 'Failed to sync APP PO' },
-      { status: 500 }
+    return new Response(
+      JSON.stringify({ error: error.message || 'Failed to sync APP PO' }),
+      { status: 500, headers: { 'Content-Type': 'application/json' } }
     );
   }
 }

@@ -6,7 +6,20 @@
  * - Downloads and stores revised files (PDF + Excel)
  */
 
-import type { Ctx } from '../index.js';
+import type { Page } from 'playwright-core';
+import type { JobRow } from '@shared/types';
+
+type Ctx = {
+  job: JobRow;
+  page: Page;
+  log: (jobId: string, level: 'info' | 'error' | 'progress', msg: string, data?: Record<string, any>) => Promise<void>;
+  saveResult: (jobId: string, data: Record<string, any>) => Promise<any>;
+  setJobFailedOrRequeue: (jobId: string, error?: string) => Promise<void>;
+  setJobSucceeded: (jobId: string) => Promise<void>;
+  ensureNotCancelled: (jobId: string) => Promise<void>;
+  supabase: any;
+  SPY_BASE_URL: string;
+};
 
 interface SyncPayload {
   po_id: number;
@@ -162,7 +175,7 @@ export async function syncAppPoFromSpy(ctx: Ctx) {
       await log(job.id, 'info', 'STEP:sync_no_files', { message: 'No revised files found' });
     } else {
       await log(job.id, 'info', 'STEP:sync_files_found', { 
-        files: revisedFiles.map(f => f.type) 
+        files: revisedFiles.map((f: { type: string; url: string }) => f.type) 
       });
       
       // Download files and store in Supabase storage
