@@ -70,8 +70,8 @@ export async function syncAppPoFromSpy(ctx: Ctx) {
     
     await log(job.id, 'info', 'STEP:sync_table_loaded');
     
-    // Find the PO row by SPY PO number
-    const poLinkHref = await page.evaluate((spyPoNo: string) => {
+    // Extract data from the table row directly
+    const poRowData = await page.evaluate((spyPoNo: string) => {
       const rows = document.querySelectorAll('.app-outlet table tbody tr');
       for (const row of Array.from(rows)) {
         const cells = row.querySelectorAll('td');
@@ -79,100 +79,72 @@ export async function syncAppPoFromSpy(ctx: Ctx) {
         const poNoCell = cells[2];
         const link = poNoCell?.querySelector('a');
         if (link && link.textContent?.trim() === spyPoNo) {
-          return link.getAttribute('href');
+          // Extract data from this row
+          const supplier = cells[3]?.textContent?.trim() || '';
+          const styleNo = cells[5]?.textContent?.trim() || '';
+          const stylesCount = cells[6]?.textContent?.trim() || '0';
+          const orderedText = cells[7]?.textContent?.trim() || '0';
+          const ordered = parseInt(orderedText.replace(/\D/g, ''), 10) || 0;
+          
+          // Get the PO edit link
+          const poEditLink = link.getAttribute('href') || '';
+          
+          // Get PDF and Excel links from Actions column (index 20)
+          const actionsCell = cells[20];
+          const pdfLink = actionsCell?.querySelector('a[href*="confirmation.php"]');
+          const excelLink = actionsCell?.querySelector('a img[alt="Excel Icon"]')?.closest('a');
+          
+          return {
+            supplier,
+            styleNo,
+            stylesCount: parseInt(stylesCount, 10),
+            ordered,
+            poEditLink,
+            pdfUrl: pdfLink ? (pdfLink as HTMLAnchorElement).href : null,
+            excelUrl: excelLink ? (excelLink as HTMLAnchorElement).href : null
+          };
         }
       }
       return null;
     }, payload.spy_po_no);
     
-    if (!poLinkHref) {
+    if (!poRowData) {
       throw new Error(`PO ${payload.spy_po_no} not found in running orders table`);
     }
     
     await log(job.id, 'info', 'STEP:sync_po_found', { spy_po_no: payload.spy_po_no });
-    await log(job.id, 'progress', 'STAGE:opening_po_details');
-    
-    // Navigate to PO details page
-    await page.goto(`${SPY_BASE_URL}${poLinkHref}`, { waitUntil: 'domcontentloaded', timeout: 30_000 });
-    await page.waitForSelector('[data-help_id="purchase_order.edit"]', { timeout: 30_000 });
-    await page.waitForTimeout(2000);
-    
-    await log(job.id, 'info', 'STEP:sync_po_details_loaded');
-    
-    // Extract data from "Added styles" table
-    const spyOrderData = await page.evaluate(() => {
-      const table = document.querySelector('[data-help_id="purchase_order.edit"] table.standardList');
-      if (!table) return null;
-      
-      const rows = table.querySelectorAll('tbody tr');
-      const styles: any[] = [];
-      
-      for (const row of Array.from(rows)) {
-        const cells = row.querySelectorAll('td');
-        if (cells.length < 12) continue;
-        
-        const styleNo = cells[1]?.textContent?.trim() || '';
-        const color = cells[4]?.textContent?.trim() || '';
-        const qtyText = cells[8]?.textContent?.trim() || '0';
-        const qty = parseInt(qtyText.replace(/\D/g, ''), 10) || 0;
-        
-        if (styleNo) {
-          styles.push({ styleNo, color, qty });
-        }
-      }
-      
-      // Get total from tfoot
-      const tfoot = table.querySelector('tfoot tr');
-      const totalCell = tfoot?.querySelectorAll('td')[1]; // 2nd cell has the total qty
-      const totalText = totalCell?.textContent?.trim() || '0';
-      const total = parseInt(totalText.replace(/\D/g, ''), 10) || 0;
-      
-      return { styles, total };
+    await log(job.id, 'info', 'STEP:sync_data_extracted', {
+      supplier: poRowData.supplier,
+      styles_count: poRowData.stylesCount,
+      total_ordered: poRowData.ordered
     });
-    
-    if (!spyOrderData) {
-      throw new Error('Failed to extract order data from SPY');
-    }
-    
-    await log(job.id, 'info', 'STEP:sync_data_extracted', spyOrderData);
     
     // Verify totals match APP PO
     const appPoItems = (appPO.meta as any)?.items || [];
     const appPoTotal = appPoItems.reduce((sum: number, item: any) => sum + (item.total || 0), 0);
     
-    if (appPoTotal !== spyOrderData.total) {
+    if (appPoTotal !== poRowData.ordered) {
       await log(job.id, 'error', 'STEP:sync_totals_mismatch', {
         app_po_total: appPoTotal,
-        spy_total: spyOrderData.total
+        spy_total: poRowData.ordered
       });
-      throw new Error(`Order totals do not match: APP PO=${appPoTotal}, SPY=${spyOrderData.total}`);
+      throw new Error(`Order totals do not match: APP PO=${appPoTotal}, SPY=${poRowData.ordered}`);
     }
     
     await log(job.id, 'info', 'STEP:sync_totals_verified', { total: appPoTotal });
     await log(job.id, 'progress', 'STAGE:downloading_files');
     
-    // Extract revised files
-    const revisedFiles = await page.evaluate(() => {
-      const fileSection = document.querySelector('#revisedFiles');
-      if (!fileSection) return null;
-      
-      const links = fileSection.querySelectorAll('a[href]');
-      const files: { type: string; url: string }[] = [];
-      
-      for (const link of Array.from(links)) {
-        const href = (link as HTMLAnchorElement).href;
-        if (href.includes('.pdf')) {
-          files.push({ type: 'pdf', url: href });
-        } else if (href.includes('.xlsx') || href.includes('.xls')) {
-          files.push({ type: 'excel', url: href });
-        }
-      }
-      
-      return files;
-    });
+    // Prepare file list from row data
+    const revisedFiles: { type: string; url: string }[] = [];
+    if (poRowData.pdfUrl) {
+      revisedFiles.push({ type: 'pdf', url: poRowData.pdfUrl });
+    }
+    if (poRowData.excelUrl) {
+      revisedFiles.push({ type: 'excel', url: poRowData.excelUrl });
+    }
     
-    if (!revisedFiles || revisedFiles.length === 0) {
-      await log(job.id, 'info', 'STEP:sync_no_files', { message: 'No revised files found' });
+    if (revisedFiles.length === 0) {
+      await log(job.id, 'info', 'STEP:sync_no_files', { message: 'No files found in row' });
     } else {
       await log(job.id, 'info', 'STEP:sync_files_found', { 
         files: revisedFiles.map((f: { type: string; url: string }) => f.type) 
@@ -225,11 +197,12 @@ export async function syncAppPoFromSpy(ctx: Ctx) {
         }
       }
       
-      // Update APP PO meta with file references
+      // Update APP PO meta with file references and SPY link
       if (downloadedFiles.length > 0) {
         const updatedMeta = {
           ...appPO.meta,
           spy_files: downloadedFiles,
+          spy_po_url: `${SPY_BASE_URL}${poRowData.poEditLink}`,
           synced_at: new Date().toISOString()
         };
         
@@ -248,14 +221,35 @@ export async function syncAppPoFromSpy(ctx: Ctx) {
           });
         }
       }
+    } else {
+      // Even if no files, save the SPY PO URL
+      const updatedMeta = {
+        ...appPO.meta,
+        spy_po_url: `${SPY_BASE_URL}${poRowData.poEditLink}`,
+        synced_at: new Date().toISOString()
+      };
+      
+      const { error: updateError } = await supabase
+        .from('purchase_orders')
+        .update({ meta: updatedMeta })
+        .eq('id', payload.po_id);
+        
+      if (updateError) {
+        await log(job.id, 'error', 'STEP:sync_meta_update_failed', { 
+          error: updateError.message 
+        });
+      } else {
+        await log(job.id, 'info', 'STEP:sync_url_saved');
+      }
     }
     
     await log(job.id, 'progress', 'STAGE:sync_complete');
     await saveResult(job.id, 'Sync from SPY completed', { 
       status: 'success',
       spy_po_no: payload.spy_po_no,
-      total_qty: spyOrderData.total,
-      files: revisedFiles?.length || 0
+      total_qty: poRowData.ordered,
+      files: revisedFiles?.length || 0,
+      spy_url: `${SPY_BASE_URL}${poRowData.poEditLink}`
     });
     await setJobSucceeded(job.id);
     
