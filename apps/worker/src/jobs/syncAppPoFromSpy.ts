@@ -1,9 +1,10 @@
 /**
  * Syncs an APP PO with SPY system data
  * - Navigates to running orders page
- * - Finds and opens the PO
+ * - Extracts data from table row (no need to open PO)
  * - Verifies quantities match
  * - Downloads and stores revised files (PDF + Excel)
+ * - Saves SPY PO URL for easy access
  */
 
 import type { Page } from 'playwright-core';
