@@ -16,6 +16,7 @@ import { scrapePurchaseOrders as scrapePurchaseOrdersJob } from './jobs/scrapePu
 import { checkPurchaseOrders as checkPurchaseOrdersJob } from './jobs/checkPurchaseOrders.js';
 import { scrapeEans as scrapeEansJob } from './jobs/scrapeEans.js';
 import { pushAppPoToSpy } from './jobs/pushAppPoToSpy.js';
+import { syncAppPoFromSpy } from './jobs/syncAppPoFromSpy.js';
 // (imported with .js extension above)
 
 const SUPABASE_URL = process.env.SUPABASE_URL!;
@@ -243,6 +244,20 @@ async function runJob(job: JobRow) {
   }
   if ((job.type as any) === 'push_app_po_to_spy') {
     await pushAppPoToSpy({ 
+      job, 
+      page: page!, 
+      log, 
+      saveResult, 
+      setJobFailedOrRequeue: async (jobId: string, error: string) => setJobFailedOrRequeue(job, error), 
+      setJobSucceeded, 
+      ensureNotCancelled, 
+      supabase, 
+      SPY_BASE_URL 
+    });
+    return;
+  }
+  if ((job.type as any) === 'sync_app_po_from_spy') {
+    await syncAppPoFromSpy({ 
       job, 
       page: page!, 
       log, 

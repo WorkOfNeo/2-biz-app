@@ -12,6 +12,7 @@ import { SearchSelect } from '../../../../components/SearchSelect';
 type AppPo = {
   id: number;
   po_no: string;
+  spy_po_no: string | null;
   status: string;
   supplier: string | null;
   styles: number | null;
@@ -68,6 +69,10 @@ export default function AppPoDetailPage() {
   const [jobError, setJobError] = React.useState('');
   const [isComplete, setIsComplete] = React.useState(false);
   const [spyPoNumber, setSpyPoNumber] = React.useState('');
+  
+  // Sync state
+  const [isSyncing, setIsSyncing] = React.useState(false);
+  const [syncError, setSyncError] = React.useState('');
 
   const { data: po, error, isLoading, mutate: mutatePo } = useSWR(
     id ? ['app-po', id] : null,
@@ -374,6 +379,49 @@ export default function AppPoDetailPage() {
     );
   }
 
+  const handleSyncOrder = async () => {
+    if (!po.spy_po_no) {
+      setSyncError('No SPY PO number found. Push order first.');
+      return;
+    }
+    
+    setIsSyncing(true);
+    setSyncError('');
+    
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        setSyncError('Not authenticated');
+        return;
+      }
+      
+      const res = await fetch('/api/sync-app-po', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`
+        },
+        body: JSON.stringify({
+          po_id: Number(id),
+          spy_po_no: po.spy_po_no
+        })
+      });
+      
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.error || 'Failed to sync order');
+      }
+      
+      // Refresh the PO data
+      await mutatePo();
+      alert('Sync started successfully!');
+    } catch (error: any) {
+      setSyncError(error.message || 'Failed to sync order');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
   return (
     <div className="p-4 space-y-4 max-w-7xl mx-auto">
       {/* Back Button */}
@@ -396,10 +444,28 @@ export default function AppPoDetailPage() {
           <div className="text-xs text-slate-500">Purchase / App PO's</div>
           <h1 className="text-2xl font-semibold">{po.po_no}</h1>
         </div>
-        <Button onClick={() => setShowModal(true)}>
-          Push Order
-        </Button>
+        <div className="flex gap-2">
+          <Button onClick={() => setShowModal(true)}>
+            Push Order
+          </Button>
+          {po.spy_po_no && (
+            <Button 
+              variant="outline" 
+              onClick={handleSyncOrder}
+              disabled={isSyncing}
+            >
+              {isSyncing ? 'Syncing...' : 'Sync Orders'}
+            </Button>
+          )}
+        </div>
       </div>
+      
+      {/* Sync error display */}
+      {syncError && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-600">
+          {syncError}
+        </div>
+      )}
 
       {/* PO Number & SPY PO No. */}
       <Card>
