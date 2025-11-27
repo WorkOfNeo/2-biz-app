@@ -141,7 +141,7 @@ export default function AppPoDetailPage() {
           .from('job_logs')
           .select('level, msg, data')
           .eq('job_id', jobId)
-          .order('created_at', { ascending: false })
+          .order('ts', { ascending: false })
           .limit(100);
 
         if (logsErr) {
