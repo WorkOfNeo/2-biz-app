@@ -483,6 +483,13 @@ export async function pushAppPoToSpy(ctx: Ctx) {
             size_mapping: sizeMapping
           });
           
+          await log(job.id, 'info', 'STEP:quantities_to_fill', { 
+            style_no: styleNo,
+            color: colorItem.color,
+            quantities: colorItem.quantities,
+            quantities_length: colorItem.quantities.length
+          });
+          
           // Fill inputs by position
           for (let i = 0; i < colorItem.quantities.length; i++) {
             const qty = colorItem.quantities[i];
@@ -515,7 +522,15 @@ export async function pushAppPoToSpy(ctx: Ctx) {
             if (filled) {
               await log(job.id, 'info', 'STEP:quantity_filled', { 
                 size: sizeInfo.size, 
-                quantity: qty 
+                quantity: qty,
+                sizeMasterId: sizeInfo.sizeMasterId
+              });
+            } else {
+              await log(job.id, 'error', 'STEP:quantity_fill_failed', { 
+                size: sizeInfo.size, 
+                quantity: qty,
+                sizeMasterId: sizeInfo.sizeMasterId,
+                boxId: colorBoxId
               });
             }
           }
@@ -578,11 +593,18 @@ export async function pushAppPoToSpy(ctx: Ctx) {
         await log(job.id, 'error', 'STEP:po_number_not_found', { supplier });
       }
       
-      // Click "Confirm" button to finalize
+      // Click "Confirm" button to finalize (use JavaScript click)
       await log(job.id, 'info', 'STEP:clicking_confirm');
-      const confirmButton = await page.$('button[name="confirm"]');
-      if (confirmButton) {
-        await confirmButton.click();
+      const confirmBtnExists = await page.evaluate(() => {
+        const confirmBtn = document.querySelector('button[name="confirm"]') as HTMLButtonElement;
+        if (confirmBtn) {
+          confirmBtn.click();
+          return true;
+        }
+        return false;
+      });
+      
+      if (confirmBtnExists) {
         await page.waitForLoadState('domcontentloaded', { timeout: 30_000 });
         await page.waitForTimeout(1000);
         await log(job.id, 'progress', 'STAGE:po_confirmed', { supplier, spy_po_no: spyPoNo });
