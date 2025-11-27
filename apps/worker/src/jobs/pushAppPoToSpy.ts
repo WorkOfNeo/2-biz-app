@@ -299,11 +299,17 @@ export async function pushAppPoToSpy(ctx: Ctx) {
       }
       
       // Check for and dismiss any sweet alert modals first
-      const sweetAlertButton = await page.$('.sweet-alert button');
-      if (sweetAlertButton) {
-        await log(job.id, 'info', 'STEP:dismissing_sweet_alert');
-        await sweetAlertButton.click();
-        await page.waitForTimeout(500);
+      try {
+        const sweetAlertVisible = await page.isVisible('.sweet-alert.visible');
+        if (sweetAlertVisible) {
+          await log(job.id, 'info', 'STEP:dismissing_sweet_alert');
+          await page.click('.sweet-alert button', { timeout: 5000 });
+          await page.waitForTimeout(500);
+          await log(job.id, 'info', 'STEP:sweet_alert_dismissed');
+        }
+      } catch (e) {
+        // Alert might not exist or already dismissed, continue
+        await log(job.id, 'info', 'STEP:no_sweet_alert_or_already_dismissed');
       }
       
       // Disable "Only Net Need" checkbox
