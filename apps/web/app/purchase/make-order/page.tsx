@@ -1239,7 +1239,6 @@ function Step4Review({
       const orderData = {
         po_no: poNo,
         status: 'Running',
-        category: 'app',
         styles: orderItems.length,
         ordered: grandTotal,
         shipped: 0,
@@ -1252,7 +1251,7 @@ function Step4Review({
 
       // Insert into database
       const { data, error } = await supabase
-        .from('purchase_orders')
+        .from('app_pos')
         .insert(orderData)
         .select()
         .single();

@@ -27,9 +27,8 @@ export default function AppPosPage() {
     'app-pos',
     async () => {
       const { data, error } = await supabase
-        .from('purchase_orders')
+        .from('app_pos')
         .select('id, po_no, status, supplier, styles, ordered, shipped, etd, eta, created_at, updated_at')
-        .eq('category', 'app')
         .order('created_at', { ascending: false });
       
       if (error) throw error;

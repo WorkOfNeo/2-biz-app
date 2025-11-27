@@ -45,10 +45,9 @@ export async function syncAppPoFromSpy(ctx: Ctx) {
     
     // Fetch APP PO from database
     const { data: appPO, error: poError } = await supabase
-      .from('purchase_orders')
+      .from('app_pos')
       .select('id, po_no, spy_po_no, meta')
       .eq('id', payload.po_id)
-      .eq('category', 'app')
       .single();
       
     if (poError || !appPO) {
@@ -208,7 +207,7 @@ export async function syncAppPoFromSpy(ctx: Ctx) {
         };
         
         const { error: updateError } = await supabase
-          .from('purchase_orders')
+          .from('app_pos')
           .update({ meta: updatedMeta })
           .eq('id', payload.po_id);
           
@@ -230,7 +229,7 @@ export async function syncAppPoFromSpy(ctx: Ctx) {
         };
         
         const { error: updateError } = await supabase
-          .from('purchase_orders')
+          .from('app_pos')
           .update({ meta: updatedMeta })
           .eq('id', payload.po_id);
           

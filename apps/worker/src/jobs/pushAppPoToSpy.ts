@@ -90,10 +90,9 @@ export async function pushAppPoToSpy(ctx: Ctx) {
     
     // Fetch APP PO data
     const { data: appPo, error: poError } = await supabase
-      .from('purchase_orders')
+      .from('app_pos')
       .select('*')
       .eq('id', poId)
-      .eq('category', 'app')
       .single();
     
     if (poError || !appPo) {
@@ -622,7 +621,7 @@ export async function pushAppPoToSpy(ctx: Ctx) {
       const spyPoNoCombined = spyPoNumbers.join(', ');
       
       const { error: updateError } = await supabase
-        .from('purchase_orders')
+        .from('app_pos')
         .update({ spy_po_no: spyPoNoCombined })
         .eq('id', poId);
       

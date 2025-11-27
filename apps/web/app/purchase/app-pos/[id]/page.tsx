@@ -82,10 +82,9 @@ export default function AppPoDetailPage() {
     id ? ['app-po', id] : null,
     async () => {
       const { data, error } = await supabase
-        .from('purchase_orders')
+        .from('app_pos')
         .select('*')
         .eq('id', id)
-        .eq('category', 'app')
         .single();
       
       if (error) throw error;
@@ -365,9 +364,8 @@ export default function AppPoDetailPage() {
     orderItems.length > 0 && po ? ['other-app-pos', orderItems.map(i => `${i.style_no}|${i.color}`).join(',')] : null,
     async () => {
       const { data, error } = await supabase
-        .from('purchase_orders')
+        .from('app_pos')
         .select('id, po_no, meta')
-        .eq('category', 'app')
         .neq('id', po!.id);
       
       if (error) throw error;
