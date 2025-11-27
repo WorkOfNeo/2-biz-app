@@ -68,6 +68,9 @@ function calculateDates(): { etd: string; eta: string } {
   };
 }
 
+/**
+ * Pushes an APP PO to the SPY system by automating browser interactions
+ */
 export async function pushAppPoToSpy(ctx: Ctx) {
   const { job, page, log, saveResult, setJobFailedOrRequeue, setJobSucceeded, ensureNotCancelled, supabase, SPY_BASE_URL } = ctx;
   
