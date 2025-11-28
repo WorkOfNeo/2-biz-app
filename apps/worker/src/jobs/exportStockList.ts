@@ -36,12 +36,12 @@ export async function exportStockList(ctx: Ctx) {
         await log(job.id, 'info', 'STEP:export_stock_list_skip_empty', { listName });
         continue;
       }
-      // Fetch style meta (no DG/Supplier; only id, number, name, image)
-      const { data: styleRows } = await supabase.from('styles').select('id, style_no, style_name, image_url').in('id', styleIds);
-      const metaByNo = new Map<string, { id: string | null; name: string | null; image: string | null }>();
+      // Fetch style meta (include supplier for grouping)
+      const { data: styleRows } = await supabase.from('styles').select('id, style_no, style_name, image_url, supplier').in('id', styleIds);
+      const metaByNo = new Map<string, { id: string | null; name: string | null; image: string | null; supplier: string | null }>();
       const finalStyleNos: string[] = [];
       for (const r of (styleRows ?? []) as any[]) {
-        metaByNo.set(r.style_no, { id: (r.id as string) || null, name: r.style_name ?? null, image: r.image_url ?? null });
+        metaByNo.set(r.style_no, { id: (r.id as string) || null, name: r.style_name ?? null, image: r.image_url ?? null, supplier: r.supplier ?? null });
         if (r.style_no) finalStyleNos.push(r.style_no as string);
       }
       // Map colors per style_id -> colorLower -> style_color_id
@@ -186,16 +186,24 @@ export async function exportStockList(ctx: Ctx) {
       const Cell = (txt: string, w: string | number, align: 'left' | 'right' = 'left', extra?: any) =>
         React.createElement(Text, { style: [{ width: w }, styles.cell, align === 'left' ? styles.leftCell : styles.rightCell, extra || {}] }, txt);
       const fmt = (n: number) => new Intl.NumberFormat('da-DK').format(Math.round(n));
-      // Order styles as provided by the list
-      const stylesOrder = new Map<string, number>(); finalStyleNos.forEach((no, idx) => stylesOrder.set(no, idx));
+      // Group by style
       const grouped = new Map<string, Array<(typeof out)[number]>>();
       for (const r of out) {
         if (!grouped.has(r.style_no)) grouped.set(r.style_no, []);
         grouped.get(r.style_no)!.push(r);
       }
-      const orderedStyles = Array.from(grouped.keys()).sort((a, b) => (stylesOrder.get(a)! - stylesOrder.get(b)!));
+      // Sort by supplier first, then A-Z by style_no within each supplier
+      const orderedStyles = Array.from(grouped.keys()).sort((a, b) => {
+        const supplierA = (metaByNo.get(a)?.supplier || '').toLowerCase();
+        const supplierB = (metaByNo.get(b)?.supplier || '').toLowerCase();
+        // First by supplier
+        const bySupplier = supplierA.localeCompare(supplierB);
+        if (bySupplier !== 0) return bySupplier;
+        // Then by style_no within supplier
+        return a.localeCompare(b);
+      });
       const blocks = orderedStyles.map((style_no) => {
-        const meta = metaByNo.get(style_no) || { name: null, image: null };
+        const meta = metaByNo.get(style_no) || { name: null, image: null, supplier: null };
         const colors = (grouped.get(style_no) || []).sort((a, b) => a.color.localeCompare(b.color));
         const header = React.createElement(View, { style: styles.row },
           React.createElement(View, { style: styles.left },

@@ -236,19 +236,14 @@ export default function StockListPage() {
       map.get(g.styleNo)!.push(g);
     }
     const out = Array.from(map.entries()).map(([styleNo, list]) => ({ styleNo, colors: list.sort((a, b) => a.color.localeCompare(b.color)) }));
-    // Sort styles based on list preference (default item number)
-    const activeSortBy = (() => {
-      if (!activeListId) return 'style_no' as 'style_no' | 'style_name';
-      const row = (stockLists || []).find((r) => (r as any).id === activeListId);
-      return ((row as any)?.sort_by as any) === 'style_name' ? 'style_name' : 'style_no';
-    })();
+    // Sort by supplier first, then A-Z by style_no within each supplier
     out.sort((a, b) => {
-      if (activeSortBy === 'style_name') {
-        const an = (styleMetaByNo[a.styleNo]?.name || '').toLowerCase();
-        const bn = (styleMetaByNo[b.styleNo]?.name || '').toLowerCase();
-        const byName = an.localeCompare(bn);
-        if (byName !== 0) return byName;
-      }
+      const supplierA = (styleMetaByNo[a.styleNo]?.supplier || '').toLowerCase();
+      const supplierB = (styleMetaByNo[b.styleNo]?.supplier || '').toLowerCase();
+      // First by supplier
+      const bySupplier = supplierA.localeCompare(supplierB);
+      if (bySupplier !== 0) return bySupplier;
+      // Then by style_no within supplier
       return a.styleNo.localeCompare(b.styleNo);
     });
     // Apply per-list color exclusions when a list is selected
