@@ -24,7 +24,7 @@ SELECT
   section,
   row_label,
   scraped_at,
-  created_at
+  updated_at
 FROM style_stock
 WHERE style_no = '10214411452'
   AND section = 'Purchase (Running + Shipped)'
