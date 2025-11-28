@@ -719,70 +719,74 @@ export default function AppPoDetailPage() {
         </Card>
       )}
 
-      {/* PO Number & SPY PO No. */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Purchase Order Details</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="text-sm font-medium text-slate-700 block mb-1">
-                PO Number
-              </label>
-              <Input value={po.po_no} disabled className="bg-slate-50" />
-            </div>
-            <div>
-              <label className="text-sm font-medium text-slate-700 block mb-1">
-                SPY PO No.
-              </label>
-              <Input 
-                value={po.spy_po_no || ''} 
-                placeholder="Not pushed to SPY yet" 
-                disabled 
-                className="bg-slate-50" 
-              />
-            </div>
-          </div>
-          
-          {/* File Downloads */}
-          {po.meta?.spy_files && po.meta.spy_files.length > 0 && (
-            <div className="pt-2 border-t">
-              <label className="text-sm font-medium text-slate-700 block mb-2">
-                Documents
-              </label>
-              <div className="flex gap-2">
-                {po.meta.spy_files.map((file: any, idx: number) => (
-                  <a
-                    key={idx}
-                    href={file.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-2 px-3 py-2 border rounded-lg hover:bg-slate-50 transition-colors"
-                  >
-                    {file.type === 'pdf' ? (
-                      <FileText className="w-5 h-5 text-red-600" />
-                    ) : (
-                      <FileSpreadsheet className="w-5 h-5 text-green-600" />
-                    )}
-                    <span className="text-sm font-medium">
-                      {file.type === 'pdf' ? 'PDF' : 'Excel'}
-                    </span>
-                    <Download className="w-4 h-4 text-slate-400" />
-                  </a>
-                ))}
+      {/* Two Column Layout */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {/* Left Column: Purchase Order Details + Order Details */}
+        <div className="lg:col-span-2 space-y-4">
+          {/* PO Number & SPY PO No. */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Purchase Order Details</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-sm font-medium text-slate-700 block mb-1">
+                    PO Number
+                  </label>
+                  <Input value={po.po_no} disabled className="bg-slate-50" />
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-slate-700 block mb-1">
+                    SPY PO No.
+                  </label>
+                  <Input 
+                    value={po.spy_po_no || ''} 
+                    placeholder="Not pushed to SPY yet" 
+                    disabled 
+                    className="bg-slate-50" 
+                  />
+                </div>
               </div>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+              
+              {/* File Downloads */}
+              {po.meta?.spy_files && po.meta.spy_files.length > 0 && (
+                <div className="pt-2 border-t">
+                  <label className="text-sm font-medium text-slate-700 block mb-2">
+                    Documents
+                  </label>
+                  <div className="flex gap-2">
+                    {po.meta.spy_files.map((file: any, idx: number) => (
+                      <a
+                        key={idx}
+                        href={file.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-2 px-3 py-2 border rounded-lg hover:bg-slate-50 transition-colors"
+                      >
+                        {file.type === 'pdf' ? (
+                          <FileText className="w-5 h-5 text-red-600" />
+                        ) : (
+                          <FileSpreadsheet className="w-5 h-5 text-green-600" />
+                        )}
+                        <span className="text-sm font-medium">
+                          {file.type === 'pdf' ? 'PDF' : 'Excel'}
+                        </span>
+                        <Download className="w-4 h-4 text-slate-400" />
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
 
-      {/* Order Content */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Order Details</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-8">
+          {/* Order Content */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Order Details</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-8">
           {groupedBySupplier.length === 0 ? (
             <div className="text-center py-8 text-slate-500">
               No items in this order
@@ -958,6 +962,22 @@ export default function AppPoDetailPage() {
           )}
         </CardContent>
       </Card>
+        </div>
+
+        {/* Right Column: Conversation */}
+        <div className="lg:col-span-1">
+          <Card className="sticky top-4">
+            <CardHeader>
+              <CardTitle>Conversation</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-center py-8 text-slate-500">
+                Conversation feature coming soon
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
 
       {/* Push Order Modal */}
       {showModal && (
