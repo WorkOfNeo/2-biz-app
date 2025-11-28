@@ -9,13 +9,11 @@ function Donut({ pct, label }: { pct: number; label: string }) {
   
   // If above 100%, show full green circle; otherwise show partial progress
   const isAbove100 = pct >= 100;
-  const progressColor = isAbove100 ? '#22c55e' : '#0f172a'; // green-500 or slate-900
-  const restColor = '#e5e7eb';
   
-  // For 100%+, use solid background; otherwise use conic-gradient
+  // For 100%+, full green circle; otherwise partial fill
   const bg = isAbove100 
-    ? progressColor // Solid green for 100%+
-    : `conic-gradient(${progressColor} ${Math.max(0, Math.min(100, Math.round(pct)))}%, ${restColor} 0)`;
+    ? 'conic-gradient(#22c55e 100%, #22c55e 0)' // Full green circle for 100%+
+    : `conic-gradient(#0f172a ${Math.max(0, Math.min(100, Math.round(pct)))}%, #e5e7eb 0)`; // Partial slate
   
   // If above 100%, use darker green text; otherwise use slate
   const textColor = isAbove100 ? '#15803d' : '#334155'; // green-700 or slate-700

@@ -11,13 +11,11 @@ function Donut({ pct, label }: { pct: number; label: string }) {
   
   // If above 100%, show full green circle; otherwise show partial progress
   const isAbove100 = pct >= 100;
-  const progressColor = isAbove100 ? '#22c55e' : '#93c5fd'; // green-500 or light blue
-  const restColor = '#e5e7eb'; // light gray
   
-  // For 100%+, use solid background; otherwise use conic-gradient
+  // For 100%+, full green circle; otherwise partial fill
   const bg = isAbove100 
-    ? progressColor // Solid green for 100%+
-    : `conic-gradient(${progressColor} ${Math.max(0, Math.min(100, Math.round(pct)))}%, ${restColor} 0)`;
+    ? 'conic-gradient(#22c55e 100%, #22c55e 0)' // Full green circle for 100%+
+    : `conic-gradient(#93c5fd ${Math.max(0, Math.min(100, Math.round(pct)))}%, #e5e7eb 0)`; // Partial light blue
   
   // If above 100%, use darker green; otherwise calculate based on progress
   const visualPct = Math.max(0, Math.min(100, Math.round(pct)));
