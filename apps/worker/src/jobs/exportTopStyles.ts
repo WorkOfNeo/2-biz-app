@@ -24,15 +24,14 @@ export async function exportTopStyles(ctx: Ctx) {
     }
     if (!seasonId) throw new Error('No current season set');
     await log(job.id, 'info', 'STEP:top_styles_export_season', { season_id: seasonId });
-    // Fetch top 15 (we will filter exclusions from settings below) and suppliers
+    // Fetch ALL top styles (we'll filter exclusions then take top 15)
     const { data: rows } = await supabase
       .from('top_styles')
       .select('id, style_no, style_name, image_url, color, type, quality, qty, dg')
       .eq('season_id', seasonId)
-      .order('qty', { ascending: false })
-      .limit(15);
+      .order('qty', { ascending: false });
     let list = (rows ?? []) as Array<{ id: string; style_no: string; style_name?: string | null; image_url?: string | null; color?: string | null; type?: string | null; quality?: string | null; qty: number; dg?: string | null }>;
-    // Apply exclusions from settings
+    // Apply exclusions from settings BEFORE taking top 15
     try {
       const exKey = `top_styles_excluded:${seasonId}`;
       const { data: exSeason } = await supabase.from('app_settings').select('value').eq('key', exKey).maybeSingle();
@@ -44,6 +43,8 @@ export async function exportTopStyles(ctx: Ctx) {
         list = list.filter((r) => !exSet.has(String(r.style_no)));
       }
     } catch {}
+    // NOW take top 15 after exclusions (matching the page behavior)
+    list = list.slice(0, 15);
     await log(job.id, 'info', 'STEP:top_styles_export_rows', { count: list.length });
     // Season display name
     let seasonName = 'Season';
