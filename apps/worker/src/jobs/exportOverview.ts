@@ -562,7 +562,9 @@ export async function exportOverview(ctx: Ctx) {
       const fmt = (n: number) => new Intl.NumberFormat('da-DK').format(Math.round(n));
       const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
       function Donut({ pct, label }: { pct: number; label: string }) {
-        // Filled pie: gray base, blue filled sector; circles 40% smaller than current (overall ~36% of original)
+        // Filled pie: gray base, filled sector
+        // If pct >= 100, show full green circle; otherwise show partial blue fill
+        const isAbove100 = pct >= 100;
         const visualPct = clamp(pct, 0, 100);
         const sizeScale = 0.36;
         // Geometry with padding to avoid clipping
@@ -571,12 +573,28 @@ export async function exportOverview(ctx: Ctx) {
         const dim = r * 2 + pad * 2;
         const cx = r + pad;
         const cy = r + pad;
+        
+        const displayPct = Math.round(pct);
+        const green = '#22c55e'; // green-500
+        const darkGreen = '#15803d'; // green-700
+        const blue = '#3b82f6'; // blue-500
+        const gray = '#d1d5db'; // gray-300
+        
+        if (isAbove100) {
+          // Full green circle for 100%+
+          return React.createElement(View, { style: { alignItems: 'center' } },
+            React.createElement(Svg, { width: dim, height: dim },
+              React.createElement(Circle, { cx, cy, r, fill: green })
+            ),
+            React.createElement(Text, { style: { fontSize: s(10), marginTop: s(2), color: darkGreen } }, `${label} · ${displayPct}%`)
+          );
+        }
+        
+        // Partial fill for < 100%
         const endAngle = (-90 + (visualPct / 100) * 360) * (Math.PI / 180);
         const largeArc = visualPct > 50 ? 1 : 0;
         const x = cx + r * Math.cos(endAngle);
         const y = cy + r * Math.sin(endAngle);
-        const blue = '#3b82f6'; // blue-500
-        const gray = '#d1d5db'; // gray-300
         // Sector path from top, arc to angle, and back to center
         const sectorPath = `M ${cx} ${cy} L ${cx} ${cy - r} A ${r} ${r} 0 ${largeArc} 1 ${x} ${y} Z`;
         return React.createElement(View, { style: { alignItems: 'center' } },
@@ -584,7 +602,7 @@ export async function exportOverview(ctx: Ctx) {
             React.createElement(Circle, { cx, cy, r, fill: gray }),
             visualPct > 0 ? React.createElement(Path, { d: sectorPath, fill: blue }) : null
           ),
-          React.createElement(Text, { style: { fontSize: s(10), marginTop: s(2) } }, `${label} · ${Math.round(pct)}%`)
+          React.createElement(Text, { style: { fontSize: s(10), marginTop: s(2) } }, `${label} · ${displayPct}%`)
         );
       }
       // Prices are aggregated to DKK already; display only DKK
