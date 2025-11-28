@@ -6,18 +6,23 @@ import { useMemo, useRef, useEffect, useState } from 'react';
 type Row = { season_id: string; qty: number; price: number; customer_id?: string | null; account_no?: string | null };
 
 function Donut({ pct, label }: { pct: number; label: string }) {
-  const visualPct = Math.max(0, Math.min(100, Math.round(pct))); // fill caps at 100
   const displayPct = Math.round(pct); // number can exceed 100
   const size = 336; // 600% larger than 56px
   
-  // If above 100%, use full green; otherwise use light blue
-  const progressColor = pct >= 100 ? '#22c55e' : '#93c5fd'; // green-500 or light blue
+  // If above 100%, show full green circle; otherwise show partial progress
+  const isAbove100 = pct >= 100;
+  const progressColor = isAbove100 ? '#22c55e' : '#93c5fd'; // green-500 or light blue
   const restColor = '#e5e7eb'; // light gray
-  const bg = `conic-gradient(${progressColor} ${visualPct}%, ${restColor} 0)`;
+  
+  // For 100%+, use solid background; otherwise use conic-gradient
+  const bg = isAbove100 
+    ? progressColor // Solid green for 100%+
+    : `conic-gradient(${progressColor} ${Math.max(0, Math.min(100, Math.round(pct)))}%, ${restColor} 0)`;
   
   // If above 100%, use darker green; otherwise calculate based on progress
+  const visualPct = Math.max(0, Math.min(100, Math.round(pct)));
   const hue = Math.round((visualPct / 100) * 120); // 0 (red) -> 120 (green)
-  const reachColor = pct >= 100 ? '#15803d' : `hsl(${hue}, 70%, 40%)`; // green-700 for above 100%
+  const reachColor = isAbove100 ? '#15803d' : `hsl(${hue}, 70%, 40%)`; // green-700 for above 100%
   
   return (
     <div className="flex flex-col items-center gap-2 text-center">
