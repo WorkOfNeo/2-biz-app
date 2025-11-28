@@ -9,11 +9,16 @@ function Donut({ pct, label }: { pct: number; label: string }) {
   const visualPct = Math.max(0, Math.min(100, Math.round(pct))); // fill caps at 100
   const displayPct = Math.round(pct); // number can exceed 100
   const size = 336; // 600% larger than 56px
-  const progressColor = '#93c5fd'; // light blue
+  
+  // If above 100%, use full green; otherwise use light blue
+  const progressColor = pct >= 100 ? '#22c55e' : '#93c5fd'; // green-500 or light blue
   const restColor = '#e5e7eb'; // light gray
   const bg = `conic-gradient(${progressColor} ${visualPct}%, ${restColor} 0)`;
+  
+  // If above 100%, use darker green; otherwise calculate based on progress
   const hue = Math.round((visualPct / 100) * 120); // 0 (red) -> 120 (green)
-  const reachColor = `hsl(${hue}, 70%, 40%)`;
+  const reachColor = pct >= 100 ? '#15803d' : `hsl(${hue}, 70%, 40%)`; // green-700 for above 100%
+  
   return (
     <div className="flex flex-col items-center gap-2 text-center">
       <div className="rounded-full" style={{ width: size, height: size, background: bg }} />

@@ -4,15 +4,22 @@ import { supabase } from '../../../../lib/supabaseClient';
 import { useEffect, useMemo } from 'react';
 
 function Donut({ pct, label }: { pct: number; label: string }) {
-  const p = Math.max(0, Math.min(100, Math.round(pct)));
+  const visualPct = Math.max(0, Math.min(100, Math.round(pct))); // fill caps at 100
+  const displayPct = Math.round(pct); // number can exceed 100
   const size = 160; // print-friendly size
-  const progressColor = '#0f172a';
+  
+  // If above 100%, use full green; otherwise use dark slate
+  const progressColor = pct >= 100 ? '#22c55e' : '#0f172a'; // green-500 or slate-900
   const restColor = '#e5e7eb';
-  const bg = `conic-gradient(${progressColor} ${p}%, ${restColor} 0)`;
+  const bg = `conic-gradient(${progressColor} ${visualPct}%, ${restColor} 0)`;
+  
+  // If above 100%, use darker green text; otherwise use slate
+  const textColor = pct >= 100 ? '#15803d' : '#334155'; // green-700 or slate-700
+  
   return (
     <div className="flex flex-col items-center gap-1 text-center">
       <div className="rounded-full" style={{ width: size, height: size, background: bg }} />
-      <div className="text-xs text-slate-700">{label}: {p}%</div>
+      <div className="text-xs" style={{ color: textColor }}>{label}: {displayPct}%</div>
     </div>
   );
 }
