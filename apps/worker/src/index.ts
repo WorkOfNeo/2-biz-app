@@ -727,7 +727,7 @@ async function runJob(job: JobRow) {
             color: row.color,
             sizes: row.sizes,
             section: row.section,
-            row_label: row.row_label || '',
+            row_label: String(row.row_label || '').trim(),  // Normalize: trim whitespace, convert null to empty string
             values: row.values,
             po_link: row.po_link,
             scraped_at: scrapeTs
@@ -735,7 +735,7 @@ async function runJob(job: JobRow) {
       // Deduplicate by conflict key to avoid ON CONFLICT affecting the same row twice
       const dedupMap = new Map<string, any>();
       for (const r of payload) {
-        const key = `${r.style_no}|${r.color}|${r.section}|${r.row_label || ''}`;
+        const key = `${r.style_no}|${r.color}|${r.section}|${r.row_label}`;
         dedupMap.set(key, r); // last one wins
       }
       const deduped = Array.from(dedupMap.values());

@@ -317,9 +317,21 @@ export async function updateStyleStock(ctx: Ctx) {
       }
     } catch {}
     const scrapeTs = new Date().toISOString();
-    const payload = extracted.map((row: any) => ({ style_no: s.style_no, color: row.color, sizes: row.sizes, section: row.section, row_label: row.row_label || '', values: row.values, po_link: row.po_link, scraped_at: scrapeTs }));
+    const payload = extracted.map((row: any) => ({ 
+      style_no: s.style_no, 
+      color: row.color, 
+      sizes: row.sizes, 
+      section: row.section, 
+      row_label: String(row.row_label || '').trim(),  // Normalize: trim whitespace, convert null to empty string
+      values: row.values, 
+      po_link: row.po_link, 
+      scraped_at: scrapeTs 
+    }));
     const dedupMap = new Map<string, any>();
-    for (const r of payload) { const key = `${r.style_no}|${r.color}|${r.section}|${r.row_label || ''}`; dedupMap.set(key, r); }
+    for (const r of payload) { 
+      const key = `${r.style_no}|${r.color}|${r.section}|${r.row_label}`; 
+      dedupMap.set(key, r); 
+    }
     const deduped = Array.from(dedupMap.values());
     if (deduped.length) {
       const { error: upErr } = await supabase.from('style_stock').upsert(deduped, { onConflict: 'style_no,color,section,row_label' as any });
