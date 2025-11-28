@@ -144,20 +144,16 @@ export default function StatisticsDashboardPage() {
         if (includeTop15Salesmen && top15Salesmen?.public_url) {
           dynamicParams.top15_salesmen_pdf = top15Salesmen.public_url;
         }
-        // Include selected stock lists - download as base64 and attach as files
-        const stockListAttachments: Array<{ name: string; data: string }> = [];
+        // Include selected stock lists as URL parameters (for Dynamic Attachments)
+        // Add each stock list as a separate parameter: stock_list_1_url, stock_list_2_url, etc.
         if (selectedStockListsSalesmen.size > 0) {
+          let idx = 1;
           for (const name of Array.from(selectedStockListsSalesmen)) {
             const exp = latestStockListByName.get(name);
             if (exp?.public_url) {
-              try {
-                const dataUrl = await fetchToDataUrl(exp.public_url);
-                const base64 = dataUrl.split(',')[1] || '';
-                const safeName = name.replace(/[^a-z0-9_-]+/gi, '_');
-                stockListAttachments.push({ name: `${safeName}.pdf`, data: base64 });
-              } catch (e) {
-                console.error(`Failed to fetch stock list ${name}:`, e);
-              }
+              dynamicParams[`stock_list_${idx}_url`] = exp.public_url;
+              dynamicParams[`stock_list_${idx}_name`] = name;
+              idx++;
             }
           }
         }
@@ -170,11 +166,13 @@ export default function StatisticsDashboardPage() {
             params: summarize(dynamicParams)
           });
         } catch {}
+        // Check if we have any PDFs to send (including stock lists)
+        const hasStockLists = Object.keys(dynamicParams).some(k => k.startsWith('stock_list_') && k.endsWith('_url'));
         const anyParam =
           Boolean(dynamicParams.salesman_pdf) ||
           Boolean(dynamicParams.countries_pdf_url) ||
           Boolean(dynamicParams.top15_salesmen_pdf) ||
-          stockListAttachments.length > 0;
+          hasStockLists;
         if (!anyParam) continue;
         const subject = 'Din statistik';
         const fullName = String(byId[sp.id]?.name || '');
@@ -187,8 +185,8 @@ export default function StatisticsDashboardPage() {
         const firstName = fullName ? toTitleCase(fullName).split(' ')[0] : '';
         const hej = firstName ? `Hej ${firstName},` : 'Hej,';
         const bodyHtml = `${hej}\n\n${salesmenBodyText || 'Hermed statistik :)'}`;
-        // Send with dynamic template params AND stock list attachments
-        await sendEmailJs([recipient], subject, bodyHtml, stockListAttachments.length > 0 ? stockListAttachments : undefined, dynamicParams);
+        // Send with dynamic template params (EmailJS will download PDFs from URLs)
+        await sendEmailJs([recipient], subject, bodyHtml, undefined, dynamicParams);
       }
       alert('Emails queued for sending.');
     } finally {
@@ -243,36 +241,31 @@ export default function StatisticsDashboardPage() {
         const row = latestByKind.get('top_styles_pdf_overall');
         if (row?.public_url) { dynamicParams.top15_overall_pdf = row.public_url; }
       }
-      // Download and attach selected stock lists as actual PDF files
-      const stockListAttachments: Array<{ name: string; data: string }> = [];
+      // Add selected stock lists as URL parameters (for Dynamic Attachments)
       if (selectedStockListsOverall.size > 0) {
+        let idx = 1;
         for (const name of Array.from(selectedStockListsOverall)) {
           const exp = latestStockListByName.get(name);
           if (exp?.public_url) {
-            try {
-              const dataUrl = await fetchToDataUrl(exp.public_url);
-              const base64 = dataUrl.split(',')[1] || '';
-              const safeName = name.replace(/[^a-z0-9_-]+/gi, '_');
-              stockListAttachments.push({ name: `${safeName}.pdf`, data: base64 });
-            } catch (e) {
-              console.error(`Failed to fetch stock list ${name}:`, e);
-            }
+            dynamicParams[`stock_list_${idx}_url`] = exp.public_url;
+            dynamicParams[`stock_list_${idx}_name`] = name;
+            idx++;
           }
         }
       }
-      if (!overallOpts.all && !overallOpts.countries && !overallOpts.top10overall && stockListAttachments.length === 0) { alert('No options selected.'); return; }
+      const hasStockLists = Object.keys(dynamicParams).some(k => k.startsWith('stock_list_') && k.endsWith('_url'));
+      if (!overallOpts.all && !overallOpts.countries && !overallOpts.top10overall && !hasStockLists) { alert('No options selected.'); return; }
       try {
         const summarize = (p: Record<string, string>) => Object.fromEntries(Object.entries(p).map(([k, v]) => [k, { len: (v || '').length, head: (v || '').slice(0, 32) }]));
         console.log('[email:overall] prepared', {
           to,
           include: { all: overallOpts.all, countries: overallOpts.countries, top10overall: overallOpts.top10overall, stockLists: Array.from(selectedStockListsOverall) },
-          params: summarize(dynamicParams),
-          stockListAttachments: stockListAttachments.length
+          params: summarize(dynamicParams)
         });
       } catch {}
       const subject = 'Statistik opdatering';
       const bodyHtml = bodyText || 'Hermed statistik :)';
-      await sendEmailJs(to, subject, bodyHtml, stockListAttachments.length > 0 ? stockListAttachments : undefined, dynamicParams);
+      await sendEmailJs(to, subject, bodyHtml, undefined, dynamicParams);
       alert('Email sent');
     } finally {
       setSendingOverall(false);
