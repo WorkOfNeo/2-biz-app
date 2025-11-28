@@ -85,6 +85,8 @@ export default function AppPoDetailPage() {
   const [showConfirmDialog, setShowConfirmDialog] = React.useState(false);
   const [isDeleting, setIsDeleting] = React.useState(false);
   const [isConfirming, setIsConfirming] = React.useState(false);
+  const [showPoNotFoundDialog, setShowPoNotFoundDialog] = React.useState(false);
+  const [isRemovingSpyPo, setIsRemovingSpyPo] = React.useState(false);
 
   const { data: po, error, isLoading, mutate: mutatePo } = useSWR(
     id ? ['app-po', id] : null,
@@ -247,13 +249,6 @@ export default function AppPoDetailPage() {
           return;
         }
 
-        if (job.status === 'failed') {
-          setSyncError('Sync failed. Check job details for more information.');
-          setSyncProgress(0);
-          setIsSyncing(false);
-          return;
-        }
-
         // Fetch job logs for progress
         const { data: logs, error: logsErr } = await supabase
           .from('job_logs')
@@ -261,6 +256,28 @@ export default function AppPoDetailPage() {
           .eq('job_id', syncJobId)
           .order('ts', { ascending: false })
           .limit(100);
+
+        if (job.status === 'failed') {
+          // Check if it's a PO not found error
+          const errorLogs = (logs || []).filter((log: any) => log.level === 'error');
+          const poNotFoundLog = errorLogs.find((log: any) => 
+            log.msg && log.msg.includes('sync_po_not_found')
+          );
+          
+          if (poNotFoundLog) {
+            // Stop syncing and show the PO not found dialog
+            setIsSyncing(false);
+            setSyncProgress(0);
+            setSyncError('');
+            setShowPoNotFoundDialog(true);
+            return;
+          }
+          
+          setSyncError('Sync failed. Check job details for more information.');
+          setSyncProgress(0);
+          setIsSyncing(false);
+          return;
+        }
 
         if (logsErr) {
           console.error('Failed to fetch sync logs:', logsErr);
@@ -565,6 +582,31 @@ export default function AppPoDetailPage() {
     } finally {
       setIsConfirming(false);
     }
+  };
+
+  const handleRemoveSpyPoNo = async () => {
+    setIsRemovingSpyPo(true);
+    try {
+      const { error } = await supabase
+        .from('app_pos')
+        .update({ spy_po_no: null })
+        .eq('id', id);
+      
+      if (error) throw error;
+      
+      // Refresh the data
+      await mutatePo();
+      setShowPoNotFoundDialog(false);
+    } catch (error: any) {
+      alert(`Failed to remove SPY PO number: ${error.message}`);
+    } finally {
+      setIsRemovingSpyPo(false);
+    }
+  };
+
+  const handlePushFromDialog = () => {
+    setShowPoNotFoundDialog(false);
+    setShowModal(true);
   };
 
   return (
@@ -1129,6 +1171,54 @@ export default function AppPoDetailPage() {
                 className="bg-green-600 hover:bg-green-700 text-white"
               >
                 {isConfirming ? 'Confirming...' : 'Confirm Order'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+      
+      {/* PO Not Found Dialog */}
+      {showPoNotFoundDialog && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-12 h-12 rounded-full bg-yellow-100 flex items-center justify-center">
+                <svg className="w-6 h-6 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+              </div>
+              <div>
+                <h3 className="font-semibold text-lg">SPY PO Not Found</h3>
+                <p className="text-sm text-slate-600">PO {po.spy_po_no} doesn't exist in SPY</p>
+              </div>
+            </div>
+            <p className="text-slate-700 mb-6">
+              The SPY PO number <strong>{po.spy_po_no}</strong> was not found in the SPY Running Orders. 
+              Would you like to push this order to SPY or remove the SPY PO number from this APP PO?
+            </p>
+            <div className="flex flex-col gap-3">
+              <Button 
+                onClick={handlePushFromDialog}
+                disabled={isRemovingSpyPo}
+                className="w-full bg-blue-600 hover:bg-blue-700 text-white"
+              >
+                Push Order to SPY
+              </Button>
+              <Button 
+                variant="outline"
+                onClick={handleRemoveSpyPoNo}
+                disabled={isRemovingSpyPo}
+                className="w-full border-red-300 text-red-600 hover:bg-red-50"
+              >
+                {isRemovingSpyPo ? 'Removing...' : 'Remove SPY PO Number'}
+              </Button>
+              <Button 
+                variant="outline"
+                onClick={() => setShowPoNotFoundDialog(false)}
+                disabled={isRemovingSpyPo}
+                className="w-full"
+              >
+                Cancel
               </Button>
             </div>
           </div>

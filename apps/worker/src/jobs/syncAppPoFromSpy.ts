@@ -109,7 +109,8 @@ export async function syncAppPoFromSpy(ctx: Ctx) {
     }, payload.spy_po_no);
     
     if (!poRowData) {
-      throw new Error(`PO ${payload.spy_po_no} not found in running orders table`);
+      await log(job.id, 'error', 'STEP:sync_po_not_found', { spy_po_no: payload.spy_po_no });
+      throw new Error(`PO_NOT_FOUND:${payload.spy_po_no}`);
     }
     
     await log(job.id, 'info', 'STEP:sync_po_found', { spy_po_no: payload.spy_po_no });
