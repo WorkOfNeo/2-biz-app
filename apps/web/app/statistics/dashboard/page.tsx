@@ -169,8 +169,15 @@ export default function StatisticsDashboardPage() {
           Boolean(dynamicParams.top15_salesmen_pdf);
         if (!anyParam) continue;
         const subject = 'Din statistik';
-        const firstName = String(byId[sp.id]?.name || '');
-        const hej = firstName ? `Hej ${firstName.split(' ')[0]},` : 'Hej,';
+        const fullName = String(byId[sp.id]?.name || '');
+        // Capitalize name properly (convert from ALL CAPS to Title Case)
+        const toTitleCase = (str: string) => {
+          return str.toLowerCase().split(' ').map(word => 
+            word.charAt(0).toUpperCase() + word.slice(1)
+          ).join(' ');
+        };
+        const firstName = fullName ? toTitleCase(fullName).split(' ')[0] : '';
+        const hej = firstName ? `Hej ${firstName},` : 'Hej,';
         const bodyHtml = `${hej}\n\n${salesmenBodyText || 'Hermed statistik :)'}`;
         // Send with dynamic template params (EmailJS)
         await sendEmailJs([recipient], subject, bodyHtml, undefined, dynamicParams);
