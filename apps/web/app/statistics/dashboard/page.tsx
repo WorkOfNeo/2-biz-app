@@ -265,7 +265,7 @@ export default function StatisticsDashboardPage() {
       } catch {}
       const subject = 'Statistik opdatering';
       const bodyHtml = bodyText || 'Hermed statistik :)';
-      await sendEmailJs(to, subject, bodyHtml, undefined, dynamicParams);
+      await sendEmailJs(to, subject, bodyHtml, undefined, dynamicParams, true); // Send as ONE email
       alert('Email sent');
     } finally {
       setSendingOverall(false);
@@ -277,7 +277,8 @@ export default function StatisticsDashboardPage() {
     subject: string,
     message: string,
     attachments?: Array<{ name: string; data: string }>,
-    extraTemplateParams?: Record<string, string>
+    extraTemplateParams?: Record<string, string>,
+    sendAsOne?: boolean  // If true, send ONE email to all recipients (BCC)
   ) {
     if (!EMAILJS_SERVICE_ID || !EMAILJS_TEMPLATE_ID || !EMAILJS_PUBLIC_KEY) {
       throw new Error('EmailJS browser env missing. Set NEXT_PUBLIC_EMAILJS_* variables.');
@@ -291,6 +292,44 @@ export default function StatisticsDashboardPage() {
       }
       return out;
     };
+    
+    // If sendAsOne is true, send ONE email with all recipients in BCC
+    if (sendAsOne && to.length > 1) {
+      const basePayload = {
+        service_id: EMAILJS_SERVICE_ID,
+        template_id: EMAILJS_TEMPLATE_ID,
+        user_id: EMAILJS_PUBLIC_KEY,
+        template_params: {
+          to_email: to[0], // First recipient as "to"
+          bcc_email: to.slice(1).join(','), // Rest as BCC
+          subject,
+          message_html: message,
+          from_name: EMAILJS_FROM_NAME,
+          from_email: EMAILJS_FROM_EMAIL,
+          ...(extraTemplateParams || {}),
+        },
+      } as any;
+      
+      try {
+        console.log('[EmailJS:request:preview:BCC]', {
+          to: to[0],
+          bcc_count: to.length - 1,
+          hasAttachments: 0,
+          templateParams: summarizeParams(basePayload.template_params)
+        });
+      } catch {}
+      
+      const res = await fetch(EMAILJS_ENDPOINT, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(basePayload) });
+      if (!res.ok) {
+        const body = await res.text().catch(() => '');
+        const lastErr = `${res.status} ${res.statusText} :: ${body}`;
+        console.error('[EmailJS:error]', lastErr);
+        throw new Error(lastErr || 'EmailJS send failed');
+      }
+      return; // Success - sent one email to all recipients
+    }
+    
+    // Otherwise, send individual emails (original behavior)
     for (const recipient of to) {
       // Prefer Dynamic Attachments via template params; fall back to attachments shapes if needed
       const basePayload = {
