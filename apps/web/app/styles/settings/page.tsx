@@ -264,9 +264,29 @@ function StockListsTab({ supabase }: { supabase: any }) {
             {(stockLists ?? []).map((l: any) => (<option key={l.id} value={l.id}>{l.name}</option>))}
           </select>
         </div>
-        <div className="flex items-center gap-1">
-          <TabButton active={innerTab==='add'} onClick={()=>setInnerTab('add')}>Add Styles</TabButton>
-          <TabButton active={innerTab==='edit'} onClick={()=>setInnerTab('edit')}>Edit List</TabButton>
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1">
+            <TabButton active={innerTab==='add'} onClick={()=>setInnerTab('add')}>Add Styles</TabButton>
+            <TabButton active={innerTab==='edit'} onClick={()=>setInnerTab('edit')}>Edit List</TabButton>
+          </div>
+          {activeListId && (
+            <Button 
+              size="sm" 
+              variant="outline"
+              className="border-red-300 text-red-600 hover:bg-red-50"
+              onClick={async () => {
+                const listName = stockLists?.find(l => l.id === activeListId)?.name;
+                if (!listName || !confirm(`Are you sure you want to delete the list "${listName}"? This action cannot be undone.`)) return;
+                const { error } = await supabase.from('stock_lists').delete().eq('id', activeListId);
+                if (error) { alert('Failed to delete: ' + error.message); return; }
+                flash('List deleted successfully');
+                setActiveListId('');
+                await mutateLists();
+              }}
+            >
+              Delete List
+            </Button>
+          )}
         </div>
       </div>
       {notice && (
