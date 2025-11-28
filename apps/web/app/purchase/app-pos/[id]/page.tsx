@@ -8,6 +8,7 @@ import { Input } from '../../../../components/ui/input';
 import { Button } from '../../../../components/ui/button';
 import { Badge } from '../../../../components/ui/badge';
 import { SearchSelect } from '../../../../components/SearchSelect';
+import { Trash2, Check, FileText, FileSpreadsheet, Download } from 'lucide-react';
 
 type AppPo = {
   id: number;
@@ -23,6 +24,7 @@ type AppPo = {
   meta: any;
   created_at: string;
   updated_at: string;
+  confirmed: boolean;
 };
 
 type OrderItem = {
@@ -77,6 +79,12 @@ export default function AppPoDetailPage() {
   const [syncStatus, setSyncStatus] = React.useState('');
   const [syncError, setSyncError] = React.useState('');
   const [syncComplete, setSyncComplete] = React.useState(false);
+  
+  // Action dialogs
+  const [showDeleteDialog, setShowDeleteDialog] = React.useState(false);
+  const [showConfirmDialog, setShowConfirmDialog] = React.useState(false);
+  const [isDeleting, setIsDeleting] = React.useState(false);
+  const [isConfirming, setIsConfirming] = React.useState(false);
 
   const { data: po, error, isLoading, mutate: mutatePo } = useSWR(
     id ? ['app-po', id] : null,
@@ -520,6 +528,45 @@ export default function AppPoDetailPage() {
     }
   };
 
+  const handleDelete = async () => {
+    setIsDeleting(true);
+    try {
+      const { error } = await supabase
+        .from('app_pos')
+        .delete()
+        .eq('id', id);
+      
+      if (error) throw error;
+      
+      // Navigate back to list
+      router.push('/purchase/app-pos');
+    } catch (error: any) {
+      alert(`Failed to delete order: ${error.message}`);
+      setIsDeleting(false);
+      setShowDeleteDialog(false);
+    }
+  };
+
+  const handleConfirm = async () => {
+    setIsConfirming(true);
+    try {
+      const { error } = await supabase
+        .from('app_pos')
+        .update({ confirmed: true })
+        .eq('id', id);
+      
+      if (error) throw error;
+      
+      // Refresh the data
+      await mutatePo();
+      setShowConfirmDialog(false);
+    } catch (error: any) {
+      alert(`Failed to confirm order: ${error.message}`);
+    } finally {
+      setIsConfirming(false);
+    }
+  };
+
   return (
     <div className="p-4 space-y-4 max-w-7xl mx-auto">
       {/* Back Button */}
@@ -541,14 +588,38 @@ export default function AppPoDetailPage() {
         <div>
           <div className="text-xs text-slate-500">Purchase / App PO's</div>
           <h1 className="text-2xl font-semibold">{po.po_no}</h1>
+          {po.confirmed && (
+            <Badge className="mt-1 bg-green-100 text-green-800 border-green-300">
+              Confirmed
+            </Badge>
+          )}
         </div>
         <div className="flex gap-2">
+          <Button 
+            variant="outline"
+            onClick={() => setShowDeleteDialog(true)}
+            disabled={po.confirmed}
+            className="border-red-300 text-red-600 hover:bg-red-50"
+          >
+            <Trash2 className="w-4 h-4 mr-2" />
+            Delete
+          </Button>
+          {!po.confirmed && (
+            <Button 
+              variant="outline"
+              onClick={() => setShowConfirmDialog(true)}
+              className="border-green-300 text-green-600 hover:bg-green-50"
+            >
+              <Check className="w-4 h-4 mr-2" />
+              Confirm
+            </Button>
+          )}
           <Button onClick={() => setShowModal(true)}>
             Push Order
           </Button>
           {po.spy_po_no && (
             <Button 
-              variant="outline" 
+              variant="outline"
               onClick={handleSyncOrder}
               disabled={isSyncing}
             >
@@ -611,9 +682,44 @@ export default function AppPoDetailPage() {
               <label className="text-sm font-medium text-slate-700 block mb-1">
                 SPY PO No.
               </label>
-              <Input placeholder="Enter SPY PO Number..." className="bg-white" />
+              <Input 
+                value={po.spy_po_no || ''} 
+                placeholder="Not pushed to SPY yet" 
+                disabled 
+                className="bg-slate-50" 
+              />
             </div>
           </div>
+          
+          {/* File Downloads */}
+          {po.meta?.spy_files && po.meta.spy_files.length > 0 && (
+            <div className="pt-2 border-t">
+              <label className="text-sm font-medium text-slate-700 block mb-2">
+                Documents
+              </label>
+              <div className="flex gap-2">
+                {po.meta.spy_files.map((file: any, idx: number) => (
+                  <a
+                    key={idx}
+                    href={file.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-2 px-3 py-2 border rounded-lg hover:bg-slate-50 transition-colors"
+                  >
+                    {file.type === 'pdf' ? (
+                      <FileText className="w-5 h-5 text-red-600" />
+                    ) : (
+                      <FileSpreadsheet className="w-5 h-5 text-green-600" />
+                    )}
+                    <span className="text-sm font-medium">
+                      {file.type === 'pdf' ? 'PDF' : 'Excel'}
+                    </span>
+                    <Download className="w-4 h-4 text-slate-400" />
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -953,6 +1059,78 @@ export default function AppPoDetailPage() {
                 </div>
               </>
             )}
+          </div>
+        </div>
+      )}
+      
+      {/* Delete Confirmation Dialog */}
+      {showDeleteDialog && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-12 h-12 rounded-full bg-red-100 flex items-center justify-center">
+                <Trash2 className="w-6 h-6 text-red-600" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-lg">Delete Purchase Order</h3>
+                <p className="text-sm text-slate-600">This action cannot be undone</p>
+              </div>
+            </div>
+            <p className="text-slate-700 mb-6">
+              Are you sure you want to delete this purchase order? This will permanently remove all data associated with this order.
+            </p>
+            <div className="flex gap-3 justify-end">
+              <Button 
+                variant="outline" 
+                onClick={() => setShowDeleteDialog(false)}
+                disabled={isDeleting}
+              >
+                Cancel
+              </Button>
+              <Button 
+                onClick={handleDelete}
+                disabled={isDeleting}
+                className="bg-red-600 hover:bg-red-700 text-white"
+              >
+                {isDeleting ? 'Deleting...' : 'Delete Order'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+      
+      {/* Confirm Order Dialog */}
+      {showConfirmDialog && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-12 h-12 rounded-full bg-green-100 flex items-center justify-center">
+                <Check className="w-6 h-6 text-green-600" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-lg">Confirm Purchase Order</h3>
+                <p className="text-sm text-slate-600">Mark this order as confirmed</p>
+              </div>
+            </div>
+            <p className="text-slate-700 mb-6">
+              Are you sure you want to confirm this purchase order? Confirmed orders will be moved to a separate section.
+            </p>
+            <div className="flex gap-3 justify-end">
+              <Button 
+                variant="outline" 
+                onClick={() => setShowConfirmDialog(false)}
+                disabled={isConfirming}
+              >
+                Cancel
+              </Button>
+              <Button 
+                onClick={handleConfirm}
+                disabled={isConfirming}
+                className="bg-green-600 hover:bg-green-700 text-white"
+              >
+                {isConfirming ? 'Confirming...' : 'Confirm Order'}
+              </Button>
+            </div>
           </div>
         </div>
       )}
