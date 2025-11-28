@@ -49,15 +49,33 @@ export default function StatisticsDashboardPage() {
     if (error) throw new Error(error.message);
     return (data ?? []) as Array<{ id: string; name: string }>
   });
-  const [selectedStockLists, setSelectedStockLists] = React.useState<Set<string>>(new Set());
-  function toggleStockList(name: string) {
-    setSelectedStockLists((prev) => { const n = new Set(prev); if (n.has(name)) n.delete(name); else n.add(name); return n; });
+  // Separate stock lists for each section
+  const [selectedStockListsSalesmen, setSelectedStockListsSalesmen] = React.useState<Set<string>>(new Set());
+  const [selectedStockListsOverall, setSelectedStockListsOverall] = React.useState<Set<string>>(new Set());
+  
+  function toggleStockListSalesmen(name: string) {
+    setSelectedStockListsSalesmen((prev) => { const n = new Set(prev); if (n.has(name)) n.delete(name); else n.add(name); return n; });
+  }
+  
+  function toggleStockListOverall(name: string) {
+    setSelectedStockListsOverall((prev) => { const n = new Set(prev); if (n.has(name)) n.delete(name); else n.add(name); return n; });
   }
 
   // Box #1 - Salesperson Statistics
   const [selected, setSelected] = React.useState<Record<string, boolean>>({});
   const [includeCountries, setIncludeCountries] = React.useState(true);
-  const [includeTop15Salesmen, setIncludeTop15Salesmen] = React.useState(false);
+  const [includeTop15Salesmen, setIncludeTop15Salesmen] = React.useState(true);
+  
+  // Initialize all salespersons as selected by default
+  React.useEffect(() => {
+    if (salespersons && salespersons.length > 0 && Object.keys(selected).length === 0) {
+      const allSelected: Record<string, boolean> = {};
+      for (const sp of salespersons) {
+        allSelected[sp.id] = true;
+      }
+      setSelected(allSelected);
+    }
+  }, [salespersons, selected]);
   const [sendingSp, setSendingSp] = React.useState(false);
   const [salesmenBodyText, setSalesmenBodyText] = React.useState('Hermed statistik :)');
   const [savingSalesmenPrefs, setSavingSalesmenPrefs] = React.useState(false);
@@ -128,9 +146,9 @@ export default function StatisticsDashboardPage() {
           dynamicParams.top15_salesmen_pdf = top15Salesmen.public_url;
         }
         // Include selected stock lists (same selection for all recipients)
-        if (selectedStockLists.size > 0) {
+        if (selectedStockListsSalesmen.size > 0) {
           const lines: string[] = [];
-          for (const name of Array.from(selectedStockLists)) {
+          for (const name of Array.from(selectedStockListsSalesmen)) {
             const exp = latestStockListByName.get(name);
             if (exp?.public_url) lines.push(`${name}: ${exp.public_url}`);
           }
@@ -211,9 +229,9 @@ export default function StatisticsDashboardPage() {
         if (row?.public_url) { dynamicParams.top15_overall_pdf = row.public_url; }
       }
       // Add selected stock lists as a newline-separated list of "Name: URL"
-      if (selectedStockLists.size > 0) {
+      if (selectedStockListsOverall.size > 0) {
         const lines: string[] = [];
-        for (const name of Array.from(selectedStockLists)) {
+        for (const name of Array.from(selectedStockListsOverall)) {
           const exp = latestStockListByName.get(name);
           if (exp?.public_url) lines.push(`${name}: ${exp.public_url}`);
         }
@@ -224,7 +242,7 @@ export default function StatisticsDashboardPage() {
         const summarize = (p: Record<string, string>) => Object.fromEntries(Object.entries(p).map(([k, v]) => [k, { len: (v || '').length, head: (v || '').slice(0, 32) }]));
         console.log('[email:overall] prepared', {
           to,
-          include: { all: overallOpts.all, countries: overallOpts.countries, top10overall: overallOpts.top10overall, stockLists: Array.from(selectedStockLists) },
+          include: { all: overallOpts.all, countries: overallOpts.countries, top10overall: overallOpts.top10overall, stockLists: Array.from(selectedStockListsOverall) },
           params: summarize(dynamicParams)
         });
       } catch {}
@@ -431,11 +449,11 @@ export default function StatisticsDashboardPage() {
             <div className="text-xs text-gray-600 mb-1">Stock Lists</div>
             <div className="flex flex-wrap gap-2">
               {(stockListsAll ?? []).map((l) => {
-                const on = selectedStockLists.has(l.name);
+                const on = selectedStockListsSalesmen.has(l.name);
                 const available = Boolean(latestStockListByName.get(l.name)?.public_url);
                 return (
                   <label key={l.id} className={"inline-flex items-center gap-1 px-2 py-1 rounded border " + (on ? 'bg-slate-900 text-white border-slate-900' : '')}>
-                    <input type="checkbox" className="h-3 w-3" checked={on} disabled={!available} onChange={() => toggleStockList(l.name)} />
+                    <input type="checkbox" className="h-3 w-3" checked={on} disabled={!available} onChange={() => toggleStockListSalesmen(l.name)} />
                     <span className="text-xs">{l.name}</span>
                     {!available && <span className="text-[10px] text-gray-500 ml-1">(no export)</span>}
                   </label>
@@ -483,11 +501,11 @@ export default function StatisticsDashboardPage() {
             <div className="text-xs text-gray-600 mb-1">Stock Lists</div>
             <div className="flex flex-wrap gap-2">
               {(stockListsAll ?? []).map((l) => {
-                const on = selectedStockLists.has(l.name);
+                const on = selectedStockListsOverall.has(l.name);
                 const available = Boolean(latestStockListByName.get(l.name)?.public_url);
                 return (
                   <label key={l.id} className={"inline-flex items-center gap-1 px-2 py-1 rounded border " + (on ? 'bg-slate-900 text-white border-slate-900' : '')}>
-                    <input type="checkbox" className="h-3 w-3" checked={on} disabled={!available} onChange={() => toggleStockList(l.name)} />
+                    <input type="checkbox" className="h-3 w-3" checked={on} disabled={!available} onChange={() => toggleStockListOverall(l.name)} />
                     <span className="text-xs">{l.name}</span>
                     {!available && <span className="text-[10px] text-gray-500 ml-1">(no export)</span>}
                   </label>
