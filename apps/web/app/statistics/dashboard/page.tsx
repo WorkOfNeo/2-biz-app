@@ -166,7 +166,8 @@ export default function StatisticsDashboardPage() {
         const anyParam =
           Boolean(dynamicParams.salesman_pdf) ||
           Boolean(dynamicParams.countries_pdf_url) ||
-          Boolean(dynamicParams.top15_salesmen_pdf);
+          Boolean(dynamicParams.top15_salesmen_pdf) ||
+          Boolean(dynamicParams.stock_lists_urls);
         if (!anyParam) continue;
         const subject = 'Din statistik';
         const fullName = String(byId[sp.id]?.name || '');
