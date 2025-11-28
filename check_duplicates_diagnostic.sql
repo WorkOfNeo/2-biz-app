@@ -16,19 +16,35 @@ HAVING COUNT(*) > 1
 ORDER BY COUNT(*) DESC, style_no, color
 LIMIT 50;
 
--- Query 2: Check the specific style you mentioned (10214411452)
+-- Query 2: Show ALL rows that are part of duplicate groups
+-- This shows you every duplicate row across the entire database
+WITH duplicates AS (
+  SELECT 
+    style_no,
+    color,
+    section,
+    COALESCE(TRIM(row_label), '') as normalized_label
+  FROM style_stock
+  GROUP BY style_no, color, section, COALESCE(TRIM(row_label), '')
+  HAVING COUNT(*) > 1
+)
 SELECT 
-  id,
-  style_no,
-  color,
-  section,
-  row_label,
-  scraped_at,
-  updated_at
-FROM style_stock
-WHERE style_no = '10214411452'
-  AND section = 'Purchase (Running + Shipped)'
-ORDER BY color, row_label, scraped_at DESC;
+  s.id,
+  s.style_no,
+  s.color,
+  s.section,
+  s.row_label,
+  s.scraped_at,
+  s.updated_at,
+  LENGTH(s.values::text) as values_size
+FROM style_stock s
+INNER JOIN duplicates d ON
+  s.style_no = d.style_no
+  AND s.color = d.color
+  AND s.section = d.section
+  AND COALESCE(TRIM(s.row_label), '') = d.normalized_label
+ORDER BY s.style_no, s.color, s.section, s.row_label, s.scraped_at DESC
+LIMIT 200;
 
 -- Query 3: Count total rows with Purchase section
 SELECT 
