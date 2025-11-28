@@ -175,12 +175,23 @@ export default function StockListPage() {
         if (rows.length === 0) continue;
         // latest per (section,row_label)
         const latestMap = new Map<string, Row>();
+        let uniqueIdCounter = 0;
+        
         for (const r of rows) {
-          // Normalize row_label to avoid duplicates from whitespace variations
           const normalizedLabel = String(r.row_label ?? '').trim();
-          const key = `${r.section}|${normalizedLabel}`;
-          const curr = latestMap.get(key);
-          if (!curr || new Date(r.scraped_at).getTime() > new Date(curr.scraped_at).getTime()) latestMap.set(key, r);
+          
+          if (normalizedLabel) {
+            // Has a PO number: deduplicate by keeping only latest scraped_at for this PO
+            const key = `${r.section}|${normalizedLabel}`;
+            const curr = latestMap.get(key);
+            if (!curr || new Date(r.scraped_at).getTime() > new Date(curr.scraped_at).getTime()) {
+              latestMap.set(key, r);
+            }
+          } else {
+            // No PO number (NULL/empty): treat each row as a unique unnamed PO
+            // Use a unique counter to ensure each gets summed
+            latestMap.set(`${r.section}|__unnamed_${uniqueIdCounter++}`, r);
+          }
         }
         const latestRows = Array.from(latestMap.values());
         const sizes = (latestRows.find(r => r.section === 'Stock') || latestRows[0] || rows[0])?.sizes || [];
