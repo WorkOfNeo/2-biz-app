@@ -7,16 +7,20 @@ function Donut({ pct, label }: { pct: number; label: string }) {
   const displayPct = Math.round(pct); // number can exceed 100
   const size = 160; // print-friendly size
   
-  // If above 100%, show full green circle; otherwise show partial progress
-  const isAbove100 = pct >= 100;
+  // If at or above 100%, show full green circle; otherwise show partial progress
+  let bg: string;
+  let textColor: string;
   
-  // For 100%+, full green circle; otherwise partial fill
-  const bg = isAbove100 
-    ? 'conic-gradient(#22c55e 100%, #22c55e 0)' // Full green circle for 100%+
-    : `conic-gradient(#0f172a ${Math.max(0, Math.min(100, Math.round(pct)))}%, #e5e7eb 0)`; // Partial slate
-  
-  // If above 100%, use darker green text; otherwise use slate
-  const textColor = isAbove100 ? '#15803d' : '#334155'; // green-700 or slate-700
+  if (pct >= 100) {
+    // Full green circle
+    bg = '#22c55e'; // green-500
+    textColor = '#15803d'; // green-700
+  } else {
+    // Partial fill with slate
+    const visualPct = Math.max(0, Math.min(100, Math.round(pct)));
+    bg = `conic-gradient(#0f172a ${visualPct}%, #e5e7eb 0)`;
+    textColor = '#334155'; // slate-700
+  }
   
   return (
     <div className="flex flex-col items-center gap-1 text-center">
