@@ -176,7 +176,9 @@ export default function StockListPage() {
         // latest per (section,row_label)
         const latestMap = new Map<string, Row>();
         for (const r of rows) {
-          const key = `${r.section}|${r.row_label ?? ''}`;
+          // Normalize row_label to avoid duplicates from whitespace variations
+          const normalizedLabel = String(r.row_label ?? '').trim();
+          const key = `${r.section}|${normalizedLabel}`;
           const curr = latestMap.get(key);
           if (!curr || new Date(r.scraped_at).getTime() > new Date(curr.scraped_at).getTime()) latestMap.set(key, r);
         }
