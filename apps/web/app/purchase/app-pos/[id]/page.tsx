@@ -584,28 +584,40 @@ export default function AppPoDetailPage() {
     }
   };
 
-  const handleRemoveSpyPoNo = async () => {
+  const handleRemoveAppPo = async () => {
     setIsRemovingSpyPo(true);
     try {
       const { error } = await supabase
         .from('app_pos')
-        .update({ spy_po_no: null })
+        .delete()
         .eq('id', id);
       
       if (error) throw error;
       
-      // Refresh the data
-      await mutatePo();
-      setShowPoNotFoundDialog(false);
+      // Navigate back to list
+      router.push('/purchase/app-pos');
     } catch (error: any) {
-      alert(`Failed to remove SPY PO number: ${error.message}`);
-    } finally {
+      alert(`Failed to remove APP PO: ${error.message}`);
       setIsRemovingSpyPo(false);
     }
   };
 
-  const handlePushFromDialog = () => {
+  const handlePushFromDialog = async () => {
     setShowPoNotFoundDialog(false);
+    
+    // First, clear the old SPY PO number
+    try {
+      await supabase
+        .from('app_pos')
+        .update({ spy_po_no: null })
+        .eq('id', id);
+      
+      await mutatePo();
+    } catch (error: any) {
+      console.error('Failed to clear old SPY PO number:', error);
+    }
+    
+    // Then open the push modal
     setShowModal(true);
   };
 
@@ -1194,7 +1206,7 @@ export default function AppPoDetailPage() {
             </div>
             <p className="text-slate-700 mb-6">
               The SPY PO number <strong>{po.spy_po_no}</strong> was not found in the SPY Running Orders. 
-              Would you like to push this order to SPY or remove the SPY PO number from this APP PO?
+              You can push this order to SPY again (this will create a new SPY PO number), or delete this APP PO entirely.
             </p>
             <div className="flex flex-col gap-3">
               <Button 
@@ -1206,11 +1218,12 @@ export default function AppPoDetailPage() {
               </Button>
               <Button 
                 variant="outline"
-                onClick={handleRemoveSpyPoNo}
+                onClick={handleRemoveAppPo}
                 disabled={isRemovingSpyPo}
                 className="w-full border-red-300 text-red-600 hover:bg-red-50"
               >
-                {isRemovingSpyPo ? 'Removing...' : 'Remove SPY PO Number'}
+                <Trash2 className="w-4 h-4 mr-2" />
+                {isRemovingSpyPo ? 'Removing...' : 'Remove APP PO'}
               </Button>
               <Button 
                 variant="outline"
