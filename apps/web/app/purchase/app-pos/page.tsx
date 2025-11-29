@@ -5,7 +5,7 @@ import useSWR from 'swr';
 import { supabase } from '../../../lib/supabaseClient';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../../components/ui/card';
 import { Badge } from '../../../components/ui/badge';
-import { ChevronDown, ChevronRight } from 'lucide-react';
+import { ChevronDown, ChevronRight, Trash2 } from 'lucide-react';
 
 type AppPo = {
   id: number;
@@ -25,8 +25,9 @@ type AppPo = {
 export default function AppPosPage() {
   const router = useRouter();
   const [showConfirmed, setShowConfirmed] = React.useState(false);
+  const [deleting, setDeleting] = React.useState<number | null>(null);
   
-  const { data: pos, error, isLoading } = useSWR(
+  const { data: pos, error, isLoading, mutate } = useSWR(
     'app-pos',
     async () => {
       const { data, error } = await supabase
@@ -41,6 +42,38 @@ export default function AppPosPage() {
   
   const unconfirmedPos = pos?.filter(po => !po.confirmed) || [];
   const confirmedPos = pos?.filter(po => po.confirmed) || [];
+
+  async function handleDelete(po: AppPo, e: React.MouseEvent) {
+    e.stopPropagation(); // Prevent navigation
+    
+    const confirmed = window.confirm(
+      `Are you sure you want to delete APP PO "${po.po_no}"?\n\nThis action cannot be undone.`
+    );
+    
+    if (!confirmed) return;
+    
+    setDeleting(po.id);
+    
+    try {
+      const { error } = await supabase
+        .from('app_pos')
+        .delete()
+        .eq('id', po.id);
+      
+      if (error) throw error;
+      
+      // Update the local cache to remove the deleted PO
+      await mutate();
+      
+      // Show success (optional)
+      // alert('APP PO deleted successfully');
+    } catch (err: any) {
+      console.error('Delete error:', err);
+      alert(`Failed to delete APP PO: ${err.message || 'Unknown error'}`);
+    } finally {
+      setDeleting(null);
+    }
+  }
 
   return (
     <div className="p-4 space-y-4 max-w-7xl mx-auto">
@@ -131,8 +164,18 @@ export default function AppPosPage() {
                             )}
                           </div>
                         </div>
-                        <div className="text-xs text-slate-400">
-                          {new Date(po.created_at).toLocaleDateString()}
+                        <div className="flex items-center gap-2">
+                          <div className="text-xs text-slate-400">
+                            {new Date(po.created_at).toLocaleDateString()}
+                          </div>
+                          <button
+                            onClick={(e) => handleDelete(po, e)}
+                            disabled={deleting === po.id}
+                            className="p-2 rounded hover:bg-red-50 text-red-600 hover:text-red-700 disabled:opacity-50 transition-colors"
+                            title="Delete APP PO"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
                         </div>
                       </div>
                     </div>
@@ -209,8 +252,18 @@ export default function AppPosPage() {
                               )}
                             </div>
                           </div>
-                          <div className="text-xs text-slate-400">
-                            {new Date(po.created_at).toLocaleDateString()}
+                          <div className="flex items-center gap-2">
+                            <div className="text-xs text-slate-400">
+                              {new Date(po.created_at).toLocaleDateString()}
+                            </div>
+                            <button
+                              onClick={(e) => handleDelete(po, e)}
+                              disabled={deleting === po.id}
+                              className="p-2 rounded hover:bg-red-50 text-red-600 hover:text-red-700 disabled:opacity-50 transition-colors"
+                              title="Delete APP PO"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
                           </div>
                         </div>
                       </div>
