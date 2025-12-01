@@ -1,19 +1,32 @@
 -- 75_jobs_add_apply_customer_preview.sql
--- Add 'apply_customer_preview' to allowed job types
+-- Update job types constraint to include all job types used in the worker
 
 -- Drop the existing constraint
 alter table public.jobs 
   drop constraint if exists jobs_type_check;
 
--- Add the new constraint with the additional job type
+-- Add comprehensive constraint with all job types
 alter table public.jobs 
   add constraint jobs_type_check 
-  check (type in (
+  check (type IN (
+    -- Original types
     'scrape_statistics',
     'scrape_styles',
     'update_style_stock',
     'export_overview',
     'scrape_customers',
-    'apply_customer_preview'
+    -- New customer scrape types
+    'apply_customer_preview',
+    -- Additional worker job types
+    'scrape_eans',
+    'deep_scrape_styles',
+    'export_stock_list',
+    'export_top_styles',
+    'scrape_top_styles',
+    'fix_invoices',
+    'scrape_purchase_orders',
+    'check_purchase_orders',
+    'push_app_po_to_spy',
+    'sync_app_po_from_spy'
   ));
 
