@@ -743,13 +743,127 @@ async function runJob(job: JobRow) {
         dedupMap.set(key, r); // last one wins
       }
       const deduped = Array.from(dedupMap.values());
-      if (deduped.length) {
-        const { error: upErr } = await supabase
+      
+      // Step 1: Get existing colors before deletion
+      const { data: existingStockColors } = await supabase
+        .from('style_stock')
+        .select('color')
+        .eq('style_no', s.style_no);
+      
+      const previousColors = new Set(
+        (existingStockColors ?? []).map((r: any) => String(r.color || '').trim())
+      );
+      
+      // Step 2: Delete ALL old data for this style_no (SPY is single source of truth)
+      if (previousColors.size > 0) {
+        const { error: delErr } = await supabase
           .from('style_stock')
-          .upsert(deduped, { onConflict: 'style_no,color,section,row_label' as any });
-        if (upErr) throw upErr;
+          .delete()
+          .eq('style_no', s.style_no);
+        
+        if (delErr) throw delErr;
+        await log(job.id, 'info', 'STEP:deleted_old_stock_data', { 
+          style_no: s.style_no, 
+          previous_colors: previousColors.size 
+        });
+      }
+      
+      // Step 3: Insert fresh scraped data
+      if (deduped.length) {
+        const { error: insErr } = await supabase.from('style_stock').insert(deduped);
+        if (insErr) throw insErr;
         totalRows += deduped.length;
       }
+      
+      // Step 4: Track missing colors
+      const scrapedColors = new Set(
+        deduped.map((r: any) => String(r.color || '').trim())
+      );
+      
+      // Find colors that disappeared
+      const missingColors = [...previousColors].filter(c => !scrapedColors.has(c));
+      
+      if (missingColors.length > 0) {
+        await log(job.id, 'info', 'STEP:missing_colors_detected', {
+          style_no: s.style_no,
+          missing_colors: missingColors
+        });
+        
+        // Increment consecutive_misses for missing colors
+        for (const color of missingColors) {
+          try {
+            await supabase.rpc('increment_missing_color', {
+              p_style_no: s.style_no,
+              p_color: color
+            });
+          } catch (e) {
+            // Log but don't fail the job
+            await log(job.id, 'info', 'STEP:increment_missing_color_error', { 
+              style_no: s.style_no, 
+              color, 
+              error: String(e) 
+            });
+          }
+        }
+      }
+      
+      // Reset counter for colors that are present/reappeared
+      for (const color of scrapedColors) {
+        try {
+          await supabase
+            .from('style_color_missing_tracker')
+            .upsert({
+              style_no: s.style_no,
+              color: color,
+              consecutive_misses: 0,
+              last_seen_at: scrapeTs,
+              last_checked_at: scrapeTs
+            }, { onConflict: 'style_no,color' });
+        } catch (e) {
+          // Log but don't fail
+          await log(job.id, 'info', 'STEP:reset_missing_tracker_error', { 
+            style_no: s.style_no, 
+            color, 
+            error: String(e) 
+          });
+        }
+      }
+      
+      // Step 5: Delete colors with 3+ consecutive misses
+      try {
+        const { data: toDelete } = await supabase
+          .from('style_color_missing_tracker')
+          .select('style_no, color')
+          .gte('consecutive_misses', 3);
+        
+        if (toDelete && toDelete.length > 0) {
+          for (const item of toDelete) {
+            // Delete from style_stock
+            await supabase
+              .from('style_stock')
+              .delete()
+              .eq('style_no', item.style_no)
+              .eq('color', item.color);
+            
+            // Delete from tracker
+            await supabase
+              .from('style_color_missing_tracker')
+              .delete()
+              .eq('style_no', item.style_no)
+              .eq('color', item.color);
+            
+            await log(job.id, 'info', 'STEP:deleted_missing_color', {
+              style_no: item.style_no,
+              color: item.color,
+              reason: '3+ consecutive misses'
+            });
+          }
+        }
+      } catch (e) {
+        // Log but don't fail
+        await log(job.id, 'info', 'STEP:cleanup_missing_colors_error', { error: String(e) });
+      }
+      
       const styleMs = Date.now() - styleStart;
       await log(job.id, 'info', 'STEP:style_stock_style_done', { style_no: s.style_no, style_name: styleName, rows: deduped.length, ms: styleMs });
       if (diffEntries && diffEntries.length) {
