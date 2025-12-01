@@ -29,15 +29,23 @@ export default function CustomerScrapePage() {
       if (!session) throw new Error('Not signed in');
       const token = session.access_token;
       
+      console.log('[SCRAPE] Starting customer scrape...');
+      
       // Enqueue scrape job
       const res = await fetch('/api/enqueue', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ type: 'scrape_customers', payload: { requestedBy: session.user.email } })
       });
-      if (!res.ok) throw new Error(await res.text());
+      if (!res.ok) {
+        const errorText = await res.text();
+        console.error('[SCRAPE] Enqueue failed:', errorText);
+        throw new Error(errorText);
+      }
       
       const { jobId } = await res.json();
+      console.log('[SCRAPE] Job enqueued:', jobId);
+      
       try { 
         if (typeof window !== 'undefined') 
           window.dispatchEvent(new CustomEvent('job-started', { detail: { label: 'Scrape customers — generating preview...' } })); 
@@ -47,38 +55,70 @@ export default function CustomerScrapePage() {
       let newPreviewId: string | null = null;
       for (let i = 0; i < 120; i++) {
         await new Promise(r => setTimeout(r, 1000));
-        const { data: job } = await supabase.from('jobs').select('status, id').eq('id', jobId).single();
+        const { data: job, error: jobError } = await supabase.from('jobs').select('status, id').eq('id', jobId).single();
+        
+        if (jobError) {
+          console.error('[SCRAPE] Error fetching job status:', jobError);
+          throw new Error(`Job status error: ${jobError.message}`);
+        }
+        
+        console.log(`[SCRAPE] Poll ${i + 1}/120 - Job status:`, job?.status);
         
         if (job?.status === 'succeeded') {
+          console.log('[SCRAPE] Job succeeded! Fetching results...');
+          
           // Get the result
-          const { data: results } = await supabase
+          const { data: results, error: resultsError } = await supabase
             .from('job_results')
             .select('data')
             .eq('job_id', jobId)
             .order('created_at', { ascending: false })
             .limit(1);
           
+          if (resultsError) {
+            console.error('[SCRAPE] Error fetching job results:', resultsError);
+            throw new Error(`Results error: ${resultsError.message}`);
+          }
+          
+          console.log('[SCRAPE] Job results:', results);
+          console.log('[SCRAPE] Results length:', results?.length);
+          
           const result = results?.[0];
+          console.log('[SCRAPE] First result:', result);
+          console.log('[SCRAPE] Result data:', result?.data);
+          
           newPreviewId = result?.data?.preview_id;
+          console.log('[SCRAPE] Preview ID:', newPreviewId);
           break;
         }
         
         if (job?.status === 'failed' || job?.status === 'cancelled') {
+          console.error('[SCRAPE] Job failed or cancelled');
           throw new Error('Scrape job failed');
         }
       }
       
       if (!newPreviewId) {
+        console.error('[SCRAPE] No preview ID found after polling');
         throw new Error('No preview generated');
       }
 
+      console.log('[SCRAPE] Fetching preview data for ID:', newPreviewId);
+      
       // Fetch the preview data
       setPreviewId(newPreviewId);
       const previewRes = await fetch(`/api/customers/preview?id=${newPreviewId}`);
-      if (!previewRes.ok) throw new Error('Failed to fetch preview');
+      if (!previewRes.ok) {
+        const errorText = await previewRes.text();
+        console.error('[SCRAPE] Failed to fetch preview:', errorText);
+        throw new Error('Failed to fetch preview');
+      }
       const previewData = await previewRes.json();
+      console.log('[SCRAPE] Preview data received:', previewData);
       setPreview(previewData.preview);
+      console.log('[SCRAPE] Success! Preview set.');
     } catch (e: any) {
+      console.error('[SCRAPE] Error:', e);
       alert(e?.message || 'Failed to scrape customers');
     } finally {
       setScraping(false);

@@ -66,7 +66,8 @@ export async function scrapeCustomers(ctx: Ctx) {
     });
     
     // Step 4: Store preview
-    const { data: preview } = await supabase
+    await log(job.id, 'info', 'STEP:storing_preview');
+    const { data: preview, error: previewError } = await supabase
       .from('customer_scrape_previews')
       .insert({
         job_id: job.id,
@@ -76,15 +77,27 @@ export async function scrapeCustomers(ctx: Ctx) {
       .select('id')
       .single();
     
-    await saveResult(job.id, 'scrape_customers', {
+    if (previewError) {
+      await log(job.id, 'error', 'STEP:preview_insert_error', { error: previewError.message });
+      throw previewError;
+    }
+    
+    await log(job.id, 'info', 'STEP:preview_stored', { preview_id: preview?.id });
+    
+    const resultData = {
       preview_id: preview?.id,
       scraped: rows.length,
       new: diff.new.length,
       updated: diff.updated.length,
       orphaned: diff.orphaned.length
-    });
+    };
+    
+    await log(job.id, 'info', 'STEP:saving_result', resultData);
+    await saveResult(job.id, 'scrape_customers', resultData);
+    await log(job.id, 'info', 'STEP:result_saved');
     
     await setJobSucceeded(job.id);
+    await log(job.id, 'info', 'STEP:job_succeeded');
   } catch (e: any) {
     await setJobFailedOrRequeue(job, e?.message || String(e));
   }
