@@ -340,7 +340,7 @@ export async function updateStyleStock(ctx: Ctx) {
       .select('color')
       .eq('style_no', s.style_no);
     
-    const previousColors = new Set(
+    const previousColors = new Set<string>(
       (existingStockColors ?? []).map((r: any) => String(r.color || '').trim())
     );
     
@@ -366,7 +366,7 @@ export async function updateStyleStock(ctx: Ctx) {
     }
     
     // Step 4: Track missing colors
-    const scrapedColors = new Set(
+    const scrapedColors = new Set<string>(
       deduped.map((r: any) => String(r.color || '').trim())
     );
     
@@ -391,7 +391,7 @@ export async function updateStyleStock(ctx: Ctx) {
           await log(job.id, 'info', 'STEP:increment_missing_color_error', { 
             style_no: s.style_no, 
             color, 
-            error: String(e) 
+            error: e instanceof Error ? e.message : String(e)
           });
         }
       }
@@ -414,7 +414,7 @@ export async function updateStyleStock(ctx: Ctx) {
         await log(job.id, 'info', 'STEP:reset_missing_tracker_error', { 
           style_no: s.style_no, 
           color, 
-          error: String(e) 
+          error: e instanceof Error ? e.message : String(e)
         });
       }
     }
@@ -451,7 +451,9 @@ export async function updateStyleStock(ctx: Ctx) {
       }
     } catch (e) {
       // Log but don't fail
-      await log(job.id, 'info', 'STEP:cleanup_missing_colors_error', { error: String(e) });
+      await log(job.id, 'info', 'STEP:cleanup_missing_colors_error', { 
+        error: e instanceof Error ? e.message : String(e) 
+      });
     }
     
     await log(job.id, 'info', 'STEP:style_stock_rows', { style_no: s.style_no, rows: extracted.length });
