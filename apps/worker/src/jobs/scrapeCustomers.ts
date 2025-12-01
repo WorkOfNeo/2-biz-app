@@ -25,12 +25,24 @@ export async function scrapeCustomers(ctx: Ctx) {
     await page.goto(listUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
     await log(job.id, 'info', 'STEP:customers_url', { url: listUrl });
     
+    await log(job.id, 'info', 'STEP:clicking_show_all');
     try {
       const btn = await findFirst(page, ['button[name="show_all"]']);
-      if (btn) { await btn.click({ timeout: 10_000 }).catch(() => {}); await page.waitForTimeout(1000); }
-    } catch {}
+      if (btn) { 
+        await log(job.id, 'info', 'STEP:show_all_button_found');
+        await btn.click({ timeout: 10_000 }).catch(() => {}); 
+        await page.waitForTimeout(1000); 
+      } else {
+        await log(job.id, 'info', 'STEP:show_all_button_not_found');
+      }
+    } catch (e: any) {
+      await log(job.id, 'error', 'STEP:show_all_error', { error: e.message });
+    }
     
+    await log(job.id, 'info', 'STEP:waiting_for_table');
     await page.waitForSelector('table.standardList tbody tr', { timeout: 60_000 });
+    await log(job.id, 'info', 'STEP:table_found');
+    
     const rows = await page.$$eval('table.standardList tbody tr', (trs) => {
       function tx(el?: Element | null): string { return ((el as HTMLElement | null)?.textContent || '').replace(/\s+/g, ' ').trim(); }
       return Array.from(trs).map(tr => {
@@ -52,11 +64,20 @@ export async function scrapeCustomers(ctx: Ctx) {
     await log(job.id, 'info', 'STEP:customers_rows', { count: rows.length });
     
     // Step 2: Fetch existing customers
-    const { data: existingCustomers } = await supabase
+    await log(job.id, 'info', 'STEP:fetching_existing_customers');
+    const { data: existingCustomers, error: fetchError } = await supabase
       .from('customers')
       .select('id, customer_id, company, city, country, phone, priority, orders_link, spy_id, salesperson_id, salespersons(name)');
     
+    if (fetchError) {
+      await log(job.id, 'error', 'STEP:fetch_customers_error', { error: fetchError.message });
+      throw fetchError;
+    }
+    
+    await log(job.id, 'info', 'STEP:existing_customers_fetched', { count: (existingCustomers || []).length });
+    
     // Step 3: Calculate diff
+    await log(job.id, 'info', 'STEP:calculating_diff');
     const diff = await calculateCustomerDiff(rows, existingCustomers || [], supabase, log, job.id);
     
     await log(job.id, 'info', 'STEP:customers_diff', {
@@ -101,6 +122,10 @@ export async function scrapeCustomers(ctx: Ctx) {
     await setJobSucceeded(job.id);
     await log(job.id, 'info', 'STEP:job_succeeded');
   } catch (e: any) {
+    await log(job.id, 'error', 'STEP:scrape_failed', { 
+      error: e?.message || String(e),
+      stack: e?.stack || 'no stack trace'
+    });
     await setJobFailedOrRequeue(job, e?.message || String(e));
   }
 }

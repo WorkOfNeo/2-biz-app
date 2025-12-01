@@ -1958,7 +1958,7 @@ const IDLE_SLEEP_MAX_MS = Math.max(IDLE_SLEEP_MS, Number(process.env.IDLE_SLEEP_
 
 async function mainLoop() {
   // eslint-disable-next-line no-console
-  console.log('[worker] started v2.1 - with unchanged customers tracking', new Date().toISOString());
+  console.log('[worker] started v2.2 - with detailed step logging for debugging', new Date().toISOString());
   try {
     const u = new URL(SUPABASE_URL);
     // eslint-disable-next-line no-console
@@ -2011,4 +2011,5 @@ mainLoop().catch((e) => {
 // deploy bump 2025-11-18
 // redeploy bump 2025-11-18T2
 // redeploy bump 2025-12-01 - customer scrape with detailed logging
+// redeploy bump 2025-12-01T2 - extensive step-by-step debugging logs
 
