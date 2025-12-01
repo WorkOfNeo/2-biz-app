@@ -79,11 +79,11 @@ export default function OverviewPage() {
   const rates = useMemo(() => ({ DKK: 1, ...(currencyRatesRow ?? {}) } as Record<string, number>), [currencyRatesRow]);
   const spCurrencyById = useMemo(() => Object.fromEntries(((people ?? []) as Person[]).map(p => [p.id, p.currency ?? 'DKK'])), [people]);
 
-  const { data: customers } = useSWR('overview:customers', async () => {
+  const { data: customers } = useSWR('overview:customers-main', async () => {
     const { data, error } = await supabase.from('customers').select('customer_id, company, city, country, salesperson_id, nulled, excluded, permanently_closed');
     if (error) throw new Error(error.message);
     return (data ?? []) as Customer[];
-  });
+  }, { refreshInterval: 10000 });
 
   const { data: stats } = useSWR(s1 && s2 ? ['overview:stats', s1, s2] : null, async () => {
     const { data, error } = await supabase
@@ -170,8 +170,24 @@ export default function OverviewPage() {
     // Build output rows
     const out = [] as any[];
     for (const sp of people) {
-      const totalCustomers = (bySpCustomers.get(sp.id) ?? []).length;
-      const nulledCount = (bySpCustomers.get(sp.id) ?? []).filter(c => !!(c.nulled || c.permanently_closed || c.excluded)).length;
+      const spCustomers = bySpCustomers.get(sp.id) ?? [];
+      const totalCustomers = spCustomers.length;
+      const nulledCustomers = spCustomers.filter(c => !!(c.nulled || c.permanently_closed || c.excluded));
+      const nulledCount = nulledCustomers.length;
+      
+      // Debug logging for nulled customers
+      if (nulledCount > 0) {
+        console.log(`[OVERVIEW] ${sp.name} - Nulled customers (${nulledCount}):`, 
+          nulledCustomers.map(c => ({
+            id: c.customer_id,
+            company: c.company,
+            nulled: c.nulled,
+            excluded: c.excluded,
+            permanently_closed: c.permanently_closed
+          }))
+        );
+      }
+      
       const a = agg.get(sp.id)!;
       // Use the exact set size of valid, non-nulled/non-closed/non-excluded accounts to determine denominator
       const validTotal = validTargetsBySp.get(sp.id)?.size ?? Math.max(0, totalCustomers - nulledCount);
@@ -184,6 +200,24 @@ export default function OverviewPage() {
       const needPrice = a.s1Price >= a.s2Price ? 0 : (a.s2Price - a.s1Price);
       const needQtyPct = a.s2Qty === 0 ? 0 : Math.max(0, (needQty / a.s2Qty) * 100);
       const needPricePct = a.s2Price === 0 ? 0 : Math.max(0, (needPrice / a.s2Price) * 100);
+      const notVisitedCount = Math.max(0, validTotal - a.visitedValid.size);
+      
+      // Debug logging for not visited
+      if (notVisitedCount > 0) {
+        const validIds = validTargetsBySp.get(sp.id) || new Set();
+        const notVisitedIds = Array.from(validIds).filter(id => !a.visitedValid.has(id));
+        const notVisitedCustomers = spCustomers.filter(c => notVisitedIds.includes(c.customer_id));
+        console.log(`[OVERVIEW] ${sp.name} - Not visited (${notVisitedCount}):`,
+          notVisitedCustomers.map(c => ({
+            id: c.customer_id,
+            company: c.company,
+            nulled: c.nulled,
+            excluded: c.excluded,
+            permanently_closed: c.permanently_closed
+          }))
+        );
+      }
+      
       out.push({
         id: sp.id,
         name: sp.name,
@@ -192,7 +226,7 @@ export default function OverviewPage() {
         visited: a.visitedValid.size,
         effectiveTotal: validTotal,
         visitedPct: validTotal > 0 ? (a.visitedValid.size / validTotal) * 100 : 0,
-        notVisited: Math.max(0, validTotal - a.visitedValid.size),
+        notVisited: notVisitedCount,
         s1Qty: a.s1Qty, s1Price: a.s1Price, s1Avg,
         s2Qty: a.s2Qty, s2Price: a.s2Price, s2Avg,
         diffPct,

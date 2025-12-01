@@ -30,28 +30,29 @@ function RecordsInner() {
     if (error) throw new Error(error.message);
     return data as { id: string; key: string; value: { s1?: string; s2?: string } } | null;
   });
-  const s1 = saved?.value?.s1 ?? '';
-  const s2 = saved?.value?.s2 ?? '';
+  const s1 = saved?.value?.s1 || null;
+  const s2 = saved?.value?.s2 || null;
 
   const { data: seasons } = useSWR('seasons-all', async () => {
     const { data, error } = await supabase.from('seasons').select('id, name, year').order('created_at', { ascending: false });
     if (error) throw new Error(error.message);
     return (data ?? []) as { id: string; name: string; year: number | null }[];
   });
-  function getSeasonLabel(seasonId: string | undefined) {
+  function getSeasonLabel(seasonId: string | null | undefined) {
     if (!seasonId) return '';
     const s = (seasons ?? []).find((x) => x.id === seasonId);
     if (!s) return '';
     return `${s.name}${s.year ? ' ' + s.year : ''}`;
   }
 
-  const { data: customers } = useSWR('overview:customers', async () => {
+  const { data: customers } = useSWR('overview-records:customers', async () => {
     const { data, error } = await supabase.from('customers').select('customer_id, company, city, country, salesperson_id, nulled, excluded, permanently_closed');
     if (error) throw new Error(error.message);
     return (data ?? []) as any[];
-  });
+  }, { refreshInterval: 10000 });
 
   const { data: stats, isLoading: statsLoading } = useSWR(s1 && s2 ? ['overview:stats', s1, s2] : null, async () => {
+    if (!s1 || !s2) return [];
     const { data, error } = await supabase
       .from('sales_stats')
       .select('account_no, qty, price, season_id, salesperson_id')
@@ -61,6 +62,7 @@ function RecordsInner() {
     return (data ?? []) as StatsRow[];
   }, { refreshInterval: 20000 });
   const { data: invoices, isLoading: invoicesLoading } = useSWR(s1 && s2 ? ['overview:invoices', s1, s2] : null, async () => {
+    if (!s1 || !s2) return [];
     const { data, error } = await supabase
       .from('sales_invoices')
       .select('account_no, qty, amount, currency, invoice_no, season_id, salesperson_id, created_at')
