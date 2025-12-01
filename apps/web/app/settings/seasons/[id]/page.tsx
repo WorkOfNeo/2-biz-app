@@ -1,5 +1,6 @@
 'use client';
 import { useParams } from 'next/navigation';
+import { useState, useEffect } from 'react';
 import useSWR from 'swr';
 import { supabase } from '../../../../lib/supabaseClient';
 
@@ -18,15 +19,45 @@ export default function SeasonDetailPage() {
     const val = (data?.value as any) || {};
     return { id: data?.id ?? null, value: { EUR: Number(val.EUR || 0) || 0, NOK: Number(val.NOK || 0) || 0, SEK: Number(val.SEK || 0) || 0 } } as { id: string | null; value: Record<string, number> };
   });
-  async function saveRates(next: Record<string, number>) {
-    if (!id) return;
-    const key = `currency_rates:${id}`;
-    if (rates?.id) {
-      await supabase.from('app_settings').update({ value: next }).eq('id', rates.id);
-    } else {
-      await supabase.from('app_settings').insert({ key, value: next });
+  
+  const [localRates, setLocalRates] = useState<Record<string, number>>({});
+  const [saving, setSaving] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState(false);
+  const [hasChanges, setHasChanges] = useState(false);
+  
+  useEffect(() => {
+    if (rates?.value) {
+      setLocalRates(rates.value);
+      setHasChanges(false);
     }
-    await mutate();
+  }, [rates?.value]);
+  
+  async function saveRates() {
+    if (!id) return;
+    setSaving(true);
+    setSaveSuccess(false);
+    try {
+      const key = `currency_rates:${id}`;
+      if (rates?.id) {
+        await supabase.from('app_settings').update({ value: localRates }).eq('id', rates.id);
+      } else {
+        await supabase.from('app_settings').insert({ key, value: localRates });
+      }
+      await mutate();
+      setHasChanges(false);
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 3000);
+    } catch (err: any) {
+      alert(err?.message || 'Failed to save');
+    } finally {
+      setSaving(false);
+    }
+  }
+  
+  function handleRateChange(code: string, value: number) {
+    setLocalRates(prev => ({ ...prev, [code]: value }));
+    setHasChanges(true);
+    setSaveSuccess(false);
   }
   return (
     <div className="space-y-4">
@@ -49,19 +80,34 @@ export default function SeasonDetailPage() {
                 className="w-full rounded border px-2 py-1 text-sm"
                 type="number"
                 step="0.0001"
-                defaultValue={rates?.value?.[code] ?? 0}
-                onBlur={async (e) => {
-                  try {
-                    const v = Number(e.target.value || 0) || 0;
-                    const next = { ...(rates?.value || {}), [code]: v };
-                    await saveRates(next);
-                  } catch (err: any) {
-                    alert(err?.message || 'Failed to save');
-                  }
+                value={localRates[code] ?? 0}
+                onChange={(e) => {
+                  const v = Number(e.target.value || 0) || 0;
+                  handleRateChange(code, v);
                 }}
               />
             </label>
           ))}
+        </div>
+        <div className="flex items-center gap-3 pt-2">
+          <button
+            onClick={saveRates}
+            disabled={!hasChanges || saving}
+            className={
+              'rounded-md px-4 py-2 text-sm font-medium transition-colors ' +
+              (hasChanges && !saving
+                ? 'bg-slate-900 text-white hover:bg-slate-800'
+                : 'bg-gray-200 text-gray-400 cursor-not-allowed')
+            }
+          >
+            {saving ? 'Saving...' : 'Save Currency Rates'}
+          </button>
+          {saveSuccess && (
+            <span className="text-sm text-green-600 font-medium">✓ Saved successfully!</span>
+          )}
+          {hasChanges && !saving && !saveSuccess && (
+            <span className="text-sm text-amber-600">Unsaved changes</span>
+          )}
         </div>
       </div>
     </div>

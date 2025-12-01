@@ -173,7 +173,8 @@ export default function OverviewPage() {
       const set = targetsBySp.get(spId);
       if (!set || !set.has(acc)) continue;
       const row = agg.get(spId)!;
-      const currency = (inv.currency || 'DKK').toUpperCase();
+      // Use salesperson's currency for consistency with sales_stats, fall back to invoice currency
+      const currency = spCurrencyById[spId] ?? (inv.currency || 'DKK').toUpperCase();
       const rateS1 = { ...baseRates, ...(ratesS1 ?? {}) }[currency] ?? 1;
       const rateS2 = { ...baseRates, ...(ratesS2 ?? {}) }[currency] ?? 1;
       const amount = Number(inv.amount || 0);
@@ -277,10 +278,16 @@ export default function OverviewPage() {
       if (r.season_id === s1) { out.s1Qty += qty; out.s1PriceDkk += price * rateS1; }
       else if (r.season_id === s2) { out.s2Qty += qty; out.s2PriceDkk += price * rateS2; }
     }
+    // Build customer lookup for invoice currency resolution
+    const customerByIdForInv = new Map<string, Customer>();
+    for (const c of (customers ?? [])) { if (c.customer_id) customerByIdForInv.set(c.customer_id, c); }
     for (const inv of (invoices ?? [])) {
       const acc = inv.account_no ?? '';
       if (!acc || !targetAccounts.has(acc)) continue;
-      const currency = (String(inv.currency || 'DKK').toUpperCase());
+      // Use salesperson's currency for consistency with sales_stats, fall back to invoice currency
+      const c = customerByIdForInv.get(acc);
+      const spId = c?.salesperson_id ?? null;
+      const currency = spId ? (spCurrencyById[spId] ?? (String(inv.currency || 'DKK').toUpperCase())) : (String(inv.currency || 'DKK').toUpperCase());
       const rateS1 = { ...baseRates, ...(ratesS1 ?? {}) }[currency] ?? 1;
       const rateS2 = { ...baseRates, ...(ratesS2 ?? {}) }[currency] ?? 1;
       const qty = Number(inv.qty || 0) || 0;
