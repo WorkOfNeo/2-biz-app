@@ -47,13 +47,13 @@ export async function scrapeCustomers(ctx: Ctx) {
       function tx(el?: Element | null): string { return ((el as HTMLElement | null)?.textContent || '').replace(/\s+/g, ' ').trim(); }
       return Array.from(trs).map(tr => {
         const tds = Array.from((tr as HTMLTableRowElement).querySelectorAll('td')) as HTMLElement[];
-        const account = tx(tds[9]);
-        const company = tx(tds[1]);
-        const city = tx(tds[6]);
-        const country = tx(tds[7]);
-        const sales_person = tx(tds[5]);
-        const phone = tx(tds[12]);
-        const priority = tx(tds[14]);
+        const account = tx(tds[9]);      // Account number
+        const company = tx(tds[1]);      // Company name
+        const city = tx(tds[6]);         // City
+        const country = tx(tds[7]);      // Country
+        const sales_person = tx(tds[3]); // Sales Person (was tds[5] - FIXED)
+        const phone = tx(tds[12]);       // Phone
+        const priority = tx(tds[13]);    // Priority (was tds[14] - FIXED)
         const ordersA = (tr as HTMLTableRowElement).querySelector('a[href*="show_sales_order"], a[href*="orders"]') as HTMLAnchorElement | null;
         const orders_link = ordersA ? (ordersA.getAttribute('href') || '') : '';
         const spy_id = (tr as HTMLElement).getAttribute('data-reference') || '';
