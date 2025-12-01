@@ -210,26 +210,14 @@ export default function CustomerScrapePage() {
         throw new Error(error.error || 'Failed to apply');
       }
       
-      const { jobId } = await res.json();
-      
-      // Poll for job completion
-      await pollJobCompletion(jobId);
+      const result = await res.json();
+      console.log('[APPLY] Changes applied:', result);
       
       router.push('/settings/customers?applied=true');
     } catch (e: any) {
       alert(e?.message || 'Failed to apply preview');
       setApplying(false);
     }
-  };
-
-  const pollJobCompletion = async (jobId: string) => {
-    for (let i = 0; i < 60; i++) {
-      const { data } = await supabase.from('jobs').select('status').eq('id', jobId).single();
-      if (data?.status === 'succeeded') return;
-      if (data?.status === 'failed') throw new Error('Job failed');
-      await new Promise(r => setTimeout(r, 1000));
-    }
-    throw new Error('Job timeout');
   };
 
   const handleDeleteCustomer = async (customerId: string) => {
