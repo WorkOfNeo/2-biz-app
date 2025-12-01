@@ -233,6 +233,13 @@ export default function CustomerScrapePage() {
         elapsedSeconds: elapsed
       });
       
+      // Show detailed changes
+      if (result.updates && result.updates.length > 0) {
+        console.log('[APPLY] Customer changes:', result.updates.map((u: any) => 
+          `${u.type === 'new' ? '➕ NEW' : '✏️ UPDATED'}: ${u.company}`
+        ).join('\n'));
+      }
+      
       setApplyStatus(`✅ Applied ${totalChanges} changes in ${elapsed}s`);
       
       // Invalidate all customer-related SWR caches

@@ -42,6 +42,8 @@ export async function POST(req: Request) {
       if (key) salespersonByName.set(key, sp.id as string);
     }
     
+    const updates: any[] = [];
+    
     // Batch insert new customers
     if (diffData.new.length > 0) {
       const newCustomerRecords = [];
@@ -66,6 +68,8 @@ export async function POST(req: Request) {
           spy_id: r.spy_id,
           salesperson_id
         });
+        
+        updates.push({ type: 'new', company: r.company || r.account });
       }
       
       // Insert all at once
@@ -76,7 +80,7 @@ export async function POST(req: Request) {
       }
     }
     
-    // Batch update existing customers (do one by one since each has different ID)
+    // Update existing customers one by one (each has different ID)
     let updatedCount = 0;
     for (const updated of diffData.updated) {
       // Find the corresponding scraped row
@@ -101,7 +105,10 @@ export async function POST(req: Request) {
         salesperson_id
       }).eq('id', updated.id);
       
-      if (!updateError) updatedCount++;
+      if (!updateError) {
+        updatedCount++;
+        updates.push({ type: 'updated', company: scrapedRow.company || updated.customer_id });
+      }
     }
     
     // Mark preview as applied
@@ -114,8 +121,9 @@ export async function POST(req: Request) {
       success: true,
       applied: {
         new: diffData.new.length,
-        updated: diffData.updated.length
-      }
+        updated: updatedCount
+      },
+      updates
     });
   } catch (e: any) {
     console.error('Apply preview error:', e);
