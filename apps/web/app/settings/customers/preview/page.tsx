@@ -16,6 +16,7 @@ function CustomerPreviewContent() {
   const [preview, setPreview] = useState<CustomerScrapePreviewRow | null>(null);
   const [loading, setLoading] = useState(true);
   const [applying, setApplying] = useState(false);
+  const [applyStatus, setApplyStatus] = useState<string>('');
   const [expandedUpdated, setExpandedUpdated] = useState<Set<string>>(new Set());
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; company: string } | null>(null);
@@ -54,12 +55,24 @@ function CustomerPreviewContent() {
   };
   
   const handleApply = async () => {
-    if (!previewId) return;
+    if (!previewId || !diff) return;
     
     try {
       setApplying(true);
+      
+      const totalChanges = diff.new.length + diff.updated.length;
+      console.log('[APPLY] Starting to apply changes:', {
+        new: diff.new.length,
+        updated: diff.updated.length,
+        total: totalChanges
+      });
+      
+      setApplyStatus(`Applying ${totalChanges} changes...`);
+      
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) throw new Error('Not signed in');
+      
+      const startTime = Date.now();
       
       const res = await fetch('/api/customers/preview/apply', {
         method: 'POST',
@@ -76,12 +89,24 @@ function CustomerPreviewContent() {
       }
       
       const result = await res.json();
-      console.log('[APPLY] Changes applied:', result);
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+      
+      console.log('[APPLY] ✅ Changes applied successfully:', {
+        ...result,
+        elapsedSeconds: elapsed
+      });
+      
+      setApplyStatus(`✅ Applied ${totalChanges} changes in ${elapsed}s`);
+      
+      // Wait a moment to show success message
+      await new Promise(r => setTimeout(r, 1000));
       
       router.push('/settings/customers?applied=true');
     } catch (e: any) {
+      console.error('[APPLY] ❌ Error:', e);
       alert(e?.message || 'Failed to apply preview');
       setApplying(false);
+      setApplyStatus('');
     }
   };
   
@@ -187,12 +212,20 @@ function CustomerPreviewContent() {
             Cancel
           </Button>
           {hasChanges && (
-            <Button
-              disabled={applying}
-              onClick={handleApply}
-            >
-              {applying ? 'Applying...' : 'Apply Changes'}
-            </Button>
+            <div className="flex items-center gap-3">
+              {applying && applyStatus && (
+                <div className="text-sm text-gray-600 flex items-center gap-2">
+                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-gray-300 border-t-slate-900" />
+                  {applyStatus}
+                </div>
+              )}
+              <Button
+                disabled={applying}
+                onClick={handleApply}
+              >
+                {applying ? 'Applying...' : 'Apply Changes'}
+              </Button>
+            </div>
           )}
         </div>
       </div>

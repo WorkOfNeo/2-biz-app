@@ -42,31 +42,42 @@ export async function POST(req: Request) {
       if (key) salespersonByName.set(key, sp.id as string);
     }
     
-    // Apply new customers
-    for (const r of diffData.new) {
-      if (!r.account) continue;
-      
-      let salesperson_id: string | null = null;
-      const spName = String(r.sales_person || '').trim();
-      if (spName) {
-        const key = spName.toLowerCase();
-        salesperson_id = salespersonByName.get(key) || null;
+    // Batch insert new customers
+    if (diffData.new.length > 0) {
+      const newCustomerRecords = [];
+      for (const r of diffData.new) {
+        if (!r.account) continue;
+        
+        let salesperson_id: string | null = null;
+        const spName = String(r.sales_person || '').trim();
+        if (spName) {
+          const key = spName.toLowerCase();
+          salesperson_id = salespersonByName.get(key) || null;
+        }
+        
+        newCustomerRecords.push({
+          customer_id: r.account,
+          company: r.company,
+          city: r.city,
+          country: r.country,
+          phone: r.phone,
+          priority: r.priority,
+          orders_link: r.orders_link,
+          spy_id: r.spy_id,
+          salesperson_id
+        });
       }
       
-      await supabase.from('customers').insert({
-        customer_id: r.account,
-        company: r.company,
-        city: r.city,
-        country: r.country,
-        phone: r.phone,
-        priority: r.priority,
-        orders_link: r.orders_link,
-        spy_id: r.spy_id,
-        salesperson_id
-      });
+      // Insert all at once
+      const { error: insertError } = await supabase.from('customers').insert(newCustomerRecords);
+      if (insertError) {
+        console.error('Batch insert error:', insertError);
+        throw new Error(`Failed to insert new customers: ${insertError.message}`);
+      }
     }
     
-    // Apply updates
+    // Batch update existing customers (do one by one since each has different ID)
+    let updatedCount = 0;
     for (const updated of diffData.updated) {
       // Find the corresponding scraped row
       const scrapedRow = scrapedData.find((r: any) => r.account === updated.customer_id);
@@ -79,7 +90,7 @@ export async function POST(req: Request) {
         salesperson_id = salespersonByName.get(key) || null;
       }
       
-      await supabase.from('customers').update({
+      const { error: updateError } = await supabase.from('customers').update({
         company: scrapedRow.company,
         city: scrapedRow.city,
         country: scrapedRow.country,
@@ -89,6 +100,8 @@ export async function POST(req: Request) {
         spy_id: scrapedRow.spy_id,
         salesperson_id
       }).eq('id', updated.id);
+      
+      if (!updateError) updatedCount++;
     }
     
     // Mark preview as applied
