@@ -51,14 +51,14 @@ export default function CustomerScrapePage() {
         
         if (job?.status === 'succeeded') {
           // Get the result
-          const { data: result } = await supabase
+          const { data: results } = await supabase
             .from('job_results')
             .select('data')
             .eq('job_id', jobId)
             .order('created_at', { ascending: false })
-            .limit(1)
-            .single();
+            .limit(1);
           
+          const result = results?.[0];
           newPreviewId = result?.data?.preview_id;
           break;
         }
