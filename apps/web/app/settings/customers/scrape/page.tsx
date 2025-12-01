@@ -39,14 +39,14 @@ export default function CustomerScrapePage() {
     try {
       const { data: logs } = await supabase
         .from('job_logs')
-        .select('message')
+        .select('msg')
         .eq('job_id', jobId)
-        .order('created_at', { ascending: false })
+        .order('ts', { ascending: false })
         .limit(1)
         .maybeSingle();
       
-      if (logs?.message) {
-        const msg = logs.message;
+      if (logs?.msg) {
+        const msg = logs.msg;
         // Look for STEP:xxx patterns
         const stepMatch = msg.match(/STEP:(\w+)/);
         if (stepMatch) {
