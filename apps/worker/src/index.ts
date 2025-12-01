@@ -3,7 +3,7 @@ import { chromium } from 'playwright-core';
 import type { Browser, BrowserContext, Page } from 'playwright-core';
 import type { JobRow, JobResult } from '@shared/types';
 import { scrapeStyles } from './jobs/scrapeStyles.js';
-import { scrapeCustomers } from './jobs/scrapeCustomers.js';
+import { scrapeCustomers, applyCustomerScrapePreview } from './jobs/scrapeCustomers.js';
 import { updateStyleStock as updateStyleStockJob } from './jobs/updateStyleStock.js';
 import { deepScrapeStyles as deepScrapeStylesJob } from './jobs/deepScrapeStyles.js';
 import { exportOverview as exportOverviewJob } from './jobs/exportOverview.js';
@@ -240,7 +240,11 @@ async function runJob(job: JobRow) {
   }
   if (job.type === 'scrape_customers') {
     await scrapeCustomers({ job, page: page!, log, saveResult, setJobFailedOrRequeue, setJobSucceeded, ensureNotCancelled, supabase, SPY_BASE_URL, findFirst });
-      return;
+    return;
+  }
+  if ((job.type as any) === 'apply_customer_preview') {
+    await applyCustomerScrapePreview({ job, log, saveResult, setJobFailedOrRequeue, setJobSucceeded, ensureNotCancelled, supabase });
+    return;
   }
   if ((job.type as any) === 'push_app_po_to_spy') {
     await pushAppPoToSpy({ 

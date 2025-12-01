@@ -1,4 +1,4 @@
-export type JobType = 'scrape_statistics' | 'scrape_styles' | 'update_style_stock' | 'export_overview' | 'scrape_customers' | 'deep_scrape_styles' | 'scrape_top_styles' | 'export_top_styles' | 'scrape_purchase_orders' | 'fix_invoices' | 'scrape_eans' | 'export_stock_list' | 'check_purchase_orders' | 'push_app_po_to_spy' | 'sync_app_po_from_spy';
+export type JobType = 'scrape_statistics' | 'scrape_styles' | 'update_style_stock' | 'export_overview' | 'scrape_customers' | 'apply_customer_preview' | 'deep_scrape_styles' | 'scrape_top_styles' | 'export_top_styles' | 'scrape_purchase_orders' | 'fix_invoices' | 'scrape_eans' | 'export_stock_list' | 'check_purchase_orders' | 'push_app_po_to_spy' | 'sync_app_po_from_spy';
 
 export interface ScrapeStatisticsPayload {
   // Allow optional 'deep' along with arbitrary keys; values may be undefined pre-validation
@@ -93,6 +93,47 @@ export interface SeasonStatisticsRow {
   qty: number;
   amount: number;
   currency?: string | null;
+  created_at: string;
+}
+
+// Customer scrape preview types
+export interface ScrapedCustomerData {
+  account: string;
+  company: string;
+  city: string;
+  country: string;
+  sales_person: string;
+  phone: string;
+  priority: string;
+  orders_link: string;
+  spy_id: string;
+}
+
+export interface CustomerFieldChange {
+  field: string;
+  oldValue: any;
+  newValue: any;
+}
+
+export interface UpdatedCustomerDiff {
+  id: string;
+  customer_id: string;
+  company: string;
+  changes: CustomerFieldChange[];
+}
+
+export interface CustomerDiff {
+  new: ScrapedCustomerData[];
+  updated: UpdatedCustomerDiff[];
+  orphaned: CustomerRow[];
+}
+
+export interface CustomerScrapePreviewRow {
+  id: string;
+  job_id: string;
+  scraped_data: ScrapedCustomerData[];
+  diff_data: CustomerDiff;
+  applied_at: string | null;
   created_at: string;
 }
 
