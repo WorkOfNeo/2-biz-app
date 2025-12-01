@@ -75,8 +75,9 @@ function RecordsInner() {
     const arr = (customers ?? []).filter((c: any) => c.salesperson_id === sp && (country === 'All' ? true : String(c.country ?? '').toUpperCase() === country.toUpperCase()));
     const nulledSet = new Set(arr.filter((c: any) => !!(c.nulled || c.excluded || c.permanently_closed)).map((c: any) => c.customer_id));
     const allSet = new Set(arr.map((c: any) => c.customer_id));
-    const visitedSet = new Set((stats ?? []).filter(r => r.salesperson_id === sp && r.season_id === s1 && r.account_no && allSet.has(r.account_no)).map(r => r.account_no as string));
     const validSet = new Set(arr.filter((c: any) => !nulledSet.has(c.customer_id)).map((c: any) => c.customer_id));
+    // Only include visited customers that are VALID (not nulled)
+    const visitedSet = new Set((stats ?? []).filter(r => r.salesperson_id === sp && r.season_id === s1 && r.account_no && validSet.has(r.account_no)).map(r => r.account_no as string));
     const notVisitedSet = new Set(Array.from(validSet).filter((id: string) => !visitedSet.has(id)));
     let targetIds: Set<string>;
     if (mode === 'nulled') targetIds = nulledSet;
