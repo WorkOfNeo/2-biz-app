@@ -26,7 +26,6 @@ export default function CustomersSettingsPage() {
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState(0);
   const [resultMsg, setResultMsg] = useState<string | null>(null);
-  const [scraping, setScraping] = useState(false);
 
   const { data: customers, mutate } = useSWR('customers', async () => {
     const { data, error } = await supabase
@@ -154,62 +153,9 @@ export default function CustomersSettingsPage() {
                   onClick={() => setBulkOpen(true)}
                 >Bulk update (XLSX)</button>
                 <button
-                  className="block w-full px-3 py-2 text-left hover:bg-gray-50 disabled:opacity-50"
-                  disabled={scraping}
-                  onClick={async () => {
-                    try {
-                      setScraping(true);
-                      const { data: { session } } = await supabase.auth.getSession();
-                      if (!session) throw new Error('Not signed in');
-                      const token = session.access_token;
-                      
-                      // Enqueue scrape job
-                      const res = await fetch('/api/enqueue', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-                        body: JSON.stringify({ type: 'scrape_customers', payload: { requestedBy: session.user.email } })
-                      });
-                      if (!res.ok) throw new Error(await res.text());
-                      
-                      const { jobId } = await res.json();
-                      try { if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('job-started', { detail: { label: 'Scrape customers — generating preview...' } })); } catch {}
-                      
-                      // Poll for job completion
-                      let previewId: string | null = null;
-                      for (let i = 0; i < 120; i++) {
-                        await new Promise(r => setTimeout(r, 1000));
-                        const { data: job } = await supabase.from('jobs').select('status, id').eq('id', jobId).single();
-                        
-                        if (job?.status === 'succeeded') {
-                          // Get the result
-                          const { data: result } = await supabase
-                            .from('job_results')
-                            .select('data')
-                            .eq('job_id', jobId)
-                            .order('created_at', { ascending: false })
-                            .limit(1)
-                            .single();
-                          
-                          previewId = result?.data?.preview_id;
-                          break;
-                        }
-                        
-                        if (job?.status === 'failed' || job?.status === 'cancelled') {
-                          throw new Error('Scrape job failed');
-                        }
-                      }
-                      
-                      if (previewId) {
-                        router.push(`/settings/customers/preview?id=${previewId}`);
-                      } else {
-                        throw new Error('No preview generated');
-                      }
-                    } catch (e: any) {
-                      alert(e?.message || 'Failed to scrape customers');
-                      setScraping(false);
-                    }
-                  }}
-                >{scraping ? 'Scraping...' : 'Scrape Customers'}</button>
+                  className="block w-full px-3 py-2 text-left hover:bg-gray-50"
+                  onClick={() => router.push('/settings/customers/scrape')}
+                >Scrape Customers</button>
               </div>
             </div>
           </details>
