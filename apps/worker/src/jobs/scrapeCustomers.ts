@@ -62,6 +62,7 @@ export async function scrapeCustomers(ctx: Ctx) {
     await log(job.id, 'info', 'STEP:customers_diff', {
       new_count: diff.new.length,
       updated_count: diff.updated.length,
+      unchanged_count: diff.unchanged.length,
       orphaned_count: diff.orphaned.length
     });
     
@@ -89,6 +90,7 @@ export async function scrapeCustomers(ctx: Ctx) {
       scraped: rows.length,
       new: diff.new.length,
       updated: diff.updated.length,
+      unchanged: diff.unchanged.length,
       orphaned: diff.orphaned.length
     };
     
@@ -125,6 +127,7 @@ async function calculateCustomerDiff(
   const scrapedCustomerIds = new Set<string>();
   const newCustomers: ScrapedCustomerData[] = [];
   const updatedCustomers: any[] = [];
+  const unchangedCustomers: any[] = [];
   
   for (const r of scrapedRows) {
     if (!r.account) continue;
@@ -168,6 +171,15 @@ async function calculateCustomerDiff(
           company: existing.company || '',
           changes
         });
+      } else {
+        // No changes - unchanged customer
+        unchangedCustomers.push({
+          id: existing.id,
+          customer_id: existing.customer_id,
+          company: existing.company || '',
+          city: existing.city || '',
+          country: existing.country || ''
+        });
       }
     }
   }
@@ -183,6 +195,7 @@ async function calculateCustomerDiff(
   return {
     new: newCustomers,
     updated: updatedCustomers,
+    unchanged: unchangedCustomers,
     orphaned: orphanedCustomers
   };
 }

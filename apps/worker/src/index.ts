@@ -1958,7 +1958,7 @@ const IDLE_SLEEP_MAX_MS = Math.max(IDLE_SLEEP_MS, Number(process.env.IDLE_SLEEP_
 
 async function mainLoop() {
   // eslint-disable-next-line no-console
-  console.log('[worker] started v2.0 - with customer scrape logging', new Date().toISOString());
+  console.log('[worker] started v2.1 - with unchanged customers tracking', new Date().toISOString());
   try {
     const u = new URL(SUPABASE_URL);
     // eslint-disable-next-line no-console

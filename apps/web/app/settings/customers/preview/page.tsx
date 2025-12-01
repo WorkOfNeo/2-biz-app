@@ -219,6 +219,33 @@ function CustomerPreviewContent() {
         </Card>
       )}
       
+      {/* Summary Stats */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Summary</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+            <div className="p-3 bg-green-50 border border-green-200 rounded">
+              <div className="text-xs text-green-700 font-medium">New</div>
+              <div className="text-2xl font-bold text-green-900">{diff.new.length}</div>
+            </div>
+            <div className="p-3 bg-blue-50 border border-blue-200 rounded">
+              <div className="text-xs text-blue-700 font-medium">Updated</div>
+              <div className="text-2xl font-bold text-blue-900">{diff.updated.length}</div>
+            </div>
+            <div className="p-3 bg-gray-50 border border-gray-200 rounded">
+              <div className="text-xs text-gray-700 font-medium">Unchanged</div>
+              <div className="text-2xl font-bold text-gray-900">{diff.unchanged?.length || 0}</div>
+            </div>
+            <div className="p-3 bg-red-50 border border-red-200 rounded">
+              <div className="text-xs text-red-700 font-medium">Orphaned</div>
+              <div className="text-2xl font-bold text-red-900">{diff.orphaned.length}</div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
       {/* New Customers */}
       {diff.new.length > 0 && (
         <Card>
@@ -323,6 +350,47 @@ function CustomerPreviewContent() {
         </Card>
       )}
       
+      {/* Unchanged Customers */}
+      {diff.unchanged && diff.unchanged.length > 0 && (
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <CardTitle>Unchanged Customers</CardTitle>
+              <Badge className="bg-gray-100 text-gray-800 border-gray-300">
+                {diff.unchanged.length} unchanged
+              </Badge>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="text-xs text-gray-600 mb-3">
+              These customers are already up to date.
+            </div>
+            <div className="overflow-auto max-h-96">
+              <table className="min-w-full text-sm">
+                <thead className="bg-gray-50 sticky top-0">
+                  <tr>
+                    <th className="text-left p-2 border-b">Account</th>
+                    <th className="text-left p-2 border-b">Company</th>
+                    <th className="text-left p-2 border-b">City</th>
+                    <th className="text-left p-2 border-b">Country</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {diff.unchanged.map((customer) => (
+                    <tr key={customer.id} className="hover:bg-gray-50">
+                      <td className="p-2 border-b font-mono text-xs">{customer.customer_id}</td>
+                      <td className="p-2 border-b">{customer.company || '-'}</td>
+                      <td className="p-2 border-b">{customer.city || '-'}</td>
+                      <td className="p-2 border-b">{customer.country || '-'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Orphaned Customers */}
       {diff.orphaned.length > 0 && (
         <Card>

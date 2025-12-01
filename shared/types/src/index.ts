@@ -122,9 +122,18 @@ export interface UpdatedCustomerDiff {
   changes: CustomerFieldChange[];
 }
 
+export interface UnchangedCustomerSummary {
+  id: string;
+  customer_id: string;
+  company: string;
+  city: string;
+  country: string;
+}
+
 export interface CustomerDiff {
   new: ScrapedCustomerData[];
   updated: UpdatedCustomerDiff[];
+  unchanged: UnchangedCustomerSummary[];
   orphaned: CustomerRow[];
 }
 
