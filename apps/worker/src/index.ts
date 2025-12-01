@@ -1608,6 +1608,19 @@ async function runJob(job: JobRow) {
               upsertedRowsForLog.push({ account: accountNo, customer: customerName, qty, price, currency: currency || null, op: 'created' });
             }
           }
+          // If customer has sales data (qty or price > 0), remove nulled flag
+          if ((qty > 0 || price > 0) && customerUuid) {
+            try {
+              const { data: customer } = await supabase.from('customers').select('nulled').eq('id', customerUuid).maybeSingle();
+              if (customer?.nulled) {
+                await supabase.from('customers').update({ nulled: false }).eq('id', customerUuid);
+                await log(job.id, 'info', 'STEP:customer_unnulled', { account: accountNo, customer: customerName });
+              }
+            } catch (e) {
+              // Non-critical, just log
+              await log(job.id, 'warn', 'STEP:unnull_failed', { account: accountNo, error: String(e) });
+            }
+          }
         }
         totalRowsUpserted += upsertedForSp;
         await log(job.id, 'info', 'STEP:salesperson_done', { index: processed, total: salespeople.length, upserted: upsertedForSp, name: sp.name, rows: upsertedRowsForLog });

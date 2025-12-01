@@ -1311,6 +1311,7 @@ export default function StatisticsGeneralPage() {
                       <div>Upserted: {importResult.upserted ?? 0}</div>
                       <div>Seasonal nulled applied: {importResult.seasonalNulled ?? 0}</div>
                       <div>Permanently closed: {importResult.permClosed ?? 0}</div>
+                      <div>Un-nulled (with sales): {importResult.unnulled ?? 0}</div>
                     </div>
                     {(importResult.unmatchedSamples?.length ?? 0) > 0 && (
                       <div className="mt-2">

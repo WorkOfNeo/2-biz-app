@@ -76,6 +76,17 @@ export default function OverviewPage() {
     if (error) throw new Error(error.message);
     return (data?.value as Record<string, number> | undefined) ?? {};
   });
+  // Season-specific currency rates
+  const { data: ratesS1 } = useSWR(s1 ? `season:${s1}:currency-rates` : null, async () => {
+    const key = `currency_rates:${s1}`;
+    const { data } = await supabase.from('app_settings').select('value').eq('key', key).maybeSingle();
+    return ((data?.value as any) || {}) as Record<string, number>;
+  });
+  const { data: ratesS2 } = useSWR(s2 ? `season:${s2}:currency-rates` : null, async () => {
+    const key = `currency_rates:${s2}`;
+    const { data } = await supabase.from('app_settings').select('value').eq('key', key).maybeSingle();
+    return ((data?.value as any) || {}) as Record<string, number>;
+  });
   const rates = useMemo(() => ({ DKK: 1, ...(currencyRatesRow ?? {}) } as Record<string, number>), [currencyRatesRow]);
   const spCurrencyById = useMemo(() => Object.fromEntries(((people ?? []) as Person[]).map(p => [p.id, p.currency ?? 'DKK'])), [people]);
 
@@ -135,6 +146,7 @@ export default function OverviewPage() {
     // Aggregate stats per salesperson, filtered to target accounts
     const agg = new Map<string, { s1Qty: number; s1Price: number; s2Qty: number; s2Price: number; visited: Set<string>; visitedValid: Set<string> }>();
     for (const sp of people) agg.set(sp.id, { s1Qty: 0, s1Price: 0, s2Qty: 0, s2Price: 0, visited: new Set<string>(), visitedValid: new Set<string>() });
+    const baseRates = { DKK: 1, ...(currencyRatesRow ?? {}) } as Record<string, number>;
     for (const r of stats) {
       const spId = r.salesperson_id ?? '';
       const set = targetsBySp.get(spId);
@@ -143,10 +155,11 @@ export default function OverviewPage() {
       if (!acc || !set.has(acc)) continue;
       const row = agg.get(spId)!;
       const currency = spCurrencyById[spId] ?? 'DKK';
-      const rate = rates[currency] ?? 1;
-      const priceDkk = Number(r.price || 0) * rate;
-      if (r.season_id === s1) { row.s1Qty += Number(r.qty||0); row.s1Price += priceDkk; row.visited.add(acc); if (validTargetsBySp.get(spId)?.has(acc)) row.visitedValid.add(acc); }
-      else if (r.season_id === s2) { row.s2Qty += Number(r.qty||0); row.s2Price += priceDkk; }
+      const rateS1 = { ...baseRates, ...(ratesS1 ?? {}) }[currency] ?? 1;
+      const rateS2 = { ...baseRates, ...(ratesS2 ?? {}) }[currency] ?? 1;
+      const price = Number(r.price || 0);
+      if (r.season_id === s1) { row.s1Qty += Number(r.qty||0); row.s1Price += price * rateS1; row.visited.add(acc); if (validTargetsBySp.get(spId)?.has(acc)) row.visitedValid.add(acc); }
+      else if (r.season_id === s2) { row.s2Qty += Number(r.qty||0); row.s2Price += price * rateS2; }
     }
     // Aggregate invoices mapped to salesperson via customers
     const customerById = new Map<string, Customer>();
@@ -161,11 +174,12 @@ export default function OverviewPage() {
       if (!set || !set.has(acc)) continue;
       const row = agg.get(spId)!;
       const currency = (inv.currency || 'DKK').toUpperCase();
-      const rate = rates[currency] ?? 1;
-      const amountDkk = Number(inv.amount || 0) * rate;
+      const rateS1 = { ...baseRates, ...(ratesS1 ?? {}) }[currency] ?? 1;
+      const rateS2 = { ...baseRates, ...(ratesS2 ?? {}) }[currency] ?? 1;
+      const amount = Number(inv.amount || 0);
       const qty = Number(inv.qty || 0) || 0;
-      if (inv.season_id === s1) { row.s1Qty += qty; row.s1Price += amountDkk; }
-      else if (inv.season_id === s2) { row.s2Qty += qty; row.s2Price += amountDkk; }
+      if (inv.season_id === s1) { row.s1Qty += qty; row.s1Price += amount * rateS1; }
+      else if (inv.season_id === s2) { row.s2Qty += qty; row.s2Price += amount * rateS2; }
     }
     // Build output rows
     const out = [] as any[];
@@ -239,7 +253,7 @@ export default function OverviewPage() {
       });
     }
     return out;
-  }, [people, customers, stats, invoices, country, s1, s2, rates, spCurrencyById]);
+  }, [people, customers, stats, invoices, country, s1, s2, currencyRatesRow, ratesS1, ratesS2, spCurrencyById]);
 
   // Totals across all salespersons for selected country, converted to DKK
   const totals = useMemo(() => {
@@ -250,28 +264,32 @@ export default function OverviewPage() {
       if (targetCountry && String(c.country ?? '').toUpperCase() !== targetCountry) continue;
       if (c.customer_id) targetAccounts.add(c.customer_id);
     }
+    const baseRates = { DKK: 1, ...(currencyRatesRow ?? {}) } as Record<string, number>;
     const out = { s1Qty: 0, s1PriceDkk: 0, s2Qty: 0, s2PriceDkk: 0 };
     for (const r of (stats ?? []) as StatsRow[]) {
       const acc = r.account_no ?? '';
       if (!acc || !targetAccounts.has(acc)) continue;
       const currency = r.salesperson_id ? (spCurrencyById[r.salesperson_id] ?? 'DKK') : 'DKK';
-      const rate = rates[currency] ?? 1;
+      const rateS1 = { ...baseRates, ...(ratesS1 ?? {}) }[currency] ?? 1;
+      const rateS2 = { ...baseRates, ...(ratesS2 ?? {}) }[currency] ?? 1;
       const qty = Number(r.qty || 0);
-      const priceDkk = Number(r.price || 0) * rate;
-      if (r.season_id === s1) { out.s1Qty += qty; out.s1PriceDkk += priceDkk; }
-      else if (r.season_id === s2) { out.s2Qty += qty; out.s2PriceDkk += priceDkk; }
+      const price = Number(r.price || 0);
+      if (r.season_id === s1) { out.s1Qty += qty; out.s1PriceDkk += price * rateS1; }
+      else if (r.season_id === s2) { out.s2Qty += qty; out.s2PriceDkk += price * rateS2; }
     }
     for (const inv of (invoices ?? [])) {
       const acc = inv.account_no ?? '';
       if (!acc || !targetAccounts.has(acc)) continue;
-      const rate = rates[(String(inv.currency || 'DKK').toUpperCase())] ?? 1;
+      const currency = (String(inv.currency || 'DKK').toUpperCase());
+      const rateS1 = { ...baseRates, ...(ratesS1 ?? {}) }[currency] ?? 1;
+      const rateS2 = { ...baseRates, ...(ratesS2 ?? {}) }[currency] ?? 1;
       const qty = Number(inv.qty || 0) || 0;
-      const amountDkk = Number(inv.amount || 0) * rate;
-      if (inv.season_id === s1) { out.s1Qty += qty; out.s1PriceDkk += amountDkk; }
-      else if (inv.season_id === s2) { out.s2Qty += qty; out.s2PriceDkk += amountDkk; }
+      const amount = Number(inv.amount || 0);
+      if (inv.season_id === s1) { out.s1Qty += qty; out.s1PriceDkk += amount * rateS1; }
+      else if (inv.season_id === s2) { out.s2Qty += qty; out.s2PriceDkk += amount * rateS2; }
     }
     return out;
-  }, [customers, stats, invoices, country, s1, s2, rates, spCurrencyById]);
+  }, [customers, stats, invoices, country, s1, s2, currencyRatesRow, ratesS1, ratesS2, spCurrencyById]);
 
   // navigation helper
   function buildDetailsHref(spId: string, mode: 'nulled' | 'not_visited' | 'visited') {

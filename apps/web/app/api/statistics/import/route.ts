@@ -47,6 +47,7 @@ async function handle(req: Request) {
       upserted: 0,
       seasonalNulled: 0,
       permClosed: 0,
+      unnulled: 0,
       unmatchedSamples: [] as Array<{ customer_name?: string; city?: string }>,
     };
     for (const r of rows) {
@@ -105,6 +106,25 @@ async function handle(req: Request) {
       const { error } = await supabase.from('sales_stats').upsert(part as any, { onConflict: 'season_id,account_no' as any });
       if (error) return new Response(JSON.stringify({ error: error.message }), { status: 500 });
       inserted += part.length;
+    }
+    // Un-null customers that have sales data (qty or price > 0)
+    const accountsWithSales = new Set<string>();
+    for (const row of aggregated) {
+      if ((Number(row.qty || 0) > 0 || Number(row.price || 0) > 0) && row.account_no) {
+        accountsWithSales.add(row.account_no);
+      }
+    }
+    if (accountsWithSales.size > 0) {
+      const idsToCheck = Array.from(accountsWithSales);
+      const { data: nulledCustomers } = await supabase.from('customers').select('customer_id').eq('nulled', true).in('customer_id', idsToCheck);
+      if (nulledCustomers && nulledCustomers.length > 0) {
+        const toUnnull = nulledCustomers.map((c: any) => c.customer_id);
+        for (let i = 0; i < toUnnull.length; i += chunkSize) {
+          const chunk = toUnnull.slice(i, i + chunkSize);
+          await supabase.from('customers').update({ nulled: false }).in('customer_id', chunk);
+        }
+        stats.unnulled = toUnnull.length;
+      }
     }
     // Update season overrides (nulled) for this season
     if (nulledAccounts.size > 0) {
