@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useState, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
+import { useSWRConfig } from 'swr';
 import { supabase } from '../../../../lib/supabaseClient';
 import { Card, CardHeader, CardTitle, CardContent } from '../../../../components/ui/card';
 import { Badge } from '../../../../components/ui/badge';
@@ -11,6 +12,7 @@ import type { CustomerDiff, CustomerScrapePreviewRow, CustomerFieldChange } from
 function CustomerPreviewContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
+  const { mutate } = useSWRConfig();
   const previewId = searchParams.get('id');
   
   const [preview, setPreview] = useState<CustomerScrapePreviewRow | null>(null);
@@ -98,8 +100,25 @@ function CustomerPreviewContent() {
       
       setApplyStatus(`✅ Applied ${totalChanges} changes in ${elapsed}s`);
       
+      // Invalidate all customer-related SWR caches
+      console.log('[APPLY] Invalidating customer caches...');
+      await mutate(
+        (key) => {
+          if (typeof key === 'string') {
+            return key.includes('customer') || key.includes('overview') || key.includes('general');
+          }
+          if (Array.isArray(key)) {
+            return key.some(k => typeof k === 'string' && (k.includes('customer') || k.includes('overview') || k.includes('general')));
+          }
+          return false;
+        },
+        undefined,
+        { revalidate: true }
+      );
+      console.log('[APPLY] ✅ Customer caches invalidated - pages will refresh automatically');
+      
       // Wait a moment to show success message
-      await new Promise(r => setTimeout(r, 1000));
+      await new Promise(r => setTimeout(r, 1500));
       
       router.push('/settings/customers?applied=true');
     } catch (e: any) {
