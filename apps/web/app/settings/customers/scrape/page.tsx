@@ -6,11 +6,24 @@ import { Card, CardHeader, CardTitle, CardContent } from '../../../../components
 import { Badge } from '../../../../components/ui/badge';
 import { Button } from '../../../../components/ui/button';
 import { Modal } from '../../../../components/Modal';
+import { ProgressBar } from '../../../../components/ProgressBar';
 import type { CustomerDiff, CustomerScrapePreviewRow } from '@shared/types';
+
+const SCRAPE_STEPS = [
+  { key: 'customers_begin', label: 'Starting customer scrape...', progress: 10 },
+  { key: 'customers_url', label: 'Loading customer list from SPY...', progress: 20 },
+  { key: 'customers_rows', label: 'Extracting customer data...', progress: 50 },
+  { key: 'customers_diff', label: 'Calculating differences...', progress: 70 },
+  { key: 'storing_preview', label: 'Storing preview data...', progress: 85 },
+  { key: 'saving_result', label: 'Saving results...', progress: 95 },
+  { key: 'job_succeeded', label: 'Complete!', progress: 100 },
+];
 
 export default function CustomerScrapePage() {
   const router = useRouter();
   const [scraping, setScraping] = useState(false);
+  const [currentStep, setCurrentStep] = useState<string>('');
+  const [progress, setProgress] = useState(0);
   const [preview, setPreview] = useState<CustomerScrapePreviewRow | null>(null);
   const [previewId, setPreviewId] = useState<string | null>(null);
   const [applying, setApplying] = useState(false);
@@ -22,9 +35,40 @@ export default function CustomerScrapePage() {
 
   const diff: CustomerDiff | null = preview?.diff_data as CustomerDiff || null;
 
+  const updateStepFromLogs = async (jobId: string) => {
+    try {
+      const { data: logs } = await supabase
+        .from('job_logs')
+        .select('message')
+        .eq('job_id', jobId)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      
+      if (logs?.message) {
+        const msg = logs.message;
+        // Look for STEP:xxx patterns
+        const stepMatch = msg.match(/STEP:(\w+)/);
+        if (stepMatch) {
+          const stepKey = stepMatch[1];
+          const step = SCRAPE_STEPS.find(s => s.key === stepKey);
+          if (step) {
+            setCurrentStep(step.label);
+            setProgress(step.progress);
+          }
+        }
+      }
+    } catch (e) {
+      console.error('[SCRAPE] Error fetching logs:', e);
+    }
+  };
+
   const handleScrape = async () => {
     try {
       setScraping(true);
+      setCurrentStep('Initializing...');
+      setProgress(0);
+      
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) throw new Error('Not signed in');
       const token = session.access_token;
@@ -46,6 +90,9 @@ export default function CustomerScrapePage() {
       const { jobId } = await res.json();
       console.log('[SCRAPE] Job enqueued:', jobId);
       
+      setCurrentStep('Job queued...');
+      setProgress(5);
+      
       try { 
         if (typeof window !== 'undefined') 
           window.dispatchEvent(new CustomEvent('job-started', { detail: { label: 'Scrape customers — generating preview...' } })); 
@@ -55,6 +102,10 @@ export default function CustomerScrapePage() {
       let newPreviewId: string | null = null;
       for (let i = 0; i < 120; i++) {
         await new Promise(r => setTimeout(r, 1000));
+        
+        // Update step from logs
+        await updateStepFromLogs(jobId);
+        
         const { data: job, error: jobError } = await supabase.from('jobs').select('status, id').eq('id', jobId).single();
         
         if (jobError) {
@@ -122,6 +173,8 @@ export default function CustomerScrapePage() {
       alert(e?.message || 'Failed to scrape customers');
     } finally {
       setScraping(false);
+      setCurrentStep('');
+      setProgress(0);
     }
   };
 
@@ -257,6 +310,14 @@ export default function CustomerScrapePage() {
                 This will scrape customer data from SPY and generate a preview of changes that need to be applied.
                 You'll be able to review all changes before applying them.
               </p>
+              
+              {scraping && currentStep && (
+                <div className="space-y-2">
+                  <div className="text-sm font-medium text-gray-700">{currentStep}</div>
+                  <ProgressBar value={progress} max={100} showLabel />
+                </div>
+              )}
+              
               <Button
                 disabled={scraping}
                 onClick={handleScrape}
