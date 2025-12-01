@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { supabase } from '../../../../lib/supabaseClient';
 import { Card, CardHeader, CardTitle, CardContent } from '../../../../components/ui/card';
@@ -8,7 +8,7 @@ import { Button } from '../../../../components/ui/button';
 import { Modal } from '../../../../components/Modal';
 import type { CustomerDiff, CustomerScrapePreviewRow, CustomerFieldChange } from '@shared/types';
 
-export default function CustomerPreviewPage() {
+function CustomerPreviewContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const previewId = searchParams.get('id');
@@ -445,6 +445,18 @@ export default function CustomerPreviewPage() {
         </div>
       </Modal>
     </div>
+  );
+}
+
+export default function CustomerPreviewPage() {
+  return (
+    <Suspense fallback={
+      <div className="p-6">
+        <div className="text-sm text-gray-600">Loading preview...</div>
+      </div>
+    }>
+      <CustomerPreviewContent />
+    </Suspense>
   );
 }
 
