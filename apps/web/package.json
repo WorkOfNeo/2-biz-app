@@ -9,6 +9,7 @@
     "start": "next start -p 3001"
   },
   "dependencies": {
+    "@radix-ui/react-tabs": "^1.0.4",
     "@shared/types": "workspace:*",
     "@supabase/auth-helpers-nextjs": "^0.10.0",
     "@supabase/auth-ui-react": "^0.4.7",

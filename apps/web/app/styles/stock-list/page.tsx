@@ -500,29 +500,6 @@ export default function StockListPage() {
                                   }}
                                 />
                               )}
-                              {/* Inactive status badges and toggle */}
-                              {colorStatus?.maybe_inactive && !colorStatus?.inactive && (
-                                <span className="text-[10px] px-1.5 py-0.5 bg-yellow-100 text-yellow-800 rounded border border-yellow-300">Maybe Inactive</span>
-                              )}
-                              {colorStatus?.inactive && (
-                                <span className="text-[10px] px-1.5 py-0.5 bg-red-100 text-red-800 rounded border border-red-300">Inactive</span>
-                              )}
-                              {!has('sales') && scId && (
-                                <button
-                                  onClick={async () => {
-                                    try {
-                                      const newInactive = !colorStatus?.inactive;
-                                      await supabase.from('style_colors').update({ inactive: newInactive }).eq('id', scId);
-                                      await mutateStyleColors();
-                                    } catch (err) {
-                                      console.error('Failed to toggle inactive', err);
-                                    }
-                                  }}
-                                  className={`text-[10px] px-1.5 py-0.5 rounded border ${colorStatus?.inactive ? 'bg-green-50 text-green-700 border-green-300 hover:bg-green-100' : 'bg-gray-50 text-gray-700 border-gray-300 hover:bg-gray-100'}`}
-                                >
-                                  {colorStatus?.inactive ? 'Activate' : 'Set Inactive'}
-                                </button>
-                              )}
                             </>
                           );
                         })()}
