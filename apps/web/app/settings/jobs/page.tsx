@@ -119,6 +119,37 @@ export default function JobsOverviewPage() {
   const [expandDesc, setExpandDesc] = React.useState<Record<string, boolean>>({});
   const [seqRunning, setSeqRunning] = React.useState(false);
 
+  // Fetch currently running job
+  const { data: runningJob } = useSWR('jobs:running', async () => {
+    const { data, error } = await supabase
+      .from('jobs')
+      .select('id, type, status, started_at')
+      .eq('status', 'running')
+      .order('started_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    return data as { id: string; type: string; status: string; started_at: string } | null;
+  }, { refreshInterval: 2000 });
+
+  // Fetch latest log for running job
+  const { data: latestLog } = useSWR(
+    runningJob?.id ? ['job:log', runningJob.id] : null,
+    async () => {
+      if (!runningJob?.id) return null;
+      const { data, error } = await supabase
+        .from('job_logs')
+        .select('message, data, created_at')
+        .eq('job_id', runningJob.id)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (error) throw new Error(error.message);
+      return data as { message: string; data: any; created_at: string } | null;
+    },
+    { refreshInterval: 1000 }
+  );
+
   async function createJob(body: any) {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) throw new Error('Not signed in');
@@ -182,6 +213,43 @@ export default function JobsOverviewPage() {
           <h1 className="text-xl font-semibold">Jobs Overview</h1>
         </div>
       </div>
+
+      {/* Running Job Progress Bar */}
+      {runningJob && (
+        <div className="rounded-lg border bg-blue-50 border-blue-200 p-4">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <div className="h-2 w-2 bg-blue-600 rounded-full animate-pulse" />
+              <span className="text-sm font-semibold text-blue-900">
+                {JOB_DESCRIPTIONS[runningJob.type]?.split(':')[0] || runningJob.type} - Running
+              </span>
+            </div>
+            <span className="text-xs text-blue-700">
+              Started {new Date(runningJob.started_at).toLocaleTimeString()}
+            </span>
+          </div>
+          {latestLog && (
+            <div className="text-sm text-blue-800 mb-3">
+              {latestLog.message || 'Processing...'}
+              {latestLog.data && typeof latestLog.data === 'object' && Object.keys(latestLog.data).length > 0 && (
+                <span className="ml-2 text-xs text-blue-600">
+                  {Object.entries(latestLog.data).slice(0, 3).map(([k, v]) => `${k}: ${v}`).join(', ')}
+                </span>
+              )}
+            </div>
+          )}
+          <div className="relative h-2 bg-blue-200 rounded-full overflow-hidden">
+            <div className="absolute inset-0 bg-blue-600 animate-pulse" style={{ width: '100%' }} />
+            <div 
+              className="absolute inset-0 bg-gradient-to-r from-transparent via-white to-transparent opacity-30"
+              style={{ 
+                animation: 'shimmer 2s infinite',
+                backgroundSize: '200% 100%'
+              }}
+            />
+          </div>
+        </div>
+      )}
 
       {/* Jobs list divided into Scrapes and Exports */}
       <div className="rounded-md border bg-white">
