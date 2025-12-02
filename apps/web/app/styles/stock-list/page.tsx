@@ -3,6 +3,7 @@ import useSWR from 'swr';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import React from 'react';
 import { useRoles } from '../../../lib/supabaseClient';
+import { MultiSelect } from '../../../components/MultiSelect';
 
 type Row = {
   style_no: string;
@@ -28,6 +29,8 @@ export default function StockListPage() {
   }, []);
   const [searchQuery, setSearchQuery] = React.useState<string>('');
   const [scrapeBusy, setScrapeBusy] = React.useState<string | null>(null);
+  const [selectedSeasons, setSelectedSeasons] = React.useState<string[]>([]);
+  const [hideZeros, setHideZeros] = React.useState<boolean>(false);
   const { data } = useSWR('style_stock:list', async () => {
     const pageSize = 2000;
     const cap = 50000; // avoid runaway
@@ -340,23 +343,64 @@ export default function StockListPage() {
 
   // (migrated to top of file to satisfy dependencies)
 
-  // Filter rows based on active Stock List and search
+  // Filter rows based on active Stock List, search, seasons, and hide zeros
   const filteredForView = React.useMemo(() => {
     let base = groupedByStyle;
+    
+    // Filter by active list
     if (activeListId) {
       base = base.filter(({ styleNo }) => {
         const sid = styleMetaByNo[styleNo]?.id || null;
         return sid ? styleIdsInList.has(sid) : false;
       });
     }
+    
+    // Filter by search query
     const q = searchQuery.trim().toLowerCase();
-    if (!q) return base;
-    return base.filter(({ styleNo, colors }) => {
-      const name = styleMetaByNo[styleNo]?.name || '';
-      if (styleNo.toLowerCase().includes(q) || (name || '').toLowerCase().includes(q)) return true;
-      return colors.some((c) => (c.color || '').toLowerCase().includes(q));
-    });
-  }, [groupedByStyle, activeListId, styleIdsInList.size, searchQuery, styleMetaByNo]);
+    if (q) {
+      base = base.filter(({ styleNo, colors }) => {
+        const name = styleMetaByNo[styleNo]?.name || '';
+        if (styleNo.toLowerCase().includes(q) || (name || '').toLowerCase().includes(q)) return true;
+        return colors.some((c) => (c.color || '').toLowerCase().includes(q));
+      });
+    }
+    
+    // Filter by seasons
+    if (selectedSeasons.length > 0) {
+      base = base.map(({ styleNo, colors }) => {
+        const sid = styleMetaByNo[styleNo]?.id || null;
+        if (!sid) return { styleNo, colors };
+        
+        const filteredColors = colors.filter((c) => {
+          const cmap = styleColors?.idMap?.get(sid) || new Map<string, string>();
+          const scId = cmap.get((c.color || '').trim().toLowerCase());
+          if (!scId) return false;
+          
+          const colorSeasonIds = colorSeasons?.get(scId) || new Set<string>();
+          // Color must have at least one of the selected seasons
+          return selectedSeasons.some(seasonId => colorSeasonIds.has(seasonId));
+        });
+        
+        return { styleNo, colors: filteredColors };
+      }).filter(({ colors }) => colors.length > 0);
+    }
+    
+    // Filter out colors with all zeros
+    if (hideZeros) {
+      base = base.map(({ styleNo, colors }) => {
+        const filteredColors = colors.filter((c) => {
+          const hasNonZero = c.stock.some(v => v !== 0) || 
+                           c.soldSum.some(v => v !== 0) || 
+                           c.purchaseSum.some(v => v !== 0) || 
+                           c.available.some(v => v !== 0);
+          return hasNonZero;
+        });
+        return { styleNo, colors: filteredColors };
+      }).filter(({ colors }) => colors.length > 0);
+    }
+    
+    return base;
+  }, [groupedByStyle, activeListId, styleIdsInList.size, searchQuery, styleMetaByNo, selectedSeasons, hideZeros, styleColors, colorSeasons]);
 
   const emptyState: JSX.Element | null = React.useMemo(() => {
     if (activeListId && filteredForView.length === 0) {
@@ -375,25 +419,62 @@ export default function StockListPage() {
         <h1 className="text-xl font-semibold sl-header-title">Stock List</h1>
       </div>
 
-      <div className="flex items-center justify-between gap-3 sl-controls">
-        <div className="flex items-center gap-2 sl-lists">
-            <button
-            className={(activeListId===''?'bg-slate-900 text-white ':'bg-white text-slate-900 ') + 'text-xs px-2 py-1 border rounded sl-list-chip sl-list-all'}
-            onClick={()=>setActiveListId('')}
-            >All</button>
-          {(stockLists ?? []).map((row) => (
-            <button key={row.id} className={(activeListId===row.id?'bg-slate-900 text-white ':'bg-white text-slate-900 ') + 'text-xs px-2 py-1 border rounded sl-list-chip'} onClick={()=>setActiveListId(row.id)}>{row.name}</button>
-          ))}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between gap-3 sl-controls">
+          <div className="flex items-center gap-2 sl-lists">
+              <button
+              className={(activeListId===''?'bg-slate-900 text-white ':'bg-white text-slate-900 ') + 'text-xs px-2 py-1 border rounded sl-list-chip sl-list-all'}
+              onClick={()=>setActiveListId('')}
+              >All</button>
+            {(stockLists ?? []).map((row) => (
+              <button key={row.id} className={(activeListId===row.id?'bg-slate-900 text-white ':'bg-white text-slate-900 ') + 'text-xs px-2 py-1 border rounded sl-list-chip'} onClick={()=>setActiveListId(row.id)}>{row.name}</button>
+            ))}
+          </div>
+          <div className="sl-search">
+            <input
+              className="text-xs border rounded px-2 py-1 w-56 sl-search-input"
+              placeholder="Search style no, name or color…"
+              value={searchQuery}
+              onChange={(e)=>setSearchQuery(e.target.value)}
+            />
+          </div>
         </div>
-        <div className="sl-search">
-          <input
-            className="text-xs border rounded px-2 py-1 w-56 sl-search-input"
-            placeholder="Search style no, name or color…"
-            value={searchQuery}
-            onChange={(e)=>setSearchQuery(e.target.value)}
+        
+        {/* Additional Filters */}
+        <div className="flex items-center gap-3 flex-wrap">
+          <MultiSelect
+            items={(seasons || []).map(s => ({ 
+              value: s.id, 
+              label: `${s.name}${s.year ? ` ${s.year}` : ''}` 
+            }))}
+            values={selectedSeasons}
+            onChange={setSelectedSeasons}
+            placeholder="Filter by seasons..."
           />
-                          </div>
-                  </div>
+          
+          <label className="flex items-center gap-2 text-xs cursor-pointer">
+            <input
+              type="checkbox"
+              checked={hideZeros}
+              onChange={(e) => setHideZeros(e.target.checked)}
+              className="h-4 w-4 rounded accent-slate-900"
+            />
+            <span>Hide colors with all zeros</span>
+          </label>
+          
+          {(selectedSeasons.length > 0 || hideZeros) && (
+            <button
+              onClick={() => {
+                setSelectedSeasons([]);
+                setHideZeros(false);
+              }}
+              className="text-xs text-slate-600 hover:text-slate-900 underline"
+            >
+              Clear filters
+            </button>
+          )}
+        </div>
+      </div>
       {/* Scrape active list */}
       {activeListId && (
         <div className="flex items-center justify-end">
