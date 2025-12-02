@@ -76,18 +76,20 @@ export default function StockListPage() {
     return (data ?? []) as Array<{ id: string; name: string; year: number | null }>;
   }, { refreshInterval: 0 });
 
-  // Colors → ids for seasons mapping
-  const { data: styleColors } = useSWR(styleIds.length ? ['style_colors:ids', styleIds.join(',')] : null, async () => {
-    const { data, error } = await supabase.from('style_colors').select('id, style_id, color').in('style_id', styleIds);
+  // Colors → ids for seasons mapping (including inactive flags)
+  const { data: styleColors, mutate: mutateStyleColors } = useSWR(styleIds.length ? ['style_colors:ids', styleIds.join(',')] : null, async () => {
+    const { data, error } = await supabase.from('style_colors').select('id, style_id, color, maybe_inactive, inactive').in('style_id', styleIds);
     if (error) throw new Error(error.message);
     const map = new Map<string, Map<string, string>>(); // style_id -> (colorLower -> style_color_id)
+    const statusMap = new Map<string, { maybe_inactive: boolean; inactive: boolean }>(); // style_color_id -> status
     for (const r of (data ?? []) as any[]) {
       const sid = String(r.style_id || '');
       const ckey = String(r.color || '').trim().toLowerCase();
       if (!map.has(sid)) map.set(sid, new Map());
       map.get(sid)!.set(ckey, r.id as string);
+      statusMap.set(r.id as string, { maybe_inactive: r.maybe_inactive || false, inactive: r.inactive || false });
     }
-    return map;
+    return { idMap: map, statusMap };
   }, { refreshInterval: 0 });
 
   // style_color_id -> seasons (computed after groups is defined)
@@ -137,7 +139,7 @@ export default function StockListPage() {
     // Build reverse map: style_id -> (style_color_id -> colorLower)
     const invertByStyle = new Map<string, Map<string, string>>();
     for (const sid of styleIds) {
-      const cmap = styleColors?.get(sid) || new Map<string, string>();
+      const cmap = styleColors?.idMap?.get(sid) || new Map<string, string>();
       const inv = new Map<string, string>();
       for (const [ck, id] of Array.from(cmap.entries())) inv.set(id, ck);
       invertByStyle.set(sid, inv);
@@ -230,7 +232,7 @@ export default function StockListPage() {
     const out: string[] = [];
     for (const r of (styleRows ?? []) as any[]) {
       const sid = r.id as string;
-      const cmap = styleColors?.get(sid) || new Map<string, string>();
+      const cmap = styleColors?.idMap?.get(sid) || new Map<string, string>();
       for (const g of groups.filter((gr) => styleMetaByNo[gr.styleNo]?.id === sid)) {
         const id = cmap.get((g.color || '').trim().toLowerCase());
         if (id) out.push(id);
@@ -284,7 +286,7 @@ export default function StockListPage() {
       if (!sid) return row;
       const hiddenIds = (listColorRules as any)?.hiddenIdsMap?.get(sid) as Set<string> | undefined;
       // Collect colorLower -> style_color_id map for this style
-      const allColorKeysMap = styleColors?.get(sid) || new Map<string, string>(); // colorLower -> style_color_id
+      const allColorKeysMap = styleColors?.idMap?.get(sid) || new Map<string, string>(); // colorLower -> style_color_id
       // Filter current colors to remove hidden
       const current = row.colors.filter((c) => {
         const key = String(c.color || '').trim().toLowerCase();
@@ -458,12 +460,13 @@ export default function StockListPage() {
                   const availableTotal = sum(g.available);
                   return (
                   <div key={key} className="space-y-1 sl-color-block">
-                      {/* Seasons chips and add control */}
+                      {/* Seasons chips, inactive status, and controls */}
                     <div className="flex flex-wrap items-center gap-1 sl-season-chips">
                         {(() => {
                           const sid = styleMetaByNo[g.styleNo]?.id || null;
-                          const cmap = sid ? (styleColors?.get(sid) || new Map<string, string>()) : new Map<string, string>();
+                          const cmap = sid ? (styleColors?.idMap?.get(sid) || new Map<string, string>()) : new Map<string, string>();
                           const scId = cmap.get((g.color || '').trim().toLowerCase()) || null;
+                          const colorStatus = scId ? styleColors?.statusMap?.get(scId) : null;
                           const set = (scId && colorSeasons) ? (colorSeasons.get(scId) || new Set<string>()) : new Set<string>();
                           const labels = (seasons || []).filter(s => set.has(s.id));
                           return (
@@ -496,6 +499,29 @@ export default function StockListPage() {
                                     await mutateColorSeasons();
                                   }}
                                 />
+                              )}
+                              {/* Inactive status badges and toggle */}
+                              {colorStatus?.maybe_inactive && !colorStatus?.inactive && (
+                                <span className="text-[10px] px-1.5 py-0.5 bg-yellow-100 text-yellow-800 rounded border border-yellow-300">Maybe Inactive</span>
+                              )}
+                              {colorStatus?.inactive && (
+                                <span className="text-[10px] px-1.5 py-0.5 bg-red-100 text-red-800 rounded border border-red-300">Inactive</span>
+                              )}
+                              {!has('sales') && scId && (
+                                <button
+                                  onClick={async () => {
+                                    try {
+                                      const newInactive = !colorStatus?.inactive;
+                                      await supabase.from('style_colors').update({ inactive: newInactive }).eq('id', scId);
+                                      await mutateStyleColors();
+                                    } catch (err) {
+                                      console.error('Failed to toggle inactive', err);
+                                    }
+                                  }}
+                                  className={`text-[10px] px-1.5 py-0.5 rounded border ${colorStatus?.inactive ? 'bg-green-50 text-green-700 border-green-300 hover:bg-green-100' : 'bg-gray-50 text-gray-700 border-gray-300 hover:bg-gray-100'}`}
+                                >
+                                  {colorStatus?.inactive ? 'Activate' : 'Set Inactive'}
+                                </button>
                               )}
                             </>
                           );

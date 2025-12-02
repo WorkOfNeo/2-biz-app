@@ -758,18 +758,36 @@ async function runJob(job: JobRow) {
       if (stockMovements.length) {
         try { await supabase.from('style_stock_movements').insert(stockMovements); } catch {}
       }
-      // Check if all values across all sections are 0 and update maybe_inactive flag
+      // Check per-color if all values across all sections are 0 and update maybe_inactive flag
       try {
-        const allZero = extracted.every((row: any) => {
-          const values = row.values || [];
-          return values.every((v: any) => Number(v) === 0);
-        });
-        if (allZero && styleId) {
-          await supabase.from('styles').update({ maybe_inactive: true }).eq('id', styleId);
-          await log(job.id, 'info', 'STEP:style_maybe_inactive', { style_no: s.style_no, reason: 'All values across all sections are 0' });
-        } else if (!allZero && styleId) {
-          // Reset maybe_inactive if there's any non-zero value
-          await supabase.from('styles').update({ maybe_inactive: false }).eq('id', styleId);
+        // Group extracted rows by color
+        const colorMap = new Map<string, any[]>();
+        for (const row of extracted) {
+          const color = String(row.color || '').trim().toLowerCase();
+          if (!colorMap.has(color)) colorMap.set(color, []);
+          colorMap.get(color)!.push(row);
+        }
+        // Check each color
+        for (const [colorKey, colorRows] of colorMap.entries()) {
+          const allZero = colorRows.every((row: any) => {
+            const values = row.values || [];
+            return values.every((v: any) => Number(v) === 0);
+          });
+          // Find the style_color_id for this color
+          if (styleId) {
+            const { data: styleColor } = await supabase
+              .from('style_colors')
+              .select('id')
+              .eq('style_id', styleId)
+              .ilike('color', colorKey)
+              .maybeSingle();
+            if (styleColor?.id) {
+              await supabase.from('style_colors').update({ maybe_inactive: allZero }).eq('id', styleColor.id);
+              if (allZero) {
+                await log(job.id, 'info', 'STEP:style_color_maybe_inactive', { style_no: s.style_no, color: colorKey, reason: 'All values are 0' });
+              }
+            }
+          }
         }
       } catch (e: any) {
         await log(job.id, 'error', 'STEP:style_inactive_check_error', { style_no: s.style_no, error: e?.message || String(e) });
