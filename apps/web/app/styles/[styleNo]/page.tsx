@@ -159,7 +159,7 @@ export default function StyleDetailPage({ params }: { params: { styleNo: string 
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 max-w-full">
       <div className="flex items-start justify-between">
         <div className="flex items-start gap-4">
           {meta?.image_url && (
@@ -197,18 +197,20 @@ export default function StyleDetailPage({ params }: { params: { styleNo: string 
         )}
       </div>
 
-      <div className="rounded-md border bg-white p-4">
+      <div className="rounded-md border bg-white p-4 max-w-full overflow-hidden">
         {(colors ?? []).length === 0 ? (
           <div className="text-sm text-gray-500">No colors found yet.</div>
         ) : (
           <Tabs defaultValue={(colors ?? [])[0]?.id} className="w-full">
-            <TabsList className="w-full justify-start mb-4">
-              {(colors ?? []).map((c) => (
-                <TabsTrigger key={c.id} value={c.id} className={getTabColor(c)}>
-                  {c.color}
-                </TabsTrigger>
-              ))}
-            </TabsList>
+            <div className="overflow-x-auto -mx-4 px-4 mb-4">
+              <TabsList className="inline-flex w-auto min-w-full">
+                {(colors ?? []).map((c) => (
+                  <TabsTrigger key={c.id} value={c.id} className={getTabColor(c)}>
+                    {c.color}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+            </div>
             
             {(colors ?? []).map((c) => {
               const stockInfo = stockByColor.get(c.color.trim().toLowerCase());
@@ -220,11 +222,11 @@ export default function StyleDetailPage({ params }: { params: { styleNo: string 
                 <TabsContent key={c.id} value={c.id}>
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                     {/* Left Column: Stock Data */}
-                    <div className="space-y-2">
+                    <div className="space-y-2 min-w-0">
                       <h3 className="text-sm font-semibold mb-3">Stock Information</h3>
                       {stockInfo ? (
-                        <div className="overflow-x-auto">
-                          <table className="min-w-full text-xs">
+                        <div className="overflow-x-auto border rounded">
+                          <table className="w-full text-xs">
                             <thead className="bg-gray-50">
                               <tr>
                                 <th className="p-2 text-left border-b">Section</th>
@@ -272,7 +274,7 @@ export default function StyleDetailPage({ params }: { params: { styleNo: string 
                     </div>
 
                     {/* Right Column: Metadata */}
-                    <div className="space-y-4">
+                    <div className="space-y-4 min-w-0">
                       <div>
                         <h3 className="text-sm font-semibold mb-2">Seasons</h3>
                         <div className="flex flex-wrap gap-1">
