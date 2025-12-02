@@ -225,6 +225,10 @@ export default function JobsOverviewPage() {
               </span>
             </div>
             <span className="text-xs text-blue-700">
+              {latestLog?.data?.percent ? `${latestLog.data.percent}% - ` : ''}
+              {latestLog?.data?.index && latestLog?.data?.total 
+                ? `${latestLog.data.index}/${latestLog.data.total} - ` 
+                : ''}
               Started {new Date(runningJob.started_at).toLocaleTimeString()}
             </span>
           </div>
@@ -233,13 +237,20 @@ export default function JobsOverviewPage() {
               {latestLog.msg || 'Processing...'}
               {latestLog.data && typeof latestLog.data === 'object' && Object.keys(latestLog.data).length > 0 && (
                 <span className="ml-2 text-xs text-blue-600">
-                  {Object.entries(latestLog.data).slice(0, 3).map(([k, v]) => `${k}: ${v}`).join(', ')}
+                  {Object.entries(latestLog.data)
+                    .filter(([k]) => !['index', 'total', 'percent'].includes(k))
+                    .slice(0, 3)
+                    .map(([k, v]) => `${k}: ${v}`)
+                    .join(', ')}
                 </span>
               )}
             </div>
           )}
           <div className="relative h-2 bg-blue-200 rounded-full overflow-hidden">
-            <div className="absolute inset-0 bg-blue-600 animate-pulse" style={{ width: '100%' }} />
+            <div 
+              className="absolute inset-0 bg-blue-600 transition-all duration-500 ease-out" 
+              style={{ width: `${latestLog?.data?.percent || 0}%` }} 
+            />
             <div 
               className="absolute inset-0 bg-gradient-to-r from-transparent via-white to-transparent opacity-30"
               style={{ 

@@ -162,6 +162,7 @@ const { data: latestLog } = useSWR(
 ```typescript
 {runningJob && (
   <div className="rounded-lg border bg-blue-50 border-blue-200 p-4">
+    {/* Header with job name and progress summary */}
     <div className="flex items-center justify-between mb-2">
       <div className="flex items-center gap-2">
         <div className="h-2 w-2 bg-blue-600 rounded-full animate-pulse" />
@@ -170,33 +171,56 @@ const { data: latestLog } = useSWR(
         </span>
       </div>
       <span className="text-xs text-blue-700">
-        {latestLog?.data?.percent}% - {latestLog?.data?.index}/{latestLog?.data?.total}
+        {latestLog?.data?.percent ? `${latestLog.data.percent}% - ` : ''}
+        {latestLog?.data?.index && latestLog?.data?.total 
+          ? `${latestLog.data.index}/${latestLog.data.total} - ` 
+          : ''}
+        Started {new Date(runningJob.started_at).toLocaleTimeString()}
       </span>
     </div>
     
+    {/* Log message and additional metrics */}
     {latestLog && (
       <div className="text-sm text-blue-800 mb-3">
-        {latestLog.msg}
-        {latestLog.data && (
-          <div className="text-xs text-blue-600 mt-1">
+        {latestLog.msg || 'Processing...'}
+        {latestLog.data && typeof latestLog.data === 'object' && Object.keys(latestLog.data).length > 0 && (
+          <span className="ml-2 text-xs text-blue-600">
             {Object.entries(latestLog.data)
               .filter(([k]) => !['index', 'total', 'percent'].includes(k))
+              .slice(0, 3)
               .map(([k, v]) => `${k}: ${v}`)
-              .join(' • ')}
-          </div>
+              .join(', ')}
+          </span>
         )}
       </div>
     )}
     
+    {/* Progress bar that fills based on percent */}
     <div className="relative h-2 bg-blue-200 rounded-full overflow-hidden">
       <div 
-        className="absolute inset-0 bg-blue-600 transition-all duration-500"
+        className="absolute inset-0 bg-blue-600 transition-all duration-500 ease-out"
         style={{ width: `${latestLog?.data?.percent || 0}%` }}
+      />
+      <div 
+        className="absolute inset-0 bg-gradient-to-r from-transparent via-white to-transparent opacity-30"
+        style={{ 
+          animation: 'shimmer 2s infinite',
+          backgroundSize: '200% 100%'
+        }}
       />
     </div>
   </div>
 )}
 ```
+
+**Key Implementation Details:**
+
+1. **Dynamic Width**: `width: ${latestLog?.data?.percent || 0}%` - Progress bar fills based on actual percentage
+2. **Smooth Animation**: `transition-all duration-500 ease-out` - Smooth width transitions
+3. **Shimmer Effect**: Optional gradient overlay for visual appeal
+4. **Fallback**: Defaults to `0%` if no data available yet
+5. **Header Info**: Shows `percent%`, `index/total`, and start time
+6. **Filtered Metrics**: Excludes `index`, `total`, `percent` from secondary display (shown in header instead)
 
 ## Real-World Example Output
 
@@ -228,15 +252,40 @@ const { data: latestLog } = useSWR(
 
 ### Frontend Display:
 
+**At 5% complete:**
 ```
-┌─────────────────────────────────────────────────────────┐
-│ 🔵 Deep Scrape Styles - Running            5% - 20/411 │
-│                                                          │
-│ STEP:deep_styles_progress                               │
-│ updated: 19 • colorLinksInserted: 5                     │
-│                                                          │
-│ [█████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░]     │
-└─────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────┐
+│ 🔵 Deep Scrape Styles - Running  5% - 20/411 - Started 10:30  │
+│                                                                 │
+│ STEP:deep_styles_progress  updated: 19, colorLinksInserted: 5 │
+│                                                                 │
+│ [██░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░]      │
+│  ↑ 5% filled                                                   │
+└────────────────────────────────────────────────────────────────┘
+```
+
+**At 50% complete:**
+```
+┌────────────────────────────────────────────────────────────────┐
+│ 🔵 Deep Scrape Styles - Running  50% - 205/411 - Started 10:30│
+│                                                                 │
+│ STEP:deep_styles_progress  updated: 204, colorLinksInserted:67│
+│                                                                 │
+│ [█████████████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░]      │
+│  ↑ 50% filled                                                  │
+└────────────────────────────────────────────────────────────────┘
+```
+
+**At 100% complete:**
+```
+┌────────────────────────────────────────────────────────────────┐
+│ 🔵 Deep Scrape Styles - Running  100% - 411/411 - Started 10:30│
+│                                                                 │
+│ STEP:deep_styles_progress  updated: 411, colorLinksInserted:127│
+│                                                                 │
+│ [██████████████████████████████████████████████████████████]   │
+│  ↑ 100% filled - Job completing...                            │
+└────────────────────────────────────────────────────────────────┘
 ```
 
 ## Performance Guidelines
