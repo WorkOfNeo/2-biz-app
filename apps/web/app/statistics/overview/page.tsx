@@ -475,18 +475,35 @@ export default function OverviewPage() {
       </div>
 
       {/* Currency Conversion Rates */}
-      <div className="rounded-lg border bg-gray-50 p-4">
-        <div className="text-sm font-semibold text-gray-700 mb-2">Currency Conversion Rates (to DKK)</div>
-        <div className="flex gap-6 text-sm">
-          <div>
-            <span className="font-medium">EUR:</span> {((rates.EUR ?? 0) || 0).toFixed(4)} DKK
-          </div>
-          <div>
-            <span className="font-medium">NOK:</span> {((rates.NOK ?? 0) || 0).toFixed(4)} DKK
-          </div>
-          <div>
-            <span className="font-medium">SEK:</span> {((rates.SEK ?? 0) || 0).toFixed(4)} DKK
-          </div>
+      <div className="rounded-lg border bg-white">
+        <div className="p-3 text-sm font-semibold border-b">Currency Conversion Rates (to DKK)</div>
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-sm">
+            <thead>
+              <tr className="bg-gray-50">
+                <th className="p-2 text-left font-semibold">Currency</th>
+                <th className="p-2 text-center font-semibold">{getSeasonLabel(s1) || 'Season 1'}</th>
+                <th className="p-2 text-center font-semibold">{getSeasonLabel(s2) || 'Season 2'}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr className="border-t">
+                <td className="p-2 font-medium">EUR</td>
+                <td className="p-2 text-center">{(({ ...rates, ...(ratesS1 ?? {}) }.EUR ?? 0) || 0).toFixed(4)}</td>
+                <td className="p-2 text-center">{(({ ...rates, ...(ratesS2 ?? {}) }.EUR ?? 0) || 0).toFixed(4)}</td>
+              </tr>
+              <tr className="border-t">
+                <td className="p-2 font-medium">NOK</td>
+                <td className="p-2 text-center">{(({ ...rates, ...(ratesS1 ?? {}) }.NOK ?? 0) || 0).toFixed(4)}</td>
+                <td className="p-2 text-center">{(({ ...rates, ...(ratesS2 ?? {}) }.NOK ?? 0) || 0).toFixed(4)}</td>
+              </tr>
+              <tr className="border-t">
+                <td className="p-2 font-medium">SEK</td>
+                <td className="p-2 text-center">{(({ ...rates, ...(ratesS1 ?? {}) }.SEK ?? 0) || 0).toFixed(4)}</td>
+                <td className="p-2 text-center">{(({ ...rates, ...(ratesS2 ?? {}) }.SEK ?? 0) || 0).toFixed(4)}</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </div>
 
