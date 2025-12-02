@@ -405,7 +405,7 @@ export default function StockListPage() {
       {/* Main content */}
       <div className="space-y-4 sl-main">
       {emptyState || filteredForView.map(({ styleNo, colors }) => {
-        const meta = styleMetaByNo[styleNo] || { name: null, supplier: null, image: null };
+        const meta = styleMetaByNo[styleNo] || { id: null, name: null, supplier: null, image: null, dg: null, link_href: null };
         return (
           <div key={styleNo} id={`style-${styleNo}`} className="bg-white p-3 space-y-3 sl-style">
             <div className="grid grid-cols-1 lg:grid-cols-[200px_1fr] gap-4 sl-style-grid">
