@@ -296,15 +296,7 @@ export async function updateStyleStock(ctx: Ctx) {
           const len = sizes.length; const zero = Array.from({ length: len }, () => 0);
           return rows.reduce((acc: number[], r: any) => acc.map((v: number, i: number) => v + Number((r.values?.[i] ?? 0) || 0)), zero);
         };
-        await log(job.id, 'info', 'STEP:style_stock_parsed', {
-          style_no: s.style_no,
-          color: colorName,
-          sizes,
-          stock: trim(stockVals as any),
-          sold: { count: soldRows.length, sum: trim(sum(soldRows)), sample: soldRows.slice(0, 2).map((r: any) => ({ label: r.row_label, values: trim(r.values) })) },
-          purchase: { count: purchaseRows.length, sum: trim(sum(purchaseRows)), sample: purchaseRows.slice(0, 2).map((r: any) => ({ label: r.row_label, values: trim(r.values) })) },
-          dedicated: { stockDedicated: { count: stockDed.length, sum: trim(sum(stockDed)) }, preDedicated: { count: preDed.length, sum: trim(sum(preDed)) } }
-        });
+        // Removed verbose STEP:style_stock_parsed log (Phase 2 optimization)
       }
     } catch {}
     try {
@@ -363,16 +355,15 @@ export async function updateStyleStock(ctx: Ctx) {
             .maybeSingle();
           if (styleColor?.id) {
             await supabase.from('style_colors').update({ maybe_inactive: allZero }).eq('id', styleColor.id);
-            if (allZero) {
-              await log(job.id, 'info', 'STEP:style_color_maybe_inactive', { style_no: s.style_no, color: colorKey, reason: 'All values are 0' });
-            }
+            // Removed verbose per-color logging (Phase 2 optimization)
+            // maybe_inactive flag is updated silently in database
           }
         }
       }
     } catch (e: any) {
       await log(job.id, 'error', 'STEP:style_inactive_check_error', { style_no: s.style_no, error: e?.message || String(e) });
     }
-    await log(job.id, 'info', 'STEP:style_stock_rows', { style_no: s.style_no, rows: extracted.length });
+    // Removed redundant STEP:style_stock_rows log (row count included in style_stock_style_done)
   }
   await saveResult(job.id, 'Style stock scrape completed', { totalRows, missingStyles });
   await log(job.id, 'info', 'STEP:complete', { totalRows, missing: missingStyles.length });
