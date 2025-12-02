@@ -417,32 +417,34 @@ export default function StockListPage() {
                     {meta.image ? <img src={meta.image} alt={meta.name ?? styleNo} className="h-20 w-20 object-cover rounded border" /> : <div className="h-20 w-20 rounded border bg-gray-50" />}
                   </div>
                   <div className="min-w-0 sl-style-meta">
-                    {(() => {
-                      const linkHref = meta.link_href;
-                      if (linkHref) {
-                        const base = (process?.env?.NEXT_PUBLIC_SPY_BASE_URL || '').replace(/\/$/, '');
-                        let statUrl = '';
-                        try {
-                          const candidate = base ? new URL(linkHref, base).toString() : linkHref;
-                          if (/^https?:\/\//i.test(candidate)) {
-                            statUrl = candidate.replace(/#.*$/, '') + '#tab=statandstock';
+                    {meta.link_href ? (
+                      <a 
+                        href={(() => {
+                          const linkHref = meta.link_href || '';
+                          // If already absolute URL, use it directly
+                          if (/^https?:\/\//i.test(linkHref)) {
+                            return linkHref.replace(/#.*$/, '') + '#tab=statandstock';
                           }
-                        } catch {}
-                        if (statUrl) {
-                          return (
-                            <a 
-                              href={statUrl} 
-                              target="_blank" 
-                              rel="noopener noreferrer"
-                              className="text-xs text-blue-600 hover:text-blue-800 underline sl-style-no"
-                            >
-                              {styleNo}
-                            </a>
-                          );
-                        }
-                      }
-                      return <div className="text-xs text-gray-500 sl-style-no">{styleNo}</div>;
-                    })()}
+                          // Try to construct with base URL
+                          const base = (typeof process !== 'undefined' && process?.env?.NEXT_PUBLIC_SPY_BASE_URL) || '';
+                          if (base) {
+                            try {
+                              const url = new URL(linkHref, base.replace(/\/$/, '')).toString();
+                              return url.replace(/#.*$/, '') + '#tab=statandstock';
+                            } catch {}
+                          }
+                          // Fallback: use as-is with hash
+                          return linkHref.replace(/#.*$/, '') + '#tab=statandstock';
+                        })()} 
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                        className="text-xs text-blue-600 hover:text-blue-800 underline sl-style-no"
+                      >
+                        {styleNo}
+                      </a>
+                    ) : (
+                      <div className="text-xs text-gray-500 sl-style-no">{styleNo}</div>
+                    )}
                     <div className="text-base font-semibold text-black truncate sl-style-name">{meta.name ?? '—'}</div>
                     {meta.supplier && <div className="text-xs text-gray-500 sl-style-supplier">{meta.supplier}</div>}
                     {styleMetaByNo[styleNo]?.dg && (
