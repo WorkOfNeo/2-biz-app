@@ -10,8 +10,10 @@ type JobResult = { job_id: string; summary?: string | null; data?: any; created_
 const JOB_DESCRIPTIONS: Record<string, string> = {
   scrape_styles:
     'Scrape Styles: Crawls SPY styles to discover and update styles (number, name, links) and pre-seeds color headers for later stock control.',
+  deep_scrape_styles:
+    'Deep Scrape Styles: Visits each style's Materials tab, reads season selects and color boxes, then maps which colors belong to which seasons. Automatically inserts/deletes style_color_seasons links to keep them in sync with SPY.',
   update_style_stock:
-    'Update Style Stock: Visits selected styles’ Stat & Stock, respects style/color scrape toggles and inactive flags, parses Stock/Sold/Purchase/Dedicated, bulk-upserts rows and runs in fan-out batches.',
+    'Update Style Stock: Visits selected styles' Stat & Stock, respects style/color scrape toggles and inactive flags, parses Stock/Sold/Purchase/Dedicated, bulk-upserts rows and runs in fan-out batches.',
   scrape_customers:
     'Scrape Customers: Imports customers from SPY (company, city, country, salesperson). Updates optional fields like phone, priority and links when available.',
   scrape_statistics:
@@ -23,7 +25,7 @@ const JOB_DESCRIPTIONS: Record<string, string> = {
   export_top_styles:
     'Export Top 10 Styles: Builds PDF exports for Top styles based on stored results and uploads them to Storage.',
   scrape_eans:
-    'Scrape EANs: Visits each style’s EAN tab (#tab=ean), parses Color/Size/EAN, maps to style_colors, flushes and reimports the EAN table.',
+    'Scrape EANs: Visits each style's EAN tab (#tab=ean), parses Color/Size/EAN, maps to style_colors, flushes and reimports the EAN table.',
   fix_invoices:
     'Fix Invoices: Reconciles season_id on invoices by matching invoice_date to season date ranges. Supports dry run and apply.'
 };
@@ -84,6 +86,9 @@ async function fetchOverview() {
     // Heuristics per type
     if (type === 'scrape_styles') {
       if (typeof data.upserted === 'number') metrics.push({ label: 'Styles upserted', value: data.upserted });
+    } else if (type === 'deep_scrape_styles') {
+      if (typeof data.updated === 'number') metrics.push({ label: 'Styles processed', value: data.updated });
+      if (typeof data.colorLinksInserted === 'number') metrics.push({ label: 'Season-color links added', value: data.colorLinksInserted });
     } else if (type === 'update_style_stock') {
       if (typeof data.totalRows === 'number') metrics.push({ label: 'Stock rows upserted', value: data.totalRows });
     } else if (type === 'scrape_customers') {
@@ -187,6 +192,7 @@ export default function JobsOverviewPage() {
               title: 'Scrapes',
               items: [
                 { type: 'scrape_styles', label: 'Scrape Styles', actions: [{ label: 'Run', payload: {} }] },
+                { type: 'deep_scrape_styles', label: 'Deep Scrape Styles (Seasons)', actions: [{ label: 'Run', payload: {} }] },
                 { type: 'update_style_stock', label: 'Update Style Stock', actions: [{ label: 'Run (Selected)', payload: {} }, { label: 'Run (All)', payload: { mode: 'all' } }] },
                 { type: 'scrape_customers', label: 'Scrape Customers', actions: [{ label: 'Run', payload: {} }] },
                 { type: 'scrape_statistics', label: 'Scrape Statistics', actions: [{ label: 'Run Deep', payload: { toggles: { deep: true } } }, { label: 'Per-size Snapshot', payload: { kind: 'per_size' } }] },
