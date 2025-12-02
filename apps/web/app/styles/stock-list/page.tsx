@@ -412,11 +412,52 @@ export default function StockListPage() {
     return null;
   }, [activeListId, filteredForView.length]);
 
+  // Calculate totals from visible content
+  const totals = React.useMemo(() => {
+    let stock = 0;
+    let sold = 0;
+    let purchase = 0;
+    let available = 0;
+    
+    for (const { colors } of filteredForView) {
+      for (const color of colors) {
+        stock += color.stock.reduce((sum, v) => sum + (Number(v) || 0), 0);
+        sold += color.soldSum.reduce((sum, v) => sum + (Number(v) || 0), 0);
+        purchase += color.purchaseSum.reduce((sum, v) => sum + (Number(v) || 0), 0);
+        available += color.available.reduce((sum, v) => sum + (Number(v) || 0), 0);
+      }
+    }
+    
+    return { stock, sold, purchase, available };
+  }, [filteredForView]);
+
   return (
     <div className="space-y-4 sl-root">
       <div>
         <div className="text-xs text-gray-500 sl-header-eyebrow">Styles</div>
         <h1 className="text-xl font-semibold sl-header-title">Stock List</h1>
+        
+        {/* Summary Totals */}
+        <div className="mt-2 flex items-center gap-6 text-sm">
+          <div className="flex items-center gap-2">
+            <span className="text-gray-600">Stock:</span>
+            <span className="font-semibold text-black">{totals.stock.toLocaleString()}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-gray-600">Sold:</span>
+            <span className="font-semibold text-red-700">{totals.sold > 0 ? `-${totals.sold.toLocaleString()}` : totals.sold}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-gray-600">Purchase:</span>
+            <span className="font-semibold text-green-700">{totals.purchase.toLocaleString()}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-gray-600">Available:</span>
+            <span className={`font-semibold ${totals.available < 0 ? 'text-red-700' : totals.available > 0 ? 'text-green-800' : 'text-black'}`}>
+              {totals.available.toLocaleString()}
+            </span>
+          </div>
+        </div>
       </div>
 
       <div className="space-y-3">
