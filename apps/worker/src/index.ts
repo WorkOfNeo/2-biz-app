@@ -1634,7 +1634,7 @@ async function runJob(job: JobRow) {
               }
             } catch (e) {
               // Non-critical, just log
-              await log(job.id, 'warn', 'STEP:unnull_failed', { account: accountNo, error: String(e) });
+              await log(job.id, 'info', 'STEP:unnull_failed', { account: accountNo, error: String(e) });
             }
           }
         }
