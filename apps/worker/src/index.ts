@@ -336,8 +336,8 @@ async function runJob(job: JobRow) {
       await log(job.id, 'info', 'STEP:complete', { upserted: 0 });
       return;
     }
-    // Fetch style hrefs from styles table
-    const { data: styles } = await supabase.from('styles').select('id, style_no, style_name, link_href, scrape_enabled').in('style_no', styleNos);
+    // Fetch style hrefs from styles table (exclude inactive styles)
+    const { data: styles } = await supabase.from('styles').select('id, style_no, style_name, link_href, scrape_enabled, inactive').in('style_no', styleNos).eq('inactive', false);
     const totalStyles = (styles ?? []).length;
     let processedStyles = 0;
     const startedAt = Date.now();
@@ -743,129 +743,13 @@ async function runJob(job: JobRow) {
         dedupMap.set(key, r); // last one wins
       }
       const deduped = Array.from(dedupMap.values());
-      
-      // Step 1: Get existing colors before deletion
-      const { data: existingStockColors } = await supabase
-        .from('style_stock')
-        .select('color')
-        .eq('style_no', s.style_no);
-      
-      const previousColors = new Set<string>(
-        (existingStockColors ?? []).map((r: any) => String(r.color || '').trim())
-      );
-      
-      // Step 2: Delete ALL old data for this style_no (SPY is single source of truth)
-      if (previousColors.size > 0) {
-        const { error: delErr } = await supabase
-          .from('style_stock')
-          .delete()
-          .eq('style_no', s.style_no);
-        
-        if (delErr) throw delErr;
-        await log(job.id, 'info', 'STEP:deleted_old_stock_data', { 
-          style_no: s.style_no, 
-          previous_colors: previousColors.size 
-        });
-      }
-      
-      // Step 3: Insert fresh scraped data
       if (deduped.length) {
-        const { error: insErr } = await supabase.from('style_stock').insert(deduped);
-        if (insErr) throw insErr;
+        const { error: upErr } = await supabase
+          .from('style_stock')
+          .upsert(deduped, { onConflict: 'style_no,color,section,row_label' as any });
+        if (upErr) throw upErr;
         totalRows += deduped.length;
       }
-      
-      // Step 4: Track missing colors
-      const scrapedColors = new Set<string>(
-        deduped.map((r: any) => String(r.color || '').trim())
-      );
-      
-      // Find colors that disappeared
-      const missingColors = [...previousColors].filter(c => !scrapedColors.has(c));
-      
-      if (missingColors.length > 0) {
-        await log(job.id, 'info', 'STEP:missing_colors_detected', {
-          style_no: s.style_no,
-          missing_colors: missingColors
-        });
-        
-        // Increment consecutive_misses for missing colors
-        for (const color of missingColors) {
-          try {
-            await supabase.rpc('increment_missing_color', {
-              p_style_no: s.style_no,
-              p_color: color
-            });
-          } catch (e) {
-            // Log but don't fail the job
-            await log(job.id, 'info', 'STEP:increment_missing_color_error', { 
-              style_no: s.style_no, 
-              color, 
-              error: e instanceof Error ? e.message : String(e)
-            });
-          }
-        }
-      }
-      
-      // Reset counter for colors that are present/reappeared
-      for (const color of scrapedColors) {
-        try {
-          await supabase
-            .from('style_color_missing_tracker')
-            .upsert({
-              style_no: s.style_no,
-              color: color,
-              consecutive_misses: 0,
-              last_seen_at: scrapeTs,
-              last_checked_at: scrapeTs
-            }, { onConflict: 'style_no,color' });
-        } catch (e) {
-          // Log but don't fail
-          await log(job.id, 'info', 'STEP:reset_missing_tracker_error', { 
-            style_no: s.style_no, 
-            color, 
-            error: e instanceof Error ? e.message : String(e)
-          });
-        }
-      }
-      
-      // Step 5: Delete colors with 3+ consecutive misses
-      try {
-        const { data: toDelete } = await supabase
-          .from('style_color_missing_tracker')
-          .select('style_no, color')
-          .gte('consecutive_misses', 3);
-        
-        if (toDelete && toDelete.length > 0) {
-          for (const item of toDelete) {
-            // Delete from style_stock
-            await supabase
-              .from('style_stock')
-              .delete()
-              .eq('style_no', item.style_no)
-              .eq('color', item.color);
-            
-            // Delete from tracker
-            await supabase
-              .from('style_color_missing_tracker')
-              .delete()
-              .eq('style_no', item.style_no)
-              .eq('color', item.color);
-            
-            await log(job.id, 'info', 'STEP:deleted_missing_color', {
-              style_no: item.style_no,
-              color: item.color,
-              reason: '3+ consecutive misses'
-            });
-          }
-        }
-      } catch (e) {
-        // Log but don't fail
-        await log(job.id, 'info', 'STEP:cleanup_missing_colors_error', { 
-          error: e instanceof Error ? e.message : String(e) 
-        });
-      }
-      
       const styleMs = Date.now() - styleStart;
       await log(job.id, 'info', 'STEP:style_stock_style_done', { style_no: s.style_no, style_name: styleName, rows: deduped.length, ms: styleMs });
       if (diffEntries && diffEntries.length) {
@@ -873,6 +757,22 @@ async function runJob(job: JobRow) {
       }
       if (stockMovements.length) {
         try { await supabase.from('style_stock_movements').insert(stockMovements); } catch {}
+      }
+      // Check if all values across all sections are 0 and update maybe_inactive flag
+      try {
+        const allZero = extracted.every((row: any) => {
+          const values = row.values || [];
+          return values.every((v: any) => Number(v) === 0);
+        });
+        if (allZero && styleId) {
+          await supabase.from('styles').update({ maybe_inactive: true }).eq('id', styleId);
+          await log(job.id, 'info', 'STEP:style_maybe_inactive', { style_no: s.style_no, reason: 'All values across all sections are 0' });
+        } else if (!allZero && styleId) {
+          // Reset maybe_inactive if there's any non-zero value
+          await supabase.from('styles').update({ maybe_inactive: false }).eq('id', styleId);
+        }
+      } catch (e: any) {
+        await log(job.id, 'error', 'STEP:style_inactive_check_error', { style_no: s.style_no, error: e?.message || String(e) });
       }
       await log(job.id, 'info', 'STEP:style_stock_rows', { style_no: s.style_no, rows: extracted.length });
     }
@@ -1734,7 +1634,7 @@ async function runJob(job: JobRow) {
               }
             } catch (e) {
               // Non-critical, just log
-              await log(job.id, 'error', 'STEP:unnull_failed', { account: accountNo, error: String(e) });
+              await log(job.id, 'warn', 'STEP:unnull_failed', { account: accountNo, error: String(e) });
             }
           }
         }

@@ -9,8 +9,8 @@ export default function StylesPage() {
   const [q, setQ] = useState('');
   const supabase = createClientComponentClient();
 
-  const { data: rows } = useSWR(['styles:list', q], async () => {
-    let query = supabase.from('styles').select('style_no, style_name, supplier, image_url, link_href').order('updated_at', { ascending: false }).limit(200);
+  const { data: rows, mutate } = useSWR(['styles:list', q], async () => {
+    let query = supabase.from('styles').select('id, style_no, style_name, supplier, image_url, link_href, maybe_inactive, inactive').order('updated_at', { ascending: false }).limit(200);
     if (q && q.trim().length > 0) query = query.ilike('style_no', `%${q.trim()}%`);
     const { data, error } = await query;
     if (error) throw new Error(error.message);
@@ -68,18 +68,40 @@ export default function StylesPage() {
                 <th className="text-left p-2 border-b">Style Name</th>
               <th className="text-left p-2 border-b">Supplier</th>
               <th className="text-left p-2 border-b">DG</th>
+                <th className="text-left p-2 border-b">Status</th>
                 <th className="text-left p-2 border-b">Link</th>
               </tr>
             </thead>
             <tbody>
               {(rows ?? []).map((r) => (
-                <tr key={r.style_no} className="hover:bg-gray-50 cursor-pointer" onClick={() => { window.location.href = `/styles/${encodeURIComponent(r.style_no)}`; }}>
-                  <td className="p-2 border-b">{r.image_url ? <img src={r.image_url} alt="thumb" className="h-8 w-8 object-cover rounded" /> : null}</td>
-                  <td className="p-2 border-b underline text-slate-700">{r.style_no}</td>
-                  <td className="p-2 border-b">{r.style_name ?? '—'}</td>
-                  <td className="p-2 border-b">{r.supplier ?? '—'}</td>
-                  <td className="p-2 border-b">{(r as any).dg ?? '—'}</td>
-                  <td className="p-2 border-b">{r.link_href ? <a className="underline" href={r.link_href} target="_blank" rel="noreferrer">Open</a> : '—'}</td>
+                <tr key={r.style_no} className="hover:bg-gray-50">
+                  <td className="p-2 border-b cursor-pointer" onClick={() => { window.location.href = `/styles/${encodeURIComponent(r.style_no)}`; }}>{r.image_url ? <img src={r.image_url} alt="thumb" className="h-8 w-8 object-cover rounded" /> : null}</td>
+                  <td className="p-2 border-b underline text-slate-700 cursor-pointer" onClick={() => { window.location.href = `/styles/${encodeURIComponent(r.style_no)}`; }}>{r.style_no}</td>
+                  <td className="p-2 border-b cursor-pointer" onClick={() => { window.location.href = `/styles/${encodeURIComponent(r.style_no)}`; }}>{r.style_name ?? '—'}</td>
+                  <td className="p-2 border-b cursor-pointer" onClick={() => { window.location.href = `/styles/${encodeURIComponent(r.style_no)}`; }}>{r.supplier ?? '—'}</td>
+                  <td className="p-2 border-b cursor-pointer" onClick={() => { window.location.href = `/styles/${encodeURIComponent(r.style_no)}`; }}>{(r as any).dg ?? '—'}</td>
+                  <td className="p-2 border-b">
+                    <div className="flex items-center gap-2">
+                      {r.maybe_inactive && !r.inactive && <span className="text-[10px] px-1.5 py-0.5 bg-yellow-100 text-yellow-800 rounded">Maybe Inactive</span>}
+                      {r.inactive && <span className="text-[10px] px-1.5 py-0.5 bg-red-100 text-red-800 rounded">Inactive</span>}
+                      <button
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          try {
+                            const newInactive = !r.inactive;
+                            await supabase.from('styles').update({ inactive: newInactive }).eq('id', r.id);
+                            await mutate();
+                          } catch (err) {
+                            console.error('Failed to toggle inactive', err);
+                          }
+                        }}
+                        className={`text-[10px] px-2 py-1 rounded border ${r.inactive ? 'bg-green-50 text-green-700 border-green-300 hover:bg-green-100' : 'bg-gray-50 text-gray-700 border-gray-300 hover:bg-gray-100'}`}
+                      >
+                        {r.inactive ? 'Activate' : 'Set Inactive'}
+                      </button>
+                    </div>
+                  </td>
+                  <td className="p-2 border-b">{r.link_href ? <a className="underline" href={r.link_href} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>Open</a> : '—'}</td>
                 </tr>
               ))}
             </tbody>
