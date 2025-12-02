@@ -1,21 +1,51 @@
 'use client';
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { MoreHorizontal } from 'lucide-react';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import useSWR from 'swr';
+import { SearchSelect } from '../../components/SearchSelect';
 
 export default function StylesPage() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [q, setQ] = useState('');
+  const [supplierFilter, setSupplierFilter] = useState('');
   const supabase = createClientComponentClient();
 
-  const { data: rows, mutate } = useSWR(['styles:list', q], async () => {
-    let query = supabase.from('styles').select('id, style_no, style_name, supplier, image_url, link_href, maybe_inactive, inactive').order('updated_at', { ascending: false }).limit(200);
-    if (q && q.trim().length > 0) query = query.ilike('style_no', `%${q.trim()}%`);
+  const { data: rows, mutate } = useSWR(['styles:list', q, supplierFilter], async () => {
+    let query = supabase
+      .from('styles')
+      .select('id, style_no, style_name, supplier, image_url, link_href, maybe_inactive, inactive')
+      .order('updated_at', { ascending: false })
+      .limit(200);
+    
+    // Search in both style_no and style_name
+    if (q && q.trim().length > 0) {
+      const searchTerm = `%${q.trim()}%`;
+      query = query.or(`style_no.ilike.${searchTerm},style_name.ilike.${searchTerm}`);
+    }
+    
+    // Filter by supplier
+    if (supplierFilter && supplierFilter.trim().length > 0) {
+      query = query.eq('supplier', supplierFilter);
+    }
+    
     const { data, error } = await query;
     if (error) throw new Error(error.message);
     return data as any[];
   });
+
+  // Get unique suppliers for the dropdown
+  const supplierOptions = useMemo(() => {
+    const suppliers = new Set<string>();
+    (rows ?? []).forEach((r) => {
+      if (r.supplier && r.supplier.trim()) {
+        suppliers.add(r.supplier.trim());
+      }
+    });
+    return Array.from(suppliers)
+      .sort((a, b) => a.localeCompare(b))
+      .map((s) => ({ value: s, label: s }));
+  }, [rows]);
 
   async function enqueueUpdate() {
     try {
@@ -36,6 +66,7 @@ export default function StylesPage() {
       console.error('[styles] enqueue error', e);
     }
   }
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -56,8 +87,25 @@ export default function StylesPage() {
       </div>
 
       <div className="rounded-md border bg-white p-3 text-sm">
-        <div className="mb-3 flex items-center gap-2">
-          <input value={q} onChange={(e)=>setQ(e.target.value)} placeholder="Search style no..." className="border rounded p-2 text-sm w-64" />
+        <div className="mb-3 flex items-center gap-3 flex-wrap">
+          <input 
+            value={q} 
+            onChange={(e) => setQ(e.target.value)} 
+            placeholder="Search style no or name..." 
+            className="border rounded p-2 text-sm w-64" 
+          />
+          <SearchSelect
+            items={supplierOptions}
+            value={supplierFilter}
+            onChange={setSupplierFilter}
+            placeholder="Filter by supplier..."
+            clearable={true}
+          />
+          {(q || supplierFilter) && (
+            <div className="text-xs text-gray-500">
+              Found {(rows ?? []).length} style{(rows ?? []).length !== 1 ? 's' : ''}
+            </div>
+          )}
         </div>
         <div className="overflow-auto">
           <table className="min-w-full text-xs">
@@ -73,6 +121,13 @@ export default function StylesPage() {
               </tr>
             </thead>
             <tbody>
+              {(rows ?? []).length === 0 && (
+                <tr>
+                  <td colSpan={7} className="p-4 text-center text-gray-500">
+                    No styles found. {(q || supplierFilter) ? 'Try adjusting your filters.' : ''}
+                  </td>
+                </tr>
+              )}
               {(rows ?? []).map((r) => (
                 <tr key={r.style_no} className="hover:bg-gray-50">
                   <td className="p-2 border-b cursor-pointer" onClick={() => { window.location.href = `/styles/${encodeURIComponent(r.style_no)}`; }}>{r.image_url ? <img src={r.image_url} alt="thumb" className="h-8 w-8 object-cover rounded" /> : null}</td>
@@ -111,5 +166,3 @@ export default function StylesPage() {
     </div>
   );
 }
-
-
