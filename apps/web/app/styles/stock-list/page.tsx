@@ -105,12 +105,14 @@ export default function StockListPage() {
       .in('style_color_id', colorIds)
       .limit(100000);
     if (error) throw new Error(error.message);
+    console.log('[stock-list] colorSeasons raw data:', data);
     const map = new Map<string, Set<string>>();
     for (const r of (data ?? []) as any[]) {
       const set = map.get(r.style_color_id) || new Set<string>();
       set.add(r.season_id);
       map.set(r.style_color_id, set);
     }
+    console.log('[stock-list] colorSeasons map:', map);
     return map as Map<string, Set<string>>;
   }, { refreshInterval: 0 });
 
@@ -241,7 +243,9 @@ export default function StockListPage() {
         if (id) out.push(id);
       }
     }
-    return Array.from(new Set(out));
+    const uniqueIds = Array.from(new Set(out));
+    console.log('[stock-list] colorIds computed:', uniqueIds.length, uniqueIds.slice(0, 5));
+    return uniqueIds;
   }, [groups, styleRows, styleColors, styleMetaByNo]);
 
   // Per-list color includes (exclusions) for selected list will be loaded below after list selection setup
@@ -346,6 +350,7 @@ export default function StockListPage() {
   // Filter rows based on active Stock List, search, seasons, and hide zeros
   const filteredForView = React.useMemo(() => {
     let base = groupedByStyle;
+    console.log('[stock-list] Starting filter - base:', base.length, 'styles');
     
     // Filter by active list
     if (activeListId) {
@@ -353,6 +358,7 @@ export default function StockListPage() {
         const sid = styleMetaByNo[styleNo]?.id || null;
         return sid ? styleIdsInList.has(sid) : false;
       });
+      console.log('[stock-list] After list filter:', base.length, 'styles');
     }
     
     // Filter by search query
@@ -363,10 +369,14 @@ export default function StockListPage() {
         if (styleNo.toLowerCase().includes(q) || (name || '').toLowerCase().includes(q)) return true;
         return colors.some((c) => (c.color || '').toLowerCase().includes(q));
       });
+      console.log('[stock-list] After search filter:', base.length, 'styles');
     }
     
     // Filter by seasons - only show colors that have at least one of the selected seasons
     if (selectedSeasons.length > 0 && styleColors && colorSeasons) {
+      console.log('[stock-list] Filtering by seasons:', selectedSeasons);
+      console.log('[stock-list] styleColors available:', !!styleColors, 'colorSeasons available:', !!colorSeasons);
+      
       base = base.map(({ styleNo, colors }) => {
         const sid = styleMetaByNo[styleNo]?.id || null;
         if (!sid) return { styleNo, colors: [] };
@@ -377,21 +387,31 @@ export default function StockListPage() {
         const filteredColors = colors.filter((c) => {
           const colorKey = (c.color || '').trim().toLowerCase();
           const scId = cmap.get(colorKey);
-          if (!scId) return false;
+          if (!scId) {
+            console.log('[stock-list] No scId for color:', c.color, 'in style:', styleNo);
+            return false;
+          }
           
           const thisColorSeasons = colorSeasons.get(scId);
-          if (!thisColorSeasons) return false;
+          if (!thisColorSeasons) {
+            console.log('[stock-list] No seasons for scId:', scId);
+            return false;
+          }
           
           // Color must have at least one of the selected seasons
-          return selectedSeasons.some(seasonId => thisColorSeasons.has(seasonId));
+          const hasMatch = selectedSeasons.some(seasonId => thisColorSeasons.has(seasonId));
+          console.log('[stock-list] Color:', c.color, 'seasons:', Array.from(thisColorSeasons), 'matches:', hasMatch);
+          return hasMatch;
         });
         
         return { styleNo, colors: filteredColors };
       }).filter(({ colors }) => colors.length > 0);
+      console.log('[stock-list] After season filter:', base.length, 'styles');
     }
     
     // Filter out colors with all zeros
     if (hideZeros) {
+      console.log('[stock-list] Filtering out zeros');
       base = base.map(({ styleNo, colors }) => {
         const filteredColors = colors.filter((c) => {
           const hasNonZero = c.stock.some(v => v !== 0) || 
@@ -402,8 +422,10 @@ export default function StockListPage() {
         });
         return { styleNo, colors: filteredColors };
       }).filter(({ colors }) => colors.length > 0);
+      console.log('[stock-list] After zero filter:', base.length, 'styles');
     }
     
+    console.log('[stock-list] Final filtered:', base.length, 'styles');
     return base;
   }, [groupedByStyle, activeListId, styleIdsInList.size, searchQuery, styleMetaByNo, selectedSeasons, hideZeros, styleColors, colorSeasons]);
 
@@ -442,23 +464,23 @@ export default function StockListPage() {
         <div className="text-xs text-gray-500 sl-header-eyebrow">Styles</div>
         <h1 className="text-xl font-semibold sl-header-title">Stock List</h1>
         
-        {/* Summary Totals */}
-        <div className="mt-2 flex items-center gap-6 text-sm">
-          <div className="flex items-center gap-2">
-            <span className="text-gray-600">Stock:</span>
-            <span className="font-semibold text-black">{totals.stock.toLocaleString()}</span>
+        {/* Summary Totals - Vertical Stack */}
+        <div className="mt-2 grid grid-cols-4 gap-4 text-sm">
+          <div className="flex flex-col">
+            <span className="text-gray-600 text-xs">Stock</span>
+            <span className="font-semibold text-black text-lg">{totals.stock.toLocaleString()}</span>
           </div>
-          <div className="flex items-center gap-2">
-            <span className="text-gray-600">Sold:</span>
-            <span className="font-semibold text-red-700">{totals.sold > 0 ? `-${totals.sold.toLocaleString()}` : totals.sold}</span>
+          <div className="flex flex-col">
+            <span className="text-gray-600 text-xs">Sold</span>
+            <span className="font-semibold text-red-700 text-lg">{totals.sold > 0 ? `-${totals.sold.toLocaleString()}` : totals.sold}</span>
           </div>
-          <div className="flex items-center gap-2">
-            <span className="text-gray-600">Purchase:</span>
-            <span className="font-semibold text-green-700">{totals.purchase.toLocaleString()}</span>
+          <div className="flex flex-col">
+            <span className="text-gray-600 text-xs">Purchase</span>
+            <span className="font-semibold text-green-700 text-lg">{totals.purchase.toLocaleString()}</span>
           </div>
-          <div className="flex items-center gap-2">
-            <span className="text-gray-600">Available:</span>
-            <span className={`font-semibold ${totals.available < 0 ? 'text-red-700' : totals.available > 0 ? 'text-green-800' : 'text-black'}`}>
+          <div className="flex flex-col">
+            <span className="text-gray-600 text-xs">Available</span>
+            <span className={`font-semibold text-lg ${totals.available < 0 ? 'text-red-700' : totals.available > 0 ? 'text-green-800' : 'text-black'}`}>
               {totals.available.toLocaleString()}
             </span>
           </div>
@@ -594,6 +616,8 @@ export default function StockListPage() {
                         const scId = cmap.get((g.color || '').trim().toLowerCase()) || null;
                         const set = (scId && colorSeasons) ? (colorSeasons.get(scId) || new Set<string>()) : new Set<string>();
                         const labels = (seasons || []).filter(s => set.has(s.id));
+                        
+                        console.log('[stock-list] Season display for', g.styleNo, g.color, '- scId:', scId, 'seasonIds:', Array.from(set), 'labels:', labels);
                         
                         if (labels.length === 0) return null;
                         
