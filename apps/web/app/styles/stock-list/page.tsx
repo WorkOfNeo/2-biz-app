@@ -95,27 +95,6 @@ export default function StockListPage() {
     return { idMap: map, statusMap };
   }, { refreshInterval: 0 });
 
-  // style_color_id -> seasons (computed after groups is defined)
-  let colorIds: string[] = [];
-
-  const { data: colorSeasons, mutate: mutateColorSeasons } = useSWR(colorIds.length ? ['style_color_seasons:byColorIds', colorIds.join(',')] : null, async () => {
-    const { data, error } = await supabase
-      .from('style_color_seasons')
-      .select('style_color_id, season_id')
-      .in('style_color_id', colorIds)
-      .limit(100000);
-    if (error) throw new Error(error.message);
-    console.log('[stock-list] colorSeasons raw data:', data);
-    const map = new Map<string, Set<string>>();
-    for (const r of (data ?? []) as any[]) {
-      const set = map.get(r.style_color_id) || new Set<string>();
-      set.add(r.season_id);
-      map.set(r.style_color_id, set);
-    }
-    console.log('[stock-list] colorSeasons map:', map);
-    return map as Map<string, Set<string>>;
-  }, { refreshInterval: 0 });
-
   // DB-backed stock lists (lists, styles, and per-list color exclusions)
   const { data: stockLists } = useSWR('stock-lists:all', async () => {
     const { data, error } = await supabase.from('stock_lists').select('id, name').order('name', { ascending: true });
@@ -232,8 +211,8 @@ export default function StockListPage() {
     return Math.max(8, n || 0);
   }, [groups]);
 
-  // Now that groups are available, compute style_color_ids we need seasons for
-  colorIds = React.useMemo(() => {
+  // Compute style_color_ids we need seasons for
+  const colorIds = React.useMemo(() => {
     const out: string[] = [];
     for (const r of (styleRows ?? []) as any[]) {
       const sid = r.id as string;
@@ -247,6 +226,25 @@ export default function StockListPage() {
     console.log('[stock-list] colorIds computed:', uniqueIds.length, uniqueIds.slice(0, 5));
     return uniqueIds;
   }, [groups, styleRows, styleColors, styleMetaByNo]);
+  
+  // Fetch season mappings for the computed color IDs
+  const { data: colorSeasons, mutate: mutateColorSeasons } = useSWR(colorIds.length ? ['style_color_seasons:byColorIds', colorIds.join(',')] : null, async () => {
+    const { data, error } = await supabase
+      .from('style_color_seasons')
+      .select('style_color_id, season_id')
+      .in('style_color_id', colorIds)
+      .limit(100000);
+    if (error) throw new Error(error.message);
+    console.log('[stock-list] colorSeasons raw data:', data);
+    const map = new Map<string, Set<string>>();
+    for (const r of (data ?? []) as any[]) {
+      const set = map.get(r.style_color_id) || new Set<string>();
+      set.add(r.season_id);
+      map.set(r.style_color_id, set);
+    }
+    console.log('[stock-list] colorSeasons map:', map);
+    return map as Map<string, Set<string>>;
+  }, { refreshInterval: 0 });
 
   // Per-list color includes (exclusions) for selected list will be loaded below after list selection setup
 
