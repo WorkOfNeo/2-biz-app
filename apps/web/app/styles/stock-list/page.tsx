@@ -55,15 +55,15 @@ export default function StockListPage() {
   const { data: styleRows } = useSWR(styleNos.length ? ['styles:byNo', styleNos.join(',')] : null, async () => {
     const { data: rows, error } = await supabase
       .from('styles')
-      .select('id, style_no, style_name, supplier, image_url, dg')
+      .select('id, style_no, style_name, supplier, image_url, dg, link_href')
       .in('style_no', styleNos);
     if (error) throw new Error(error.message);
-    return rows as Array<{ id: string; style_no: string; style_name: string | null; supplier: string | null; image_url: string | null; dg?: string | null }>;
+    return rows as Array<{ id: string; style_no: string; style_name: string | null; supplier: string | null; image_url: string | null; dg?: string | null; link_href?: string | null }>;
   }, { refreshInterval: 0 });
   const styleMetaByNo = React.useMemo(() => {
-    const m: Record<string, { id: string | null; name: string | null; supplier: string | null; image: string | null; dg?: string | null }> = {};
+    const m: Record<string, { id: string | null; name: string | null; supplier: string | null; image: string | null; dg?: string | null; link_href?: string | null }> = {};
     for (const r of (styleRows ?? []) as any[]) {
-      m[r.style_no] = { id: r.id || null, name: r.style_name || null, supplier: r.supplier || null, image: r.image_url || null, dg: (r as any).dg ?? null };
+      m[r.style_no] = { id: r.id || null, name: r.style_name || null, supplier: r.supplier || null, image: r.image_url || null, dg: (r as any).dg ?? null, link_href: (r as any).link_href ?? null };
     }
     return m;
   }, [styleRows]);
@@ -417,7 +417,32 @@ export default function StockListPage() {
                     {meta.image ? <img src={meta.image} alt={meta.name ?? styleNo} className="h-20 w-20 object-cover rounded border" /> : <div className="h-20 w-20 rounded border bg-gray-50" />}
                   </div>
                   <div className="min-w-0 sl-style-meta">
-                    <div className="text-xs text-gray-500 sl-style-no">{styleNo}</div>
+                    {(() => {
+                      const linkHref = meta.link_href;
+                      if (linkHref) {
+                        const base = (process?.env?.NEXT_PUBLIC_SPY_BASE_URL || '').replace(/\/$/, '');
+                        let statUrl = '';
+                        try {
+                          const candidate = base ? new URL(linkHref, base).toString() : linkHref;
+                          if (/^https?:\/\//i.test(candidate)) {
+                            statUrl = candidate.replace(/#.*$/, '') + '#tab=statandstock';
+                          }
+                        } catch {}
+                        if (statUrl) {
+                          return (
+                            <a 
+                              href={statUrl} 
+                              target="_blank" 
+                              rel="noopener noreferrer"
+                              className="text-xs text-blue-600 hover:text-blue-800 underline sl-style-no"
+                            >
+                              {styleNo}
+                            </a>
+                          );
+                        }
+                      }
+                      return <div className="text-xs text-gray-500 sl-style-no">{styleNo}</div>;
+                    })()}
                     <div className="text-base font-semibold text-black truncate sl-style-name">{meta.name ?? '—'}</div>
                     {meta.supplier && <div className="text-xs text-gray-500 sl-style-supplier">{meta.supplier}</div>}
                     {styleMetaByNo[styleNo]?.dg && (
