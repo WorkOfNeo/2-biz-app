@@ -139,13 +139,13 @@ export default function JobsOverviewPage() {
       if (!runningJob?.id) return null;
       const { data, error } = await supabase
         .from('job_logs')
-        .select('message, data, created_at')
+        .select('msg, data, ts')
         .eq('job_id', runningJob.id)
-        .order('created_at', { ascending: false })
+        .order('ts', { ascending: false })
         .limit(1)
         .maybeSingle();
       if (error) throw new Error(error.message);
-      return data as { message: string; data: any; created_at: string } | null;
+      return data as { msg: string; data: any; ts: string } | null;
     },
     { refreshInterval: 1000 }
   );
@@ -230,7 +230,7 @@ export default function JobsOverviewPage() {
           </div>
           {latestLog && (
             <div className="text-sm text-blue-800 mb-3">
-              {latestLog.message || 'Processing...'}
+              {latestLog.msg || 'Processing...'}
               {latestLog.data && typeof latestLog.data === 'object' && Object.keys(latestLog.data).length > 0 && (
                 <span className="ml-2 text-xs text-blue-600">
                   {Object.entries(latestLog.data).slice(0, 3).map(([k, v]) => `${k}: ${v}`).join(', ')}

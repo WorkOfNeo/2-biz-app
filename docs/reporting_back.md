@@ -24,11 +24,12 @@ This document describes the standard pattern for reporting job progress from wor
 - `finished_at`: Timestamp when job completed
 
 ### `job_logs` Table
-- `job_id`: References jobs.id
-- `message`: String describing the step/status
-- `data`: JSONB containing progress metrics
-- `level`: 'info' | 'error' | 'progress'
-- `created_at`: Timestamp of log entry
+- `id`: Bigserial primary key
+- `job_id`: UUID references jobs.id
+- `ts`: Timestamptz - timestamp of log entry
+- `level`: Text - 'info' | 'error' | 'progress'
+- `msg`: Text - string describing the step/status
+- `data`: JSONB - containing progress metrics
 
 ## Worker-Side Pattern
 
@@ -145,9 +146,9 @@ const { data: latestLog } = useSWR(
     if (!runningJob?.id) return null;
     const { data } = await supabase
       .from('job_logs')
-      .select('message, data, created_at')
+      .select('msg, data, ts')
       .eq('job_id', runningJob.id)
-      .order('created_at', { ascending: false })
+      .order('ts', { ascending: false })
       .limit(1)
       .maybeSingle();
     return data;
@@ -175,7 +176,7 @@ const { data: latestLog } = useSWR(
     
     {latestLog && (
       <div className="text-sm text-blue-800 mb-3">
-        {latestLog.message}
+        {latestLog.msg}
         {latestLog.data && (
           <div className="text-xs text-blue-600 mt-1">
             {Object.entries(latestLog.data)
