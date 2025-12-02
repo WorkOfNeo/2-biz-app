@@ -77,13 +77,15 @@ function UnifiedBatchProgress({ jobs }: { jobs: Array<{ id: string; type: string
   // Aggregate progress across all batches
   let totalIndex = 0;
   let totalTotal = 0;
-  let oldestStartTime = jobs[0]?.started_at;
+  let oldestStartTime = jobs[0]?.started_at || new Date().toISOString();
   
   for (const job of jobs) {
     const progress = progressByJob.get(job.id) || {};
     totalIndex += Number(progress.index || 0);
     totalTotal += Number(progress.total || 0);
-    if (job.started_at < oldestStartTime) oldestStartTime = job.started_at;
+    if (job.started_at && job.started_at < oldestStartTime) {
+      oldestStartTime = job.started_at;
+    }
   }
 
   const percent = totalTotal > 0 ? Math.round((totalIndex / totalTotal) * 100) : 0;
