@@ -46,6 +46,73 @@ function Truncated({ text, expanded, onToggle }: { text: string; expanded: boole
   );
 }
 
+// Reusable component for displaying a running job's progress
+function RunningJobProgress({ job }: { job: { id: string; type: string; started_at: string } }) {
+  // Fetch latest log for this specific job
+  const { data: latestLog } = useSWR(
+    ['job:log', job.id],
+    async () => {
+      const { data, error } = await supabase
+        .from('job_logs')
+        .select('msg, data, ts')
+        .eq('job_id', job.id)
+        .order('ts', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (error) throw new Error(error.message);
+      return data as { msg: string; data: any; ts: string } | null;
+    },
+    { refreshInterval: 1000 }
+  );
+
+  return (
+    <div className="rounded-lg border bg-blue-50 border-blue-200 p-4">
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-2">
+          <div className="h-2 w-2 bg-blue-600 rounded-full animate-pulse" />
+          <span className="text-sm font-semibold text-blue-900">
+            {JOB_DESCRIPTIONS[job.type]?.split(':')[0] || job.type} - Running
+          </span>
+        </div>
+        <span className="text-xs text-blue-700">
+          {latestLog?.data?.percent ? `${latestLog.data.percent}% - ` : ''}
+          {latestLog?.data?.index && latestLog?.data?.total 
+            ? `${latestLog.data.index}/${latestLog.data.total} - ` 
+            : ''}
+          Started {new Date(job.started_at).toLocaleTimeString()}
+        </span>
+      </div>
+      {latestLog && (
+        <div className="text-sm text-blue-800 mb-3">
+          {latestLog.msg || 'Processing...'}
+          {latestLog.data && typeof latestLog.data === 'object' && Object.keys(latestLog.data).length > 0 && (
+            <span className="ml-2 text-xs text-blue-600">
+              {Object.entries(latestLog.data)
+                .filter(([k]) => !['index', 'total', 'percent'].includes(k))
+                .slice(0, 3)
+                .map(([k, v]) => `${k}: ${v}`)
+                .join(', ')}
+            </span>
+          )}
+        </div>
+      )}
+      <div className="relative h-2 bg-blue-200 rounded-full overflow-hidden">
+        <div 
+          className="absolute inset-0 bg-blue-600 transition-all duration-500 ease-out" 
+          style={{ width: `${Math.min(100, Math.max(0, latestLog?.data?.percent ?? 0))}%` }} 
+        />
+        <div 
+          className="absolute inset-0 bg-gradient-to-r from-transparent via-white to-transparent opacity-30"
+          style={{ 
+            animation: 'shimmer 2s infinite',
+            backgroundSize: '200% 100%'
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
 async function fetchOverview() {
   // Fetch latest jobs (cap 200), then pick last per type and map results
   const { data: jobs } = await supabase
@@ -119,36 +186,17 @@ export default function JobsOverviewPage() {
   const [expandDesc, setExpandDesc] = React.useState<Record<string, boolean>>({});
   const [seqRunning, setSeqRunning] = React.useState(false);
 
-  // Fetch currently running job
-  const { data: runningJob } = useSWR('jobs:running', async () => {
+  // Fetch currently running jobs (support multiple workers)
+  const { data: runningJobs } = useSWR('jobs:running', async () => {
     const { data, error } = await supabase
       .from('jobs')
       .select('id, type, status, started_at')
       .eq('status', 'running')
       .order('started_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
+      .limit(10); // Support up to 10 concurrent workers
     if (error) throw new Error(error.message);
-    return data as { id: string; type: string; status: string; started_at: string } | null;
+    return (data ?? []) as Array<{ id: string; type: string; status: string; started_at: string }>;
   }, { refreshInterval: 2000 });
-
-  // Fetch latest log for running job
-  const { data: latestLog } = useSWR(
-    runningJob?.id ? ['job:log', runningJob.id] : null,
-    async () => {
-      if (!runningJob?.id) return null;
-      const { data, error } = await supabase
-        .from('job_logs')
-        .select('msg, data, ts')
-        .eq('job_id', runningJob.id)
-        .order('ts', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (error) throw new Error(error.message);
-      return data as { msg: string; data: any; ts: string } | null;
-    },
-    { refreshInterval: 1000 }
-  );
 
   async function createJob(body: any) {
     const { data: { session } } = await supabase.auth.getSession();
@@ -214,51 +262,15 @@ export default function JobsOverviewPage() {
         </div>
       </div>
 
-      {/* Running Job Progress Bar */}
-      {runningJob && (
-        <div className="rounded-lg border bg-blue-50 border-blue-200 p-4">
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-2">
-              <div className="h-2 w-2 bg-blue-600 rounded-full animate-pulse" />
-              <span className="text-sm font-semibold text-blue-900">
-                {JOB_DESCRIPTIONS[runningJob.type]?.split(':')[0] || runningJob.type} - Running
-              </span>
-            </div>
-            <span className="text-xs text-blue-700">
-              {latestLog?.data?.percent ? `${latestLog.data.percent}% - ` : ''}
-              {latestLog?.data?.index && latestLog?.data?.total 
-                ? `${latestLog.data.index}/${latestLog.data.total} - ` 
-                : ''}
-              Started {new Date(runningJob.started_at).toLocaleTimeString()}
-            </span>
+      {/* Running Jobs Progress Bars (Multiple Workers) */}
+      {runningJobs && runningJobs.length > 0 && (
+        <div className="space-y-3">
+          <div className="text-sm font-semibold text-gray-700">
+            Running Jobs ({runningJobs.length})
           </div>
-          {latestLog && (
-            <div className="text-sm text-blue-800 mb-3">
-              {latestLog.msg || 'Processing...'}
-              {latestLog.data && typeof latestLog.data === 'object' && Object.keys(latestLog.data).length > 0 && (
-                <span className="ml-2 text-xs text-blue-600">
-                  {Object.entries(latestLog.data)
-                    .filter(([k]) => !['index', 'total', 'percent'].includes(k))
-                    .slice(0, 3)
-                    .map(([k, v]) => `${k}: ${v}`)
-                    .join(', ')}
-                </span>
-              )}
-            </div>
-          )}
-          <div className="relative h-2 bg-blue-200 rounded-full overflow-hidden">
-            <div 
-              className="absolute inset-0 bg-blue-600 transition-all duration-500 ease-out" 
-              style={{ width: `${latestLog?.data?.percent || 0}%` }} 
-            />
-            <div 
-              className="absolute inset-0 bg-gradient-to-r from-transparent via-white to-transparent opacity-30"
-              style={{ 
-                animation: 'shimmer 2s infinite',
-                backgroundSize: '200% 100%'
-              }}
-            />
-          </div>
+          {runningJobs.map((job) => (
+            <RunningJobProgress key={job.id} job={job} />
+          ))}
         </div>
       )}
 
