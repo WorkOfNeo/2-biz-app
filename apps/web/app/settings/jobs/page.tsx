@@ -46,7 +46,107 @@ function Truncated({ text, expanded, onToggle }: { text: string; expanded: boole
   );
 }
 
-// Reusable component for displaying a running job's progress
+// Component for displaying unified progress across multiple batch jobs
+function UnifiedBatchProgress({ jobs }: { jobs: Array<{ id: string; type: string; started_at: string; payload: any }> }) {
+  // Fetch latest logs for all batch jobs
+  const jobIds = jobs.map(j => j.id);
+  const { data: allLogs } = useSWR(
+    ['batch:logs', jobIds.join(',')],
+    async () => {
+      if (jobIds.length === 0) return [];
+      const { data, error } = await supabase
+        .from('job_logs')
+        .select('job_id, msg, data, ts')
+        .in('job_id', jobIds)
+        .order('ts', { ascending: false })
+        .limit(jobIds.length * 2); // Get latest 2 logs per job
+      if (error) throw new Error(error.message);
+      return (data ?? []) as Array<{ job_id: string; msg: string; data: any; ts: string }>;
+    },
+    { refreshInterval: 1000 }
+  );
+
+  // Get the most recent progress log for each job
+  const progressByJob = new Map<string, any>();
+  for (const log of (allLogs ?? [])) {
+    if (!progressByJob.has(log.job_id) && log.msg?.includes('progress')) {
+      progressByJob.set(log.job_id, log.data || {});
+    }
+  }
+
+  // Aggregate progress across all batches
+  let totalIndex = 0;
+  let totalTotal = 0;
+  let oldestStartTime = jobs[0]?.started_at;
+  
+  for (const job of jobs) {
+    const progress = progressByJob.get(job.id) || {};
+    totalIndex += Number(progress.index || 0);
+    totalTotal += Number(progress.total || 0);
+    if (job.started_at < oldestStartTime) oldestStartTime = job.started_at;
+  }
+
+  const percent = totalTotal > 0 ? Math.round((totalIndex / totalTotal) * 100) : 0;
+  
+  // Calculate ETA
+  const elapsedMs = Date.now() - new Date(oldestStartTime).getTime();
+  const elapsedMin = Math.floor(elapsedMs / 60000);
+  const remainingItems = totalTotal - totalIndex;
+  const itemsPerMin = totalIndex > 0 ? totalIndex / (elapsedMs / 60000) : 0;
+  const etaMin = itemsPerMin > 0 ? Math.ceil(remainingItems / itemsPerMin) : 0;
+
+  const mainJob = jobs[0];
+  const batchCount = jobs.length;
+
+  return (
+    <div className="rounded-lg border bg-blue-50 border-blue-200 p-4">
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-2">
+          <div className="h-2 w-2 bg-blue-600 rounded-full animate-pulse" />
+          <span className="text-sm font-semibold text-blue-900">
+            {JOB_DESCRIPTIONS[mainJob.type]?.split(':')[0] || mainJob.type} - Running
+          </span>
+          {batchCount > 1 && (
+            <span className="text-xs text-blue-600 bg-blue-100 px-2 py-0.5 rounded">
+              {batchCount} batches
+            </span>
+          )}
+        </div>
+        <span className="text-xs text-blue-700">
+          Started {new Date(oldestStartTime).toLocaleTimeString()}
+        </span>
+      </div>
+      <div className="text-sm text-blue-800 mb-3">
+        {totalIndex}/{totalTotal} styles ({percent}%)
+        {etaMin > 0 && (
+          <span className="ml-2 text-blue-600">
+            • ETA: {etaMin < 60 ? `${etaMin}m` : `${Math.floor(etaMin / 60)}h ${etaMin % 60}m`}
+          </span>
+        )}
+        {elapsedMin > 0 && (
+          <span className="ml-2 text-xs text-blue-500">
+            (Elapsed: {elapsedMin}m)
+          </span>
+        )}
+      </div>
+      <div className="relative h-2 bg-blue-200 rounded-full overflow-hidden">
+        <div 
+          className="absolute inset-0 bg-blue-600 transition-all duration-500 ease-out" 
+          style={{ width: `${percent}%` }} 
+        />
+        <div 
+          className="absolute inset-0 bg-gradient-to-r from-transparent via-white to-transparent opacity-30"
+          style={{ 
+            animation: 'shimmer 2s infinite',
+            backgroundSize: '200% 100%'
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
+// Component for displaying a single running job's progress
 function RunningJobProgress({ job }: { job: { id: string; type: string; started_at: string } }) {
   // Fetch latest log for this specific job
   const { data: latestLog } = useSWR(
@@ -190,12 +290,12 @@ export default function JobsOverviewPage() {
   const { data: runningJobs } = useSWR('jobs:running', async () => {
     const { data, error } = await supabase
       .from('jobs')
-      .select('id, type, status, started_at')
+      .select('id, type, status, started_at, payload')
       .eq('status', 'running')
       .order('started_at', { ascending: false })
-      .limit(10); // Support up to 10 concurrent workers
+      .limit(20); // Support up to 20 concurrent workers/batches
     if (error) throw new Error(error.message);
-    return (data ?? []) as Array<{ id: string; type: string; status: string; started_at: string }>;
+    return (data ?? []) as Array<{ id: string; type: string; status: string; started_at: string; payload: any }>;
   }, { refreshInterval: 2000 });
 
   async function createJob(body: any) {
@@ -262,17 +362,43 @@ export default function JobsOverviewPage() {
         </div>
       </div>
 
-      {/* Running Jobs Progress Bars (Multiple Workers) */}
-      {runningJobs && runningJobs.length > 0 && (
-        <div className="space-y-3">
-          <div className="text-sm font-semibold text-gray-700">
-            Running Jobs ({runningJobs.length})
+      {/* Running Jobs Progress Bars - Grouped by rootId for batch jobs */}
+      {runningJobs && runningJobs.length > 0 && (() => {
+        // Group jobs by rootId (for batch operations) or show individually
+        const groupedJobs = new Map<string, typeof runningJobs>();
+        const standaloneJobs: typeof runningJobs = [];
+        
+        for (const job of runningJobs) {
+          const rootId = job.payload?.rootId as string | undefined;
+          if (rootId) {
+            // This is part of a batch operation
+            const existing = groupedJobs.get(rootId) || [];
+            existing.push(job);
+            groupedJobs.set(rootId, existing);
+          } else {
+            // Standalone job
+            standaloneJobs.push(job);
+          }
+        }
+
+        const totalGroups = groupedJobs.size + standaloneJobs.length;
+        
+        return (
+          <div className="space-y-3">
+            <div className="text-sm font-semibold text-gray-700">
+              Running Jobs ({totalGroups})
+            </div>
+            {/* Display grouped batch jobs */}
+            {Array.from(groupedJobs.values()).map((batchJobs) => (
+              <UnifiedBatchProgress key={batchJobs[0].id} jobs={batchJobs} />
+            ))}
+            {/* Display standalone jobs */}
+            {standaloneJobs.map((job) => (
+              <RunningJobProgress key={job.id} job={job} />
+            ))}
           </div>
-          {runningJobs.map((job) => (
-            <RunningJobProgress key={job.id} job={job} />
-          ))}
-        </div>
-      )}
+        );
+      })()}
 
       {/* Jobs list divided into Scrapes and Exports */}
       <div className="rounded-md border bg-white">
