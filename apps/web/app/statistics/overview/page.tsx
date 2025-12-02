@@ -474,6 +474,22 @@ export default function OverviewPage() {
         </div>
       </div>
 
+      {/* Currency Conversion Rates */}
+      <div className="rounded-lg border bg-gray-50 p-4">
+        <div className="text-sm font-semibold text-gray-700 mb-2">Currency Conversion Rates (to DKK)</div>
+        <div className="flex gap-6 text-sm">
+          <div>
+            <span className="font-medium">EUR:</span> {((rates.EUR ?? 0) || 0).toFixed(4)} DKK
+          </div>
+          <div>
+            <span className="font-medium">NOK:</span> {((rates.NOK ?? 0) || 0).toFixed(4)} DKK
+          </div>
+          <div>
+            <span className="font-medium">SEK:</span> {((rates.SEK ?? 0) || 0).toFixed(4)} DKK
+          </div>
+        </div>
+      </div>
+
     </div>
   );
 }
