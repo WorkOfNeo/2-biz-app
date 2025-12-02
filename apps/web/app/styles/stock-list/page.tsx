@@ -421,20 +421,14 @@ export default function StockListPage() {
                       <a 
                         href={(() => {
                           const linkHref = meta.link_href || '';
-                          // If already absolute URL, use it directly
-                          if (/^https?:\/\//i.test(linkHref)) {
-                            return linkHref.replace(/#.*$/, '') + '#tab=statandstock';
+                          const SPY_BASE_URL = 'https://2-biz.spysystem.dk';
+                          try {
+                            const url = new URL(linkHref, SPY_BASE_URL).toString();
+                            return url.replace(/#.*$/, '') + '#tab=statandstock';
+                          } catch {
+                            // Fallback if URL construction fails
+                            return linkHref;
                           }
-                          // Try to construct with base URL
-                          const base = (typeof process !== 'undefined' && process?.env?.NEXT_PUBLIC_SPY_BASE_URL) || '';
-                          if (base) {
-                            try {
-                              const url = new URL(linkHref, base.replace(/\/$/, '')).toString();
-                              return url.replace(/#.*$/, '') + '#tab=statandstock';
-                            } catch {}
-                          }
-                          // Fallback: use as-is with hash
-                          return linkHref.replace(/#.*$/, '') + '#tab=statandstock';
                         })()} 
                         target="_blank" 
                         rel="noopener noreferrer"
