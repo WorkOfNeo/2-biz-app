@@ -13,7 +13,7 @@ const JOB_DESCRIPTIONS: Record<string, string> = {
   deep_scrape_styles:
     'Deep Scrape Styles: Visits each style Materials tab, reads season selects and color boxes, then maps which colors belong to which seasons. Automatically inserts/deletes style_color_seasons links to keep them in sync with SPY.',
   update_style_stock:
-    'Update Style Stock: Visits selected styles' Stat & Stock, respects style/color scrape toggles and inactive flags, parses Stock/Sold/Purchase/Dedicated, bulk-upserts rows and runs in fan-out batches.',
+    'Update Style Stock: Visits selected styles Stat & Stock tab, respects style/color scrape toggles and inactive flags, parses Stock/Sold/Purchase/Dedicated, bulk-upserts rows and runs in fan-out batches.',
   scrape_customers:
     'Scrape Customers: Imports customers from SPY (company, city, country, salesperson). Updates optional fields like phone, priority and links when available.',
   scrape_statistics:
@@ -25,7 +25,7 @@ const JOB_DESCRIPTIONS: Record<string, string> = {
   export_top_styles:
     'Export Top 10 Styles: Builds PDF exports for Top styles based on stored results and uploads them to Storage.',
   scrape_eans:
-    'Scrape EANs: Visits each style's EAN tab (#tab=ean), parses Color/Size/EAN, maps to style_colors, flushes and reimports the EAN table.',
+    'Scrape EANs: Visits each style EAN tab (#tab=ean), parses Color/Size/EAN, maps to style_colors, flushes and reimports the EAN table.',
   fix_invoices:
     'Fix Invoices: Reconciles season_id on invoices by matching invoice_date to season date ranges. Supports dry run and apply.'
 };
