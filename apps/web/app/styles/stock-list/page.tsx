@@ -4,6 +4,10 @@ import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import React from 'react';
 import { useRoles } from '../../../lib/supabaseClient';
 import { MultiSelect } from '../../../components/MultiSelect';
+import { Card, CardContent } from '../../../components/ui/card';
+import { Input } from '../../../components/ui/input';
+import { Tabs, TabsList, TabsTrigger } from '../../../components/ui/tabs';
+import { Button } from '../../../components/ui/button';
 
 type Row = {
   style_no: string;
@@ -460,87 +464,99 @@ export default function StockListPage() {
     <div className="space-y-4 sl-root">
       <div>
         <div className="text-xs text-gray-500 sl-header-eyebrow">Styles</div>
-        <h1 className="text-xl font-semibold sl-header-title">Stock List</h1>
+        <h1 className="text-2xl font-semibold sl-header-title mb-4">Stock List</h1>
         
-        {/* Summary Totals - Vertical Stack */}
-        <div className="mt-2 grid grid-cols-4 gap-4 text-sm">
-          <div className="flex flex-col">
-            <span className="text-gray-600 text-xs">Stock</span>
-            <span className="font-semibold text-black text-lg">{totals.stock.toLocaleString()}</span>
-          </div>
-          <div className="flex flex-col">
-            <span className="text-gray-600 text-xs">Sold</span>
-            <span className="font-semibold text-red-700 text-lg">{totals.sold > 0 ? `-${totals.sold.toLocaleString()}` : totals.sold}</span>
-          </div>
-          <div className="flex flex-col">
-            <span className="text-gray-600 text-xs">Purchase</span>
-            <span className="font-semibold text-green-700 text-lg">{totals.purchase.toLocaleString()}</span>
-          </div>
-          <div className="flex flex-col">
-            <span className="text-gray-600 text-xs">Available</span>
-            <span className={`font-semibold text-lg ${totals.available < 0 ? 'text-red-700' : totals.available > 0 ? 'text-green-800' : 'text-black'}`}>
-              {totals.available.toLocaleString()}
-            </span>
-          </div>
+        {/* Summary Totals - Cards */}
+        <div className="grid grid-cols-4 gap-3">
+          <Card className="shadow-sm">
+            <CardContent className="p-4">
+              <div className="text-xs text-gray-600 mb-1">Stock</div>
+              <div className="text-2xl font-bold text-black">{totals.stock.toLocaleString()}</div>
+            </CardContent>
+          </Card>
+          <Card className="shadow-sm">
+            <CardContent className="p-4">
+              <div className="text-xs text-gray-600 mb-1">Sold</div>
+              <div className="text-2xl font-bold text-red-700">
+                {totals.sold > 0 ? `-${totals.sold.toLocaleString()}` : totals.sold}
+              </div>
+            </CardContent>
+          </Card>
+          <Card className="shadow-sm">
+            <CardContent className="p-4">
+              <div className="text-xs text-gray-600 mb-1">Purchase</div>
+              <div className="text-2xl font-bold text-green-700">{totals.purchase.toLocaleString()}</div>
+            </CardContent>
+          </Card>
+          <Card className="shadow-sm">
+            <CardContent className="p-4">
+              <div className="text-xs text-gray-600 mb-1">Available</div>
+              <div className={`text-2xl font-bold ${totals.available < 0 ? 'text-red-700' : totals.available > 0 ? 'text-green-800' : 'text-black'}`}>
+                {totals.available.toLocaleString()}
+              </div>
+            </CardContent>
+          </Card>
         </div>
       </div>
 
-      <div className="space-y-3">
-        <div className="flex items-center justify-between gap-3 sl-controls">
-          <div className="flex items-center gap-2 sl-lists">
-              <button
-              className={(activeListId===''?'bg-slate-900 text-white ':'bg-white text-slate-900 ') + 'text-xs px-2 py-1 border rounded sl-list-chip sl-list-all'}
-              onClick={()=>setActiveListId('')}
-              >All</button>
-            {(stockLists ?? []).map((row) => (
-              <button key={row.id} className={(activeListId===row.id?'bg-slate-900 text-white ':'bg-white text-slate-900 ') + 'text-xs px-2 py-1 border rounded sl-list-chip'} onClick={()=>setActiveListId(row.id)}>{row.name}</button>
-            ))}
+      {/* Stock List Tabs and Filters in Single Row */}
+      <Card className="shadow-sm">
+        <CardContent className="p-3">
+          <div className="space-y-3">
+            {/* Stock List Tabs */}
+            <Tabs value={activeListId || 'all'} onValueChange={(v) => setActiveListId(v === 'all' ? '' : v)}>
+              <TabsList className="w-full justify-start">
+                <TabsTrigger value="all">All</TabsTrigger>
+                {(stockLists ?? []).map((row) => (
+                  <TabsTrigger key={row.id} value={row.id}>{row.name}</TabsTrigger>
+                ))}
+              </TabsList>
+            </Tabs>
+            
+            {/* All Filters in One Row */}
+            <div className="flex items-center gap-3 flex-wrap">
+              <Input
+                placeholder="Search style no, name or color…"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-64"
+              />
+              
+              <MultiSelect
+                items={(seasons || []).map(s => ({ 
+                  value: s.id, 
+                  label: `${s.name}${s.year ? ` ${s.year}` : ''}` 
+                }))}
+                values={selectedSeasons}
+                onChange={setSelectedSeasons}
+                placeholder="Filter by seasons..."
+              />
+              
+              <label className="flex items-center gap-2 text-sm cursor-pointer border rounded px-3 py-2 bg-white hover:bg-gray-50">
+                <input
+                  type="checkbox"
+                  checked={hideZeros}
+                  onChange={(e) => setHideZeros(e.target.checked)}
+                  className="h-4 w-4 rounded accent-slate-900"
+                />
+                <span>Hide all zeros</span>
+              </label>
+              
+              {(selectedSeasons.length > 0 || hideZeros) && (
+                <button
+                  onClick={() => {
+                    setSelectedSeasons([]);
+                    setHideZeros(false);
+                  }}
+                  className="text-sm text-slate-600 hover:text-slate-900 underline"
+                >
+                  Clear filters
+                </button>
+              )}
+            </div>
           </div>
-          <div className="sl-search">
-            <input
-              className="text-xs border rounded px-2 py-1 w-56 sl-search-input"
-              placeholder="Search style no, name or color…"
-              value={searchQuery}
-              onChange={(e)=>setSearchQuery(e.target.value)}
-            />
-          </div>
-        </div>
-        
-        {/* Additional Filters */}
-        <div className="flex items-center gap-3 flex-wrap">
-          <MultiSelect
-            items={(seasons || []).map(s => ({ 
-              value: s.id, 
-              label: `${s.name}${s.year ? ` ${s.year}` : ''}` 
-            }))}
-            values={selectedSeasons}
-            onChange={setSelectedSeasons}
-            placeholder="Filter by seasons..."
-          />
-          
-          <label className="flex items-center gap-2 text-xs cursor-pointer">
-            <input
-              type="checkbox"
-              checked={hideZeros}
-              onChange={(e) => setHideZeros(e.target.checked)}
-              className="h-4 w-4 rounded accent-slate-900"
-            />
-            <span>Hide colors with all zeros</span>
-          </label>
-          
-          {(selectedSeasons.length > 0 || hideZeros) && (
-            <button
-              onClick={() => {
-                setSelectedSeasons([]);
-                setHideZeros(false);
-              }}
-              className="text-xs text-slate-600 hover:text-slate-900 underline"
-            >
-              Clear filters
-            </button>
-          )}
-        </div>
-      </div>
+        </CardContent>
+      </Card>
       {/* Scrape active list */}
       {activeListId && (
         <div className="flex items-center justify-end">
@@ -703,12 +719,12 @@ export default function StockListPage() {
 
 function ScrapeActiveListButton({ listId, styleIdsInList }: { listId: string; styleIdsInList: string[] }) {
   const supabase = createClientComponentClient();
-  const React = require('react') as typeof import('react');
   const [busy, setBusy] = React.useState(false);
   const [done, setDone] = React.useState(false);
   return (
-    <button
-      className={"text-xs px-2 py-1 border rounded " + (busy ? 'bg-slate-300 text-gray-700' : 'bg-slate-900 text-white hover:bg-slate-800')}
+    <Button
+      size="sm"
+      variant={busy ? 'secondary' : 'default'}
       disabled={busy}
       onClick={async () => {
         try {
@@ -750,7 +766,7 @@ function ScrapeActiveListButton({ listId, styleIdsInList }: { listId: string; st
       }}
     >
       {busy ? 'Scraping…' : (done ? 'Enqueued!' : 'Scrape this list')}
-    </button>
+    </Button>
   );
 }
 
