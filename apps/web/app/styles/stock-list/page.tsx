@@ -365,20 +365,25 @@ export default function StockListPage() {
       });
     }
     
-    // Filter by seasons
-    if (selectedSeasons.length > 0) {
+    // Filter by seasons - only show colors that have at least one of the selected seasons
+    if (selectedSeasons.length > 0 && styleColors && colorSeasons) {
       base = base.map(({ styleNo, colors }) => {
         const sid = styleMetaByNo[styleNo]?.id || null;
-        if (!sid) return { styleNo, colors };
+        if (!sid) return { styleNo, colors: [] };
+        
+        const cmap = styleColors.idMap?.get(sid);
+        if (!cmap) return { styleNo, colors: [] };
         
         const filteredColors = colors.filter((c) => {
-          const cmap = styleColors?.idMap?.get(sid) || new Map<string, string>();
-          const scId = cmap.get((c.color || '').trim().toLowerCase());
+          const colorKey = (c.color || '').trim().toLowerCase();
+          const scId = cmap.get(colorKey);
           if (!scId) return false;
           
-          const colorSeasonIds = colorSeasons?.get(scId) || new Set<string>();
+          const thisColorSeasons = colorSeasons.get(scId);
+          if (!thisColorSeasons) return false;
+          
           // Color must have at least one of the selected seasons
-          return selectedSeasons.some(seasonId => colorSeasonIds.has(seasonId));
+          return selectedSeasons.some(seasonId => thisColorSeasons.has(seasonId));
         });
         
         return { styleNo, colors: filteredColors };
@@ -582,50 +587,21 @@ export default function StockListPage() {
                   const availableTotal = sum(g.available);
                   return (
                   <div key={key} className="space-y-1 sl-color-block">
-                      {/* Seasons chips, inactive status, and controls */}
-                    <div className="flex flex-wrap items-center gap-1 sl-season-chips">
-                        {(() => {
-                          const sid = styleMetaByNo[g.styleNo]?.id || null;
-                          const cmap = sid ? (styleColors?.idMap?.get(sid) || new Map<string, string>()) : new Map<string, string>();
-                          const scId = cmap.get((g.color || '').trim().toLowerCase()) || null;
-                          const colorStatus = scId ? styleColors?.statusMap?.get(scId) : null;
-                          const set = (scId && colorSeasons) ? (colorSeasons.get(scId) || new Set<string>()) : new Set<string>();
-                          const labels = (seasons || []).filter(s => set.has(s.id));
-                          return (
-                            <>
-                              {labels.map((s) => (
-                                <span key={s.id} className="inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] sl-season-chip">
-                                  <span>{s.name}{s.year ? ` ${s.year}` : ''}</span>
-                                  {!has('sales') && (
-                                    <button
-                                      className="text-gray-500 hover:text-black sl-season-remove"
-                                      onClick={async () => {
-                                        if (!scId) return;
-                                        await supabase.from('style_color_seasons').delete().eq('style_color_id', scId).eq('season_id', s.id);
-                                        await mutateColorSeasons();
-                                      }}
-                                      title="Remove"
-                                    >×</button>
-                                  )}
-                                </span>
-                              ))}
-                              {!has('sales') && scId && (
-                                <SeasonAdder
-                                  // @ts-ignore
-                                  className="sl-season-adder"
-                                  seasons={seasons || []}
-                                  selected={set}
-                                  onAdd={async (seasonId) => {
-                                    if (!seasonId) return;
-                                    await supabase.from('style_color_seasons').insert({ style_color_id: scId, season_id: seasonId });
-                                    await mutateColorSeasons();
-                                  }}
-                                />
-                              )}
-                            </>
-                          );
-                        })()}
-                      </div>
+                      {/* Display seasons as simple text */}
+                      {(() => {
+                        const sid = styleMetaByNo[g.styleNo]?.id || null;
+                        const cmap = sid ? (styleColors?.idMap?.get(sid) || new Map<string, string>()) : new Map<string, string>();
+                        const scId = cmap.get((g.color || '').trim().toLowerCase()) || null;
+                        const set = (scId && colorSeasons) ? (colorSeasons.get(scId) || new Set<string>()) : new Set<string>();
+                        const labels = (seasons || []).filter(s => set.has(s.id));
+                        
+                        if (labels.length === 0) return null;
+                        
+                        const seasonText = labels.map(s => `${s.name}${s.year ? ` ${s.year}` : ''}`).join(', ');
+                        return (
+                          <div className="text-[12px] text-gray-500 mb-1">{seasonText}</div>
+                        );
+                      })()}
                     {/* Sizes table with image + color columns */}
                     <div className="overflow-auto sl-table-wrap">
                       <table className="min-w-full text-xs sl-table">
@@ -702,36 +678,6 @@ export default function StockListPage() {
     </div>
   );
 }
-
-function SeasonAdder({ seasons, selected, onAdd }: { seasons: Array<{ id: string; name: string; year: number | null }>; selected: Set<string>; onAdd: (seasonId: string) => void }) {
-  const [open, setOpen] = React.useState(false);
-  const [q, setQ] = React.useState('');
-  const list = React.useMemo(() => {
-    const base = seasons.filter((s) => !selected.has(s.id));
-    const qq = q.trim().toLowerCase();
-    if (!qq) return base.slice(0, 20);
-    return base.filter((s) => (s.name || '').toLowerCase().includes(qq) || String(s.year || '').includes(qq)).slice(0, 20);
-  }, [seasons, selected, q]);
-  return (
-    <div className="relative inline-block sl-season-adder">
-      <button className="text-[11px] border rounded px-1.5 py-0.5 sl-season-adder-trigger" onClick={() => setOpen((v) => !v)}>+ Season</button>
-      {open && (
-        <div className="absolute z-10 mt-1 w-56 rounded border bg-white shadow p-1 sl-season-adder-popover">
-          <input className="w-full border rounded px-2 py-1 text-[12px] mb-1 sl-season-adder-search" placeholder="Search seasons" value={q} onChange={(e)=>setQ(e.target.value)} />
-          <div className="max-h-48 overflow-auto sl-season-adder-list">
-            {list.length === 0 && <div className="px-2 py-1 text-[12px] text-gray-500 sl-season-adder-empty">No matches</div>}
-            {list.map((s) => (
-              <button key={s.id} className="block w-full text-left px-2 py-1 text-[12px] hover:bg-gray-50 sl-season-adder-item" onClick={()=>{ onAdd(s.id); setOpen(false); setQ(''); }}>
-                {s.name}{s.year ? ` ${s.year}` : ''}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
 
 function ScrapeActiveListButton({ listId, styleIdsInList }: { listId: string; styleIdsInList: string[] }) {
   const supabase = createClientComponentClient();
