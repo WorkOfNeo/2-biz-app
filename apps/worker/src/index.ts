@@ -343,10 +343,36 @@ async function runJob(job: JobRow) {
     const startedAt = Date.now();
     const maxDurationMs = Math.max(0, Number((job.payload as any)?.maxDurationMs || process.env.STOCK_MAX_MS || 0) || 0);
     let totalRows = 0;
+    // Pre-fetch all style_colors to eliminate N+1 queries (optimization: 1 query instead of N)
+    const styleIds = (styles ?? []).map((s: any) => s.id).filter(Boolean);
+    let allStyleColors = new Map<string, Map<string, boolean>>(); // styleId -> (colorKey -> scrapeEnabled)
+    if (styleIds.length > 0) {
+      try {
+        const { data: allColors } = await supabase
+          .from('style_colors')
+          .select('style_id, color, scrape_enabled')
+          .in('style_id', styleIds);
+        for (const c of (allColors ?? []) as any[]) {
+          const sid = c.style_id;
+          if (!allStyleColors.has(sid)) allStyleColors.set(sid, new Map());
+          const key = String(c.color || '').trim().toLowerCase();
+          if (key) allStyleColors.get(sid)!.set(key, c.scrape_enabled !== false);
+        }
+      } catch {}
+    }
     for (const s of (styles ?? []) as any[]) {
       processedStyles++;
       const styleName = (s as any)?.style_name || null;
-      await log(job.id, 'info', 'STEP:update_style_stock_progress', { index: processedStyles, total: totalStyles, style_no: s.style_no, style_name: styleName });
+      // Log every 10 styles or on last style (optimization: reduce log writes by 90%)
+      if (processedStyles % 10 === 0 || processedStyles === totalStyles) {
+        await log(job.id, 'info', 'STEP:update_style_stock_progress', { 
+          index: processedStyles, 
+          total: totalStyles, 
+          percent: Math.round((processedStyles / totalStyles) * 100),
+          style_no: s.style_no, 
+          style_name: styleName 
+        });
+      }
       if (maxDurationMs > 0 && (Date.now() - startedAt) > maxDurationMs) {
         await log(job.id, 'info', 'STEP:style_stock_timeout', { processed: processedStyles, total: totalStyles, ms: Date.now() - startedAt });
         break;
@@ -362,19 +388,13 @@ async function runJob(job: JobRow) {
         await log(job.id, 'info', 'STEP:style_stock_skip_style_disabled', { style_no: s.style_no });
         continue;
       }
-      // Load per-color scrape flags for this style
+      // Use pre-fetched color data (optimization: no query in loop)
       let allowedColors: Record<string, boolean> = {};
-      if (styleId) {
-        try {
-          const { data: colorRows } = await supabase
-            .from('style_colors')
-            .select('color, scrape_enabled')
-            .eq('style_id', styleId);
-          for (const c of (colorRows ?? []) as any[]) {
-            const key = String(c.color || '').trim().toLowerCase();
-            if (key) allowedColors[key] = c.scrape_enabled !== false;
-          }
-        } catch {}
+      if (styleId && allStyleColors.has(styleId)) {
+        const colorMap = allStyleColors.get(styleId)!;
+        for (const [key, enabled] of colorMap.entries()) {
+          allowedColors[key] = enabled;
+        }
       }
       // Optimization: skip whole style if we know colors and all are disabled
       const knownColorKeys = Object.keys(allowedColors);
