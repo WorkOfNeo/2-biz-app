@@ -159,7 +159,7 @@ export default function StyleDetailPage({ params }: { params: { styleNo: string 
   };
 
   return (
-    <div className="space-y-4 max-w-full">
+    <div className="space-y-4 w-full max-w-full overflow-hidden">
       <div className="flex items-start justify-between">
         <div className="flex items-start gap-4">
           {meta?.image_url && (
@@ -197,13 +197,13 @@ export default function StyleDetailPage({ params }: { params: { styleNo: string 
         )}
       </div>
 
-      <div className="rounded-md border bg-white p-4 max-w-full overflow-hidden">
+      <div className="rounded-md border bg-white p-4 w-full overflow-hidden">
         {(colors ?? []).length === 0 ? (
           <div className="text-sm text-gray-500">No colors found yet.</div>
         ) : (
           <Tabs defaultValue={(colors ?? [])[0]?.id} className="w-full">
-            <div className="overflow-x-auto -mx-4 px-4 mb-4">
-              <TabsList className="inline-flex w-auto min-w-full">
+            <div className="w-full overflow-x-auto -mx-4 px-4 mb-4 scrollbar-thin">
+              <TabsList className="inline-flex">
                 {(colors ?? []).map((c) => (
                   <TabsTrigger key={c.id} value={c.id} className={getTabColor(c)}>
                     {c.color}
@@ -219,8 +219,8 @@ export default function StyleDetailPage({ params }: { params: { styleNo: string 
               const sum = (arr: number[]) => arr.reduce((a, b) => a + b, 0);
               
               return (
-                <TabsContent key={c.id} value={c.id}>
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <TabsContent key={c.id} value={c.id} className="w-full">
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 w-full">
                     {/* Left Column: Stock Data */}
                     <div className="space-y-2 min-w-0">
                       <h3 className="text-sm font-semibold mb-3">Stock Information</h3>

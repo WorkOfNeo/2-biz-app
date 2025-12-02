@@ -13,10 +13,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   }
   return (
     <div className="flex min-h-screen">
-      <aside className="sidebar w-64 p-4">
+      <aside className="sidebar w-64 p-4 flex-shrink-0">
         <SidebarNav />
       </aside>
-      <main className="flex-1 p-6">{children}</main>
+      <main className="flex-1 min-w-0 p-6 overflow-x-hidden">{children}</main>
     </div>
   );
 }
