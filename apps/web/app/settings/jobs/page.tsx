@@ -100,6 +100,9 @@ function UnifiedBatchProgress({ jobs }: { jobs: Array<{ id: string; type: string
   const mainJob = jobs[0];
   const batchCount = jobs.length;
 
+  // Safety check: if no jobs, don't render (shouldn't happen but prevents TypeScript error)
+  if (!mainJob) return null;
+
   return (
     <div className="rounded-lg border bg-blue-50 border-blue-200 p-4">
       <div className="flex items-center justify-between mb-2">
