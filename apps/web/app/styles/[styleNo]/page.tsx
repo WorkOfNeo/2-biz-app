@@ -20,6 +20,7 @@ export default function StyleDetailPage({ params }: { params: { styleNo: string 
   const supabase = createClientComponentClient();
   const router = useRouter();
   const styleNo = decodeURIComponent(params.styleNo);
+  const [updatingColorId, setUpdatingColorId] = React.useState<string | null>(null);
 
   const { data: meta, mutate: mutateMeta } = useSWR(['style:meta', styleNo], async () => {
     const { data, error } = await supabase
@@ -300,21 +301,63 @@ export default function StyleDetailPage({ params }: { params: { styleNo: string 
                           <button
                             onClick={async () => {
                               try {
+                                setUpdatingColorId(c.id);
                                 const newInactive = !c.inactive;
-                                await supabase.from('style_colors').update({ inactive: newInactive }).eq('id', c.id);
+                                
+                                // Optimistic update
+                                mutateColors((current) => {
+                                  if (!current) return current;
+                                  return current.map(color => 
+                                    color.id === c.id 
+                                      ? { ...color, inactive: newInactive } 
+                                      : color
+                                  );
+                                }, false);
+                                
+                                // Update database
+                                const { error } = await supabase
+                                  .from('style_colors')
+                                  .update({ inactive: newInactive })
+                                  .eq('id', c.id);
+                                
+                                if (error) throw error;
+                                
+                                // Revalidate to ensure we have server truth
                                 await mutateColors();
+                                
+                                // Show success feedback
+                                if (typeof window !== 'undefined') {
+                                  window.dispatchEvent(new CustomEvent('toast', { 
+                                    detail: { 
+                                      message: newInactive ? 'Color marked as inactive' : 'Color activated',
+                                      type: 'success' 
+                                    } 
+                                  }));
+                                }
                               } catch (err) {
                                 console.error('Failed to toggle inactive', err);
                                 alert('Failed to update inactive status');
+                                // Revalidate on error to restore correct state
+                                await mutateColors();
+                              } finally {
+                                setUpdatingColorId(null);
                               }
                             }}
-                            className={`w-full text-sm px-4 py-2 rounded border font-medium ${
-                              c.inactive 
-                                ? 'bg-green-50 text-green-700 border-green-300 hover:bg-green-100' 
-                                : 'bg-red-50 text-red-700 border-red-300 hover:bg-red-100'
+                            disabled={updatingColorId === c.id}
+                            className={`w-full text-sm px-4 py-2 rounded border font-medium transition-colors ${
+                              updatingColorId === c.id
+                                ? 'bg-gray-100 text-gray-400 border-gray-300 cursor-not-allowed'
+                                : c.inactive 
+                                  ? 'bg-green-50 text-green-700 border-green-300 hover:bg-green-100' 
+                                  : 'bg-red-50 text-red-700 border-red-300 hover:bg-red-100'
                             }`}
                           >
-                            {c.inactive ? 'Activate Color' : 'Set Color as Inactive'}
+                            {updatingColorId === c.id 
+                              ? 'Updating...' 
+                              : c.inactive 
+                                ? 'Activate Color' 
+                                : 'Set Color as Inactive'
+                            }
                           </button>
                         </div>
                       )}
