@@ -11,7 +11,7 @@ const JOB_DESCRIPTIONS: Record<string, string> = {
   scrape_styles:
     'Scrape Styles: Crawls SPY styles to discover and update styles (number, name, links) and pre-seeds color headers for later stock control.',
   deep_scrape_styles:
-    'Deep Scrape Styles: Visits each style's Materials tab, reads season selects and color boxes, then maps which colors belong to which seasons. Automatically inserts/deletes style_color_seasons links to keep them in sync with SPY.',
+    'Deep Scrape Styles: Visits each style Materials tab, reads season selects and color boxes, then maps which colors belong to which seasons. Automatically inserts/deletes style_color_seasons links to keep them in sync with SPY.',
   update_style_stock:
     'Update Style Stock: Visits selected styles' Stat & Stock, respects style/color scrape toggles and inactive flags, parses Stock/Sold/Purchase/Dedicated, bulk-upserts rows and runs in fan-out batches.',
   scrape_customers:
