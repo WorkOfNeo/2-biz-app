@@ -394,9 +394,11 @@ export default function JobsOverviewPage() {
               Running Jobs ({totalGroups})
             </div>
             {/* Display grouped batch jobs */}
-            {Array.from(groupedJobs.values()).map((batchJobs) => (
-              <UnifiedBatchProgress key={batchJobs[0].id} jobs={batchJobs} />
-            ))}
+            {Array.from(groupedJobs.values())
+              .filter((batchJobs) => batchJobs.length > 0)
+              .map((batchJobs) => (
+                <UnifiedBatchProgress key={batchJobs[0]!.id} jobs={batchJobs} />
+              ))}
             {/* Display standalone jobs */}
             {standaloneJobs.map((job) => (
               <RunningJobProgress key={job.id} job={job} />
