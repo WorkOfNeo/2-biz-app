@@ -98,6 +98,8 @@ export default function StockScraperPage() {
     return (data ?? []) as Array<{ id: string; status: string; created_at: string; payload: any }>;
   }, { refreshInterval: 10000 });
   const [showRelated, setShowRelated] = React.useState(false);
+  const [startFrom, setStartFrom] = React.useState<string>('0');
+  const [limit, setLimit] = React.useState<string>('25');
 
   const { data: recent } = useSWR('stock-scraper:recent', async () => {
     const { data, error } = await supabase
@@ -143,6 +145,59 @@ export default function StockScraperPage() {
     await fetch('/api/cron/update-stock-selected', { method: 'POST' });
   }
 
+  async function enqueueWithLimit() {
+    const start = parseInt(startFrom, 10);
+    const lim = parseInt(limit, 10);
+    if (isNaN(start) || start < 0) {
+      alert('Start from must be a non-negative number');
+      return;
+    }
+    if (isNaN(lim) || lim < 1) {
+      alert('Limit must be a positive number');
+      return;
+    }
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        alert('Not signed in');
+        return;
+      }
+      // Fetch styles with offset and limit
+      const { data: styles, error } = await supabase
+        .from('styles')
+        .select('style_no')
+        .order('updated_at', { ascending: false })
+        .range(start, start + lim - 1);
+      if (error) throw new Error(error.message);
+      const styleNos = ((styles ?? []) as any[]).map((r) => String(r.style_no || '')).filter(Boolean);
+      if (styleNos.length === 0) {
+        alert(`No styles found in range ${start} to ${start + lim - 1}`);
+        return;
+      }
+      // Enqueue job with these styleNos
+      const res = await fetch('/api/enqueue', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ 
+          type: 'update_style_stock', 
+          payload: { 
+            requestedBy: session.user.email, 
+            styleNos: styleNos 
+          } 
+        })
+      });
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        throw new Error(text || `Failed (${res.status})`);
+      }
+      const result = await res.json().catch(() => ({}));
+      alert(`Enqueued job for ${styleNos.length} styles (range ${start} to ${start + lim - 1})`);
+    } catch (e: any) {
+      alert(e?.message || 'Failed to enqueue job');
+      console.error('[stock-scraper] enqueueWithLimit error', e);
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div>
@@ -152,9 +207,36 @@ export default function StockScraperPage() {
 
       <section className="rounded-md border p-4">
         <h2 className="mb-2 text-lg font-semibold">Current run</h2>
-        <div className="mb-3 flex items-center gap-2">
+        <div className="mb-3 flex items-center gap-2 flex-wrap">
           <button onClick={enqueueAll} disabled={!!running} className="rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-60">Scrape all</button>
           <button onClick={enqueueSelected} disabled={!!running} className="rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-60">Scrape selected</button>
+          <div className="flex items-center gap-2 border rounded-md px-3 py-1.5">
+            <label className="text-sm text-gray-600">Start from:</label>
+            <input
+              type="number"
+              value={startFrom}
+              onChange={(e) => setStartFrom(e.target.value)}
+              min="0"
+              className="w-20 rounded border px-2 py-1 text-sm"
+              disabled={!!running}
+            />
+            <label className="text-sm text-gray-600">Limit:</label>
+            <input
+              type="number"
+              value={limit}
+              onChange={(e) => setLimit(e.target.value)}
+              min="1"
+              className="w-20 rounded border px-2 py-1 text-sm"
+              disabled={!!running}
+            />
+            <button 
+              onClick={enqueueWithLimit} 
+              disabled={!!running} 
+              className="rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-60"
+            >
+              Scrape range
+            </button>
+          </div>
         </div>
         {running ? (
           <div className="space-y-2">

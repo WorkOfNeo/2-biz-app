@@ -14,7 +14,7 @@ export default function StylesPage() {
   const { data: rows, mutate } = useSWR(['styles:list', q, supplierFilter], async () => {
     let query = supabase
       .from('styles')
-      .select('id, style_no, style_name, supplier, image_url, link_href, maybe_inactive, inactive')
+      .select('id, style_no, style_name, supplier, image_url, link_href, maybe_inactive, inactive, stock_all_zeros')
       .order('updated_at', { ascending: false })
       .limit(200);
     
@@ -139,6 +139,7 @@ export default function StylesPage() {
                     <div className="flex items-center gap-2">
                       {r.maybe_inactive && !r.inactive && <span className="text-[10px] px-1.5 py-0.5 bg-yellow-100 text-yellow-800 rounded">Maybe Inactive</span>}
                       {r.inactive && <span className="text-[10px] px-1.5 py-0.5 bg-red-100 text-red-800 rounded">Inactive</span>}
+                      {(r as any).stock_all_zeros && <span className="text-[10px] px-1.5 py-0.5 bg-orange-100 text-orange-800 rounded" title="All zeros or scrape error - will be skipped in future scrapes">All Zeros</span>}
                       <button
                         onClick={async (e) => {
                           e.stopPropagation();

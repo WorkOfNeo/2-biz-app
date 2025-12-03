@@ -76,6 +76,9 @@ export async function updateStyleStock(ctx: Ctx) {
     const styleId: string | null = (s.id as string | undefined) || null;
     const styleScrapeEnabled: boolean = (s as any)?.scrape_enabled !== false;
     if (!styleScrapeEnabled) { await log(job.id, 'info', 'STEP:style_stock_skip_style_disabled', { style_no: s.style_no }); continue; }
+    // Skip styles flagged as having all zeros or scraping errors
+    const stockAllZeros: boolean = (s as any)?.stock_all_zeros === true;
+    if (stockAllZeros) { await log(job.id, 'info', 'STEP:style_stock_skip_all_zeros', { style_no: s.style_no }); continue; }
     let allowedColors: Record<string, boolean> = {};
     if (styleId) {
       try {
@@ -94,6 +97,15 @@ export async function updateStyleStock(ctx: Ctx) {
     if (!ok) {
       await log(job.id, 'error', 'STEP:style_stock_nav_timeout', { style_no: s.style_no, url });
       missingStyles.push({ style_no: s.style_no, reason: 'nav_timeout' });
+      // Flag style to skip in future scrapes
+      if (styleId) {
+        try {
+          await supabase.from('styles').update({ stock_all_zeros: true }).eq('id', styleId);
+          await log(job.id, 'info', 'STEP:style_stock_flag_nav_timeout', { style_no: s.style_no, style_id: styleId });
+        } catch (e: any) {
+          await log(job.id, 'error', 'STEP:style_stock_flag_error', { style_no: s.style_no, error: e?.message || String(e) });
+        }
+      }
       continue;
     }
     try {
@@ -191,6 +203,15 @@ export async function updateStyleStock(ctx: Ctx) {
       const html = await page.content();
       await log(job.id, 'error', 'STEP:style_stock_missing_skip', { style_no: s.style_no, error: e?.message || String(e), html_sample: String(html || '').slice(0, 5_000) });
       missingStyles.push({ style_no: s.style_no, reason: 'details_missing' });
+      // Flag style to skip in future scrapes
+      if (styleId) {
+        try {
+          await supabase.from('styles').update({ stock_all_zeros: true }).eq('id', styleId);
+          await log(job.id, 'info', 'STEP:style_stock_flag_missing_skip', { style_no: s.style_no, style_id: styleId });
+        } catch (err: any) {
+          await log(job.id, 'error', 'STEP:style_stock_flag_error', { style_no: s.style_no, error: err?.message || String(err) });
+        }
+      }
       continue;
     }
     const extracted = await page.$$eval('.statAndStockBox', (boxes, allowed: Record<string, boolean>) => {
@@ -340,7 +361,37 @@ export async function updateStyleStock(ctx: Ctx) {
         colorMap.get(color)!.push(row);
       }
       // Check each color
+      const colorAllZeros: boolean[] = [];
       for (const [colorKey, colorRows] of colorMap.entries()) {
+        // Get sizes from stock row or first row
+        const sizes = (colorRows.find((r: any) => r.section === 'Stock') || colorRows[0])?.sizes || [];
+        const num = sizes.length || 0;
+        const zero = Array.from({ length: num }, () => 0);
+        
+        // Get stock values
+        const stockRow = colorRows.find((r: any) => r.section === 'Stock');
+        const stockVals = stockRow ? (Array.isArray(stockRow.values) ? stockRow.values : []) : [];
+        const stock = Array.from({ length: num }, (_, i) => Number(stockVals[i] ?? 0) || 0);
+        
+        // Sum sold rows
+        const soldRows = colorRows.filter((r: any) => r.section === 'Sold');
+        const soldSum = soldRows.reduce((acc: number[], r: any) => {
+          const vals = Array.isArray(r.values) ? r.values : [];
+          return acc.map((v, i) => v + (Number(vals[i] ?? 0) || 0));
+        }, zero.slice());
+        
+        // Sum purchase rows
+        const purchaseRows = colorRows.filter((r: any) => r.section === 'Purchase (Running + Shipped)');
+        const purchaseSum = purchaseRows.reduce((acc: number[], r: any) => {
+          const vals = Array.isArray(r.values) ? r.values : [];
+          return acc.map((v, i) => v + (Number(vals[i] ?? 0) || 0));
+        }, zero.slice());
+        
+        // Check if this color has all zeros (stock, sold, purchase all 0)
+        const colorAllZero = stock.every(v => v === 0) && soldSum.every(v => v === 0) && purchaseSum.every(v => v === 0);
+        colorAllZeros.push(colorAllZero);
+        
+        // Update maybe_inactive flag for this color
         const allZero = colorRows.every((row: any) => {
           const values = row.values || [];
           return values.every((v: any) => Number(v) === 0);
@@ -359,6 +410,23 @@ export async function updateStyleStock(ctx: Ctx) {
             // maybe_inactive flag is updated silently in database
           }
         }
+      }
+      
+      // Check if ALL colors have all zeros (stock, sold, purchase all 0)
+      if (colorAllZeros.length > 0 && colorAllZeros.every(z => z === true)) {
+        if (styleId) {
+          try {
+            await supabase.from('styles').update({ stock_all_zeros: true }).eq('id', styleId);
+            await log(job.id, 'info', 'STEP:style_stock_flag_all_zeros', { style_no: s.style_no, style_id: styleId, colors_checked: colorAllZeros.length });
+          } catch (e: any) {
+            await log(job.id, 'error', 'STEP:style_stock_flag_error', { style_no: s.style_no, error: e?.message || String(e) });
+          }
+        }
+      } else if (styleId) {
+        // Reset flag if style no longer has all zeros
+        try {
+          await supabase.from('styles').update({ stock_all_zeros: false }).eq('id', styleId);
+        } catch {}
       }
     } catch (e: any) {
       await log(job.id, 'error', 'STEP:style_inactive_check_error', { style_no: s.style_no, error: e?.message || String(e) });

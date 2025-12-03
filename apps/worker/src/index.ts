@@ -388,6 +388,9 @@ async function runJob(job: JobRow) {
         await log(job.id, 'info', 'STEP:style_stock_skip_style_disabled', { style_no: s.style_no });
         continue;
       }
+      // Skip styles flagged as having all zeros or scraping errors
+      const stockAllZeros: boolean = (s as any)?.stock_all_zeros === true;
+      if (stockAllZeros) { await log(job.id, 'info', 'STEP:style_stock_skip_all_zeros', { style_no: s.style_no }); continue; }
       // Use pre-fetched color data (optimization: no query in loop)
       let allowedColors: Record<string, boolean> = {};
       if (styleId && allStyleColors.has(styleId)) {
@@ -497,6 +500,15 @@ async function runJob(job: JobRow) {
             const html = await captureHtmlSnippet(page, page!);
             await log(job.id, 'info', 'STEP:style_stock_missing_skip', { style_no: s.style_no, html });
           } catch {}
+          // Flag style to skip in future scrapes
+          if (styleId) {
+            try {
+              await supabase.from('styles').update({ stock_all_zeros: true }).eq('id', styleId);
+              await log(job.id, 'info', 'STEP:style_stock_flag_missing_skip', { style_no: s.style_no, style_id: styleId });
+            } catch (err: any) {
+              await log(job.id, 'error', 'STEP:style_stock_flag_error', { style_no: s.style_no, error: err?.message || String(err) });
+            }
+          }
           continue; // skip quickly when nothing to show
         }
         try {
@@ -508,6 +520,15 @@ async function runJob(job: JobRow) {
         const html = await captureHtmlSnippet(page, page!);
         await log(job.id, 'error', 'STEP:style_stock_missing', { style_no: s.style_no, error: e?.message || String(e), html });
         } catch {}
+        // Flag style to skip in future scrapes
+        if (styleId) {
+          try {
+            await supabase.from('styles').update({ stock_all_zeros: true }).eq('id', styleId);
+            await log(job.id, 'info', 'STEP:style_stock_flag_missing', { style_no: s.style_no, style_id: styleId });
+          } catch (err: any) {
+            await log(job.id, 'error', 'STEP:style_stock_flag_error', { style_no: s.style_no, error: err?.message || String(err) });
+          }
+        }
         continue;
       }
       // Discover ALL color headers (unfiltered) and ensure style_colors is updated before parsing
