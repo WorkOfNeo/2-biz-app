@@ -15,7 +15,7 @@ export default function StylesPage() {
     // Build base query
     let baseQuery = supabase
       .from('styles')
-      .select('id, style_no, style_name, supplier, image_url, link_href, maybe_inactive, inactive, stock_all_zeros')
+      .select('id, style_no, style_name, supplier, image_url, link_href, maybe_inactive, inactive, stock_all_zeros, missing_from_spy, needs_enrichment')
       .order('updated_at', { ascending: false });
     
     // Search in both style_no and style_name
@@ -131,6 +131,7 @@ export default function StylesPage() {
                 <th className="text-left p-2 border-b">Supplier</th>
               <th className="text-left p-2 border-b">DG</th>
                 <th className="text-left p-2 border-b">Stock All Zeros</th>
+                <th className="text-left p-2 border-b">Missing from SPY</th>
                 <th className="text-left p-2 border-b">Status</th>
                 <th className="text-left p-2 border-b">Link</th>
               </tr>
@@ -138,7 +139,7 @@ export default function StylesPage() {
             <tbody>
               {(rows ?? []).length === 0 && (
                 <tr>
-                  <td colSpan={8} className="p-4 text-center text-gray-500">
+                  <td colSpan={9} className="p-4 text-center text-gray-500">
                     No styles found. {(q || supplierFilter) ? 'Try adjusting your filters.' : ''}
                   </td>
                 </tr>
@@ -157,11 +158,19 @@ export default function StylesPage() {
                       <span className="text-gray-400">No</span>
                     )}
                   </td>
+                  <td className="p-2 border-b cursor-pointer" onClick={() => { window.location.href = `/styles/${encodeURIComponent(r.style_no)}`; }}>
+                    {r.missing_from_spy ? (
+                      <span className="text-red-600 font-medium">Yes</span>
+                    ) : (
+                      <span className="text-gray-400">No</span>
+                    )}
+                  </td>
                   <td className="p-2 border-b">
                     <div className="flex items-center gap-2">
                       {r.maybe_inactive && !r.inactive && <span className="text-[10px] px-1.5 py-0.5 bg-yellow-100 text-yellow-800 rounded">Maybe Inactive</span>}
                       {r.inactive && <span className="text-[10px] px-1.5 py-0.5 bg-red-100 text-red-800 rounded">Inactive</span>}
                       {(r as any).stock_all_zeros && <span className="text-[10px] px-1.5 py-0.5 bg-orange-100 text-orange-800 rounded" title="All zeros or scrape error - will be skipped in future scrapes">All Zeros</span>}
+                      {r.needs_enrichment && <span className="text-[10px] px-1.5 py-0.5 bg-blue-100 text-blue-800 rounded" title="Needs enrichment - will be processed by enrich_styles job">Needs Enrichment</span>}
                       <button
                         onClick={async (e) => {
                           e.stopPropagation();
