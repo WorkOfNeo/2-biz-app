@@ -978,8 +978,10 @@ export default function StockListPage() {
                   // Calculate style-level totals across all colors
                   const sum = (arr: number[]) => arr.reduce((a, b) => a + (Number(b) || 0), 0);
                   
-                  // Aggregate all sizes across all colors
-                  const allSizes = Array.from(new Set(colors.flatMap(c => c.sizes)));
+                  // Get the first color with sizes to use as reference
+                  const firstColorWithSizes = colors.find(c => c.sizes && c.sizes.length > 0);
+                  const referenceSizes = firstColorWithSizes?.sizes || [];
+                  const referenceSizeCount = referenceSizes.length;
                   
                   // Build totals by combining all colors
                   const styleTotals = {
@@ -1010,7 +1012,7 @@ export default function StockListPage() {
                           <thead className="bg-blue-50">
                             <tr>
                               <th className="p-2 text-left border-b font-semibold sl-th sl-th-section" style={{ width: 160 }}>Section</th>
-                              {Array.from({ length: maxSizeCount }, (_, i) => colors[0]?.sizes[i] ?? '').map((s, i) => (
+                              {Array.from({ length: maxSizeCount }, (_, i) => referenceSizes[i] ?? '').map((s, i) => (
                                 <th key={i} className="p-2 text-right border-b font-semibold sl-th sl-th-size" style={{ width: 64 }}>{s}</th>
                               ))}
                               <th className="p-2 text-right border-b font-semibold sl-th sl-th-total" style={{ width: 72 }}>Total</th>
@@ -1021,7 +1023,7 @@ export default function StockListPage() {
                               <td className="p-2 border-b font-semibold whitespace-nowrap" style={{ width: 160 }}>Stock</td>
                               {styleTotals.stock.map((v, i) => (
                                 <td key={i} className="p-2 border-b text-right font-semibold text-black" style={{ width: 64 }}>
-                                  {i < colors[0]?.sizes.length ? v : ''}
+                                  {i < referenceSizeCount ? v : ''}
                                 </td>
                               ))}
                               <td className="p-2 border-b text-right font-bold text-black" style={{ width: 72 }}>{totalStock}</td>
@@ -1030,7 +1032,7 @@ export default function StockListPage() {
                               <td className="p-2 border-b font-semibold whitespace-nowrap" style={{ width: 160 }}>Sold</td>
                               {styleTotals.soldSum.map((v, i) => (
                                 <td key={i} className="p-2 border-b text-right font-semibold text-red-600" style={{ width: 64 }}>
-                                  {i < colors[0]?.sizes.length ? (Number(v) > 0 ? `-${v}` : v) : ''}
+                                  {i < referenceSizeCount ? (Number(v) > 0 ? `-${v}` : v) : ''}
                                 </td>
                               ))}
                               <td className="p-2 border-b text-right font-bold text-red-700" style={{ width: 72 }}>
@@ -1041,7 +1043,7 @@ export default function StockListPage() {
                               <td className="p-2 border-b font-semibold whitespace-nowrap" style={{ width: 160 }}>Purchase</td>
                               {styleTotals.purchaseSum.map((v, i) => (
                                 <td key={i} className="p-2 border-b text-right font-semibold text-green-700" style={{ width: 64 }}>
-                                  {i < colors[0]?.sizes.length ? v : ''}
+                                  {i < referenceSizeCount ? v : ''}
                                 </td>
                               ))}
                               <td className="p-2 border-b text-right font-bold text-green-800" style={{ width: 72 }}>{totalPurchase}</td>
@@ -1050,7 +1052,7 @@ export default function StockListPage() {
                               <td className="p-2 font-semibold whitespace-nowrap" style={{ width: 160 }}>Available</td>
                               {styleTotals.available.map((v, i) => (
                                 <td key={i} className={`p-2 text-right font-semibold ${Number(v) < 0 ? 'text-red-700' : Number(v) > 0 ? 'text-green-800' : 'text-black'}`} style={{ width: 64 }}>
-                                  {i < colors[0]?.sizes.length ? v : ''}
+                                  {i < referenceSizeCount ? v : ''}
                                 </td>
                               ))}
                               <td className={`p-2 text-right font-bold ${totalAvailable < 0 ? 'text-red-700' : totalAvailable > 0 ? 'text-green-800' : 'text-black'}`} style={{ width: 72 }}>
