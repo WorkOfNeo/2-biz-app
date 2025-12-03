@@ -13,6 +13,7 @@ type Ctx = {
   findFirst: (page: Page, selectors: string[]) => Promise<import('playwright-core').Locator | null>;
 };
 
+// Fast scan job - scrapes table only, no detail page visits
 export async function scrapeStyles(ctx: Ctx) {
   const { job, page, log, saveResult, ensureNotCancelled, captureHtmlSnippet, supabase, SPY_BASE_URL, findFirst } = ctx;
   await ensureNotCancelled(job.id);
@@ -34,7 +35,7 @@ export async function scrapeStyles(ctx: Ctx) {
     if (showAll) {
       await showAll.click({ timeout: 30_000 }).catch(() => {});
       await log(job.id, 'info', 'STEP:styles_show_all_clicked');
-      await page.waitForTimeout(1200);
+      await page.waitForTimeout(1000); // Reduced from 1200ms
     } else {
       await log(job.id, 'info', 'STEP:styles_show_all_not_found');
     }
@@ -44,19 +45,24 @@ export async function scrapeStyles(ctx: Ctx) {
   await page.waitForSelector('table.standardList tbody tr', { timeout: 60_000, state: 'attached' as any });
   try {
     let last = 0;
+    let scrollIterations = 0;
     for (let i = 0; i < 20; i++) {
       await ensureNotCancelled(job.id);
       const count = await page.$$eval('table.standardList tbody tr', (trs) => trs.length);
-      await log(job.id, 'info', 'STEP:styles_rows_count', { iteration: i + 1, count });
+      if (i % 5 === 0 || count >= 100) {
+        await log(job.id, 'info', 'STEP:styles_rows_count', { iteration: i + 1, count });
+      }
       if (count >= 100) break;
       if (count > last) {
         last = count;
         await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-        await page.waitForTimeout(800);
+        await page.waitForTimeout(600); // Reduced from 800ms
+        scrollIterations++;
       } else {
         break;
       }
     }
+    await log(job.id, 'info', 'STEP:styles_scroll_complete', { finalCount: last, scrollIterations });
   } catch (e: any) {
     await log(job.id, 'error', 'STEP:styles_scroll_error', { error: e?.message || String(e) });
   }
@@ -79,28 +85,12 @@ export async function scrapeStyles(ctx: Ctx) {
     }
     return out;
   });
-  await log(job.id, 'info', 'STEP:styles_rows', { count: rows.length });
-  // Enrich with style_type (category) by briefly visiting each style detail page to read the selected Type
-  for (let i = 0; i < rows.length; i++) {
-    await ensureNotCancelled(job.id);
-    const rMaybe = rows[i];
-    if (!rMaybe) continue;
-    const r = rMaybe;
-    if (!r.link_href) continue;
-    try {
-      const detailUrl = new URL(r.link_href, SPY_BASE_URL).toString();
-      await log(job.id, 'info', 'STEP:styles_detail_nav', { style_no: r.style_no, url: detailUrl, index: i + 1, total: rows.length });
-      await page.goto(detailUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
-      const typeText = await page.$eval('select[name=\"sTypeId\"]', (sel: HTMLSelectElement) => {
-        const opt = sel && sel.selectedIndex >= 0 ? sel.options[sel.selectedIndex] : null;
-        return (opt?.textContent || '').trim();
-      }).catch(() => null as string | null);
-      (r as any).style_type = typeText;
-    } catch (e: any) {
-      await log(job.id, 'error', 'STEP:styles_detail_error', { style_no: r.style_no, error: e?.message || String(e) });
-    }
-  }
+  const total = rows.length;
+  await log(job.id, 'info', 'STEP:styles_rows_scraped', { count: total });
+  
+  // Upsert scraped styles (without style_type - that's done by enrich_styles job)
   let upserted = 0;
+  const logInterval = Math.max(50, Math.floor(total / 20)); // Log every 50 items or ~20 times total
   for (let i = 0; i < rows.length; i += 1000) {
     await ensureNotCancelled(job.id);
     const batch = rows.slice(i, i + 1000);
@@ -109,17 +99,119 @@ export async function scrapeStyles(ctx: Ctx) {
       style_no: r.style_no,
       style_name: r.style_name,
       supplier: r.supplier,
-      style_type: (r as any).style_type || null,
       image_url: r.image_url,
       link_href: r.link_href,
+      missing_from_spy: false, // Clear flag for found styles
       updated_at: new Date().toISOString()
     })), { onConflict: 'style_no' });
     if (error) throw error;
     upserted += batch.length;
-    await log(job.id, 'info', 'STEP:styles_batch_upsert', { upserted, total: rows.length });
+    if (upserted % logInterval === 0 || upserted === total) {
+      await log(job.id, 'info', 'STEP:styles_progress', {
+        index: upserted,
+        total,
+        percent: Math.round((upserted / total) * 100),
+        upserted
+      });
+    }
   }
-  await saveResult(job.id, 'Styles scrape completed', { upserted });
-  await log(job.id, 'info', 'STEP:complete', { upserted });
+  
+  // Detect missing styles (in DB but not in SPY)
+  await ensureNotCancelled(job.id);
+  await log(job.id, 'info', 'STEP:styles_checking_missing');
+  const scrapedStyleNos = new Set(rows.map(r => r.style_no));
+  const { data: existingStyles } = await supabase.from('styles').select('style_no');
+  const existingStyleNos = new Set((existingStyles || []).map((s: any) => s.style_no));
+  const missingStyleNos = Array.from(existingStyleNos).filter(no => !scrapedStyleNos.has(no));
+  
+  if (missingStyleNos.length > 0) {
+    await supabase.from('styles').update({ missing_from_spy: true }).in('style_no', missingStyleNos);
+    await log(job.id, 'info', 'STEP:styles_missing_flagged', { count: missingStyleNos.length });
+  }
+  
+  await saveResult(job.id, 'Styles scrape completed', { upserted, missing: missingStyleNos.length });
+  await log(job.id, 'info', 'STEP:complete', { upserted, missing: missingStyleNos.length });
+}
+
+// Enrichment job - visits detail pages to populate style_type
+export async function enrichStyles(ctx: Ctx) {
+  const { job, page, log, saveResult, ensureNotCancelled, supabase, SPY_BASE_URL } = ctx;
+  await ensureNotCancelled(job.id);
+  await log(job.id, 'info', 'STEP:enrich_styles_begin');
+  
+  // Fetch styles that need enrichment (style_type IS NULL OR needs_enrichment = true)
+  const { data: stylesToEnrich } = await supabase
+    .from('styles')
+    .select('id, style_no, link_href, style_type, needs_enrichment')
+    .or('style_type.is.null,needs_enrichment.eq.true')
+    .not('link_href', 'is', null)
+    .neq('link_href', '');
+  
+  if (!stylesToEnrich || stylesToEnrich.length === 0) {
+    await saveResult(job.id, 'Enrich styles: no styles to enrich', { count: 0 });
+    await log(job.id, 'info', 'STEP:complete', { enriched: 0 });
+    return;
+  }
+  
+  const total = stylesToEnrich.length;
+  let enriched = 0;
+  let failed = 0;
+  let idx = 0;
+  
+  for (const style of stylesToEnrich as any[]) {
+    idx++;
+    await ensureNotCancelled(job.id);
+    
+    // Log progress every 10 styles
+    if (idx % 10 === 0 || idx === total) {
+      try {
+        await log(job.id, 'info', 'STEP:enrich_styles_progress', {
+          index: idx,
+          total,
+          percent: Math.round((idx / total) * 100),
+          enriched,
+          failed
+        });
+      } catch {}
+    }
+    
+    if (!style.link_href) {
+      failed++;
+      continue;
+    }
+    
+    try {
+      const detailUrl = new URL(style.link_href, SPY_BASE_URL).toString();
+      await page.goto(detailUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      const typeText = await page.$eval('select[name="sTypeId"]', (sel: HTMLSelectElement) => {
+        const opt = sel && sel.selectedIndex >= 0 ? sel.options[sel.selectedIndex] : null;
+        return (opt?.textContent || '').trim();
+      }).catch(() => null as string | null);
+      
+      // Update style with style_type and clear needs_enrichment flag
+      const { error } = await supabase
+        .from('styles')
+        .update({
+          style_type: typeText || null,
+          needs_enrichment: false,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', style.id);
+      
+      if (error) {
+        await log(job.id, 'error', 'STEP:enrich_styles_update_error', { style_no: style.style_no, error: error.message });
+        failed++;
+      } else {
+        enriched++;
+      }
+    } catch (e: any) {
+      await log(job.id, 'error', 'STEP:enrich_styles_detail_error', { style_no: style.style_no, error: e?.message || String(e) });
+      failed++;
+    }
+  }
+  
+  await saveResult(job.id, 'Enrich styles completed', { enriched, failed, total });
+  await log(job.id, 'info', 'STEP:complete', { enriched, failed, total });
 }
 
 

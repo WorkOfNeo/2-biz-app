@@ -2,7 +2,7 @@ import { createClient } from '@supabase/supabase-js';
 import { chromium } from 'playwright-core';
 import type { Browser, BrowserContext, Page } from 'playwright-core';
 import type { JobRow, JobResult } from '@shared/types';
-import { scrapeStyles } from './jobs/scrapeStyles.js';
+import { scrapeStyles, enrichStyles } from './jobs/scrapeStyles.js';
 import { scrapeCustomers, applyCustomerScrapePreview } from './jobs/scrapeCustomers.js';
 import { updateStyleStock as updateStyleStockJob } from './jobs/updateStyleStock.js';
 import { deepScrapeStyles as deepScrapeStylesJob } from './jobs/deepScrapeStyles.js';
@@ -232,6 +232,10 @@ async function runJob(job: JobRow) {
 
   if (job.type === 'scrape_styles') {
     await scrapeStyles({ job, page: page!, log, saveResult, ensureNotCancelled, captureHtmlSnippet, supabase, SPY_BASE_URL, findFirst });
+    return;
+  }
+  if ((job.type as any) === 'enrich_styles') {
+    await enrichStyles({ job, page: page!, log, saveResult, ensureNotCancelled, captureHtmlSnippet, supabase, SPY_BASE_URL, findFirst });
     return;
   }
   if ((job.type as any) === 'scrape_eans') {
