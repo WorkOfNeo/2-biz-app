@@ -211,7 +211,8 @@ export async function exportOverview(ctx: Ctx) {
               .in('customer_id', accountNos)
               .or(`season_id.eq.${s1},is_permanent.eq.true`);
             // Prioritize season-specific comments over permanent ones
-            for (const c of (comments ?? []) as any[]) {
+            const commentsData = (comments ?? []) as Array<{ customer_id: string; comment: string; is_permanent: boolean; season_id: string | null }>;
+            for (const c of commentsData) {
               if (!commentsMap[c.customer_id] || (c.season_id === s1 && c.season_id)) {
                 commentsMap[c.customer_id] = c.comment || '';
               }
