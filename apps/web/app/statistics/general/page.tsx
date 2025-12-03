@@ -272,12 +272,16 @@ export default function StatisticsGeneralPage() {
   const [detailsLoading, setDetailsLoading] = useState(false);
   const [detailsS1, setDetailsS1] = useState<any[]>([]);
   const [detailsS2, setDetailsS2] = useState<any[]>([]);
+  const [detailsS1NewRows, setDetailsS1NewRows] = useState<any[]>([]);
+  const [detailsS2NewRows, setDetailsS2NewRows] = useState<any[]>([]);
 
   async function openDetails(row: RowOut) {
     if (!s1 && !s2) return;
     setDetailsRow(row);
     setDetailsOpen(true);
     setDetailsLoading(true);
+    setDetailsS1NewRows([]);
+    setDetailsS2NewRows([]);
     try {
       const hasAccount = !!row.account_no && !row.account_no.includes(':');
           const buildQuery = (seasonId: string | undefined) => {
@@ -321,6 +325,93 @@ export default function StatisticsGeneralPage() {
       alert(e?.message || 'Failed to load details');
     } finally {
       setDetailsLoading(false);
+    }
+  }
+
+  function addNewRowToSeason(season: 's1' | 's2') {
+    if (!detailsRow) return;
+    const seasonId = season === 's1' ? s1 : s2;
+    if (!seasonId) return;
+    const invoiceNo = `2BIZ-${new Date().toISOString().slice(0,10).replace(/-/g,'')}-${Date.now().toString().slice(-6)}`;
+    const newRow = {
+      id: `temp-${Date.now()}-${Math.random()}`,
+      account_no: detailsRow.account_no,
+      customer_name: detailsRow.customer,
+      city: detailsRow.city || '-',
+      qty: 0,
+      price: 0,
+      season_id: seasonId,
+      salesperson_id: detailsRow.salespersonId,
+      invoice_no: invoiceNo,
+      manual_edited: true,
+      isNew: true
+    };
+    if (season === 's1') {
+      setDetailsS1NewRows([...detailsS1NewRows, newRow]);
+    } else {
+      setDetailsS2NewRows([...detailsS2NewRows, newRow]);
+    }
+  }
+
+  async function saveNewRow(row: any, season: 's1' | 's2') {
+    const seasonId = season === 's1' ? s1 : s2;
+    if (!seasonId || !row) return;
+    const qty = Number(row.qty ?? 0) || 0;
+    const price = Number(row.price ?? 0) || 0;
+    if (!qty && !price) return; // Skip if both are zero/empty
+    
+    // Check if this row is already being saved (has been saved flag)
+    if ((row as any).saving) return;
+    
+    try {
+      // Mark as saving to prevent duplicate saves
+      if (season === 's1') {
+        setDetailsS1NewRows(detailsS1NewRows.map(r => r.id === row.id ? { ...r, saving: true } : r));
+      } else {
+        setDetailsS2NewRows(detailsS2NewRows.map(r => r.id === row.id ? { ...r, saving: true } : r));
+      }
+      
+      const { error } = await supabase.from('sales_invoices').insert({
+        invoice_no: row.invoice_no,
+        account_no: row.account_no,
+        customer_name: row.customer_name,
+        qty,
+        amount: price,
+        season_id: seasonId,
+        manual_edited: true
+      } as any);
+      if (error) throw new Error(error.message);
+      
+      // Remove from temporary state
+      if (season === 's1') {
+        setDetailsS1NewRows(detailsS1NewRows.filter(r => r.id !== row.id));
+      } else {
+        setDetailsS2NewRows(detailsS2NewRows.filter(r => r.id !== row.id));
+      }
+      
+      // Refresh details data
+      if (detailsRow) {
+        await openDetails(detailsRow);
+      }
+      
+      // Refresh main table
+      await mutateGeneralRows();
+    } catch (e: any) {
+      // Remove saving flag on error
+      if (season === 's1') {
+        setDetailsS1NewRows(detailsS1NewRows.map(r => r.id === row.id ? { ...r, saving: false } : r));
+      } else {
+        setDetailsS2NewRows(detailsS2NewRows.map(r => r.id === row.id ? { ...r, saving: false } : r));
+      }
+      alert(e?.message || 'Failed to save row');
+    }
+  }
+
+  function removeNewRow(rowId: string, season: 's1' | 's2') {
+    if (season === 's1') {
+      setDetailsS1NewRows(detailsS1NewRows.filter(r => r.id !== rowId));
+    } else {
+      setDetailsS2NewRows(detailsS2NewRows.filter(r => r.id !== rowId));
     }
   }
 
@@ -966,10 +1057,18 @@ export default function StatisticsGeneralPage() {
             {/* Details modal */}
             <Modal
               open={detailsOpen}
-              onClose={() => setDetailsOpen(false)}
+              onClose={() => {
+                setDetailsOpen(false);
+                setDetailsS1NewRows([]);
+                setDetailsS2NewRows([]);
+              }}
               title={detailsRow ? `${detailsRow.customer} · ${detailsRow.city}` : 'Details'}
               footer={
-                <button className="rounded border px-3 py-1.5 text-sm" onClick={() => setDetailsOpen(false)}>Close</button>
+                <button className="rounded border px-3 py-1.5 text-sm" onClick={() => {
+                  setDetailsOpen(false);
+                  setDetailsS1NewRows([]);
+                  setDetailsS2NewRows([]);
+                }}>Close</button>
               }
             >
               {detailsLoading ? (
@@ -977,7 +1076,14 @@ export default function StatisticsGeneralPage() {
               ) : (
                 <div className="space-y-4">
                   <div>
-                    <div className="font-medium mb-1">{getSeasonLabel(s1) || 'Season 1'}</div>
+                    <div className="flex items-center justify-between mb-1">
+                      <div className="font-medium">{getSeasonLabel(s1) || 'Season 1'}</div>
+                      <button
+                        className="rounded border px-2 py-1 text-xs hover:bg-gray-50"
+                        onClick={() => addNewRowToSeason('s1')}
+                        disabled={!s1}
+                      >Add</button>
+                    </div>
                     <table className="min-w-full text-sm">
                       <thead>
                         <tr className="bg-gray-50">
@@ -988,11 +1094,14 @@ export default function StatisticsGeneralPage() {
                           <th className="text-right p-2 border-b">Price</th>
                           <th className="text-left p-2 border-b">Invoice</th>
                           <th className="text-right p-2 border-b">Scraped</th>
+                          <th className="text-left p-2 border-b">Actions</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {detailsS1.map((r, idx) => (
-                          <tr key={idx}>
+                        {[...detailsS1, ...detailsS1NewRows].map((r, idx) => {
+                          const isNew = (r as any).isNew;
+                          return (
+                          <tr key={r.id || idx} className={isNew ? 'bg-blue-50' : ''}>
                             <td className="p-2 border-b">{r.account_no}</td>
                             <td className="p-2 border-b">{r.customer_name}</td>
                             <td className="p-2 border-b">{r.city}</td>
@@ -1000,13 +1109,25 @@ export default function StatisticsGeneralPage() {
                               <input
                                 className="w-20 border rounded px-1 text-right"
                                 defaultValue={Number(r.qty ?? 0)}
+                                onChange={(e) => {
+                                  if (isNew) {
+                                    const v = Number(e.target.value || 0) || 0;
+                                    setDetailsS1NewRows(prevRows => 
+                                      prevRows.map(row => 
+                                        row.id === r.id ? { ...row, qty: v } : row
+                                      )
+                                    );
+                                  }
+                                }}
                                 onBlur={async (e) => {
                                   try {
                                     const v = Number(e.target.value || 0) || 0;
-                                    if ((r as any).invoice_no) {
-                                      await supabase.from('sales_invoices').update({ qty: v, manual_edited: true }).eq('id', (r as any).id);
-                                    } else {
-                                      await supabase.from('sales_stats').update({ qty: v }).eq('id', (r as any).id);
+                                    if (!isNew) {
+                                      if ((r as any).invoice_no) {
+                                        await supabase.from('sales_invoices').update({ qty: v, manual_edited: true }).eq('id', (r as any).id);
+                                      } else {
+                                        await supabase.from('sales_stats').update({ qty: v }).eq('id', (r as any).id);
+                                      }
                                     }
                                   } catch {}
                                 }}
@@ -1016,13 +1137,25 @@ export default function StatisticsGeneralPage() {
                               <input
                                 className="w-28 border rounded px-1 text-right"
                                 defaultValue={Number(r.price ?? 0)}
+                                onChange={(e) => {
+                                  if (isNew) {
+                                    const v = Number(e.target.value || 0) || 0;
+                                    setDetailsS1NewRows(prevRows => 
+                                      prevRows.map(row => 
+                                        row.id === r.id ? { ...row, price: v } : row
+                                      )
+                                    );
+                                  }
+                                }}
                                 onBlur={async (e) => {
                                   try {
                                     const v = Number(e.target.value || 0) || 0;
-                                    if ((r as any).invoice_no) {
-                                      await supabase.from('sales_invoices').update({ amount: v, manual_edited: true }).eq('id', (r as any).id);
-                                    } else {
-                                      await supabase.from('sales_stats').update({ price: v }).eq('id', (r as any).id);
+                                    if (!isNew) {
+                                      if ((r as any).invoice_no) {
+                                        await supabase.from('sales_invoices').update({ amount: v, manual_edited: true }).eq('id', (r as any).id);
+                                      } else {
+                                        await supabase.from('sales_stats').update({ price: v }).eq('id', (r as any).id);
+                                      }
                                     }
                                   } catch {}
                                 }}
@@ -1031,33 +1164,53 @@ export default function StatisticsGeneralPage() {
                             <td className="p-2 border-b">{(r as any).invoice_no ?? '—'}</td>
                             <td className="p-2 border-b text-right">{r.updated_at ? new Date(r.updated_at).toLocaleString() : '—'}</td>
                             <td className="p-2 border-b">
-                              <label className="inline-flex items-center gap-1 text-xs">
-                                <input
-                                  type="checkbox"
-                                  defaultChecked={(r as any).invoice_no ? Boolean((r as any).manual_edited) : Boolean((r as any).frozen)}
-                                  onChange={async (e) => {
-                                    try {
-                                      if ((r as any).invoice_no) {
-                                        await supabase.from('sales_invoices').update({ manual_edited: e.target.checked }).eq('id', (r as any).id);
-                                      } else {
-                                        await supabase.from('sales_stats').update({ frozen: e.target.checked }).eq('id', (r as any).id);
+                              {isNew ? (
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    className="text-xs rounded border px-2 py-0.5 hover:bg-gray-50"
+                                    onClick={async () => {
+                                      const currentRow = detailsS1NewRows.find(row => row.id === r.id);
+                                      if (currentRow) {
+                                        await saveNewRow(currentRow, 's1');
                                       }
-                                    } catch {}
-                                  }}
-                                /> Freeze
-                              </label>
+                                    }}
+                                  >Save</button>
+                                  <button
+                                    className="text-xs text-red-600 hover:text-red-800"
+                                    onClick={() => removeNewRow(r.id, 's1')}
+                                  >Remove</button>
+                                </div>
+                              ) : (
+                                <label className="inline-flex items-center gap-1 text-xs">
+                                  <input
+                                    type="checkbox"
+                                    defaultChecked={(r as any).invoice_no ? Boolean((r as any).manual_edited) : Boolean((r as any).frozen)}
+                                    onChange={async (e) => {
+                                      try {
+                                        if ((r as any).invoice_no) {
+                                          await supabase.from('sales_invoices').update({ manual_edited: e.target.checked }).eq('id', (r as any).id);
+                                        } else {
+                                          await supabase.from('sales_stats').update({ frozen: e.target.checked }).eq('id', (r as any).id);
+                                        }
+                                      } catch {}
+                                    }}
+                                  /> Freeze
+                                </label>
+                              )}
                             </td>
                           </tr>
-                        ))}
+                        )})}
                       </tbody>
                       <tfoot>
                         {(() => {
-                          const s = detailsS1.reduce((a, r) => ({ qty: a.qty + Number(r.qty ?? 0), price: a.price + Number(r.price ?? 0) }), { qty: 0, price: 0 });
+                          const allRows = [...detailsS1, ...detailsS1NewRows];
+                          const s = allRows.reduce((a, r) => ({ qty: a.qty + Number(r.qty ?? 0), price: a.price + Number(r.price ?? 0) }), { qty: 0, price: 0 });
                           return (
                             <tr className="bg-gray-50 font-semibold">
                               <td className="p-2" colSpan={3}>TOTAL</td>
                               <td className="p-2 text-right">{s.qty}</td>
                               <td className="p-2 text-right">{s.price.toLocaleString('da-DK')}</td>
+                              <td className="p-2" colSpan={2}></td>
                             </tr>
                           );
                         })()}
@@ -1065,7 +1218,14 @@ export default function StatisticsGeneralPage() {
                     </table>
                   </div>
                   <div>
-                    <div className="font-medium mb-1">{getSeasonLabel(s2) || 'Season 2'}</div>
+                    <div className="flex items-center justify-between mb-1">
+                      <div className="font-medium">{getSeasonLabel(s2) || 'Season 2'}</div>
+                      <button
+                        className="rounded border px-2 py-1 text-xs hover:bg-gray-50"
+                        onClick={() => addNewRowToSeason('s2')}
+                        disabled={!s2}
+                      >Add</button>
+                    </div>
                     <table className="min-w-full text-sm">
                       <thead>
                         <tr className="bg-gray-50">
@@ -1076,12 +1236,14 @@ export default function StatisticsGeneralPage() {
                           <th className="text-right p-2 border-b">Price</th>
                           <th className="text-left p-2 border-b">Invoice</th>
                           <th className="text-right p-2 border-b">Scraped</th>
-                          <th className="text-right p-2 border-b">Actions</th>
+                          <th className="text-left p-2 border-b">Actions</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {detailsS2.map((r, idx) => (
-                          <tr key={idx}>
+                        {[...detailsS2, ...detailsS2NewRows].map((r, idx) => {
+                          const isNew = (r as any).isNew;
+                          return (
+                          <tr key={r.id || idx} className={isNew ? 'bg-blue-50' : ''}>
                             <td className="p-2 border-b">{r.account_no}</td>
                             <td className="p-2 border-b">{r.customer_name}</td>
                             <td className="p-2 border-b">{r.city}</td>
@@ -1089,13 +1251,25 @@ export default function StatisticsGeneralPage() {
                               <input
                                 className="w-20 border rounded px-1 text-right"
                                 defaultValue={Number(r.qty ?? 0)}
+                                onChange={(e) => {
+                                  if (isNew) {
+                                    const v = Number(e.target.value || 0) || 0;
+                                    setDetailsS2NewRows(prevRows => 
+                                      prevRows.map(row => 
+                                        row.id === r.id ? { ...row, qty: v } : row
+                                      )
+                                    );
+                                  }
+                                }}
                                 onBlur={async (e) => {
                                   try {
                                     const v = Number(e.target.value || 0) || 0;
-                                    if ((r as any).invoice_no) {
-                                      await supabase.from('sales_invoices').update({ qty: v, manual_edited: true }).eq('id', (r as any).id);
-                                    } else {
-                                      await supabase.from('sales_stats').update({ qty: v }).eq('id', (r as any).id);
+                                    if (!isNew) {
+                                      if ((r as any).invoice_no) {
+                                        await supabase.from('sales_invoices').update({ qty: v, manual_edited: true }).eq('id', (r as any).id);
+                                      } else {
+                                        await supabase.from('sales_stats').update({ qty: v }).eq('id', (r as any).id);
+                                      }
                                     }
                                   } catch {}
                                 }}
@@ -1105,13 +1279,25 @@ export default function StatisticsGeneralPage() {
                               <input
                                 className="w-28 border rounded px-1 text-right"
                                 defaultValue={Number(r.price ?? 0)}
+                                onChange={(e) => {
+                                  if (isNew) {
+                                    const v = Number(e.target.value || 0) || 0;
+                                    setDetailsS2NewRows(prevRows => 
+                                      prevRows.map(row => 
+                                        row.id === r.id ? { ...row, price: v } : row
+                                      )
+                                    );
+                                  }
+                                }}
                                 onBlur={async (e) => {
                                   try {
                                     const v = Number(e.target.value || 0) || 0;
-                                    if ((r as any).invoice_no) {
-                                      await supabase.from('sales_invoices').update({ amount: v, manual_edited: true }).eq('id', (r as any).id);
-                                    } else {
-                                      await supabase.from('sales_stats').update({ price: v }).eq('id', (r as any).id);
+                                    if (!isNew) {
+                                      if ((r as any).invoice_no) {
+                                        await supabase.from('sales_invoices').update({ amount: v, manual_edited: true }).eq('id', (r as any).id);
+                                      } else {
+                                        await supabase.from('sales_stats').update({ price: v }).eq('id', (r as any).id);
+                                      }
                                     }
                                   } catch {}
                                 }}
@@ -1120,50 +1306,53 @@ export default function StatisticsGeneralPage() {
                             <td className="p-2 border-b">{(r as any).invoice_no ?? '—'}</td>
                             <td className="p-2 border-b text-right">{r.updated_at ? new Date(r.updated_at).toLocaleString() : '—'}</td>
                             <td className="p-2 border-b">
-                              <label className="inline-flex items-center gap-1 text-xs">
-                                <input
-                                  type="checkbox"
-                                  defaultChecked={(r as any).invoice_no ? Boolean((r as any).manual_edited) : Boolean((r as any).frozen)}
-                                  onChange={async (e) => {
-                                    try {
-                                      if ((r as any).invoice_no) {
-                                        await supabase.from('sales_invoices').update({ manual_edited: e.target.checked }).eq('id', (r as any).id);
-                                      } else {
-                                        await supabase.from('sales_stats').update({ frozen: e.target.checked }).eq('id', (r as any).id);
+                              {isNew ? (
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    className="text-xs rounded border px-2 py-0.5 hover:bg-gray-50"
+                                    onClick={async () => {
+                                      const currentRow = detailsS2NewRows.find(row => row.id === r.id);
+                                      if (currentRow) {
+                                        await saveNewRow(currentRow, 's2');
                                       }
-                                    } catch {}
-                                  }}
-                                /> Freeze
-                              </label>
-                            </td>
-                            <td className="p-2 border-b">
-                              <label className="inline-flex items-center gap-1 text-xs">
-                                <input
-                                  type="checkbox"
-                                  defaultChecked={(r as any).invoice_no ? Boolean((r as any).manual_edited) : Boolean((r as any).frozen)}
-                                  onChange={async (e) => {
-                                    try {
-                                      if ((r as any).invoice_no) {
-                                        await supabase.from('sales_invoices').update({ manual_edited: e.target.checked }).eq('id', (r as any).id);
-                                      } else {
-                                        await supabase.from('sales_stats').update({ frozen: e.target.checked }).eq('id', (r as any).id);
-                                      }
-                                    } catch {}
-                                  }}
-                                /> Freeze
-                              </label>
+                                    }}
+                                  >Save</button>
+                                  <button
+                                    className="text-xs text-red-600 hover:text-red-800"
+                                    onClick={() => removeNewRow(r.id, 's2')}
+                                  >Remove</button>
+                                </div>
+                              ) : (
+                                <label className="inline-flex items-center gap-1 text-xs">
+                                  <input
+                                    type="checkbox"
+                                    defaultChecked={(r as any).invoice_no ? Boolean((r as any).manual_edited) : Boolean((r as any).frozen)}
+                                    onChange={async (e) => {
+                                      try {
+                                        if ((r as any).invoice_no) {
+                                          await supabase.from('sales_invoices').update({ manual_edited: e.target.checked }).eq('id', (r as any).id);
+                                        } else {
+                                          await supabase.from('sales_stats').update({ frozen: e.target.checked }).eq('id', (r as any).id);
+                                        }
+                                      } catch {}
+                                    }}
+                                  /> Freeze
+                                </label>
+                              )}
                             </td>
                           </tr>
-                        ))}
+                        )})}
                       </tbody>
                       <tfoot>
                         {(() => {
-                          const s = detailsS2.reduce((a, r) => ({ qty: a.qty + Number(r.qty ?? 0), price: a.price + Number(r.price ?? 0) }), { qty: 0, price: 0 });
+                          const allRows = [...detailsS2, ...detailsS2NewRows];
+                          const s = allRows.reduce((a, r) => ({ qty: a.qty + Number(r.qty ?? 0), price: a.price + Number(r.price ?? 0) }), { qty: 0, price: 0 });
                           return (
                             <tr className="bg-gray-50 font-semibold">
                               <td className="p-2" colSpan={3}>TOTAL</td>
                               <td className="p-2 text-right">{s.qty}</td>
                               <td className="p-2 text-right">{s.price.toLocaleString('da-DK')}</td>
+                              <td className="p-2" colSpan={2}></td>
                             </tr>
                           );
                         })()}
