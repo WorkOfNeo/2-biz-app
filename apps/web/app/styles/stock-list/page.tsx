@@ -483,7 +483,12 @@ export default function StockListPage() {
     <div className="space-y-4 sl-root">
       <div>
         <div className="text-xs text-gray-500 sl-header-eyebrow">Styles</div>
-        <h1 className="text-2xl font-semibold sl-header-title mb-4">Stock List</h1>
+        <div className="flex items-center gap-3 mb-4">
+          <h1 className="text-2xl font-semibold sl-header-title">Stock List</h1>
+          <span className="text-sm text-gray-600">
+            ({filteredForView.length.toLocaleString()} {filteredForView.length === 1 ? 'style' : 'styles'})
+          </span>
+        </div>
         
         {/* Loading Progress Bar */}
         {loadingProgress && (
