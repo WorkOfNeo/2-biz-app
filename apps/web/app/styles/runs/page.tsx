@@ -10,6 +10,7 @@ export default function StylesRunsPage() {
     { type: 'deep_scrape_styles', label: 'Deep Scrape Styles', description: 'Open each style and read details' },
     { type: 'scrape_eans', label: 'Scrape EANs', description: 'Fetch EANs for known colors' },
     { type: 'scrape_styles', label: 'Update Styles (Meta)', description: 'Refresh list of styles, names, images' },
+    { type: 'enrich_styles', label: 'Enrich Styles', description: 'Populate style_type from detail pages' },
   ];
   const { data: jobsByType } = useSWR('styles:runs:all', async () => {
     const { data, error } = await supabase
@@ -68,6 +69,7 @@ export default function StylesRunsPage() {
           <button className="text-xs px-2 py-1 border rounded bg-slate-900 text-white hover:bg-slate-800" onClick={() => enqueue('deep_scrape_styles')}>Deep Scrape</button>
           <button className="text-xs px-2 py-1 border rounded bg-slate-900 text-white hover:bg-slate-800" onClick={() => enqueue('scrape_eans')}>Scrape EANs</button>
           <button className="text-xs px-2 py-1 border rounded bg-slate-900 text-white hover:bg-slate-800" onClick={() => enqueue('scrape_styles')}>Update Styles</button>
+          <button className="text-xs px-2 py-1 border rounded bg-slate-900 text-white hover:bg-slate-800" onClick={() => enqueue('enrich_styles')}>Enrich Styles</button>
         </div>
       </div>
 

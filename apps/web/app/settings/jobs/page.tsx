@@ -9,7 +9,9 @@ type JobResult = { job_id: string; summary?: string | null; data?: any; created_
 
 const JOB_DESCRIPTIONS: Record<string, string> = {
   scrape_styles:
-    'Scrape Styles: Crawls SPY styles to discover and update styles (number, name, links) and pre-seeds color headers for later stock control.',
+    'Scrape Styles: Fast scan of SPY styles table to discover and update styles (number, name, links, images). Detects missing styles. No detail page visits.',
+  enrich_styles:
+    'Enrich Styles: Visits style detail pages to populate style_type (category). Skips styles that already have style_type unless needs_enrichment flag is set. Run on demand or weekly.',
   deep_scrape_styles:
     'Deep Scrape Styles: Visits each style Materials tab, reads season selects and color boxes, then maps which colors belong to which seasons. Automatically inserts/deletes style_color_seasons links to keep them in sync with SPY.',
   update_style_stock:
@@ -416,6 +418,7 @@ export default function JobsOverviewPage() {
               title: 'Scrapes',
               items: [
                 { type: 'scrape_styles', label: 'Scrape Styles', actions: [{ label: 'Run', payload: {} }] },
+                { type: 'enrich_styles', label: 'Enrich Styles', actions: [{ label: 'Run', payload: {} }] },
                 { type: 'deep_scrape_styles', label: 'Deep Scrape Styles (Seasons)', actions: [{ label: 'Run', payload: {} }] },
                 { type: 'update_style_stock', label: 'Update Style Stock', actions: [{ label: 'Run (Selected)', payload: {} }, { label: 'Run (All)', payload: { mode: 'all' } }] },
                 { type: 'scrape_customers', label: 'Scrape Customers', actions: [{ label: 'Run', payload: {} }] },

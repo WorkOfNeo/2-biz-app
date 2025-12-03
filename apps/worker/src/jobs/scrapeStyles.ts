@@ -121,8 +121,8 @@ export async function scrapeStyles(ctx: Ctx) {
   await log(job.id, 'info', 'STEP:styles_checking_missing');
   const scrapedStyleNos = new Set(rows.map(r => r.style_no));
   const { data: existingStyles } = await supabase.from('styles').select('style_no');
-  const existingStyleNos = new Set((existingStyles || []).map((s: any) => s.style_no));
-  const missingStyleNos = Array.from(existingStyleNos).filter(no => !scrapedStyleNos.has(no));
+  const existingStyleNos = new Set((existingStyles || []).map((s: any) => s.style_no as string));
+  const missingStyleNos = Array.from(existingStyleNos).filter((no: string) => !scrapedStyleNos.has(no));
   
   if (missingStyleNos.length > 0) {
     await supabase.from('styles').update({ missing_from_spy: true }).in('style_no', missingStyleNos);
