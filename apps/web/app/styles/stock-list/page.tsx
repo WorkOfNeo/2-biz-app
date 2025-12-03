@@ -387,6 +387,90 @@ export default function StockListPage() {
   const [showHiddenModal, setShowHiddenModal] = React.useState(false);
   const [exporting, setExporting] = React.useState(false);
 
+  // (migrated to top of file to satisfy dependencies)
+
+  // Filter rows based on active Stock List, search, seasons, and hide zeros
+  const filteredForView = React.useMemo(() => {
+    let base = groupedByStyle;
+    console.log('[stock-list] Starting filter - base:', base.length, 'styles');
+    
+    // Filter by active list
+    if (activeListId) {
+      base = base.filter(({ styleNo }) => {
+        const sid = styleMetaByNo[styleNo]?.id || null;
+        return sid ? styleIdsInList.has(sid) : false;
+      });
+      console.log('[stock-list] After list filter:', base.length, 'styles');
+    }
+    
+    // Filter by search query
+    const q = searchQuery.trim().toLowerCase();
+    if (q) {
+      base = base.filter(({ styleNo, colors }) => {
+        const name = styleMetaByNo[styleNo]?.name || '';
+        if (styleNo.toLowerCase().includes(q) || (name || '').toLowerCase().includes(q)) return true;
+        return colors.some((c) => (c.color || '').toLowerCase().includes(q));
+      });
+      console.log('[stock-list] After search filter:', base.length, 'styles');
+    }
+    
+    // Filter by seasons - only show colors that have at least one of the selected seasons
+    if (selectedSeasons.length > 0 && styleColors && colorSeasons) {
+      console.log('[stock-list] Filtering by seasons:', selectedSeasons);
+      console.log('[stock-list] styleColors available:', !!styleColors, 'colorSeasons available:', !!colorSeasons);
+      
+      base = base.map(({ styleNo, colors }) => {
+        const sid = styleMetaByNo[styleNo]?.id || null;
+        if (!sid) return { styleNo, colors: [] };
+        
+        const cmap = styleColors.idMap?.get(sid);
+        if (!cmap) return { styleNo, colors: [] };
+        
+        const filteredColors = colors.filter((c) => {
+          const colorKey = (c.color || '').trim().toLowerCase();
+          const scId = cmap.get(colorKey);
+          if (!scId) {
+            console.log('[stock-list] No scId for color:', c.color, 'in style:', styleNo);
+            return false;
+          }
+          
+          const thisColorSeasons = colorSeasons.get(scId);
+          if (!thisColorSeasons) {
+            console.log('[stock-list] No seasons for scId:', scId);
+            return false;
+          }
+          
+          // Color must have at least one of the selected seasons
+          const hasMatch = selectedSeasons.some(seasonId => thisColorSeasons.has(seasonId));
+          console.log('[stock-list] Color:', c.color, 'seasons:', Array.from(thisColorSeasons), 'matches:', hasMatch);
+          return hasMatch;
+        });
+        
+        return { styleNo, colors: filteredColors };
+      }).filter(({ colors }) => colors.length > 0);
+      console.log('[stock-list] After season filter:', base.length, 'styles');
+    }
+    
+    // Filter out colors with all zeros
+    if (hideZeros) {
+      console.log('[stock-list] Filtering out zeros');
+      base = base.map(({ styleNo, colors }) => {
+        const filteredColors = colors.filter((c) => {
+          const hasNonZero = c.stock.some(v => v !== 0) || 
+                           c.soldSum.some(v => v !== 0) || 
+                           c.purchaseSum.some(v => v !== 0) || 
+                           c.available.some(v => v !== 0);
+          return hasNonZero;
+        });
+        return { styleNo, colors: filteredColors };
+      }).filter(({ colors }) => colors.length > 0);
+      console.log('[stock-list] After zero filter:', base.length, 'styles');
+    }
+    
+    console.log('[stock-list] Final filtered:', base.length, 'styles');
+    return base;
+  }, [groupedByStyle, activeListId, styleIdsInList.size, searchQuery, styleMetaByNo, selectedSeasons, hideZeros, styleColors, colorSeasons]);
+
   // Excel export function
   const exportToExcel = React.useCallback(() => {
     setExporting(true);
@@ -484,90 +568,6 @@ export default function StockListPage() {
       setExporting(false);
     }
   }, [filteredForView, styleMetaByNo, activeListId, stockLists]);
-
-  // (migrated to top of file to satisfy dependencies)
-
-  // Filter rows based on active Stock List, search, seasons, and hide zeros
-  const filteredForView = React.useMemo(() => {
-    let base = groupedByStyle;
-    console.log('[stock-list] Starting filter - base:', base.length, 'styles');
-    
-    // Filter by active list
-    if (activeListId) {
-      base = base.filter(({ styleNo }) => {
-        const sid = styleMetaByNo[styleNo]?.id || null;
-        return sid ? styleIdsInList.has(sid) : false;
-      });
-      console.log('[stock-list] After list filter:', base.length, 'styles');
-    }
-    
-    // Filter by search query
-    const q = searchQuery.trim().toLowerCase();
-    if (q) {
-      base = base.filter(({ styleNo, colors }) => {
-        const name = styleMetaByNo[styleNo]?.name || '';
-        if (styleNo.toLowerCase().includes(q) || (name || '').toLowerCase().includes(q)) return true;
-        return colors.some((c) => (c.color || '').toLowerCase().includes(q));
-      });
-      console.log('[stock-list] After search filter:', base.length, 'styles');
-    }
-    
-    // Filter by seasons - only show colors that have at least one of the selected seasons
-    if (selectedSeasons.length > 0 && styleColors && colorSeasons) {
-      console.log('[stock-list] Filtering by seasons:', selectedSeasons);
-      console.log('[stock-list] styleColors available:', !!styleColors, 'colorSeasons available:', !!colorSeasons);
-      
-      base = base.map(({ styleNo, colors }) => {
-        const sid = styleMetaByNo[styleNo]?.id || null;
-        if (!sid) return { styleNo, colors: [] };
-        
-        const cmap = styleColors.idMap?.get(sid);
-        if (!cmap) return { styleNo, colors: [] };
-        
-        const filteredColors = colors.filter((c) => {
-          const colorKey = (c.color || '').trim().toLowerCase();
-          const scId = cmap.get(colorKey);
-          if (!scId) {
-            console.log('[stock-list] No scId for color:', c.color, 'in style:', styleNo);
-            return false;
-          }
-          
-          const thisColorSeasons = colorSeasons.get(scId);
-          if (!thisColorSeasons) {
-            console.log('[stock-list] No seasons for scId:', scId);
-            return false;
-          }
-          
-          // Color must have at least one of the selected seasons
-          const hasMatch = selectedSeasons.some(seasonId => thisColorSeasons.has(seasonId));
-          console.log('[stock-list] Color:', c.color, 'seasons:', Array.from(thisColorSeasons), 'matches:', hasMatch);
-          return hasMatch;
-        });
-        
-        return { styleNo, colors: filteredColors };
-      }).filter(({ colors }) => colors.length > 0);
-      console.log('[stock-list] After season filter:', base.length, 'styles');
-    }
-    
-    // Filter out colors with all zeros
-    if (hideZeros) {
-      console.log('[stock-list] Filtering out zeros');
-      base = base.map(({ styleNo, colors }) => {
-        const filteredColors = colors.filter((c) => {
-          const hasNonZero = c.stock.some(v => v !== 0) || 
-                           c.soldSum.some(v => v !== 0) || 
-                           c.purchaseSum.some(v => v !== 0) || 
-                           c.available.some(v => v !== 0);
-          return hasNonZero;
-        });
-        return { styleNo, colors: filteredColors };
-      }).filter(({ colors }) => colors.length > 0);
-      console.log('[stock-list] After zero filter:', base.length, 'styles');
-    }
-    
-    console.log('[stock-list] Final filtered:', base.length, 'styles');
-    return base;
-  }, [groupedByStyle, activeListId, styleIdsInList.size, searchQuery, styleMetaByNo, selectedSeasons, hideZeros, styleColors, colorSeasons]);
 
   // Compute total style universe and hidden styles
   const { totalStyles, hiddenStyles } = React.useMemo(() => {
