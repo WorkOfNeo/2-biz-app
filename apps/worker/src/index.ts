@@ -382,6 +382,25 @@ async function runJob(job: JobRow) {
         break;
       }
       await ensureNotCancelled(job.id);
+      
+      // IMMEDIATELY delete ALL existing stock rows for this style (before any other logic)
+      console.log(`[updateStyleStock] Deleting all stock rows for style: ${s.style_no}`);
+      await log(job.id, 'info', 'STEP:style_stock_delete_all_start', { style_no: s.style_no });
+      try {
+        const { error: delErr, count } = await supabase.from('style_stock').delete().eq('style_no', s.style_no).select();
+        if (delErr) {
+          console.error(`[updateStyleStock] Failed to delete stock for ${s.style_no}:`, delErr.message);
+          await log(job.id, 'error', 'STEP:style_stock_delete_all_error', { style_no: s.style_no, error: delErr.message });
+        } else {
+          const rowCount = (count as any) || 0;
+          console.log(`[updateStyleStock] Deleted ${rowCount} stock rows for style: ${s.style_no}`);
+          await log(job.id, 'info', 'STEP:style_stock_delete_all_success', { style_no: s.style_no, rows_deleted: rowCount });
+        }
+      } catch (e: any) {
+        console.error(`[updateStyleStock] Exception deleting stock for ${s.style_no}:`, e?.message || String(e));
+        await log(job.id, 'error', 'STEP:style_stock_delete_all_exception', { style_no: s.style_no, error: e?.message || String(e) });
+      }
+      
       const styleStart = Date.now();
       const href = (s.link_href || '').toString();
       if (!href) continue;
@@ -392,9 +411,8 @@ async function runJob(job: JobRow) {
         await log(job.id, 'info', 'STEP:style_stock_skip_style_disabled', { style_no: s.style_no });
         continue;
       }
-      // Skip styles flagged as having all zeros or scraping errors
-      const stockAllZeros: boolean = (s as any)?.stock_all_zeros === true;
-      if (stockAllZeros) { await log(job.id, 'info', 'STEP:style_stock_skip_all_zeros', { style_no: s.style_no }); continue; }
+      // Note: stock_all_zeros flag is ONLY for badge display, NOT for controlling scraping
+      // Only scrape_enabled (manual control) determines whether to scrape
       // Use pre-fetched color data (optimization: no query in loop)
       let allowedColors: Record<string, boolean> = {};
       if (styleId && allStyleColors.has(styleId)) {
