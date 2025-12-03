@@ -117,6 +117,38 @@ export default function OverviewPage() {
     return (data ?? []) as { account_no: string | null; qty: number | null; amount: number | null; currency: string | null; season_id: string }[];
   }, { refreshInterval: 20000 });
 
+  // Seasonal overrides (null/hidden) stored in app_settings per season - same as General page
+  const overridesKey = s1 ? `season_overrides:${s1}` : null;
+  const { data: overrides } = useSWR(overridesKey, async () => {
+    if (!overridesKey) return { id: null, value: { nulled: [], hidden: [] as string[] } };
+    const { data, error } = await supabase.from('app_settings').select('id, value').eq('key', overridesKey).maybeSingle();
+    if (error) throw new Error(error.message);
+    const val = (data?.value as any) || {};
+    return { id: data?.id ?? null, value: { nulled: Array.isArray(val.nulled) ? val.nulled : [], hidden: Array.isArray(val.hidden) ? val.hidden : [] } } as { id: string | null, value: { nulled: string[]; hidden: string[] } };
+  }, { refreshInterval: 0 });
+
+  const { data: closedCustomers } = useSWR('overview:customers-closed', async () => {
+    const { data, error } = await supabase.from('customers').select('customer_id, permanently_closed, excluded, nulled');
+    if (error) throw new Error(error.message);
+    const setClosed = new Set<string>();
+    const setExcluded = new Set<string>();
+    const setNulled = new Set<string>();
+    for (const c of (data ?? []) as any[]) {
+      if (c.permanently_closed) setClosed.add(c.customer_id);
+      if (c.excluded) setExcluded.add(c.customer_id);
+      if (c.nulled) setNulled.add(c.customer_id);
+    }
+    return { setClosed, setExcluded, setNulled };
+  });
+
+  // Helper functions to check if customer is hidden or nulled (same logic as General page)
+  function isHidden(account: string): boolean {
+    return Boolean(overrides?.value.hidden.includes(account)) || Boolean(closedCustomers?.setExcluded.has(account));
+  }
+  function isNulled(account: string): boolean {
+    return Boolean(overrides?.value.nulled.includes(account)) || Boolean(closedCustomers?.setNulled.has(account)) || Boolean(closedCustomers?.setClosed.has(account));
+  }
+
   const rows = useMemo(() => {
     if (!people || !customers || !stats) return [] as any[];
     const targetCountry = country === 'All' ? null : country.toUpperCase();
@@ -128,7 +160,7 @@ export default function OverviewPage() {
       arr.push(c);
       bySpCustomers.set(c.salesperson_id, arr);
     }
-    // Build quick lookup sets of target accounts (all) and valid accounts (excluding nulled/excluded/closed)
+    // Build quick lookup sets of target accounts (all) and valid accounts (excluding nulled/excluded/closed/hidden via seasonal overrides)
     const targetsBySp = new Map<string, Set<string>>();
     const validTargetsBySp = new Map<string, Set<string>>();
     for (const [spId, arr] of bySpCustomers.entries()) {
@@ -137,7 +169,10 @@ export default function OverviewPage() {
       for (const c of arr) {
         if (c.customer_id) {
           allSet.add(c.customer_id);
-          if (!(c.nulled || c.permanently_closed || c.excluded)) validSet.add(c.customer_id);
+          // Exclude hidden and nulled customers (same logic as General page)
+          if (!isHidden(c.customer_id) && !isNulled(c.customer_id)) {
+            validSet.add(c.customer_id);
+          }
         }
       }
       targetsBySp.set(spId, allSet);
@@ -153,13 +188,26 @@ export default function OverviewPage() {
       if (!set) continue; // salesperson may have no customers in this country
       const acc = r.account_no ?? '';
       if (!acc || !set.has(acc)) continue;
+      // Exclude hidden customers from aggregation (same as General page)
+      if (isHidden(acc)) continue;
       const row = agg.get(spId)!;
       const currency = spCurrencyById[spId] ?? 'DKK';
       const rateS1 = { ...baseRates, ...(ratesS1 ?? {}) }[currency] ?? 1;
       const rateS2 = { ...baseRates, ...(ratesS2 ?? {}) }[currency] ?? 1;
       const price = Number(r.price || 0);
-      if (r.season_id === s1) { row.s1Qty += Number(r.qty||0); row.s1Price += price * rateS1; row.visited.add(acc); if (validTargetsBySp.get(spId)?.has(acc)) row.visitedValid.add(acc); }
-      else if (r.season_id === s2) { row.s2Qty += Number(r.qty||0); row.s2Price += price * rateS2; }
+      // Exclude nulled customers from S1 totals (same as General page)
+      if (r.season_id === s1) {
+        const isNullS1 = isNulled(acc);
+        if (!isNullS1) {
+          row.s1Qty += Number(r.qty||0);
+          row.s1Price += price * rateS1;
+        }
+        row.visited.add(acc);
+        if (validTargetsBySp.get(spId)?.has(acc)) row.visitedValid.add(acc);
+      } else if (r.season_id === s2) {
+        row.s2Qty += Number(r.qty||0);
+        row.s2Price += price * rateS2;
+      }
     }
     // Aggregate invoices mapped to salesperson via customers
     const customerById = new Map<string, Customer>();
@@ -167,6 +215,8 @@ export default function OverviewPage() {
     for (const inv of (invoices ?? [])) {
       const acc = inv.account_no ?? '';
       if (!acc) continue;
+      // Exclude hidden customers from aggregation (same as General page)
+      if (isHidden(acc)) continue;
       const c = customerById.get(acc);
       const spId = c?.salesperson_id ?? '';
       if (!spId) continue;
@@ -179,15 +229,25 @@ export default function OverviewPage() {
       const rateS2 = { ...baseRates, ...(ratesS2 ?? {}) }[currency] ?? 1;
       const amount = Number(inv.amount || 0);
       const qty = Number(inv.qty || 0) || 0;
-      if (inv.season_id === s1) { row.s1Qty += qty; row.s1Price += amount * rateS1; }
-      else if (inv.season_id === s2) { row.s2Qty += qty; row.s2Price += amount * rateS2; }
+      // Exclude nulled customers from S1 totals (same as General page)
+      if (inv.season_id === s1) {
+        const isNullS1 = isNulled(acc);
+        if (!isNullS1) {
+          row.s1Qty += qty;
+          row.s1Price += amount * rateS1;
+        }
+      } else if (inv.season_id === s2) {
+        row.s2Qty += qty;
+        row.s2Price += amount * rateS2;
+      }
     }
     // Build output rows
     const out = [] as any[];
     for (const sp of people) {
       const spCustomers = bySpCustomers.get(sp.id) ?? [];
       const totalCustomers = spCustomers.length;
-      const nulledCustomers = spCustomers.filter(c => !!(c.nulled || c.permanently_closed || c.excluded));
+      // Count nulled customers using same logic as General page (includes seasonal overrides)
+      const nulledCustomers = spCustomers.filter(c => c.customer_id && isNulled(c.customer_id));
       const nulledCount = nulledCustomers.length;
       
       // Debug logging for nulled customers
@@ -254,16 +314,19 @@ export default function OverviewPage() {
       });
     }
     return out;
-  }, [people, customers, stats, invoices, country, s1, s2, currencyRatesRow, ratesS1, ratesS2, spCurrencyById]);
+  }, [people, customers, stats, invoices, country, s1, s2, currencyRatesRow, ratesS1, ratesS2, spCurrencyById, overrides, closedCustomers]);
 
   // Totals across all salespersons for selected country, converted to DKK
   const totals = useMemo(() => {
     if (!customers || !stats) return { s1Qty: 0, s1PriceDkk: 0, s2Qty: 0, s2PriceDkk: 0 };
     const targetCountry = country === 'All' ? null : country.toUpperCase();
     const targetAccounts = new Set<string>();
+    // Exclude hidden customers from target accounts (same as General page)
     for (const c of (customers ?? []) as Customer[]) {
       if (targetCountry && String(c.country ?? '').toUpperCase() !== targetCountry) continue;
-      if (c.customer_id) targetAccounts.add(c.customer_id);
+      if (c.customer_id && !isHidden(c.customer_id)) {
+        targetAccounts.add(c.customer_id);
+      }
     }
     const baseRates = { DKK: 1, ...(currencyRatesRow ?? {}) } as Record<string, number>;
     const out = { s1Qty: 0, s1PriceDkk: 0, s2Qty: 0, s2PriceDkk: 0 };
@@ -275,8 +338,17 @@ export default function OverviewPage() {
       const rateS2 = { ...baseRates, ...(ratesS2 ?? {}) }[currency] ?? 1;
       const qty = Number(r.qty || 0);
       const price = Number(r.price || 0);
-      if (r.season_id === s1) { out.s1Qty += qty; out.s1PriceDkk += price * rateS1; }
-      else if (r.season_id === s2) { out.s2Qty += qty; out.s2PriceDkk += price * rateS2; }
+      // Exclude nulled customers from S1 totals (same as General page)
+      if (r.season_id === s1) {
+        const isNullS1 = isNulled(acc);
+        if (!isNullS1) {
+          out.s1Qty += qty;
+          out.s1PriceDkk += price * rateS1;
+        }
+      } else if (r.season_id === s2) {
+        out.s2Qty += qty;
+        out.s2PriceDkk += price * rateS2;
+      }
     }
     // Build customer lookup for invoice currency resolution
     const customerByIdForInv = new Map<string, Customer>();
@@ -292,11 +364,20 @@ export default function OverviewPage() {
       const rateS2 = { ...baseRates, ...(ratesS2 ?? {}) }[currency] ?? 1;
       const qty = Number(inv.qty || 0) || 0;
       const amount = Number(inv.amount || 0);
-      if (inv.season_id === s1) { out.s1Qty += qty; out.s1PriceDkk += amount * rateS1; }
-      else if (inv.season_id === s2) { out.s2Qty += qty; out.s2PriceDkk += amount * rateS2; }
+      // Exclude nulled customers from S1 totals (same as General page)
+      if (inv.season_id === s1) {
+        const isNullS1 = isNulled(acc);
+        if (!isNullS1) {
+          out.s1Qty += qty;
+          out.s1PriceDkk += amount * rateS1;
+        }
+      } else if (inv.season_id === s2) {
+        out.s2Qty += qty;
+        out.s2PriceDkk += amount * rateS2;
+      }
     }
     return out;
-  }, [customers, stats, invoices, country, s1, s2, currencyRatesRow, ratesS1, ratesS2, spCurrencyById]);
+  }, [customers, stats, invoices, country, s1, s2, currencyRatesRow, ratesS1, ratesS2, spCurrencyById, overrides, closedCustomers]);
 
   // navigation helper
   function buildDetailsHref(spId: string, mode: 'nulled' | 'not_visited' | 'visited') {
