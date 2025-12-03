@@ -4,6 +4,7 @@ import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import React from 'react';
 import { useRoles } from '../../../lib/supabaseClient';
 import { MultiSelect } from '../../../components/MultiSelect';
+import { ProgressBar } from '../../../components/ProgressBar';
 import { Card, CardContent } from '../../../components/ui/card';
 import { Input } from '../../../components/ui/input';
 import { Tabs, TabsList, TabsTrigger } from '../../../components/ui/tabs';
@@ -35,24 +36,42 @@ export default function StockListPage() {
   const [scrapeBusy, setScrapeBusy] = React.useState<string | null>(null);
   const [selectedSeasons, setSelectedSeasons] = React.useState<string[]>([]);
   const [hideZeros, setHideZeros] = React.useState<boolean>(false);
+  const [loadingProgress, setLoadingProgress] = React.useState<{ total: number; current: number } | null>(null);
   const { data } = useSWR('style_stock:list', async () => {
-    const pageSize = 2000;
+    // First, get the total count
+    const { count, error: countError } = await supabase
+      .from('style_stock')
+      .select('*', { count: 'exact', head: true });
+    if (countError) throw new Error(countError.message);
+    const totalCount = count ?? 0;
+    
+    setLoadingProgress({ total: totalCount, current: 0 });
+    
+    const pageSize = 1000; // Match Supabase's default limit
     const cap = 50000; // avoid runaway
     let from = 0;
     const rows: any[] = [];
+    
     while (from < cap) {
       const to = from + pageSize - 1;
-    const { data, error } = await supabase
-      .from('style_stock')
-      .select('style_no, color, sizes, section, row_label, values, po_link, scraped_at')
-      .order('scraped_at', { ascending: false })
+      const { data, error } = await supabase
+        .from('style_stock')
+        .select('style_no, color, sizes, section, row_label, values, po_link, scraped_at')
+        .order('scraped_at', { ascending: false })
         .range(from, to);
-    if (error) throw new Error(error.message);
+      if (error) throw new Error(error.message);
       const batch = data ?? [];
       rows.push(...batch);
+      
+      // Update progress
+      setLoadingProgress({ total: totalCount, current: rows.length });
+      
+      // Break if we got fewer rows than requested (end of data)
       if (batch.length < pageSize) break;
       from += pageSize;
     }
+    
+    setLoadingProgress(null); // Clear progress when done
     return rows as Row[];
   }, { refreshInterval: 30000 });
 
@@ -465,6 +484,18 @@ export default function StockListPage() {
       <div>
         <div className="text-xs text-gray-500 sl-header-eyebrow">Styles</div>
         <h1 className="text-2xl font-semibold sl-header-title mb-4">Stock List</h1>
+        
+        {/* Loading Progress Bar */}
+        {loadingProgress && (
+          <Card className="shadow-sm mb-4">
+            <CardContent className="p-4">
+              <div className="text-sm text-gray-600 mb-2">
+                Loading {loadingProgress.current.toLocaleString()} of {loadingProgress.total.toLocaleString()} rows...
+              </div>
+              <ProgressBar value={loadingProgress.current} max={loadingProgress.total} showLabel={true} />
+            </CardContent>
+          </Card>
+        )}
         
         {/* Summary Totals - Cards */}
         <div className="grid grid-cols-4 gap-3">
