@@ -12,26 +12,40 @@ export default function StylesPage() {
   const supabase = createClientComponentClient();
 
   const { data: rows, mutate } = useSWR(['styles:list', q, supplierFilter], async () => {
-    let query = supabase
+    // Build base query
+    let baseQuery = supabase
       .from('styles')
       .select('id, style_no, style_name, supplier, image_url, link_href, maybe_inactive, inactive, stock_all_zeros')
-      .order('updated_at', { ascending: false })
-      .limit(200);
+      .order('updated_at', { ascending: false });
     
     // Search in both style_no and style_name
     if (q && q.trim().length > 0) {
       const searchTerm = `%${q.trim()}%`;
-      query = query.or(`style_no.ilike.${searchTerm},style_name.ilike.${searchTerm}`);
+      baseQuery = baseQuery.or(`style_no.ilike.${searchTerm},style_name.ilike.${searchTerm}`);
     }
     
     // Filter by supplier
     if (supplierFilter && supplierFilter.trim().length > 0) {
-      query = query.eq('supplier', supplierFilter);
+      baseQuery = baseQuery.eq('supplier', supplierFilter);
     }
     
-    const { data, error } = await query;
-    if (error) throw new Error(error.message);
-    return data as any[];
+    // Paginate to get all rows (Supabase default limit is ~1000, so we'll paginate)
+    const pageSize = 1000;
+    const cap = 50000; // avoid runaway
+    let from = 0;
+    const allRows: any[] = [];
+    
+    while (from < cap) {
+      const to = from + pageSize - 1;
+      const { data, error } = await baseQuery.range(from, to);
+      if (error) throw new Error(error.message);
+      const batch = data ?? [];
+      allRows.push(...batch);
+      if (batch.length < pageSize) break;
+      from += pageSize;
+    }
+    
+    return allRows;
   });
 
   // Get unique suppliers for the dropdown
