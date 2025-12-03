@@ -4,7 +4,6 @@ import type { Browser, BrowserContext, Page } from 'playwright-core';
 import type { JobRow, JobResult } from '@shared/types';
 import { scrapeStyles, enrichStyles } from './jobs/scrapeStyles.js';
 import { scrapeCustomers, applyCustomerScrapePreview } from './jobs/scrapeCustomers.js';
-import { updateStyleStock as updateStyleStockJob } from './jobs/updateStyleStock.js';
 import { deepScrapeStyles as deepScrapeStylesJob } from './jobs/deepScrapeStyles.js';
 import { exportOverview as exportOverviewJob } from './jobs/exportOverview.js';
 import { exportTopStyles as exportTopStylesJob } from './jobs/exportTopStyles.js';
@@ -383,22 +382,41 @@ async function runJob(job: JobRow) {
       }
       await ensureNotCancelled(job.id);
       
-      // IMMEDIATELY delete ALL existing stock rows for this style (before any other logic)
-      console.log(`[updateStyleStock] Deleting all stock rows for style: ${s.style_no}`);
+      // IMMEDIATELY delete ALL existing data for this style (before any other logic)
+      // Delete from style_stock (Stock, Sold, Purchase, etc. rows)
+      console.log(`[updateStyleStock] Deleting all style_stock rows for style: ${s.style_no}`);
       await log(job.id, 'info', 'STEP:style_stock_delete_all_start', { style_no: s.style_no });
       try {
-        const { error: delErr, count } = await supabase.from('style_stock').delete().eq('style_no', s.style_no).select();
-        if (delErr) {
-          console.error(`[updateStyleStock] Failed to delete stock for ${s.style_no}:`, delErr.message);
-          await log(job.id, 'error', 'STEP:style_stock_delete_all_error', { style_no: s.style_no, error: delErr.message });
-        } else {
-          const rowCount = (count as any) || 0;
-          console.log(`[updateStyleStock] Deleted ${rowCount} stock rows for style: ${s.style_no}`);
-          await log(job.id, 'info', 'STEP:style_stock_delete_all_success', { style_no: s.style_no, rows_deleted: rowCount });
-        }
+        // First, count existing rows
+        const { count: existingCount } = await supabase.from('style_stock').select('*', { count: 'exact', head: true }).eq('style_no', s.style_no);
+        const stockRowCount = existingCount || 0;
+        
+        // Delete all style_stock rows
+        const { error: delErr1 } = await supabase.from('style_stock').delete().eq('style_no', s.style_no);
+        if (delErr1) throw new Error(`style_stock delete failed: ${delErr1.message}`);
+        
+        console.log(`[updateStyleStock] Deleted ${stockRowCount} style_stock rows for style: ${s.style_no}`);
+        await log(job.id, 'info', 'STEP:style_stock_deleted', { style_no: s.style_no, style_stock_rows: stockRowCount });
+        
+        // Also delete from style_stock_movements (movement history)
+        const { count: movementsCount } = await supabase.from('style_stock_movements').select('*', { count: 'exact', head: true }).eq('style_no', s.style_no);
+        const movementsRowCount = movementsCount || 0;
+        
+        const { error: delErr2 } = await supabase.from('style_stock_movements').delete().eq('style_no', s.style_no);
+        if (delErr2) throw new Error(`style_stock_movements delete failed: ${delErr2.message}`);
+        
+        console.log(`[updateStyleStock] Deleted ${movementsRowCount} style_stock_movements rows for style: ${s.style_no}`);
+        await log(job.id, 'info', 'STEP:style_stock_movements_deleted', { style_no: s.style_no, movements_rows: movementsRowCount });
+        
+        await log(job.id, 'info', 'STEP:style_stock_delete_all_success', { 
+          style_no: s.style_no, 
+          style_stock_rows: stockRowCount,
+          movements_rows: movementsRowCount,
+          total_deleted: stockRowCount + movementsRowCount
+        });
       } catch (e: any) {
-        console.error(`[updateStyleStock] Exception deleting stock for ${s.style_no}:`, e?.message || String(e));
-        await log(job.id, 'error', 'STEP:style_stock_delete_all_exception', { style_no: s.style_no, error: e?.message || String(e) });
+        console.error(`[updateStyleStock] Exception deleting data for ${s.style_no}:`, e?.message || String(e));
+        await log(job.id, 'error', 'STEP:style_stock_delete_all_error', { style_no: s.style_no, error: e?.message || String(e) });
       }
       
       const styleStart = Date.now();
