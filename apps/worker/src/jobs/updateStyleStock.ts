@@ -71,7 +71,7 @@ export async function updateStyleStock(ctx: Ctx) {
   const missingStyles: Array<{ style_no: string; reason: string }> = [];
   
   // Track status for each style to verify completeness at the end
-  type StyleStatus = 'scraped' | 'inactive' | 'style_disabled' | 'colors_disabled' | 'nav_timeout' | 'details_missing' | 'all_zeros_skip' | 'unknown';
+  type StyleStatus = 'scraped' | 'inactive' | 'style_disabled' | 'colors_disabled' | 'nav_timeout' | 'details_missing' | 'unknown';
   const statusByStyle = new Map<string, StyleStatus>();
   
   // Initialize all requested styles as unknown
@@ -92,13 +92,8 @@ export async function updateStyleStock(ctx: Ctx) {
       statusByStyle.set(s.style_no, 'style_disabled');
       continue; 
     }
-    // Skip styles flagged as having all zeros or scraping errors
-    const stockAllZeros: boolean = (s as any)?.stock_all_zeros === true;
-    if (stockAllZeros) { 
-      await log(job.id, 'info', 'STEP:style_stock_skip_all_zeros', { style_no: s.style_no }); 
-      statusByStyle.set(s.style_no, 'all_zeros_skip');
-      continue; 
-    }
+    // Note: stock_all_zeros flag is ONLY for badge display, NOT for controlling scraping
+    // Only scrape_enabled (manual control) determines whether to scrape
     let allowedColors: Record<string, boolean> = {};
     if (styleId) {
       try {
@@ -119,7 +114,20 @@ export async function updateStyleStock(ctx: Ctx) {
       await log(job.id, 'error', 'STEP:style_stock_nav_timeout', { style_no: s.style_no, url });
       missingStyles.push({ style_no: s.style_no, reason: 'nav_timeout' });
       statusByStyle.set(s.style_no, 'nav_timeout');
-      // Flag style to skip in future scrapes
+      
+      // Delete any existing stock rows for this style since we couldn't scrape it
+      try {
+        const { error: delErr } = await supabase.from('style_stock').delete().eq('style_no', s.style_no);
+        if (delErr) {
+          await log(job.id, 'error', 'STEP:style_stock_delete_error_nav_timeout', { style_no: s.style_no, error: delErr.message });
+        } else {
+          await log(job.id, 'info', 'STEP:style_stock_deleted_nav_timeout', { style_no: s.style_no });
+        }
+      } catch (e: any) {
+        await log(job.id, 'error', 'STEP:style_stock_delete_exception_nav_timeout', { style_no: s.style_no, error: e?.message || String(e) });
+      }
+      
+      // Update stock_all_zeros flag for badge display (doesn't affect future scraping)
       if (styleId) {
         try {
           await supabase.from('styles').update({ stock_all_zeros: true }).eq('id', styleId);
@@ -226,7 +234,20 @@ export async function updateStyleStock(ctx: Ctx) {
       await log(job.id, 'error', 'STEP:style_stock_missing_skip', { style_no: s.style_no, error: e?.message || String(e), html_sample: String(html || '').slice(0, 5_000) });
       missingStyles.push({ style_no: s.style_no, reason: 'details_missing' });
       statusByStyle.set(s.style_no, 'details_missing');
-      // Flag style to skip in future scrapes
+      
+      // Delete any existing stock rows for this style since we couldn't scrape it
+      try {
+        const { error: delErr } = await supabase.from('style_stock').delete().eq('style_no', s.style_no);
+        if (delErr) {
+          await log(job.id, 'error', 'STEP:style_stock_delete_error_details_missing', { style_no: s.style_no, error: delErr.message });
+        } else {
+          await log(job.id, 'info', 'STEP:style_stock_deleted_details_missing', { style_no: s.style_no });
+        }
+      } catch (delE: any) {
+        await log(job.id, 'error', 'STEP:style_stock_delete_exception_details_missing', { style_no: s.style_no, error: delE?.message || String(delE) });
+      }
+      
+      // Update stock_all_zeros flag for badge display (doesn't affect future scraping)
       if (styleId) {
         try {
           await supabase.from('styles').update({ stock_all_zeros: true }).eq('id', styleId);
@@ -453,6 +474,7 @@ export async function updateStyleStock(ctx: Ctx) {
       }
       
       // Check if ALL colors have all zeros (stock, sold, purchase all 0)
+      // Note: stock_all_zeros is ONLY for badge display in backend, NOT for controlling scraping
       if (colorAllZeros.length > 0 && colorAllZeros.every(z => z === true)) {
         if (styleId) {
           try {
@@ -463,7 +485,7 @@ export async function updateStyleStock(ctx: Ctx) {
           }
         }
       } else if (styleId) {
-        // Reset flag if style no longer has all zeros
+        // Reset flag if style no longer has all zeros (for badge display only)
         try {
           await supabase.from('styles').update({ stock_all_zeros: false }).eq('id', styleId);
         } catch {}
@@ -483,7 +505,6 @@ export async function updateStyleStock(ctx: Ctx) {
     colors_disabled: 0,
     nav_timeout: 0,
     details_missing: 0,
-    all_zeros_skip: 0,
     unknown: 0
   };
   
