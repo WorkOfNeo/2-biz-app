@@ -121,6 +121,13 @@ export default function StockListPage() {
     return (data ?? []) as Array<{ id: string; name: string; year: number | null }>;
   }, { refreshInterval: 0 });
 
+  // Get total count of ALL styles in database
+  const { data: allStylesData } = useSWR('styles:all', async () => {
+    const { data, error } = await supabase.from('styles').select('id, style_no, style_name, supplier').eq('inactive', false);
+    if (error) throw new Error(error.message);
+    return (data ?? []) as Array<{ id: string; style_no: string; style_name: string | null; supplier: string | null }>;
+  }, { refreshInterval: 0 });
+
   // Colors → ids for seasons mapping (including inactive flags)
   const { data: styleColors, mutate: mutateStyleColors } = useSWR(styleIds.length ? ['style_colors:ids', styleIds.join(',')] : null, async () => {
     const { data, error } = await supabase.from('style_colors').select('id, style_id, color, maybe_inactive, inactive').in('style_id', styleIds);
@@ -571,68 +578,70 @@ export default function StockListPage() {
 
   // Compute total style universe and hidden styles
   const { totalStyles, hiddenStyles } = React.useMemo(() => {
-    // Determine the full universe of styles we should be showing
-    let universeStyleIds: Set<string>;
-    if (activeListId) {
-      // When a list is active, the universe is the styles in that list
-      universeStyleIds = new Set(Array.from(styleIdsInList));
-    } else {
-      // When viewing "All", the universe is all styles that have been scraped
-      universeStyleIds = new Set((styleRows ?? []).map((r: any) => r.id as string).filter(Boolean));
-    }
+    // Total is ALWAYS all styles in the database (excluding inactive)
+    const allDbStyles = allStylesData ?? [];
+    const totalStyles = allDbStyles.length;
 
     const visibleStyleNos = new Set(filteredForView.map(s => s.styleNo));
     const hidden: Array<{ styleNo: string; name: string | null; supplier: string | null; reason: string }> = [];
 
-    // Check each style in the universe
-    for (const sid of Array.from(universeStyleIds)) {
-      const meta = (styleRows ?? []).find((r: any) => r.id === sid) as any;
-      if (!meta) continue;
-      const styleNo = meta.style_no;
+    // Check each style in the database
+    for (const dbStyle of allDbStyles) {
+      const styleNo = dbStyle.style_no;
       
       if (!visibleStyleNos.has(styleNo)) {
         // Determine why it's hidden
         let reason = 'Unknown';
         
+        // Check if in active list (if a list is selected)
+        if (activeListId) {
+          const isInList = styleIdsInList.has(dbStyle.id);
+          if (!isInList) {
+            reason = 'Not in selected list';
+          }
+        }
+        
         // Check if it has no scraped data
-        const hasScrapedData = groups.some(g => g.styleNo === styleNo);
-        if (!hasScrapedData) {
-          reason = 'No scraped stock data';
-        } else {
-          // Check filters
-          if (searchQuery.trim()) {
-            const q = searchQuery.trim().toLowerCase();
-            const matchesSearch = styleNo.toLowerCase().includes(q) || 
-                                  (meta.style_name || '').toLowerCase().includes(q) ||
-                                  groups.filter(g => g.styleNo === styleNo).some(g => g.color.toLowerCase().includes(q));
-            if (!matchesSearch) {
-              reason = 'Filtered out by search';
+        if (reason === 'Unknown' || reason === 'Not in selected list') {
+          const hasScrapedData = groups.some(g => g.styleNo === styleNo);
+          if (!hasScrapedData) {
+            reason = reason === 'Not in selected list' ? 'Not in selected list & no scraped data' : 'No scraped stock data';
+          } else {
+            // Has scraped data but filtered out
+            if (searchQuery.trim()) {
+              const q = searchQuery.trim().toLowerCase();
+              const matchesSearch = styleNo.toLowerCase().includes(q) || 
+                                    (dbStyle.style_name || '').toLowerCase().includes(q) ||
+                                    groups.filter(g => g.styleNo === styleNo).some(g => g.color.toLowerCase().includes(q));
+              if (!matchesSearch) {
+                reason = 'Filtered out by search';
+              }
             }
-          }
-          
-          if (selectedSeasons.length > 0 && reason === 'Unknown') {
-            reason = 'Filtered out by season';
-          }
-          
-          if (hideZeros && reason === 'Unknown') {
-            reason = 'All zeros hidden';
+            
+            if (selectedSeasons.length > 0 && (reason === 'Unknown' || reason === 'Not in selected list')) {
+              reason = 'Filtered out by season';
+            }
+            
+            if (hideZeros && (reason === 'Unknown' || reason === 'Not in selected list')) {
+              reason = 'All zeros hidden';
+            }
           }
         }
         
         hidden.push({
           styleNo,
-          name: meta.style_name || null,
-          supplier: meta.supplier || null,
+          name: dbStyle.style_name || null,
+          supplier: dbStyle.supplier || null,
           reason
         });
       }
     }
 
     return {
-      totalStyles: universeStyleIds.size,
+      totalStyles,
       hiddenStyles: hidden
     };
-  }, [activeListId, styleIdsInList, styleRows, filteredForView, groups, searchQuery, selectedSeasons, hideZeros]);
+  }, [allStylesData, filteredForView, activeListId, styleIdsInList, groups, searchQuery, selectedSeasons, hideZeros]);
 
   const emptyState: JSX.Element | null = React.useMemo(() => {
     if (activeListId && filteredForView.length === 0) {
