@@ -80,6 +80,25 @@ export async function updateStyleStock(ctx: Ctx) {
   }
   for (const s of (styles ?? []) as any[]) {
     await ensureNotCancelled(job.id);
+    
+    // IMMEDIATELY delete ALL existing stock rows for this style (before any other logic)
+    console.log(`[updateStyleStock] Deleting all stock rows for style: ${s.style_no}`);
+    await log(job.id, 'info', 'STEP:style_stock_delete_all_start', { style_no: s.style_no });
+    try {
+      const { error: delErr, count } = await supabase.from('style_stock').delete().eq('style_no', s.style_no).select();
+      if (delErr) {
+        console.error(`[updateStyleStock] Failed to delete stock for ${s.style_no}:`, delErr.message);
+        await log(job.id, 'error', 'STEP:style_stock_delete_all_error', { style_no: s.style_no, error: delErr.message });
+      } else {
+        const rowCount = (count as any) || 0;
+        console.log(`[updateStyleStock] Deleted ${rowCount} stock rows for style: ${s.style_no}`);
+        await log(job.id, 'info', 'STEP:style_stock_delete_all_success', { style_no: s.style_no, rows_deleted: rowCount });
+      }
+    } catch (e: any) {
+      console.error(`[updateStyleStock] Exception deleting stock for ${s.style_no}:`, e?.message || String(e));
+      await log(job.id, 'error', 'STEP:style_stock_delete_all_exception', { style_no: s.style_no, error: e?.message || String(e) });
+    }
+    
     const href = (s.link_href || '').toString();
     if (!href) {
       statusByStyle.set(s.style_no, 'style_disabled');
@@ -114,18 +133,6 @@ export async function updateStyleStock(ctx: Ctx) {
       await log(job.id, 'error', 'STEP:style_stock_nav_timeout', { style_no: s.style_no, url });
       missingStyles.push({ style_no: s.style_no, reason: 'nav_timeout' });
       statusByStyle.set(s.style_no, 'nav_timeout');
-      
-      // Delete any existing stock rows for this style since we couldn't scrape it
-      try {
-        const { error: delErr } = await supabase.from('style_stock').delete().eq('style_no', s.style_no);
-        if (delErr) {
-          await log(job.id, 'error', 'STEP:style_stock_delete_error_nav_timeout', { style_no: s.style_no, error: delErr.message });
-        } else {
-          await log(job.id, 'info', 'STEP:style_stock_deleted_nav_timeout', { style_no: s.style_no });
-        }
-      } catch (e: any) {
-        await log(job.id, 'error', 'STEP:style_stock_delete_exception_nav_timeout', { style_no: s.style_no, error: e?.message || String(e) });
-      }
       
       // Update stock_all_zeros flag for badge display (doesn't affect future scraping)
       if (styleId) {
@@ -234,18 +241,6 @@ export async function updateStyleStock(ctx: Ctx) {
       await log(job.id, 'error', 'STEP:style_stock_missing_skip', { style_no: s.style_no, error: e?.message || String(e), html_sample: String(html || '').slice(0, 5_000) });
       missingStyles.push({ style_no: s.style_no, reason: 'details_missing' });
       statusByStyle.set(s.style_no, 'details_missing');
-      
-      // Delete any existing stock rows for this style since we couldn't scrape it
-      try {
-        const { error: delErr } = await supabase.from('style_stock').delete().eq('style_no', s.style_no);
-        if (delErr) {
-          await log(job.id, 'error', 'STEP:style_stock_delete_error_details_missing', { style_no: s.style_no, error: delErr.message });
-        } else {
-          await log(job.id, 'info', 'STEP:style_stock_deleted_details_missing', { style_no: s.style_no });
-        }
-      } catch (delE: any) {
-        await log(job.id, 'error', 'STEP:style_stock_delete_exception_details_missing', { style_no: s.style_no, error: delE?.message || String(delE) });
-      }
       
       // Update stock_all_zeros flag for badge display (doesn't affect future scraping)
       if (styleId) {
@@ -391,17 +386,7 @@ export async function updateStyleStock(ctx: Ctx) {
     }
     const deduped = Array.from(dedupMap.values());
     
-    // Delete existing stock data for this style before inserting fresh data
-    try {
-      const { error: delErr } = await supabase.from('style_stock').delete().eq('style_no', s.style_no);
-      if (delErr) {
-        await log(job.id, 'error', 'STEP:style_stock_delete_error', { style_no: s.style_no, error: delErr.message });
-      } else {
-        await log(job.id, 'info', 'STEP:style_stock_deleted', { style_no: s.style_no });
-      }
-    } catch (e: any) {
-      await log(job.id, 'error', 'STEP:style_stock_delete_exception', { style_no: s.style_no, error: e?.message || String(e) });
-    }
+    // Note: Stock rows already deleted at the start of processing this style
     
     if (deduped.length) {
       const { error: upErr } = await supabase.from('style_stock').upsert(deduped, { onConflict: 'style_no,color,section,row_label' as any });
