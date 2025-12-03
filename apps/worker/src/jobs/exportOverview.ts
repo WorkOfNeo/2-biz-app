@@ -200,8 +200,25 @@ export async function exportOverview(ctx: Ctx) {
           (Array.isArray(val.hidden) ? val.hidden : []).forEach((a: string) => hiddenSet.add(a));
           (Array.isArray(val.nulled) ? val.nulled : []).forEach((a: string) => nulledSet.add(a));
         } catch {}
+        // Fetch comments for these customers
         const accountNos = items.map((c) => c.customer_id).filter(Boolean);
-        let rows: Array<{ account: string; company: string; city: string; nulled: boolean; s1Qty: number; s1Price: number; s2Qty: number; s2Price: number }>= [];
+        const commentsMap: Record<string, string> = {};
+        if (accountNos.length > 0) {
+          try {
+            const { data: comments } = await supabase
+              .from('customer_comments')
+              .select('customer_id, comment, is_permanent, season_id')
+              .in('customer_id', accountNos)
+              .or(`season_id.eq.${s1},is_permanent.eq.true`);
+            // Prioritize season-specific comments over permanent ones
+            for (const c of (comments ?? []) as any[]) {
+              if (!commentsMap[c.customer_id] || (c.season_id === s1 && c.season_id)) {
+                commentsMap[c.customer_id] = c.comment || '';
+              }
+            }
+          } catch {}
+        }
+        let rows: Array<{ account: string; company: string; city: string; comment: string; nulled: boolean; s1Qty: number; s1Price: number; s2Qty: number; s2Price: number }>= [];
         if (accountNos.length) {
           const statResp = await supabase.from('sales_stats').select('account_no, qty, price, season_id').in('season_id', [s1, s2]).in('account_no', accountNos).limit(200000);
           const statRows: Array<{ account_no: string | null; qty: number | null; price: number | null; season_id: string }> = ((statResp as any)?.data ?? []) as any[];
@@ -228,7 +245,7 @@ export async function exportOverview(ctx: Ctx) {
             if (isHidden) continue;
             const agg = map.get(c.customer_id) || { s1Qty: 0, s1Price: 0, s2Qty: 0, s2Price: 0 };
             const isNulled = nulledSet.has(c.customer_id) || Boolean(c.nulled) || Boolean(c.permanently_closed);
-            rows.push({ account: c.customer_id, company: c.company || '-', city: c.city || '-', nulled: isNulled, ...agg });
+            rows.push({ account: c.customer_id, company: c.company || '-', city: c.city || '-', comment: commentsMap[c.customer_id] || '', nulled: isNulled, ...agg });
           }
           rows.sort((a,b)=> a.company.localeCompare(b.company));
         }
@@ -260,14 +277,15 @@ export async function exportOverview(ctx: Ctx) {
           Cell('Forskel', '15%', 'right', styles.headerCell)
         );
         const header = React.createElement(View, { style: styles.tableHeader },
-          Cell('Kunde', '30%', 'left', styles.headerCell),
-          Cell('By', '15%', 'left', styles.headerCell),
-          Cell('Stk', '8%', 'right', styles.headerCell),
-          Cell('Oms', '12%', 'right', styles.headerCell),
-          Cell('Stk', '8%', 'right', styles.headerCell),
-          Cell('Oms', '12%', 'right', styles.headerCell),
+          Cell('Kunde', '25%', 'left', styles.headerCell),
+          Cell('By', '12%', 'left', styles.headerCell),
+          Cell('Kommentar', '10%', 'left', styles.headerCell),
           Cell('Stk', '7%', 'right', styles.headerCell),
-          Cell('Oms', '8%', 'right', styles.headerCell)
+          Cell('Oms', '10%', 'right', styles.headerCell),
+          Cell('Stk', '7%', 'right', styles.headerCell),
+          Cell('Oms', '10%', 'right', styles.headerCell),
+          Cell('Stk', '6%', 'right', styles.headerCell),
+          Cell('Oms', '7%', 'right', styles.headerCell)
         );
         // Respect group_name: sort by group then company, and add a subtotal row at the end of each group
         const sorted = [...rows].sort((a,b) => {
@@ -290,6 +308,7 @@ export async function exportOverview(ctx: Ctx) {
             account: `__group_total:${curGroup}`,
             company: `Group total — ${curGroup}`,
             city: '',
+            comment: '',
             nulled: false,
             s1Qty: accTotals.s1Qty,
             s1Price: accTotals.s1Price,
@@ -319,16 +338,19 @@ export async function exportOverview(ctx: Ctx) {
           const nameStyle = r.isGroupTotal ? styles.subtotalStrong : (r.nulled ? styles.strike : undefined);
           const s1QtyStyle = r.s1Qty === 0 ? undefined : (r.s1Qty > r.s2Qty ? styles.green : r.s1Qty < r.s2Qty ? styles.red : undefined);
           const s1PriceStyle = r.s1Price === 0 ? undefined : (r.s1Price > r.s2Price ? styles.green : r.s1Price < r.s2Price ? styles.red : undefined);
-          return React.createElement(View, { style: rowStyle },
-            Cell(r.company, '30%', 'left', nameStyle),
-            Cell(r.city, '15%', 'left', nameStyle),
-            Cell(String(r.s1Qty), '8%', 'right', s1QtyStyle),
-            Cell(fmt(r.s1Price), '12%', 'right', s1PriceStyle),
-            Cell(String(r.s2Qty), '8%', 'right'),
-            Cell(fmt(r.s2Price), '12%', 'right'),
-            Cell((devQty>0?'+':'')+String(devQty), '7%', 'right', r.nulled ? [devQtyStyle, styles.strike] : devQtyStyle),
-            Cell((devPrice>0?'+':'')+fmt(devPrice), '8%', 'right', r.nulled ? [devPriceStyle, styles.strike] : devPriceStyle)
-          );
+            const commentText = (r as any).comment || '';
+            const commentDisplay = commentText.length > 30 ? commentText.substring(0, 27) + '...' : commentText;
+            return React.createElement(View, { style: rowStyle },
+              Cell(r.company, '25%', 'left', nameStyle),
+              Cell(r.city, '12%', 'left', nameStyle),
+              Cell(commentDisplay, '10%', 'left', { fontSize: 7, fontStyle: 'italic' }),
+              Cell(String(r.s1Qty), '7%', 'right', s1QtyStyle),
+              Cell(fmt(r.s1Price), '10%', 'right', s1PriceStyle),
+              Cell(String(r.s2Qty), '7%', 'right'),
+              Cell(fmt(r.s2Price), '10%', 'right'),
+              Cell((devQty>0?'+':'')+String(devQty), '6%', 'right', r.nulled ? [devQtyStyle, styles.strike] : devQtyStyle),
+              Cell((devPrice>0?'+':'')+fmt(devPrice), '7%', 'right', r.nulled ? [devPriceStyle, styles.strike] : devPriceStyle)
+            );
         });
         const totals = rows.reduce((a, r) => ({ s1Qty: a.s1Qty + r.s1Qty, s2Qty: a.s2Qty + r.s2Qty, s1Price: a.s1Price + r.s1Price, s2Price: a.s2Price + r.s2Price }), { s1Qty: 0, s2Qty: 0, s1Price: 0, s2Price: 0 });
         const currency = (sp.currency || 'DKK').toUpperCase();
@@ -339,28 +361,28 @@ export async function exportOverview(ctx: Ctx) {
         const totalsView = React.createElement(View, { style: { marginTop: 6 } },
           React.createElement(Text, { style: { fontSize: 10, fontWeight: 700, marginBottom: 3 } }, 'TOTALS'),
           React.createElement(View, { style: styles.tableHeader },
-            Cell('', '45%', 'left', (styles as any).headerCell),
-            Cell(`${s1Name ?? 'S1'} (${currency})`, '22%', 'right', (styles as any).headerCell),
-            Cell(`${s2Name ?? 'S2'} (${currency})`, '22%', 'right', (styles as any).headerCell),
-            Cell('Diff', '11%', 'right', (styles as any).headerCell)
+            Cell('', '47%', 'left', (styles as any).headerCell),
+            Cell(`${s1Name ?? 'S1'} (${currency})`, '20%', 'right', (styles as any).headerCell),
+            Cell(`${s2Name ?? 'S2'} (${currency})`, '20%', 'right', (styles as any).headerCell),
+            Cell('Diff', '13%', 'right', (styles as any).headerCell)
           ),
           React.createElement(View, { style: styles.row },
-            Cell('Qty', '45%', 'left'),
-            Cell(String(totalsQty.s1), '22%', 'right'),
-            Cell(String(totalsQty.s2), '22%', 'right'),
-            Cell(((totalsQty.s1 - totalsQty.s2) > 0 ? '+' : '') + String(totalsQty.s1 - totalsQty.s2), '11%', 'right')
+            Cell('Qty', '47%', 'left'),
+            Cell(String(totalsQty.s1), '20%', 'right'),
+            Cell(String(totalsQty.s2), '20%', 'right'),
+            Cell(((totalsQty.s1 - totalsQty.s2) > 0 ? '+' : '') + String(totalsQty.s1 - totalsQty.s2), '13%', 'right')
           ),
           React.createElement(View, { style: styles.row },
-            Cell('Local', '45%', 'left'),
-            Cell(fmt(totalsLocal.s1), '22%', 'right'),
-            Cell(fmt(totalsLocal.s2), '22%', 'right'),
-            Cell(((totalsLocal.s1 - totalsLocal.s2) > 0 ? '+' : '') + fmt(totalsLocal.s1 - totalsLocal.s2), '11%', 'right')
+            Cell('Local', '47%', 'left'),
+            Cell(fmt(totalsLocal.s1), '20%', 'right'),
+            Cell(fmt(totalsLocal.s2), '20%', 'right'),
+            Cell(((totalsLocal.s1 - totalsLocal.s2) > 0 ? '+' : '') + fmt(totalsLocal.s1 - totalsLocal.s2), '13%', 'right')
           ),
           React.createElement(View, { style: [styles.row, styles.rowAlt] },
-            Cell('DKK', '45%', 'left'),
-            Cell(fmt(totalsDkk.s1), '22%', 'right'),
-            Cell(fmt(totalsDkk.s2), '22%', 'right'),
-            Cell(((totalsDkk.s1 - totalsDkk.s2) > 0 ? '+' : '') + fmt(totalsDkk.s1 - totalsDkk.s2), '11%', 'right')
+            Cell('DKK', '47%', 'left'),
+            Cell(fmt(totalsDkk.s1), '20%', 'right'),
+            Cell(fmt(totalsDkk.s2), '20%', 'right'),
+            Cell(((totalsDkk.s1 - totalsDkk.s2) > 0 ? '+' : '') + fmt(totalsDkk.s1 - totalsDkk.s2), '13%', 'right')
           )
         );
         const pageEl = React.createElement(PdfPage, { size: 'A4', orientation: 'landscape', style: styles.page },

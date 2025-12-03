@@ -2,7 +2,7 @@
 import { useEffect } from 'react';
 import type { ReactNode } from 'react';
 
-export function Modal({ open, onClose, title, children, footer }: { open: boolean; onClose: () => void; title?: string; children: ReactNode; footer?: ReactNode }) {
+export function Modal({ open, onClose, title, children, footer, maxWidth = 'max-w-2xl' }: { open: boolean; onClose: () => void; title?: string; children: ReactNode; footer?: ReactNode; maxWidth?: string }) {
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === 'Escape') onClose();
@@ -15,7 +15,7 @@ export function Modal({ open, onClose, title, children, footer }: { open: boolea
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-      <div className="relative bg-white rounded-lg shadow-lg w-full max-w-2xl mx-4">
+      <div className={`relative bg-white rounded-lg shadow-lg w-full ${maxWidth} mx-4`}>
         <div className="border-b px-4 py-3">
           <div className="text-lg font-semibold">{title}</div>
         </div>

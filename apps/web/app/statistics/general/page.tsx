@@ -3,7 +3,7 @@ import { useState, useEffect, useMemo, useRef, type ReactNode } from 'react';
 import useSWR from 'swr';
 import { supabase } from '../../../lib/supabaseClient';
 import Link from 'next/link';
-import { Menu, EyeOff, Trash2, Ban } from 'lucide-react';
+import { Menu, EyeOff, Trash2, Ban, MessageCircle } from 'lucide-react';
 import { SearchSelect } from '../../../components/SearchSelect';
 import { ProgressBar } from '../../../components/ProgressBar';
 import { Modal } from '../../../components/Modal';
@@ -274,6 +274,12 @@ export default function StatisticsGeneralPage() {
   const [detailsS2, setDetailsS2] = useState<any[]>([]);
   const [detailsS1NewRows, setDetailsS1NewRows] = useState<any[]>([]);
   const [detailsS2NewRows, setDetailsS2NewRows] = useState<any[]>([]);
+  // Comment modal state
+  const [commentModalOpen, setCommentModalOpen] = useState(false);
+  const [commentCustomerId, setCommentCustomerId] = useState<string>('');
+  const [commentText, setCommentText] = useState<string>('');
+  const [commentIsPermanent, setCommentIsPermanent] = useState(false);
+  const [commentLoading, setCommentLoading] = useState(false);
 
   async function openDetails(row: RowOut) {
     if (!s1 && !s2) return;
@@ -412,6 +418,119 @@ export default function StatisticsGeneralPage() {
       setDetailsS1NewRows(detailsS1NewRows.filter(r => r.id !== rowId));
     } else {
       setDetailsS2NewRows(detailsS2NewRows.filter(r => r.id !== rowId));
+    }
+  }
+
+  // Fetch comments for visible customers (season-specific or permanent)
+  const { data: commentsMap, mutate: mutateComments } = useSWR(
+    s1 ? ['customer-comments', s1] : null,
+    async () => {
+      if (!s1) return {};
+      const { data, error } = await supabase
+        .from('customer_comments')
+        .select('customer_id, comment, is_permanent, season_id')
+        .or(`season_id.eq.${s1},is_permanent.eq.true`);
+      if (error) throw new Error(error.message);
+      const map: Record<string, { comment: string; is_permanent: boolean; season_id: string | null }> = {};
+      // Prioritize season-specific comments over permanent ones
+      for (const c of (data ?? []) as any[]) {
+        const existing = map[c.customer_id];
+        if (!existing || (c.season_id === s1 && existing.season_id !== s1)) {
+          map[c.customer_id] = { comment: c.comment, is_permanent: c.is_permanent, season_id: c.season_id };
+        }
+      }
+      return map;
+    },
+    { refreshInterval: 0 }
+  );
+
+  async function openCommentModal(customerId: string) {
+    setCommentCustomerId(customerId);
+    setCommentModalOpen(true);
+    setCommentLoading(true);
+    try {
+      // Fetch existing comment (season-specific or permanent)
+      const { data: seasonComment } = await supabase
+        .from('customer_comments')
+        .select('id, comment, is_permanent, season_id')
+        .eq('customer_id', customerId)
+        .eq('season_id', s1)
+        .maybeSingle();
+      const { data: permanentComment } = await supabase
+        .from('customer_comments')
+        .select('id, comment, is_permanent, season_id')
+        .eq('customer_id', customerId)
+        .eq('is_permanent', true)
+        .maybeSingle();
+      // Prioritize season-specific over permanent
+      const existing = seasonComment || permanentComment;
+      if (existing) {
+        setCommentText(existing.comment || '');
+        setCommentIsPermanent(existing.is_permanent || false);
+      } else {
+        setCommentText('');
+        setCommentIsPermanent(false);
+      }
+    } catch (e: any) {
+      console.error('Failed to load comment', e);
+      setCommentText('');
+      setCommentIsPermanent(false);
+    } finally {
+      setCommentLoading(false);
+    }
+  }
+
+  async function saveComment() {
+    if (!commentCustomerId || !s1) return;
+    try {
+      setCommentLoading(true);
+      const commentTextTrimmed = commentText.trim();
+      
+      if (!commentTextTrimmed) {
+        // Delete comment if empty
+        await supabase
+          .from('customer_comments')
+          .delete()
+          .or(`and(customer_id.eq.${commentCustomerId},season_id.eq.${s1}),and(customer_id.eq.${commentCustomerId},is_permanent.eq.true)`);
+      } else {
+        const seasonId = commentIsPermanent ? null : s1;
+        // Check if comment exists
+        const { data: existing } = await supabase
+          .from('customer_comments')
+          .select('id')
+          .eq('customer_id', commentCustomerId)
+          .eq(commentIsPermanent ? 'is_permanent' : 'season_id', commentIsPermanent ? true : s1)
+          .maybeSingle();
+        
+        if (existing) {
+          // Update existing
+          await supabase
+            .from('customer_comments')
+            .update({
+              comment: commentTextTrimmed,
+              is_permanent: commentIsPermanent,
+              season_id: seasonId
+            })
+            .eq('id', existing.id);
+        } else {
+          // Insert new
+          await supabase
+            .from('customer_comments')
+            .insert({
+              customer_id: commentCustomerId,
+              season_id: seasonId,
+              comment: commentTextTrimmed,
+              is_permanent: commentIsPermanent
+            });
+        }
+      }
+      setCommentModalOpen(false);
+      // Refresh comments
+      await mutateComments();
+    } catch (e: any) {
+      alert(e?.message || 'Failed to save comment');
+    } finally {
+      setCommentLoading(false);
     }
   }
 
@@ -901,9 +1020,20 @@ export default function StatisticsGeneralPage() {
                       const s1QtyClass = row.s1Qty === 0 ? '' : (row.s1Qty > row.s2Qty ? 'text-green-600' : row.s1Qty < row.s2Qty ? 'text-red-600' : '');
                       const s1PriceClass = row.s1Price === 0 ? '' : (row.s1Price > row.s2Price ? 'text-green-600' : row.s1Price < row.s2Price ? 'text-red-600' : '');
                       return (
-                        <tr key={row.account_no} className={(row.isGroupTotal ? 'bg-slate-100 font-semibold ' : '') + "border-t hover:bg-slate-50 " + (nulled ? 'opacity-80' : '')}>
+                        <tr key={row.account_no} className={(row.isGroupTotal ? 'bg-slate-100 font-semibold ' : '') + "border-t hover:bg-slate-50 group " + (nulled ? 'opacity-80' : '')}>
                           <td className={"relative p-2 font-medium " + (nulled ? '' : '')}>
-                            {row.customer}
+                            <div className="flex items-center gap-1.5">
+                              {row.customer}
+                              {!row.isGroupTotal && (
+                                <button
+                                  onClick={() => openCommentModal(row.account_no)}
+                                  className={commentsMap?.[row.account_no] ? "text-blue-600 hover:text-blue-800" : "text-gray-400 hover:text-gray-600 opacity-0 group-hover:opacity-100"}
+                                  title={commentsMap?.[row.account_no]?.comment || 'Add comment'}
+                                >
+                                  <MessageCircle className="h-4 w-4" />
+                                </button>
+                              )}
+                            </div>
                             {nulled && <div className="pointer-events-none absolute inset-x-0 top-1/2 -translate-y-1/2 h-px bg-gray-500/70" />}
                           </td>
                           <td className={"relative p-2 " + (nulled ? '' : '')}>
@@ -1063,6 +1193,7 @@ export default function StatisticsGeneralPage() {
                 setDetailsS2NewRows([]);
               }}
               title={detailsRow ? `${detailsRow.customer} · ${detailsRow.city}` : 'Details'}
+              maxWidth="max-w-5xl"
               footer={
                 <button className="rounded border px-3 py-1.5 text-sm" onClick={() => {
                   setDetailsOpen(false);
@@ -1672,6 +1803,59 @@ export default function StatisticsGeneralPage() {
                   </label>
                 </div>
                 <div className="text-xs text-gray-500">Invoice number will be generated with 2BIZ- prefix.</div>
+              </div>
+            </Modal>
+            {/* Comment modal */}
+            <Modal
+              open={commentModalOpen}
+              onClose={() => {
+                setCommentModalOpen(false);
+                setCommentText('');
+                setCommentIsPermanent(false);
+              }}
+              title="Customer Comment"
+              footer={(
+                <div className="flex items-center gap-2">
+                  <button className="rounded border px-3 py-1.5 text-sm" onClick={() => {
+                    setCommentModalOpen(false);
+                    setCommentText('');
+                    setCommentIsPermanent(false);
+                  }}>Cancel</button>
+                  <button
+                    className="inline-flex items-center rounded-md bg-slate-900 text-white px-3 py-1.5 text-sm hover:bg-slate-800 disabled:opacity-50"
+                    disabled={commentLoading}
+                    onClick={saveComment}
+                  >
+                    {commentLoading ? 'Saving…' : 'Save'}
+                  </button>
+                </div>
+              )}
+            >
+              <div className="space-y-3">
+                <label className="block text-sm">
+                  <div className="text-gray-600 mb-1">Comment</div>
+                  <textarea
+                    className="w-full rounded border px-2 py-1 text-sm min-h-[100px]"
+                    value={commentText}
+                    onChange={(e) => setCommentText(e.target.value)}
+                    placeholder="Enter comment for this customer..."
+                    disabled={commentLoading}
+                  />
+                </label>
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={commentIsPermanent}
+                    onChange={(e) => setCommentIsPermanent(e.target.checked)}
+                    disabled={commentLoading}
+                  />
+                  <span className="text-gray-700">Permanent (applies to all seasons)</span>
+                </label>
+                <div className="text-xs text-gray-500">
+                  {commentIsPermanent 
+                    ? 'This comment will be visible for all seasons.' 
+                    : `This comment will only be visible for ${getSeasonLabel(s1) || 'Season 1'}.`}
+                </div>
               </div>
             </Modal>
             </>
