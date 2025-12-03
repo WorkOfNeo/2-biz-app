@@ -155,22 +155,40 @@ function UnifiedBatchProgress({ jobs }: { jobs: Array<{ id: string; type: string
 
 // Component for displaying a single running job's progress
 function RunningJobProgress({ job }: { job: { id: string; type: string; started_at: string } }) {
-  // Fetch latest log for this specific job
-  const { data: latestLog } = useSWR(
-    ['job:log', job.id],
+  // Fetch latest progress log for this specific job
+  const { data: progressLog } = useSWR(
+    ['job:progress', job.id],
     async () => {
       const { data, error } = await supabase
         .from('job_logs')
         .select('msg, data, ts')
         .eq('job_id', job.id)
         .order('ts', { ascending: false })
-        .limit(1)
-        .maybeSingle();
+        .limit(10); // Get latest 10 logs to find progress
       if (error) throw new Error(error.message);
-      return data as { msg: string; data: any; ts: string } | null;
+      const logs = (data ?? []) as Array<{ msg: string; data: any; ts: string }>;
+      // Find the most recent progress log
+      for (const log of logs) {
+        if (log.msg?.includes('progress') || (log.data && typeof log.data === 'object' && ('index' in log.data || 'percent' in log.data))) {
+          return log;
+        }
+      }
+      return null;
     },
     { refreshInterval: 1000 }
   );
+
+  const progress = progressLog?.data || {};
+  const index = Number(progress.index || 0);
+  const total = Number(progress.total || 0);
+  const percent = total > 0 ? Math.round((index / total) * 100) : (progress.percent ? Number(progress.percent) : 0);
+  
+  // Calculate ETA
+  const elapsedMs = Date.now() - new Date(job.started_at).getTime();
+  const elapsedMin = Math.floor(elapsedMs / 60000);
+  const remainingItems = total - index;
+  const itemsPerMin = index > 0 && elapsedMs > 0 ? index / (elapsedMs / 60000) : 0;
+  const etaMin = itemsPerMin > 0 && remainingItems > 0 ? Math.ceil(remainingItems / itemsPerMin) : 0;
 
   return (
     <div className="rounded-lg border bg-blue-50 border-blue-200 p-4">
@@ -182,31 +200,39 @@ function RunningJobProgress({ job }: { job: { id: string; type: string; started_
           </span>
         </div>
         <span className="text-xs text-blue-700">
-          {latestLog?.data?.percent ? `${latestLog.data.percent}% - ` : ''}
-          {latestLog?.data?.index && latestLog?.data?.total 
-            ? `${latestLog.data.index}/${latestLog.data.total} - ` 
-            : ''}
           Started {new Date(job.started_at).toLocaleTimeString()}
         </span>
       </div>
-      {latestLog && (
-        <div className="text-sm text-blue-800 mb-3">
-          {latestLog.msg || 'Processing...'}
-          {latestLog.data && typeof latestLog.data === 'object' && Object.keys(latestLog.data).length > 0 && (
-            <span className="ml-2 text-xs text-blue-600">
-              {Object.entries(latestLog.data)
-                .filter(([k]) => !['index', 'total', 'percent'].includes(k))
-                .slice(0, 3)
-                .map(([k, v]) => `${k}: ${v}`)
-                .join(', ')}
-            </span>
-          )}
-        </div>
-      )}
+      <div className="text-sm text-blue-800 mb-3">
+        {total > 0 ? (
+          <>
+            {index}/{total} styles ({percent}%)
+            {etaMin > 0 && (
+              <span className="ml-2 text-blue-600">
+                • ETA: {etaMin < 60 ? `${etaMin}m` : `${Math.floor(etaMin / 60)}h ${etaMin % 60}m`}
+              </span>
+            )}
+            {elapsedMin > 0 && (
+              <span className="ml-2 text-xs text-blue-500">
+                (Elapsed: {elapsedMin}m)
+              </span>
+            )}
+          </>
+        ) : (
+          <>
+            {progressLog ? 'Initializing...' : 'Waiting for progress...'}
+            {elapsedMin > 0 && (
+              <span className="ml-2 text-xs text-blue-500">
+                (Elapsed: {elapsedMin}m)
+              </span>
+            )}
+          </>
+        )}
+      </div>
       <div className="relative h-2 bg-blue-200 rounded-full overflow-hidden">
         <div 
           className="absolute inset-0 bg-blue-600 transition-all duration-500 ease-out" 
-          style={{ width: `${Math.min(100, Math.max(0, latestLog?.data?.percent ?? 0))}%` }} 
+          style={{ width: `${Math.min(100, Math.max(0, percent))}%` }} 
         />
         <div 
           className="absolute inset-0 bg-gradient-to-r from-transparent via-white to-transparent opacity-30"
