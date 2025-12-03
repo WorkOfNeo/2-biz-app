@@ -5,10 +5,12 @@ import React from 'react';
 import { useRoles } from '../../../lib/supabaseClient';
 import { MultiSelect } from '../../../components/MultiSelect';
 import { ProgressBar } from '../../../components/ProgressBar';
+import { Modal } from '../../../components/Modal';
 import { Card, CardContent } from '../../../components/ui/card';
 import { Input } from '../../../components/ui/input';
 import { Tabs, TabsList, TabsTrigger } from '../../../components/ui/tabs';
 import { Button } from '../../../components/ui/button';
+import * as XLSX from 'xlsx';
 
 type Row = {
   style_no: string;
@@ -20,6 +22,23 @@ type Row = {
   po_link: string | null;
   scraped_at: string;
 };
+
+// Helper function to format relative time
+function formatRelativeTime(isoString: string): string {
+  if (!isoString) return 'Never';
+  const date = new Date(isoString);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMs / 3600000);
+  const diffDays = Math.floor(diffMs / 86400000);
+  
+  if (diffMins < 1) return 'Just now';
+  if (diffMins < 60) return `${diffMins}m ago`;
+  if (diffHours < 24) return `${diffHours}h ago`;
+  if (diffDays < 7) return `${diffDays}d ago`;
+  return date.toLocaleDateString();
+}
 
 export default function StockListPage() {
   const supabase = createClientComponentClient();
@@ -365,6 +384,106 @@ export default function StockListPage() {
 
   const [openSold, setOpenSold] = React.useState<Record<string, boolean>>({});
   const [openPurchase, setOpenPurchase] = React.useState<Record<string, boolean>>({});
+  const [showHiddenModal, setShowHiddenModal] = React.useState(false);
+  const [exporting, setExporting] = React.useState(false);
+
+  // Excel export function
+  const exportToExcel = React.useCallback(() => {
+    setExporting(true);
+    try {
+      const exportData: any[] = [];
+      
+      // Add header row
+      const maxSizes = Math.max(...filteredForView.flatMap(s => s.colors.flatMap(c => c.sizes.length)), 0);
+      const sizeHeaders = Array.from({ length: maxSizes }, (_, i) => `Size ${i + 1}`);
+      
+      for (const { styleNo, colors } of filteredForView) {
+        const meta = styleMetaByNo[styleNo] || { id: null, name: null, supplier: null, image: null };
+        
+        for (const color of colors) {
+          // Stock row
+          const stockRow: any = {
+            'Style No': styleNo,
+            'Style Name': meta.name || '',
+            'Supplier': meta.supplier || '',
+            'Color': color.color,
+            'Section': 'Stock',
+            'Scraped At': color.scrapedAt ? new Date(color.scrapedAt).toLocaleString() : 'Not scraped'
+          };
+          color.sizes.forEach((size, idx) => {
+            stockRow[size] = color.stock[idx] ?? 0;
+          });
+          stockRow['Total'] = color.stock.reduce((sum, v) => sum + (Number(v) || 0), 0);
+          exportData.push(stockRow);
+          
+          // Sold row
+          const soldRow: any = {
+            'Style No': styleNo,
+            'Style Name': meta.name || '',
+            'Supplier': meta.supplier || '',
+            'Color': color.color,
+            'Section': 'Sold',
+            'Scraped At': color.scrapedAt ? new Date(color.scrapedAt).toLocaleString() : 'Not scraped'
+          };
+          color.sizes.forEach((size, idx) => {
+            soldRow[size] = color.soldSum[idx] ?? 0;
+          });
+          soldRow['Total'] = color.soldSum.reduce((sum, v) => sum + (Number(v) || 0), 0);
+          exportData.push(soldRow);
+          
+          // Purchase row
+          const purchaseRow: any = {
+            'Style No': styleNo,
+            'Style Name': meta.name || '',
+            'Supplier': meta.supplier || '',
+            'Color': color.color,
+            'Section': 'Purchase',
+            'Scraped At': color.scrapedAt ? new Date(color.scrapedAt).toLocaleString() : 'Not scraped'
+          };
+          color.sizes.forEach((size, idx) => {
+            purchaseRow[size] = color.purchaseSum[idx] ?? 0;
+          });
+          purchaseRow['Total'] = color.purchaseSum.reduce((sum, v) => sum + (Number(v) || 0), 0);
+          exportData.push(purchaseRow);
+          
+          // Available row
+          const availableRow: any = {
+            'Style No': styleNo,
+            'Style Name': meta.name || '',
+            'Supplier': meta.supplier || '',
+            'Color': color.color,
+            'Section': 'Available',
+            'Scraped At': color.scrapedAt ? new Date(color.scrapedAt).toLocaleString() : 'Not scraped'
+          };
+          color.sizes.forEach((size, idx) => {
+            availableRow[size] = color.available[idx] ?? 0;
+          });
+          availableRow['Total'] = color.available.reduce((sum, v) => sum + (Number(v) || 0), 0);
+          exportData.push(availableRow);
+        }
+      }
+      
+      // Create worksheet
+      const ws = XLSX.utils.json_to_sheet(exportData);
+      
+      // Create workbook
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Stock List');
+      
+      // Generate filename with timestamp
+      const timestamp = new Date().toISOString().split('T')[0];
+      const listName = activeListId ? (stockLists?.find(l => l.id === activeListId)?.name || 'List') : 'All';
+      const filename = `stock-list-${listName}-${timestamp}.xlsx`;
+      
+      // Download
+      XLSX.writeFile(wb, filename);
+    } catch (error) {
+      console.error('Export error:', error);
+      alert('Failed to export Excel file');
+    } finally {
+      setExporting(false);
+    }
+  }, [filteredForView, styleMetaByNo, activeListId, stockLists]);
 
   // (migrated to top of file to satisfy dependencies)
 
@@ -450,6 +569,71 @@ export default function StockListPage() {
     return base;
   }, [groupedByStyle, activeListId, styleIdsInList.size, searchQuery, styleMetaByNo, selectedSeasons, hideZeros, styleColors, colorSeasons]);
 
+  // Compute total style universe and hidden styles
+  const { totalStyles, hiddenStyles } = React.useMemo(() => {
+    // Determine the full universe of styles we should be showing
+    let universeStyleIds: Set<string>;
+    if (activeListId) {
+      // When a list is active, the universe is the styles in that list
+      universeStyleIds = new Set(Array.from(styleIdsInList));
+    } else {
+      // When viewing "All", the universe is all styles that have been scraped
+      universeStyleIds = new Set((styleRows ?? []).map((r: any) => r.id as string).filter(Boolean));
+    }
+
+    const visibleStyleNos = new Set(filteredForView.map(s => s.styleNo));
+    const hidden: Array<{ styleNo: string; name: string | null; supplier: string | null; reason: string }> = [];
+
+    // Check each style in the universe
+    for (const sid of Array.from(universeStyleIds)) {
+      const meta = (styleRows ?? []).find((r: any) => r.id === sid) as any;
+      if (!meta) continue;
+      const styleNo = meta.style_no;
+      
+      if (!visibleStyleNos.has(styleNo)) {
+        // Determine why it's hidden
+        let reason = 'Unknown';
+        
+        // Check if it has no scraped data
+        const hasScrapedData = groups.some(g => g.styleNo === styleNo);
+        if (!hasScrapedData) {
+          reason = 'No scraped stock data';
+        } else {
+          // Check filters
+          if (searchQuery.trim()) {
+            const q = searchQuery.trim().toLowerCase();
+            const matchesSearch = styleNo.toLowerCase().includes(q) || 
+                                  (meta.style_name || '').toLowerCase().includes(q) ||
+                                  groups.filter(g => g.styleNo === styleNo).some(g => g.color.toLowerCase().includes(q));
+            if (!matchesSearch) {
+              reason = 'Filtered out by search';
+            }
+          }
+          
+          if (selectedSeasons.length > 0 && reason === 'Unknown') {
+            reason = 'Filtered out by season';
+          }
+          
+          if (hideZeros && reason === 'Unknown') {
+            reason = 'All zeros hidden';
+          }
+        }
+        
+        hidden.push({
+          styleNo,
+          name: meta.style_name || null,
+          supplier: meta.supplier || null,
+          reason
+        });
+      }
+    }
+
+    return {
+      totalStyles: universeStyleIds.size,
+      hiddenStyles: hidden
+    };
+  }, [activeListId, styleIdsInList, styleRows, filteredForView, groups, searchQuery, selectedSeasons, hideZeros]);
+
   const emptyState: JSX.Element | null = React.useMemo(() => {
     if (activeListId && filteredForView.length === 0) {
       return <div className="text-sm text-gray-600">No stock data yet for styles in the selected list.</div>;
@@ -486,20 +670,38 @@ export default function StockListPage() {
         <div className="flex items-center gap-3 mb-4">
           <h1 className="text-2xl font-semibold sl-header-title">Stock List</h1>
           <span className="text-sm text-gray-600">
-            ({filteredForView.length.toLocaleString()} {filteredForView.length === 1 ? 'style' : 'styles'})
+            (Showing {filteredForView.length.toLocaleString()} / {totalStyles.toLocaleString()} {totalStyles === 1 ? 'style' : 'styles'})
           </span>
+            {hiddenStyles.length > 0 && (
+            <button
+              onClick={() => setShowHiddenModal(true)}
+              className="text-sm text-blue-600 hover:text-blue-800 underline"
+            >
+              {hiddenStyles.length} hidden
+            </button>
+          )}
+          <Button
+            size="sm"
+            variant="default"
+            onClick={exportToExcel}
+            disabled={exporting || filteredForView.length === 0}
+          >
+            {exporting ? 'Exporting...' : 'Export to Excel'}
+          </Button>
         </div>
         
-        {/* Loading Progress Bar */}
+        {/* Loading Progress Bar - Fixed Bottom Right */}
         {loadingProgress && (
-          <Card className="shadow-sm mb-4">
-            <CardContent className="p-4">
-              <div className="text-sm text-gray-600 mb-2">
-                Loading {loadingProgress.current.toLocaleString()} of {loadingProgress.total.toLocaleString()} rows...
-              </div>
-              <ProgressBar value={loadingProgress.current} max={loadingProgress.total} showLabel={true} />
-            </CardContent>
-          </Card>
+          <div className="fixed bottom-4 right-4 z-40 w-80 max-w-[calc(100vw-2rem)]">
+            <Card className="shadow-lg">
+              <CardContent className="p-4">
+                <div className="text-sm text-gray-600 mb-2">
+                  Loading {loadingProgress.current.toLocaleString()} of {loadingProgress.total.toLocaleString()} rows...
+                </div>
+                <ProgressBar value={loadingProgress.current} max={loadingProgress.total} showLabel={true} />
+              </CardContent>
+            </Card>
+          </div>
         )}
         
         {/* Summary Totals - Cards */}
@@ -659,23 +861,30 @@ export default function StockListPage() {
                   const availableTotal = sum(g.available);
                   return (
                   <div key={key} className="space-y-1 sl-color-block">
-                      {/* Display seasons as simple text */}
-                      {(() => {
-                        const sid = styleMetaByNo[g.styleNo]?.id || null;
-                        const cmap = sid ? (styleColors?.idMap?.get(sid) || new Map<string, string>()) : new Map<string, string>();
-                        const scId = cmap.get((g.color || '').trim().toLowerCase()) || null;
-                        const set = (scId && colorSeasons) ? (colorSeasons.get(scId) || new Set<string>()) : new Set<string>();
-                        const labels = (seasons || []).filter(s => set.has(s.id));
-                        
-                        console.log('[stock-list] Season display for', g.styleNo, g.color, '- scId:', scId, 'seasonIds:', Array.from(set), 'labels:', labels);
-                        
-                        if (labels.length === 0) return null;
-                        
-                        const seasonText = labels.map(s => `${s.name}${s.year ? ` ${s.year}` : ''}`).join(', ');
-                        return (
-                          <div className="text-[12px] text-gray-500 mb-1">{seasonText}</div>
-                        );
-                      })()}
+                      {/* Display seasons and scraped timestamp */}
+                      <div className="flex items-center justify-between gap-2 mb-1">
+                        <div>
+                          {(() => {
+                            const sid = styleMetaByNo[g.styleNo]?.id || null;
+                            const cmap = sid ? (styleColors?.idMap?.get(sid) || new Map<string, string>()) : new Map<string, string>();
+                            const scId = cmap.get((g.color || '').trim().toLowerCase()) || null;
+                            const set = (scId && colorSeasons) ? (colorSeasons.get(scId) || new Set<string>()) : new Set<string>();
+                            const labels = (seasons || []).filter(s => set.has(s.id));
+                            
+                            console.log('[stock-list] Season display for', g.styleNo, g.color, '- scId:', scId, 'seasonIds:', Array.from(set), 'labels:', labels);
+                            
+                            if (labels.length === 0) return null;
+                            
+                            const seasonText = labels.map(s => `${s.name}${s.year ? ` ${s.year}` : ''}`).join(', ');
+                            return (
+                              <span className="text-[12px] text-gray-500">{seasonText}</span>
+                            );
+                          })()}
+                        </div>
+                        <div className="text-[11px] text-gray-400">
+                          {g.scrapedAt ? `Scraped: ${formatRelativeTime(g.scrapedAt)}` : 'Not scraped yet'}
+                        </div>
+                      </div>
                     {/* Sizes table with image + color columns */}
                     <div className="overflow-auto sl-table-wrap">
                       <table className="min-w-full text-xs sl-table">
@@ -749,6 +958,47 @@ export default function StockListPage() {
         );
       })}
       </div>
+
+      {/* Hidden Styles Modal */}
+      <Modal
+        open={showHiddenModal}
+        onClose={() => setShowHiddenModal(false)}
+        title={`Hidden Styles (${hiddenStyles.length})`}
+        maxWidth="max-w-4xl"
+        footer={
+          <Button onClick={() => setShowHiddenModal(false)} variant="default">
+            Close
+          </Button>
+        }
+      >
+        <div className="space-y-2">
+          <p className="text-sm text-gray-600 mb-4">
+            These styles are in {activeListId ? 'the selected list' : 'your database'} but not currently visible due to filters or missing data.
+          </p>
+          <div className="overflow-auto max-h-[50vh]">
+            <table className="min-w-full text-sm">
+              <thead className="bg-gray-50 sticky top-0">
+                <tr>
+                  <th className="p-2 text-left border-b font-semibold">Style No</th>
+                  <th className="p-2 text-left border-b font-semibold">Name</th>
+                  <th className="p-2 text-left border-b font-semibold">Supplier</th>
+                  <th className="p-2 text-left border-b font-semibold">Reason</th>
+                </tr>
+              </thead>
+              <tbody>
+                {hiddenStyles.map((style, idx) => (
+                  <tr key={idx} className="hover:bg-gray-50">
+                    <td className="p-2 border-b font-mono text-xs">{style.styleNo}</td>
+                    <td className="p-2 border-b">{style.name || '—'}</td>
+                    <td className="p-2 border-b text-gray-600">{style.supplier || '—'}</td>
+                    <td className="p-2 border-b text-gray-500">{style.reason}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

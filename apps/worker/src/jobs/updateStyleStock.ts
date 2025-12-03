@@ -69,16 +69,36 @@ export async function updateStyleStock(ctx: Ctx) {
   const { data: styles } = await supabase.from('styles').select('id, style_no, link_href, scrape_enabled, inactive').in('style_no', styleNos).eq('inactive', false);
   let totalRows = 0;
   const missingStyles: Array<{ style_no: string; reason: string }> = [];
+  
+  // Track status for each style to verify completeness at the end
+  type StyleStatus = 'scraped' | 'inactive' | 'style_disabled' | 'colors_disabled' | 'nav_timeout' | 'details_missing' | 'all_zeros_skip' | 'unknown';
+  const statusByStyle = new Map<string, StyleStatus>();
+  
+  // Initialize all requested styles as unknown
+  for (const styleNo of styleNos) {
+    statusByStyle.set(styleNo, 'unknown');
+  }
   for (const s of (styles ?? []) as any[]) {
     await ensureNotCancelled(job.id);
     const href = (s.link_href || '').toString();
-    if (!href) continue;
+    if (!href) {
+      statusByStyle.set(s.style_no, 'style_disabled');
+      continue;
+    }
     const styleId: string | null = (s.id as string | undefined) || null;
     const styleScrapeEnabled: boolean = (s as any)?.scrape_enabled !== false;
-    if (!styleScrapeEnabled) { await log(job.id, 'info', 'STEP:style_stock_skip_style_disabled', { style_no: s.style_no }); continue; }
+    if (!styleScrapeEnabled) { 
+      await log(job.id, 'info', 'STEP:style_stock_skip_style_disabled', { style_no: s.style_no }); 
+      statusByStyle.set(s.style_no, 'style_disabled');
+      continue; 
+    }
     // Skip styles flagged as having all zeros or scraping errors
     const stockAllZeros: boolean = (s as any)?.stock_all_zeros === true;
-    if (stockAllZeros) { await log(job.id, 'info', 'STEP:style_stock_skip_all_zeros', { style_no: s.style_no }); continue; }
+    if (stockAllZeros) { 
+      await log(job.id, 'info', 'STEP:style_stock_skip_all_zeros', { style_no: s.style_no }); 
+      statusByStyle.set(s.style_no, 'all_zeros_skip');
+      continue; 
+    }
     let allowedColors: Record<string, boolean> = {};
     if (styleId) {
       try {
@@ -89,6 +109,7 @@ export async function updateStyleStock(ctx: Ctx) {
     const knownColorKeys = Object.keys(allowedColors);
     if (knownColorKeys.length > 0 && knownColorKeys.every((k) => allowedColors[k] === false)) {
       await log(job.id, 'info', 'STEP:style_stock_skip_all_colors_disabled', { style_no: s.style_no });
+      statusByStyle.set(s.style_no, 'colors_disabled');
       continue;
     }
     const url = new URL(href, SPY_BASE_URL).toString().replace(/#.*$/, '') + '#tab=statandstock';
@@ -97,6 +118,7 @@ export async function updateStyleStock(ctx: Ctx) {
     if (!ok) {
       await log(job.id, 'error', 'STEP:style_stock_nav_timeout', { style_no: s.style_no, url });
       missingStyles.push({ style_no: s.style_no, reason: 'nav_timeout' });
+      statusByStyle.set(s.style_no, 'nav_timeout');
       // Flag style to skip in future scrapes
       if (styleId) {
         try {
@@ -203,6 +225,7 @@ export async function updateStyleStock(ctx: Ctx) {
       const html = await page.content();
       await log(job.id, 'error', 'STEP:style_stock_missing_skip', { style_no: s.style_no, error: e?.message || String(e), html_sample: String(html || '').slice(0, 5_000) });
       missingStyles.push({ style_no: s.style_no, reason: 'details_missing' });
+      statusByStyle.set(s.style_no, 'details_missing');
       // Flag style to skip in future scrapes
       if (styleId) {
         try {
@@ -346,10 +369,27 @@ export async function updateStyleStock(ctx: Ctx) {
       dedupMap.set(key, r); 
     }
     const deduped = Array.from(dedupMap.values());
+    
+    // Delete existing stock data for this style before inserting fresh data
+    try {
+      const { error: delErr } = await supabase.from('style_stock').delete().eq('style_no', s.style_no);
+      if (delErr) {
+        await log(job.id, 'error', 'STEP:style_stock_delete_error', { style_no: s.style_no, error: delErr.message });
+      } else {
+        await log(job.id, 'info', 'STEP:style_stock_deleted', { style_no: s.style_no });
+      }
+    } catch (e: any) {
+      await log(job.id, 'error', 'STEP:style_stock_delete_exception', { style_no: s.style_no, error: e?.message || String(e) });
+    }
+    
     if (deduped.length) {
       const { error: upErr } = await supabase.from('style_stock').upsert(deduped, { onConflict: 'style_no,color,section,row_label' as any });
       if (upErr) throw upErr;
       totalRows += deduped.length;
+      statusByStyle.set(s.style_no, 'scraped');
+    } else {
+      // No data extracted - mark as scraped but empty
+      statusByStyle.set(s.style_no, 'scraped');
     }
     // Check per-color if all values across all sections are 0 and update maybe_inactive flag
     try {
@@ -433,8 +473,46 @@ export async function updateStyleStock(ctx: Ctx) {
     }
     // Removed redundant STEP:style_stock_rows log (row count included in style_stock_style_done)
   }
-  await saveResult(job.id, 'Style stock scrape completed', { totalRows, missingStyles });
-  await log(job.id, 'info', 'STEP:complete', { totalRows, missing: missingStyles.length });
+  
+  // Post-scrape verification: ensure all requested styles have a terminal status
+  const unknownStyles: string[] = [];
+  const statusSummary: Record<StyleStatus, number> = {
+    scraped: 0,
+    inactive: 0,
+    style_disabled: 0,
+    colors_disabled: 0,
+    nav_timeout: 0,
+    details_missing: 0,
+    all_zeros_skip: 0,
+    unknown: 0
+  };
+  
+  for (const [styleNo, status] of statusByStyle.entries()) {
+    statusSummary[status]++;
+    if (status === 'unknown') {
+      unknownStyles.push(styleNo);
+    }
+  }
+  
+  await log(job.id, 'info', 'STEP:style_stock_status_summary', statusSummary as any);
+  
+  // If any styles are still unknown, this is an error - fail the job
+  if (unknownStyles.length > 0) {
+    await log(job.id, 'error', 'STEP:style_stock_runthrough_failed', { 
+      unknown_count: unknownStyles.length, 
+      unknown_styles: unknownStyles.slice(0, 20) // Log first 20 for debugging
+    });
+    await saveResult(job.id, `Style stock scrape FAILED: ${unknownStyles.length} styles with unknown status`, { 
+      totalRows, 
+      missingStyles, 
+      unknownStyles,
+      statusSummary 
+    });
+    throw new Error(`Post-scrape verification failed: ${unknownStyles.length} styles with unknown status. This indicates the scraper may have skipped styles without proper error handling.`);
+  }
+  
+  await saveResult(job.id, 'Style stock scrape completed', { totalRows, missingStyles, statusSummary });
+  await log(job.id, 'info', 'STEP:complete', { totalRows, missing: missingStyles.length, statusSummary });
 }
 
 
