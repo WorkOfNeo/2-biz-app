@@ -114,8 +114,9 @@ export default function StylesPage() {
                 <th className="text-left p-2 border-b">Image</th>
                 <th className="text-left p-2 border-b">Style No.</th>
                 <th className="text-left p-2 border-b">Style Name</th>
-              <th className="text-left p-2 border-b">Supplier</th>
+                <th className="text-left p-2 border-b">Supplier</th>
               <th className="text-left p-2 border-b">DG</th>
+                <th className="text-left p-2 border-b">Stock All Zeros</th>
                 <th className="text-left p-2 border-b">Status</th>
                 <th className="text-left p-2 border-b">Link</th>
               </tr>
@@ -123,7 +124,7 @@ export default function StylesPage() {
             <tbody>
               {(rows ?? []).length === 0 && (
                 <tr>
-                  <td colSpan={7} className="p-4 text-center text-gray-500">
+                  <td colSpan={8} className="p-4 text-center text-gray-500">
                     No styles found. {(q || supplierFilter) ? 'Try adjusting your filters.' : ''}
                   </td>
                 </tr>
@@ -135,6 +136,13 @@ export default function StylesPage() {
                   <td className="p-2 border-b cursor-pointer" onClick={() => { window.location.href = `/styles/${encodeURIComponent(r.style_no)}`; }}>{r.style_name ?? '—'}</td>
                   <td className="p-2 border-b cursor-pointer" onClick={() => { window.location.href = `/styles/${encodeURIComponent(r.style_no)}`; }}>{r.supplier ?? '—'}</td>
                   <td className="p-2 border-b cursor-pointer" onClick={() => { window.location.href = `/styles/${encodeURIComponent(r.style_no)}`; }}>{(r as any).dg ?? '—'}</td>
+                  <td className="p-2 border-b cursor-pointer" onClick={() => { window.location.href = `/styles/${encodeURIComponent(r.style_no)}`; }}>
+                    {(r as any).stock_all_zeros ? (
+                      <span className="text-red-600 font-medium">Yes</span>
+                    ) : (
+                      <span className="text-gray-400">No</span>
+                    )}
+                  </td>
                   <td className="p-2 border-b">
                     <div className="flex items-center gap-2">
                       {r.maybe_inactive && !r.inactive && <span className="text-[10px] px-1.5 py-0.5 bg-yellow-100 text-yellow-800 rounded">Maybe Inactive</span>}
