@@ -70,6 +70,12 @@ export default function StockListPage() {
   const [runningStockFix, setRunningStockFix] = React.useState<boolean>(false);
   const [stockFixMessage, setStockFixMessage] = React.useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
   const [stockFixProgress, setStockFixProgress] = React.useState<{ step: string; details?: string } | null>(null);
+  const [stockFixResults, setStockFixResults] = React.useState<{ 
+    totalChecked: number; 
+    mismatches: Array<{ style_no: string; spy_stock: number | null; db_stock: number; diff: number }>;
+    jobId: string;
+  } | null>(null);
+  const [scrapingStockFixMismatches, setScrapingStockFixMismatches] = React.useState<boolean>(false);
   const [scrapeProgress, setScrapeProgress] = React.useState<{ current: number; total: number } | null>(null);
   const [scrapeMessage, setScrapeMessage] = React.useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
   const { data, mutate: mutateStockData } = useSWR('style_stock:list', async () => {
@@ -915,19 +921,38 @@ export default function StockListPage() {
             setStockFixProgress(null);
             
             if (jobData.status === 'succeeded') {
-              if (scrapeEnqueuedLog) {
-                const styleCount = scrapeEnqueuedLog.data?.styleCount || 0;
-                setStockFixMessage({ 
-                  type: 'success', 
-                  text: `Stock check complete! ${styleCount} style${styleCount !== 1 ? 's' : ''} queued for re-scraping. Check Jobs page for progress.` 
-                });
-              } else if (mismatchLog?.data?.mismatchCount === 0) {
-                setStockFixMessage({ type: 'success', text: 'Stock check complete! All styles match.' });
+              // Fetch the job results to get the mismatch data
+              const { data: resultsData } = await supabase
+                .from('job_results')
+                .select('data')
+                .eq('job_id', jobId)
+                .order('created_at', { ascending: false })
+                .limit(1)
+                .maybeSingle();
+              
+              if (resultsData?.data) {
+                const resultData = resultsData.data as any;
+                const mismatchCount = resultData.mismatches || 0;
+                const totalChecked = resultData.totalChecked || 0;
+                const details = resultData.details || [];
+                
+                if (mismatchCount === 0) {
+                  setStockFixMessage({ type: 'success', text: `Stock check complete! All ${totalChecked} styles match.` });
+                  setStockFixResults(null);
+                } else {
+                  setStockFixMessage({ 
+                    type: 'info', 
+                    text: `Stock check complete! Found ${mismatchCount} mismatch${mismatchCount !== 1 ? 'es' : ''} out of ${totalChecked} styles.` 
+                  });
+                  setStockFixResults({
+                    totalChecked,
+                    mismatches: details,
+                    jobId
+                  });
+                }
               } else {
                 setStockFixMessage({ type: 'success', text: 'Stock check complete!' });
               }
-              // Optionally refresh data after a delay
-              setTimeout(() => mutateStockData(), 5000);
             } else {
               setStockFixMessage({ type: 'error', text: `Stock check ${jobData.status}. Check the Jobs page for details.` });
             }
@@ -953,6 +978,58 @@ export default function StockListPage() {
       setStockFixMessage({ type: 'error', text: `Failed to start stock check: ${err.message}` });
     }
   }, [supabase, runningStockFix, mutateStockData]);
+
+  // Scrape stock fix mismatches function
+  const scrapeStockFixMismatches = React.useCallback(async () => {
+    if (!stockFixResults || stockFixResults.mismatches.length === 0) return;
+    
+    try {
+      setScrapingStockFixMismatches(true);
+      const mismatchStyleNos = stockFixResults.mismatches.map(m => m.style_no);
+      
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        alert('Not signed in');
+        setScrapingStockFixMismatches(false);
+        return;
+      }
+      
+      // Enqueue the scrape job
+      const res = await fetch('/api/enqueue', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({
+          type: 'update_style_stock',
+          payload: { 
+            styleNos: mismatchStyleNos, 
+            requestedBy: 'check-stock-fix-manual',
+            checkJobId: stockFixResults.jobId
+          }
+        })
+      });
+      
+      if (!res.ok) {
+        const txt = await res.text().catch(() => '');
+        throw new Error(txt || `Failed (${res.status})`);
+      }
+      
+      const { jobId } = await res.json();
+      setStockFixMessage({ 
+        type: 'success', 
+        text: `Scraping ${mismatchStyleNos.length} style${mismatchStyleNos.length !== 1 ? 's' : ''} enqueued! Check Jobs page for progress.` 
+      });
+      
+      // Clear results after enqueuing
+      setTimeout(() => {
+        setScrapingStockFixMismatches(false);
+        setStockFixResults(null);
+      }, 3000);
+      
+    } catch (err: any) {
+      setScrapingStockFixMismatches(false);
+      alert(`Failed to enqueue scraping: ${err.message}`);
+    }
+  }, [stockFixResults, supabase]);
 
   // Export Checker results to Excel
   const exportCheckerToExcel = React.useCallback(() => {
@@ -1935,8 +2012,10 @@ PO7332, 2100"
                 setScrapeProgress(null);
                 setStockFixMessage(null);
                 setStockFixProgress(null);
+                setStockFixResults(null);
+                setScrapingStockFixMismatches(false);
               }}
-              disabled={scrapingMismatches || runningStockFix}
+              disabled={scrapingMismatches || runningStockFix || scrapingStockFixMismatches}
             >
               Clear
             </Button>
@@ -2018,6 +2097,59 @@ PO7332, 2100"
                  'ℹ️ '}
                 {stockFixMessage.text}
               </p>
+            </div>
+          )}
+          
+          {stockFixResults && stockFixResults.mismatches.length > 0 && (
+            <div className="mt-4 space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-gray-900">
+                  Stock Verification Results
+                </h3>
+                <Button 
+                  onClick={scrapeStockFixMismatches}
+                  variant="default"
+                  disabled={scrapingStockFixMismatches}
+                  className="bg-orange-600 hover:bg-orange-700"
+                >
+                  {scrapingStockFixMismatches ? 'Scraping...' : `Scrape ${stockFixResults.mismatches.length} Mismatches`}
+                </Button>
+              </div>
+              
+              <div className="border rounded overflow-hidden">
+                <div className="overflow-auto max-h-96">
+                  <table className="min-w-full text-sm">
+                    <thead className="bg-gray-100 sticky top-0">
+                      <tr>
+                        <th className="p-2 text-left font-semibold">Style No</th>
+                        <th className="p-2 text-right font-semibold">SPY Stock</th>
+                        <th className="p-2 text-right font-semibold">DB Stock</th>
+                        <th className="p-2 text-right font-semibold">Difference</th>
+                        <th className="p-2 text-left font-semibold">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {stockFixResults.mismatches.map((mismatch, idx) => (
+                        <tr key={idx} className="bg-orange-50">
+                          <td className="p-2 border-t font-mono text-xs">{mismatch.style_no}</td>
+                          <td className="p-2 border-t text-right font-mono">{mismatch.spy_stock?.toLocaleString() ?? '-'}</td>
+                          <td className="p-2 border-t text-right font-mono">{mismatch.db_stock.toLocaleString()}</td>
+                          <td className={`p-2 border-t text-right font-mono font-semibold ${
+                            mismatch.diff > 0 ? 'text-red-600' : 'text-red-600'
+                          }`}>
+                            {mismatch.diff.toLocaleString()}
+                          </td>
+                          <td className="p-2 border-t">
+                            <span className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-orange-100 text-orange-800">
+                              Mismatch
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
             </div>
           )}
           

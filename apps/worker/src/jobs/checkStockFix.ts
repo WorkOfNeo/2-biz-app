@@ -179,38 +179,12 @@ export async function checkStockFix(ctx: Ctx) {
       sample: mismatches.slice(0, 10)
     });
     
-    // If there are mismatches, enqueue a scrape job for those styles
+    // Store mismatches for manual review - DO NOT auto-scrape
     if (mismatches.length > 0) {
-      const mismatchStyleNos = mismatches.map(m => m.style_no);
-      
-      await log(job.id, 'info', 'STEP:check_stock_fix_enqueuing_scrape', { styleCount: mismatchStyleNos.length });
-      
-      // Enqueue scrape job for mismatched styles
-      const { data: scrapeJob, error: enqueueError } = await supabase
-        .from('jobs')
-        .insert({
-          type: 'update_style_stock',
-          payload: { 
-            styleNos: mismatchStyleNos, 
-            requestedBy: 'check-stock-fix',
-            checkJobId: job.id
-          },
-          status: 'queued',
-          max_attempts: 3,
-          queue: 'default',
-          priority: 90 // Slightly lower priority than user-triggered scrapes
-        })
-        .select('id')
-        .single();
-      
-      if (enqueueError) {
-        await log(job.id, 'error', 'STEP:check_stock_fix_enqueue_failed', { error: enqueueError.message });
-      } else {
-        await log(job.id, 'info', 'STEP:check_stock_fix_scrape_enqueued', { 
-          scrapeJobId: scrapeJob?.id,
-          styleCount: mismatchStyleNos.length
-        });
-      }
+      await log(job.id, 'info', 'STEP:check_stock_fix_ready_for_review', { 
+        message: 'Mismatches found - ready for manual review',
+        styleCount: mismatches.length 
+      });
     } else {
       await log(job.id, 'info', 'STEP:check_stock_fix_no_mismatches', { message: 'All styles match!' });
     }
