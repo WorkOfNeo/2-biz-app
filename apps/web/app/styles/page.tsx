@@ -27,8 +27,10 @@ export default function StylesPage() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [q, setQ] = useState('');
   const [supplierFilter, setSupplierFilter] = useState('');
+  const [supplierInvert, setSupplierInvert] = useState(false);
   const [stockAllZerosFilter, setStockAllZerosFilter] = useState<boolean | null>(null);
   const [seasonFilter, setSeasonFilter] = useState('');
+  const [seasonInvert, setSeasonInvert] = useState(false);
   const [settingInactive, setSettingInactive] = useState(false);
   const supabase = createClientComponentClient();
 
@@ -60,7 +62,7 @@ export default function StylesPage() {
     return map;
   });
 
-  const { data: rows, mutate } = useSWR(['styles:list', q, supplierFilter, stockAllZerosFilter, seasonFilter], async () => {
+  const { data: rows, mutate } = useSWR(['styles:list', q, supplierFilter, supplierInvert, stockAllZerosFilter, seasonFilter, seasonInvert], async () => {
     // Build base query
     let baseQuery = supabase
       .from('styles')
@@ -75,7 +77,11 @@ export default function StylesPage() {
     
     // Filter by supplier
     if (supplierFilter && supplierFilter.trim().length > 0) {
-      baseQuery = baseQuery.eq('supplier', supplierFilter);
+      if (supplierInvert) {
+        baseQuery = baseQuery.neq('supplier', supplierFilter);
+      } else {
+        baseQuery = baseQuery.eq('supplier', supplierFilter);
+      }
     }
     
     // Filter by stock_all_zeros
@@ -118,12 +124,19 @@ export default function StylesPage() {
         
         if (styleColors && styleColors.length > 0) {
           const styleIds = new Set(styleColors.map(sc => sc.style_id));
-          filtered = allRows.filter(r => styleIds.has(r.id));
+          // Invert logic if seasonInvert is true
+          if (seasonInvert) {
+            filtered = allRows.filter(r => !styleIds.has(r.id));
+          } else {
+            filtered = allRows.filter(r => styleIds.has(r.id));
+          }
         } else {
-          filtered = [];
+          // No styles found with this season
+          filtered = seasonInvert ? allRows : [];
         }
       } else {
-        filtered = [];
+        // No color-season mappings found
+        filtered = seasonInvert ? allRows : [];
       }
     }
     
@@ -218,20 +231,46 @@ export default function StylesPage() {
             placeholder="Search style no or name..." 
             className="border rounded p-2 text-sm w-64" 
           />
-          <SearchSelect
-            items={supplierOptions}
-            value={supplierFilter}
-            onChange={setSupplierFilter}
-            placeholder="Filter by supplier..."
-            clearable={true}
-          />
-          <SearchSelect
-            items={seasonOptions}
-            value={seasonFilter}
-            onChange={setSeasonFilter}
-            placeholder="Filter by season..."
-            clearable={true}
-          />
+          <div className="flex items-center gap-1">
+            <SearchSelect
+              items={supplierOptions}
+              value={supplierFilter}
+              onChange={setSupplierFilter}
+              placeholder="Filter by supplier..."
+              clearable={true}
+            />
+            {supplierFilter && (
+              <label className="flex items-center gap-1 text-xs whitespace-nowrap cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={supplierInvert}
+                  onChange={(e) => setSupplierInvert(e.target.checked)}
+                  className="h-3 w-3 rounded"
+                />
+                <span>NOT</span>
+              </label>
+            )}
+          </div>
+          <div className="flex items-center gap-1">
+            <SearchSelect
+              items={seasonOptions}
+              value={seasonFilter}
+              onChange={setSeasonFilter}
+              placeholder="Filter by season..."
+              clearable={true}
+            />
+            {seasonFilter && (
+              <label className="flex items-center gap-1 text-xs whitespace-nowrap cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={seasonInvert}
+                  onChange={(e) => setSeasonInvert(e.target.checked)}
+                  className="h-3 w-3 rounded"
+                />
+                <span>NOT</span>
+              </label>
+            )}
+          </div>
           <label className="flex items-center gap-2 border rounded px-3 py-2 cursor-pointer hover:bg-gray-50">
             <input
               type="checkbox"
