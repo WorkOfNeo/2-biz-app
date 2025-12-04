@@ -46,9 +46,33 @@ export async function checkStockFix(ctx: Ctx) {
     if (showAllExists) {
       await showAllButton.click();
       await log(job.id, 'info', 'STEP:check_stock_fix_show_all_clicked');
+      
       // Wait for table to update (wait for tbody to be present)
       await page.waitForSelector('.spy-container table.standardList tbody tr', { timeout: 60_000 });
-      // Give it a bit more time to ensure all rows load
+      
+      // Wait for the table to stabilize by checking row count doesn't change
+      await log(job.id, 'info', 'STEP:check_stock_fix_waiting_for_table_load');
+      let previousRowCount = 0;
+      let stableCount = 0;
+      
+      for (let i = 0; i < 10; i++) {
+        await page.waitForTimeout(1000);
+        const currentRowCount = await page.locator('.spy-container table.standardList tbody tr').count();
+        
+        if (currentRowCount === previousRowCount && currentRowCount > 0) {
+          stableCount++;
+          if (stableCount >= 3) {
+            await log(job.id, 'info', 'STEP:check_stock_fix_table_loaded', { rowCount: currentRowCount });
+            break;
+          }
+        } else {
+          stableCount = 0;
+        }
+        
+        previousRowCount = currentRowCount;
+      }
+      
+      // Additional wait to ensure backend has processed the data
       await page.waitForTimeout(2000);
     }
     
