@@ -547,7 +547,7 @@ export default function StatisticsGeneralPage() {
       }
       const invoicesQuery = supabase
         .from('sales_invoices')
-        .select('account_no, customer_name, qty, amount, season_id')
+        .select('account_no, customer_name, qty, amount, season_id, salesperson_id')
         .in('season_id', [s1, s2]);
 
       const [statsRes, invoicesRes] = await Promise.all([
@@ -632,6 +632,8 @@ export default function StatisticsGeneralPage() {
         if (!itemCity && inv.account_no) itemCity = customerIndex?.byId?.[inv.account_no] ?? '';
         if (!itemCity && inv.customer_name) itemCity = customerIndex?.byName?.[inv.customer_name] ?? '';
         if (!itemCity) itemCity = '-';
+        // Use salesperson_id directly from invoice
+        const spId = inv.salesperson_id ?? null;
         const item = itemExisting ?? {
           account_no: inv.account_no ?? key,
           customer: inv.customer_name ?? '-',
@@ -641,8 +643,8 @@ export default function StatisticsGeneralPage() {
           s1Price: 0,
           s2Qty: 0,
           s2Price: 0,
-          salespersonId: null,
-          salespersonName: '—'
+          salespersonId: spId,
+          salespersonName: spId ? (spNameById[spId] ?? 'Unknown') : '—'
         } as RowOut;
         const qty = Number(inv.qty ?? 0) || 0;
         const amount = Number(inv.amount ?? 0) || 0;
