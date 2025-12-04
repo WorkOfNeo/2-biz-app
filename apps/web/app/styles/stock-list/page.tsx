@@ -734,7 +734,7 @@ export default function StockListPage() {
             .select('msg, data')
             .eq('job_id', jobId)
             .eq('msg', 'STEP:style_stock_style_done')
-            .order('created_at', { ascending: true });
+            .order('ts', { ascending: true });
           
           const completedCount = logsData?.length || 0;
           setScrapeProgress({ current: completedCount, total: mismatchStyleNos.length });
