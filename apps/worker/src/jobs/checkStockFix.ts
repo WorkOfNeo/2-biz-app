@@ -11,10 +11,12 @@ type Ctx = {
   setJobSucceeded: (jobId: string) => Promise<void>;
   ensureNotCancelled: (jobId: string) => Promise<void>;
   supabase: any;
+  SPY_BASE_URL: string;
+  findFirst: (page: Page, selectors: string[]) => Promise<any>;
 };
 
 export async function checkStockFix(ctx: Ctx) {
-  const { job, page, log, saveResult, setJobFailedOrRequeue, setJobSucceeded, ensureNotCancelled, supabase } = ctx;
+  const { job, page, log, saveResult, setJobFailedOrRequeue, setJobSucceeded, ensureNotCancelled, supabase, SPY_BASE_URL } = ctx;
   
   try {
     await log(job.id, 'info', 'STEP:check_stock_fix_begin');
@@ -104,7 +106,13 @@ export async function checkStockFix(ctx: Ctx) {
     // Parse Excel
     const workbook = XLSX.read(buffer, { type: 'buffer' });
     const sheetName = workbook.SheetNames[0];
+    if (!sheetName) {
+      throw new Error('Excel workbook has no sheets');
+    }
     const sheet = workbook.Sheets[sheetName];
+    if (!sheet) {
+      throw new Error(`Sheet ${sheetName} not found in workbook`);
+    }
     const rawData = XLSX.utils.sheet_to_json(sheet, { header: 1 }) as any[][];
     
     await log(job.id, 'info', 'STEP:check_stock_fix_excel_parsed', { 
@@ -174,7 +182,7 @@ export async function checkStockFix(ctx: Ctx) {
       total_rows: stockData?.length || 0,
       unique_styles: styleNos.length,
       sample_style: styleNos[0],
-      sample_rows: stockData?.filter(r => r.style_no === styleNos[0]).length || 0
+      sample_rows: stockData?.filter((r: any) => r.style_no === styleNos[0]).length || 0
     });
     
     // Aggregate stock data per style using same logic as stock-list page
@@ -239,7 +247,7 @@ export async function checkStockFix(ctx: Ctx) {
     // Log first 10 comparisons for debugging
     const debugSample = parsedRows.slice(0, 10).map(row => {
       const spyStock = row.stock ?? 0;
-      const dbStock = dbStockByStyleNo.get(row.style_no) ?? 0;
+      const dbStock = row.style_no ? dbStockByStyleNo.get(row.style_no) ?? 0 : 0;
       return {
         style_no: row.style_no,
         spy_stock: spyStock,
@@ -252,14 +260,15 @@ export async function checkStockFix(ctx: Ctx) {
     
     for (const row of parsedRows) {
       if (!row.style_no) continue;
+      const styleNo = row.style_no; // TypeScript narrows the type here
       const spyStock = row.stock ?? 0;
-      const dbStock = dbStockByStyleNo.get(row.style_no) ?? 0;
+      const dbStock = dbStockByStyleNo.get(styleNo) ?? 0;
       const diff = Math.abs(spyStock - dbStock);
       
       // Consider it a mismatch if difference is greater than 0
       if (diff > 0) {
         mismatches.push({
-          style_no: row.style_no,
+          style_no: styleNo,
           spy_stock: spyStock,
           db_stock: dbStock,
           diff
@@ -268,11 +277,11 @@ export async function checkStockFix(ctx: Ctx) {
         // Log detailed info for first 5 mismatches
         if (mismatches.length <= 5) {
           await log(job.id, 'info', 'STEP:check_stock_fix_mismatch_detail', {
-            style_no: row.style_no,
+            style_no: styleNo,
             style_name: row.style_name,
             spy_stock: row.stock,
             db_stock: dbStock,
-            colors_in_db: byStyle.get(row.style_no)?.size || 0
+            colors_in_db: byStyle.get(styleNo)?.size || 0
           });
         }
       }
