@@ -1014,6 +1014,15 @@ export default function StockListPage() {
       const lines = checkerInput.trim().split('\n');
       const pastedPOs = new Map<string, { count: number; total: number; lines: string[] }>();
       
+      // Helper function to extract base PO number from label (e.g., "PO7376 ETA 2025-11-06" -> "PO7376")
+      const extractPONumber = (label: string): string | null => {
+        const trimmed = label.trim();
+        if (!trimmed) return null;
+        // Match PO pattern at the start (e.g., PO7376, BR7317, etc.)
+        const match = trimmed.match(/^([A-Z]{1,3}\d+(?:-\d+)?)/i);
+        return match && match[1] ? match[1].toUpperCase() : null;
+      };
+      
       // Parse pasted PO data - format: PO7376, 480 or PO7376<TAB>480
       for (const line of lines) {
         const trimmed = line.trim();
@@ -1023,20 +1032,24 @@ export default function StockListPage() {
         const parts = trimmed.includes('\t') ? trimmed.split('\t') : trimmed.split(',');
         if (parts.length < 2) continue;
         
-        const poLabel = parts[0]?.trim() || '';
+        const poLabelRaw = parts[0]?.trim() || '';
         const qtyStr = parts[1]?.trim().replace(/[^0-9-]/g, '') || '';
         
-        if (!poLabel || !qtyStr) continue;
+        if (!poLabelRaw || !qtyStr) continue;
+        
+        // Extract base PO number from pasted label (handles cases like "PO7376 ETA 2025-11-06")
+        const basePONumber = extractPONumber(poLabelRaw);
+        if (!basePONumber) continue;
         
         const qty = parseInt(qtyStr, 10);
         if (isNaN(qty)) continue;
         
-        // Aggregate by PO label
-        const existing = pastedPOs.get(poLabel) || { count: 0, total: 0, lines: [] };
+        // Aggregate by base PO number
+        const existing = pastedPOs.get(basePONumber) || { count: 0, total: 0, lines: [] };
         existing.count += 1;
         existing.total += qty;
         existing.lines.push(trimmed);
-        pastedPOs.set(poLabel, existing);
+        pastedPOs.set(basePONumber, existing);
       }
       
       // Get current PO data from database - aggregate purchase rows
@@ -1046,8 +1059,12 @@ export default function StockListPage() {
       for (const { styleNo, colors } of groupedByStyle) {
         for (const color of colors) {
           for (const purchaseRow of color.purchaseRows) {
-            const poLabel = String(purchaseRow.row_label || '').trim();
-            if (!poLabel) continue;
+            const fullLabel = String(purchaseRow.row_label || '').trim();
+            if (!fullLabel) continue;
+            
+            // Extract base PO number (e.g., "PO7376" from "PO7376 ETA 2025-11-06")
+            const basePONumber = extractPONumber(fullLabel);
+            if (!basePONumber) continue;
             
             // Calculate total qty for this PO row
             const values = Array.isArray(purchaseRow.values) 
@@ -1057,16 +1074,17 @@ export default function StockListPage() {
               ? values.reduce((sum, v) => sum + (Number(v) || 0), 0)
               : Number(values) || 0;
             
-            const existing = currentPOs.get(poLabel) || { count: 0, total: 0, rows: [] };
+            // Group by base PO number (not full label)
+            const existing = currentPOs.get(basePONumber) || { count: 0, total: 0, rows: [] };
             existing.count += 1;
             existing.total += qty;
             existing.rows.push({
               style_no: styleNo,
               color: color.color,
-              row_label: poLabel,
+              row_label: fullLabel, // Keep full label for reference
               qty
             });
-            currentPOs.set(poLabel, existing);
+            currentPOs.set(basePONumber, existing);
           }
         }
       }
