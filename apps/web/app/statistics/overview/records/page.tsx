@@ -86,6 +86,14 @@ function RecordsInner() {
     else if (mode === 'not_visited') targetIds = notVisitedSet;
     else targetIds = visitedSet;
 
+    // Create lookup map for customer -> salesperson_id
+    const customerSalespersonMap = new Map<string, string | null>();
+    for (const c of (customers ?? [])) {
+      if (c.customer_id) {
+        customerSalespersonMap.set(c.customer_id, c.salesperson_id || null);
+      }
+    }
+
     const byCustomer = new Map<string, { id: string; name: string; city: string; s1: Array<StatsRow & { isInvoice?: boolean; invoice_no?: string | null }>; s2: Array<StatsRow & { isInvoice?: boolean; invoice_no?: string | null }> }>();
     for (const id of targetIds) {
       const c = arr.find((x: any) => x.customer_id === id);
@@ -101,12 +109,16 @@ function RecordsInner() {
     for (const inv of (invoices ?? [])) {
       const acc = inv.account_no as string | null;
       if (!acc || !byCustomer.has(acc)) continue;
+      // Look up salesperson_id from customers table
+      const invSalespersonId = customerSalespersonMap.get(acc) || null;
+      // Only include invoices for the selected salesperson
+      if (invSalespersonId !== sp) continue;
       const fake: StatsRow & { isInvoice?: boolean; invoice_no?: string | null } = {
         account_no: inv.account_no,
         qty: Number(inv.qty || 0),
         price: Number(inv.amount || 0),
         season_id: inv.season_id,
-        salesperson_id: inv.salesperson_id,
+        salesperson_id: invSalespersonId,
         isInvoice: true,
         invoice_no: inv.invoice_no
       };
@@ -114,7 +126,7 @@ function RecordsInner() {
       if (inv.season_id === s2) byCustomer.get(acc)!.s2.push(fake);
     }
     return Array.from(byCustomer.values()).sort((a, b) => a.name.localeCompare(b.name));
-  }, [customers, stats, sp, country, mode, s1, s2]);
+  }, [customers, stats, invoices, sp, country, mode, s1, s2]);
 
   return (
     <div className="space-y-6">
