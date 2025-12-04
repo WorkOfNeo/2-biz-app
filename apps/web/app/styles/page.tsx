@@ -340,9 +340,8 @@ export default function StylesPage() {
                   </td>
                   <td className="p-2 border-b">
                     <div className="flex flex-col gap-1.5">
-                      {r.inactive ? (
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm px-3 py-1.5 bg-red-600 text-white rounded font-bold uppercase">🚫 IS INACTIVE</span>
+                      <div className="flex items-center gap-2">
+                        {r.inactive ? (
                           <button
                             onClick={async (e) => {
                               e.stopPropagation();
@@ -376,10 +375,7 @@ export default function StylesPage() {
                           >
                             {updatingStyleId === r.id ? '⏳ Updating...' : '✓ Set Active'}
                           </button>
-                        </div>
-                      ) : (
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm px-3 py-1.5 bg-green-100 text-green-800 rounded font-semibold">✓ Active</span>
+                        ) : (
                           <button
                             onClick={async (e) => {
                               e.stopPropagation();
@@ -414,11 +410,10 @@ export default function StylesPage() {
                           >
                             {updatingStyleId === r.id ? '⏳ Setting...' : 'Set Inactive'}
                           </button>
-                        </div>
-                      )}
+                        )}
+                      </div>
                       <div className="flex items-center gap-1.5 flex-wrap">
                         {r.maybe_inactive && !r.inactive && <span className="text-[10px] px-1.5 py-0.5 bg-yellow-100 text-yellow-800 rounded">Maybe Inactive</span>}
-                        {r.stock_all_zeros && <span className="text-[10px] px-1.5 py-0.5 bg-orange-100 text-orange-800 rounded" title="All zeros or scrape error - will be skipped in future scrapes">All Zeros</span>}
                         {r.needs_enrichment && <span className="text-[10px] px-1.5 py-0.5 bg-blue-100 text-blue-800 rounded" title="Needs enrichment - will be processed by enrich_styles job">Needs Enrichment</span>}
                       </div>
                     </div>
