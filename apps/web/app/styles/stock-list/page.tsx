@@ -67,6 +67,8 @@ export default function StockListPage() {
   const [checkerResults, setCheckerResults] = React.useState<any>(null);
   const [checkerMode, setCheckerMode] = React.useState<'styles' | 'po'>('styles');
   const [scrapingMismatches, setScrapingMismatches] = React.useState<boolean>(false);
+  const [runningStockFix, setRunningStockFix] = React.useState<boolean>(false);
+  const [stockFixMessage, setStockFixMessage] = React.useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
   const [scrapeProgress, setScrapeProgress] = React.useState<{ current: number; total: number } | null>(null);
   const [scrapeMessage, setScrapeMessage] = React.useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
   const { data, mutate: mutateStockData } = useSWR('style_stock:list', async () => {
@@ -811,6 +813,113 @@ export default function StockListPage() {
       });
     }
   }, [checkerResults, supabase, scrapingMismatches, mutateStockData]);
+
+  // Run stock fix check function
+  const runStockFixCheck = React.useCallback(async () => {
+    try {
+      setRunningStockFix(true);
+      setStockFixMessage({ type: 'info', text: 'Starting stock verification check...' });
+      
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        setStockFixMessage({ type: 'error', text: 'Not signed in' });
+        setRunningStockFix(false);
+        return;
+      }
+      
+      // Enqueue the check_stock_fix job
+      const res = await fetch('/api/enqueue', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({
+          type: 'check_stock_fix',
+          payload: { 
+            requestedBy: session.user.email,
+            manual: true // Mark as manually triggered
+          }
+        })
+      });
+      
+      if (!res.ok) {
+        const txt = await res.text().catch(() => '');
+        throw new Error(txt || `Failed (${res.status})`);
+      }
+      
+      const { jobId } = await res.json();
+      setStockFixMessage({ type: 'info', text: 'Stock check job queued. Monitoring progress...' });
+      
+      // Poll for progress
+      const pollInterval = setInterval(async () => {
+        try {
+          const { data: jobData } = await supabase
+            .from('jobs')
+            .select('status')
+            .eq('id', jobId)
+            .single();
+          
+          if (!jobData) return;
+          
+          // Check logs for completion steps
+          const { data: logsData } = await supabase
+            .from('job_logs')
+            .select('msg, data')
+            .eq('job_id', jobId)
+            .order('ts', { ascending: true });
+          
+          // Find if mismatches were found and scrape was triggered
+          const mismatchLog = (logsData ?? []).find((l: any) => l.msg === 'STEP:check_stock_fix_mismatches_found');
+          const scrapeEnqueuedLog = (logsData ?? []).find((l: any) => l.msg === 'STEP:check_stock_fix_scrape_enqueued');
+          
+          if (mismatchLog?.data?.mismatchCount !== undefined) {
+            const count = mismatchLog.data.mismatchCount;
+            if (count === 0) {
+              setStockFixMessage({ type: 'success', text: 'All styles match! No mismatches found.' });
+            } else {
+              setStockFixMessage({ type: 'info', text: `Found ${count} mismatch${count !== 1 ? 'es' : ''}. Scraping...` });
+            }
+          }
+          
+          if (jobData.status === 'succeeded' || jobData.status === 'failed' || jobData.status === 'cancelled') {
+            clearInterval(pollInterval);
+            setRunningStockFix(false);
+            
+            if (jobData.status === 'succeeded') {
+              if (scrapeEnqueuedLog) {
+                const styleCount = scrapeEnqueuedLog.data?.styleCount || 0;
+                setStockFixMessage({ 
+                  type: 'success', 
+                  text: `Stock check complete! ${styleCount} style${styleCount !== 1 ? 's' : ''} queued for re-scraping. Check Jobs page for progress.` 
+                });
+              } else if (mismatchLog?.data?.mismatchCount === 0) {
+                setStockFixMessage({ type: 'success', text: 'Stock check complete! All styles match.' });
+              } else {
+                setStockFixMessage({ type: 'success', text: 'Stock check complete!' });
+              }
+              // Optionally refresh data after a delay
+              setTimeout(() => mutateStockData(), 5000);
+            } else {
+              setStockFixMessage({ type: 'error', text: `Stock check ${jobData.status}. Check the Jobs page for details.` });
+            }
+          }
+        } catch (err: any) {
+          console.error('Stock fix poll error:', err);
+        }
+      }, 3000); // Poll every 3 seconds
+      
+      // Stop polling after 5 minutes
+      setTimeout(() => {
+        clearInterval(pollInterval);
+        if (runningStockFix) {
+          setRunningStockFix(false);
+          setStockFixMessage({ type: 'info', text: 'Stock check is taking longer than expected. Check the Jobs page for status.' });
+        }
+      }, 300000);
+      
+    } catch (err: any) {
+      setRunningStockFix(false);
+      setStockFixMessage({ type: 'error', text: `Failed to start stock check: ${err.message}` });
+    }
+  }, [supabase, runningStockFix, mutateStockData]);
 
   // Export Checker results to Excel
   const exportCheckerToExcel = React.useCallback(() => {
@@ -1736,7 +1845,7 @@ PO7332, 2100"
           <div className="flex gap-2 flex-wrap">
             <Button 
               onClick={checkerMode === 'styles' ? runChecker : runPOChecker} 
-              disabled={!checkerInput.trim() || scrapingMismatches}
+              disabled={!checkerInput.trim() || scrapingMismatches || runningStockFix}
             >
               Check Differences
             </Button>
@@ -1773,18 +1882,27 @@ PO7332, 2100"
               );
             })()}
             {checkerResults && (
-              <Button onClick={exportCheckerToExcel} variant="outline" disabled={scrapingMismatches}>
+              <Button onClick={exportCheckerToExcel} variant="outline" disabled={scrapingMismatches || runningStockFix}>
                 Export to Excel
               </Button>
             )}
+            <Button 
+              onClick={runStockFixCheck}
+              variant="default"
+              disabled={runningStockFix || scrapingMismatches}
+              className="bg-blue-600 hover:bg-blue-700"
+            >
+              {runningStockFix ? 'Running...' : 'Run SPY Stock Verification'}
+            </Button>
             <Button 
               variant="outline" 
               onClick={() => {
                 setCheckerInput('');
                 setCheckerResults(null);
                 setScrapeProgress(null);
+                setStockFixMessage(null);
               }}
-              disabled={scrapingMismatches}
+              disabled={scrapingMismatches || runningStockFix}
             >
               Clear
             </Button>
@@ -1823,6 +1941,25 @@ PO7332, 2100"
                  scrapeMessage.type === 'error' ? '✗ ' : 
                  'ℹ️ '}
                 {scrapeMessage.text}
+              </p>
+            </div>
+          )}
+          
+          {stockFixMessage && (
+            <div className={`mt-4 p-4 border rounded ${
+              stockFixMessage.type === 'success' ? 'bg-green-50 border-green-200' :
+              stockFixMessage.type === 'error' ? 'bg-red-50 border-red-200' :
+              'bg-blue-50 border-blue-200'
+            }`}>
+              <p className={`text-sm font-semibold ${
+                stockFixMessage.type === 'success' ? 'text-green-900' :
+                stockFixMessage.type === 'error' ? 'text-red-900' :
+                'text-blue-900'
+              }`}>
+                {stockFixMessage.type === 'success' ? '✓ ' : 
+                 stockFixMessage.type === 'error' ? '✗ ' : 
+                 'ℹ️ '}
+                {stockFixMessage.text}
               </p>
             </div>
           )}
