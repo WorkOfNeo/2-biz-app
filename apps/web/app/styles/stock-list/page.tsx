@@ -69,6 +69,7 @@ export default function StockListPage() {
   const [scrapingMismatches, setScrapingMismatches] = React.useState<boolean>(false);
   const [runningStockFix, setRunningStockFix] = React.useState<boolean>(false);
   const [stockFixMessage, setStockFixMessage] = React.useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
+  const [stockFixProgress, setStockFixProgress] = React.useState<{ step: string; details?: string } | null>(null);
   const [scrapeProgress, setScrapeProgress] = React.useState<{ current: number; total: number } | null>(null);
   const [scrapeMessage, setScrapeMessage] = React.useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
   const { data, mutate: mutateStockData } = useSWR('style_stock:list', async () => {
@@ -819,10 +820,12 @@ export default function StockListPage() {
     try {
       setRunningStockFix(true);
       setStockFixMessage({ type: 'info', text: 'Starting stock verification check...' });
+      setStockFixProgress({ step: 'Initializing...' });
       
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) {
         setStockFixMessage({ type: 'error', text: 'Not signed in' });
+        setStockFixProgress(null);
         setRunningStockFix(false);
         return;
       }
@@ -847,6 +850,7 @@ export default function StockListPage() {
       
       const { jobId } = await res.json();
       setStockFixMessage({ type: 'info', text: 'Stock check job queued. Monitoring progress...' });
+      setStockFixProgress({ step: 'Job queued', details: jobId });
       
       // Poll for progress
       const pollInterval = setInterval(async () => {
@@ -862,26 +866,53 @@ export default function StockListPage() {
           // Check logs for completion steps
           const { data: logsData } = await supabase
             .from('job_logs')
-            .select('msg, data')
+            .select('msg, data, ts')
             .eq('job_id', jobId)
             .order('ts', { ascending: true });
+          
+          // Update progress based on latest log
+          const latestLog = (logsData ?? []).slice(-1)[0];
+          if (latestLog) {
+            const msg = latestLog.msg || '';
+            if (msg === 'STEP:check_stock_fix_begin') {
+              setStockFixProgress({ step: 'Starting check...' });
+            } else if (msg === 'STEP:check_stock_fix_navigated') {
+              setStockFixProgress({ step: 'Navigated to Stock Status page' });
+            } else if (msg === 'STEP:check_stock_fix_verified_page') {
+              setStockFixProgress({ step: 'Page verified' });
+            } else if (msg === 'STEP:check_stock_fix_table_found') {
+              setStockFixProgress({ step: 'Table found' });
+            } else if (msg === 'STEP:check_stock_fix_show_all_clicked') {
+              setStockFixProgress({ step: 'Loading all entries...' });
+            } else if (msg === 'STEP:check_stock_fix_parsing_table') {
+              setStockFixProgress({ step: 'Parsing table data...' });
+            } else if (msg === 'STEP:check_stock_fix_parsed') {
+              const count = latestLog.data?.rowCount || 0;
+              setStockFixProgress({ step: 'Parsed table', details: `${count} rows` });
+            } else if (msg === 'STEP:check_stock_fix_fetching_db_stock') {
+              const count = latestLog.data?.styleCount || 0;
+              setStockFixProgress({ step: 'Fetching database stock', details: `${count} styles` });
+            } else if (msg === 'STEP:check_stock_fix_mismatches_found') {
+              const total = latestLog.data?.totalChecked || 0;
+              const count = latestLog.data?.mismatchCount || 0;
+              setStockFixProgress({ step: 'Comparison complete', details: `${total} checked, ${count} mismatches` });
+            } else if (msg === 'STEP:check_stock_fix_enqueuing_scrape') {
+              const count = latestLog.data?.styleCount || 0;
+              setStockFixProgress({ step: 'Enqueuing scrape job', details: `${count} styles` });
+            } else if (msg === 'STEP:check_stock_fix_scrape_enqueued') {
+              const scrapeJobId = latestLog.data?.scrapeJobId || '';
+              setStockFixProgress({ step: 'Scrape job enqueued', details: scrapeJobId });
+            }
+          }
           
           // Find if mismatches were found and scrape was triggered
           const mismatchLog = (logsData ?? []).find((l: any) => l.msg === 'STEP:check_stock_fix_mismatches_found');
           const scrapeEnqueuedLog = (logsData ?? []).find((l: any) => l.msg === 'STEP:check_stock_fix_scrape_enqueued');
           
-          if (mismatchLog?.data?.mismatchCount !== undefined) {
-            const count = mismatchLog.data.mismatchCount;
-            if (count === 0) {
-              setStockFixMessage({ type: 'success', text: 'All styles match! No mismatches found.' });
-            } else {
-              setStockFixMessage({ type: 'info', text: `Found ${count} mismatch${count !== 1 ? 'es' : ''}. Scraping...` });
-            }
-          }
-          
           if (jobData.status === 'succeeded' || jobData.status === 'failed' || jobData.status === 'cancelled') {
             clearInterval(pollInterval);
             setRunningStockFix(false);
+            setStockFixProgress(null);
             
             if (jobData.status === 'succeeded') {
               if (scrapeEnqueuedLog) {
@@ -911,12 +942,14 @@ export default function StockListPage() {
         clearInterval(pollInterval);
         if (runningStockFix) {
           setRunningStockFix(false);
+          setStockFixProgress(null);
           setStockFixMessage({ type: 'info', text: 'Stock check is taking longer than expected. Check the Jobs page for status.' });
         }
       }, 300000);
       
     } catch (err: any) {
       setRunningStockFix(false);
+      setStockFixProgress(null);
       setStockFixMessage({ type: 'error', text: `Failed to start stock check: ${err.message}` });
     }
   }, [supabase, runningStockFix, mutateStockData]);
@@ -1901,6 +1934,7 @@ PO7332, 2100"
                 setCheckerResults(null);
                 setScrapeProgress(null);
                 setStockFixMessage(null);
+                setStockFixProgress(null);
               }}
               disabled={scrapingMismatches || runningStockFix}
             >
@@ -1942,6 +1976,29 @@ PO7332, 2100"
                  'ℹ️ '}
                 {scrapeMessage.text}
               </p>
+            </div>
+          )}
+          
+          {runningStockFix && stockFixProgress && (
+            <div className="mt-4 p-4 bg-blue-50 border border-blue-200 rounded">
+              <p className="text-sm font-semibold text-blue-900 mb-2">
+                🔍 SPY Stock Verification in Progress
+              </p>
+              <div className="space-y-1">
+                <div className="text-sm text-blue-700">
+                  Status: <span className="font-medium">{stockFixProgress.step}</span>
+                </div>
+                {stockFixProgress.details && (
+                  <div className="text-xs text-blue-600">
+                    {stockFixProgress.details}
+                  </div>
+                )}
+              </div>
+              <div className="mt-3">
+                <div className="h-2 bg-blue-200 rounded-full overflow-hidden">
+                  <div className="h-full bg-blue-600 animate-pulse" style={{ width: '100%' }} />
+                </div>
+              </div>
             </div>
           )}
           

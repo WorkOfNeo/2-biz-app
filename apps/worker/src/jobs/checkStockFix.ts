@@ -24,8 +24,8 @@ export async function checkStockFix(ctx: Ctx) {
     await log(job.id, 'info', 'STEP:check_stock_fix_navigated', { url: stockStatusUrl });
     
     // Verify we're on the right page by checking breadcrumbs
-    const breadcrumbsH1 = await page.locator('h1.breadcrumbs').textContent().catch(() => '');
-    if (!breadcrumbsH1.includes('Stock Status')) {
+    const breadcrumbsH1 = await page.locator('h1.breadcrumbs').textContent().catch(() => null);
+    if (!breadcrumbsH1 || !breadcrumbsH1.includes('Stock Status')) {
       throw new Error('Could not verify Stock Status page - breadcrumbs not found');
     }
     await log(job.id, 'info', 'STEP:check_stock_fix_verified_page', { breadcrumbs: breadcrumbsH1 });
