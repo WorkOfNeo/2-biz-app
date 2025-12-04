@@ -130,17 +130,21 @@ export async function checkStockFix(ctx: Ctx) {
       filename: download.suggestedFilename() 
     });
     
-    // Save to a temporary path and read the file
-    const downloadPath = await download.path();
-    if (!downloadPath) {
-      throw new Error('Download path is null - file was not saved');
-    }
+    // Save download to a temporary file
+    const fs = await import('fs');
+    const os = await import('os');
+    const path = await import('path');
+    const tmpDir = os.tmpdir();
+    const tmpFile = path.join(tmpDir, `stock_check_${Date.now()}.xlsx`);
     
-    await log(job.id, 'info', 'STEP:check_stock_fix_download_saved', { path: downloadPath });
+    await download.saveAs(tmpFile);
+    await log(job.id, 'info', 'STEP:check_stock_fix_download_saved', { path: tmpFile });
     
     // Read the downloaded file
-    const fs = await import('fs');
-    const buffer = await fs.promises.readFile(downloadPath);
+    const buffer = await fs.promises.readFile(tmpFile);
+    
+    // Clean up temp file
+    await fs.promises.unlink(tmpFile).catch(() => null);
     
     await log(job.id, 'info', 'STEP:check_stock_fix_excel_downloaded', { size: buffer.length });
     
