@@ -1243,72 +1243,17 @@ export default function StockListPage() {
           </div>
         </div>
       </Modal>
-    </div>
-  );
-}
-
-function ScrapeActiveListButton({ listId, styleIdsInList }: { listId: string; styleIdsInList: string[] }) {
-  const supabase = createClientComponentClient();
-  const [busy, setBusy] = React.useState(false);
-  const [done, setDone] = React.useState(false);
-  return (
-    <Button
-      size="sm"
-      variant={busy ? 'secondary' : 'default'}
-      disabled={busy}
-      onClick={async () => {
-        try {
-          setBusy(true);
-          setDone(false);
-          // Resolve style_nos for styles in this list
-          const ids = Array.from(new Set(styleIdsInList || []));
-          if (ids.length === 0) {
-            alert('This list has no styles yet.');
-            setBusy(false);
-            return;
-          }
-          const { data: styles } = await supabase.from('styles').select('style_no').in('id', ids);
-          const nos = Array.from(new Set((styles ?? []).map((r: any) => String(r.style_no || '')).filter(Boolean)));
-          if (nos.length === 0) {
-            alert('No style numbers found for this list.');
-            setBusy(false);
-            return;
-          }
-          const { data: { session } } = await supabase.auth.getSession();
-          if (!session) { alert('Not signed in'); setBusy(false); return; }
-          const res = await fetch('/api/enqueue', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
-            body: JSON.stringify({ type: 'update_style_stock', payload: { requestedBy: session.user.email, styleNos: nos } })
-          });
-          if (!res.ok) {
-            const t = await res.text().catch(()=>'');
-            throw new Error(t || `Failed (${res.status})`);
-          }
-          // eslint-disable-next-line no-console
-          console.log('[stock-list] scrape list enqueued', { listId, count: nos.length });
-          setDone(true);
-        } catch (e: any) {
-          alert(e?.message || 'Failed to enqueue scrape');
-        } finally {
-          setBusy(false);
-        }
-      }}
-    >
-      {busy ? 'Scraping…' : (done ? 'Enqueued!' : 'Scrape this list')}
-    </Button>
-  );
-}
 
       {/* Checker Modal */}
       <Modal
-        isOpen={showCheckerModal}
+        open={showCheckerModal}
         onClose={() => {
           setShowCheckerModal(false);
           setCheckerResults(null);
           setCheckerInput('');
         }}
         title="Stock Checker"
+        maxWidth="max-w-6xl"
       >
         <div className="space-y-4">
           <div>
@@ -1452,4 +1397,55 @@ function ScrapeActiveListButton({ listId, styleIdsInList }: { listId: string; st
   );
 }
 
-
+function ScrapeActiveListButton({ listId, styleIdsInList }: { listId: string; styleIdsInList: string[] }) {
+  const supabase = createClientComponentClient();
+  const [busy, setBusy] = React.useState(false);
+  const [done, setDone] = React.useState(false);
+  return (
+    <Button
+      size="sm"
+      variant={busy ? 'secondary' : 'default'}
+      disabled={busy}
+      onClick={async () => {
+        try {
+          setBusy(true);
+          setDone(false);
+          // Resolve style_nos for styles in this list
+          const ids = Array.from(new Set(styleIdsInList || []));
+          if (ids.length === 0) {
+            alert('This list has no styles yet.');
+            setBusy(false);
+            return;
+          }
+          const { data: styles } = await supabase.from('styles').select('style_no').in('id', ids);
+          const nos = Array.from(new Set((styles ?? []).map((r: any) => String(r.style_no || '')).filter(Boolean)));
+          if (nos.length === 0) {
+            alert('No style numbers found for this list.');
+            setBusy(false);
+            return;
+          }
+          const { data: { session } } = await supabase.auth.getSession();
+          if (!session) { alert('Not signed in'); setBusy(false); return; }
+          const res = await fetch('/api/enqueue', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+            body: JSON.stringify({ type: 'update_style_stock', payload: { requestedBy: session.user.email, styleNos: nos } })
+          });
+          if (!res.ok) {
+            const t = await res.text().catch(()=>'');
+            throw new Error(t || `Failed (${res.status})`);
+          }
+          // eslint-disable-next-line no-console
+          console.log('[stock-list] scrape list enqueued', { listId, count: nos.length });
+          setDone(true);
+        } catch (e: any) {
+          alert(e?.message || 'Failed to enqueue scrape');
+        } finally {
+          setBusy(false);
+        }
+      }}
+    >
+      {busy ? 'Scraping…' : (done ? 'Enqueued!' : 'Scrape this list')}
+    </Button>
+  );
+}
