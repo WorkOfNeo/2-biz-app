@@ -676,6 +676,66 @@ export default function StockListPage() {
     return { stock, sold, purchase, available };
   }, [filteredForView]);
 
+  // Export Checker results to Excel
+  const exportCheckerToExcel = React.useCallback(() => {
+    if (!checkerResults) return;
+    
+    try {
+      const workbook = XLSX.utils.book_new();
+      
+      // Create summary data
+      const summaryData = [
+        ['Stock Checker Results', '', '', '', '', ''],
+        ['Generated', new Date().toLocaleString()],
+        [''],
+        ['Summary'],
+        ['Pasted Styles', checkerResults.pastedCount],
+        ['Current Styles', checkerResults.currentCount],
+        ['Matches', checkerResults.matches],
+        ['Mismatches', checkerResults.mismatches],
+        ['Missing in Current', checkerResults.missingInCurrent],
+        ['Missing in Pasted', checkerResults.missingInPasted],
+        [''],
+        ['Details'],
+        ['Style No', 'Name', 'Pasted Total', 'Current Total', 'Difference', 'Status']
+      ];
+      
+      // Add all differences
+      for (const diff of checkerResults.differences) {
+        summaryData.push([
+          diff.styleNo,
+          diff.name || '',
+          diff.pastedTotal,
+          diff.currentTotal,
+          diff.diff,
+          diff.status === 'match' ? 'Match' :
+          diff.status === 'mismatch' ? 'Mismatch' :
+          diff.status === 'missing_in_current' ? 'Not in current' :
+          'Not in pasted'
+        ]);
+      }
+      
+      const worksheet = XLSX.utils.aoa_to_sheet(summaryData);
+      
+      // Set column widths
+      worksheet['!cols'] = [
+        { wch: 15 }, // Style No
+        { wch: 25 }, // Name
+        { wch: 15 }, // Pasted Total
+        { wch: 15 }, // Current Total
+        { wch: 15 }, // Difference
+        { wch: 20 }  // Status
+      ];
+      
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'Checker Results');
+      
+      const filename = `stock-checker-${new Date().toISOString().split('T')[0]}.xlsx`;
+      XLSX.writeFile(workbook, filename);
+    } catch (err: any) {
+      alert(`Export failed: ${err.message}`);
+    }
+  }, [checkerResults]);
+
   // Checker function: parse pasted data and compare with current stock
   const runChecker = React.useCallback(() => {
     try {
@@ -1279,6 +1339,11 @@ export default function StockListPage() {
             <Button onClick={runChecker} disabled={!checkerInput.trim()}>
               Check Differences
             </Button>
+            {checkerResults && (
+              <Button onClick={exportCheckerToExcel} variant="default">
+                Export to Excel
+              </Button>
+            )}
             <Button 
               variant="outline" 
               onClick={() => {
