@@ -5,7 +5,7 @@ import { supabase } from '../../../../lib/supabaseClient';
 import { useSearchParams } from 'next/navigation';
 
 type StatsRow = { account_no: string | null; qty: number; price: number; season_id: string; salesperson_id: string | null };
-type InvoiceRow = { account_no: string | null; qty: number; amount: number; currency: string | null; invoice_no: string | null; season_id: string; salesperson_id: string | null; created_at?: string };
+type InvoiceRow = { account_no: string | null; qty: number; amount: number; currency: string | null; invoice_no: string | null; season_id: string; created_at?: string };
 
 export default function OverviewRecordsPage() {
   return (
@@ -65,7 +65,7 @@ function RecordsInner() {
     if (!s1 || !s2) return [];
     const { data, error } = await supabase
       .from('sales_invoices')
-      .select('account_no, qty, amount, currency, invoice_no, season_id, salesperson_id, created_at')
+      .select('account_no, qty, amount, currency, invoice_no, season_id, created_at')
       .in('season_id', [s1, s2])
       .limit(200000);
     if (error) throw new Error(error.message);
@@ -101,12 +101,13 @@ function RecordsInner() {
     for (const inv of (invoices ?? [])) {
       const acc = inv.account_no as string | null;
       if (!acc || !byCustomer.has(acc)) continue;
+      // Note: invoices don't have salesperson_id in DB, but customer is already filtered by sp
       const fake: StatsRow & { isInvoice?: boolean; invoice_no?: string | null } = {
         account_no: inv.account_no,
         qty: Number(inv.qty || 0),
         price: Number(inv.amount || 0),
         season_id: inv.season_id,
-        salesperson_id: inv.salesperson_id,
+        salesperson_id: sp, // Use the selected salesperson since customer is already filtered
         isInvoice: true,
         invoice_no: inv.invoice_no
       };
