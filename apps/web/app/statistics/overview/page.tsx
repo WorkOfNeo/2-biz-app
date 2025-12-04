@@ -112,11 +112,11 @@ export default function OverviewPage() {
   const { data: invoices } = useSWR(s1 && s2 ? ['overview:invoices', s1, s2] : null, async () => {
     const { data, error } = await supabase
       .from('sales_invoices')
-      .select('account_no, qty, amount, currency, season_id, salesperson_id')
+      .select('account_no, qty, amount, currency, season_id')
       .in('season_id', [s1, s2])
       .limit(200000);
     if (error) throw new Error(error.message);
-    return (data ?? []) as { account_no: string | null; qty: number | null; amount: number | null; currency: string | null; season_id: string; salesperson_id: string | null }[];
+    return (data ?? []) as { account_no: string | null; qty: number | null; amount: number | null; currency: string | null; season_id: string }[];
   }, { refreshInterval: 20000 });
 
   // Seasonal overrides (null/hidden) stored in app_settings per season - same as General page
@@ -211,13 +211,16 @@ export default function OverviewPage() {
         row.s2Price += price * rateS2;
       }
     }
-    // Aggregate invoices using salesperson_id directly from invoice (same as General page)
+    // Aggregate invoices mapped to salesperson via customers
+    const customerById = new Map<string, Customer>();
+    for (const c of customers) { if (c.customer_id) customerById.set(c.customer_id, c); }
     for (const inv of (invoices ?? [])) {
       const acc = inv.account_no ?? '';
       if (!acc) continue;
       // Exclude hidden customers from aggregation (same as General page)
       if (isHidden(acc)) continue;
-      const spId = inv.salesperson_id ?? '';
+      const c = customerById.get(acc);
+      const spId = c?.salesperson_id ?? '';
       if (!spId) continue;
       const set = targetsBySp.get(spId);
       if (!set || !set.has(acc)) continue;
@@ -349,12 +352,15 @@ export default function OverviewPage() {
         out.s2PriceDkk += price * rateS2;
       }
     }
-    // Process invoices - use salesperson_id directly from invoice (same as General page)
+    // Build customer lookup for invoice currency resolution
+    const customerByIdForInv = new Map<string, Customer>();
+    for (const c of (customers ?? [])) { if (c.customer_id) customerByIdForInv.set(c.customer_id, c); }
     for (const inv of (invoices ?? [])) {
       const acc = inv.account_no ?? '';
       if (!acc || !targetAccounts.has(acc)) continue;
-      // Use salesperson's currency directly from invoice, default to DKK if no salesperson (same as General page)
-      const spId = inv.salesperson_id ?? null;
+      // Use salesperson's currency via customer lookup, default to DKK if no salesperson (same as General page)
+      const c = customerByIdForInv.get(acc);
+      const spId = c?.salesperson_id ?? null;
       const currency = spId ? (spCurrencyById[spId] ?? 'DKK') : 'DKK';
       const rateS1 = { ...baseRates, ...(ratesS1 ?? {}) }[currency] ?? 1;
       const rateS2 = { ...baseRates, ...(ratesS2 ?? {}) }[currency] ?? 1;

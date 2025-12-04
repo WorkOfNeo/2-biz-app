@@ -547,7 +547,7 @@ export default function StatisticsGeneralPage() {
       }
       const invoicesQuery = supabase
         .from('sales_invoices')
-        .select('account_no, customer_name, qty, amount, season_id, salesperson_id')
+        .select('account_no, customer_name, qty, amount, season_id')
         .in('season_id', [s1, s2]);
 
       const [statsRes, invoicesRes] = await Promise.all([
