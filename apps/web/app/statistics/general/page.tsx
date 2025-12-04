@@ -545,10 +545,26 @@ export default function StatisticsGeneralPage() {
       if (selectedSalespersonId) {
         statsQuery.eq('salesperson_id', selectedSalespersonId);
       }
+      
+      // Build invoices query - need to filter by salesperson via customer lookup
+      // First get customer IDs for the selected salesperson
+      let targetCustomerIds: string[] = [];
+      if (selectedSalespersonId) {
+        const customerIds = (allCustomers ?? [])
+          .filter(c => c.salesperson_id === selectedSalespersonId && c.customer_id)
+          .map(c => c.customer_id!);
+        targetCustomerIds = customerIds;
+      }
+      
       const invoicesQuery = supabase
         .from('sales_invoices')
         .select('account_no, customer_name, qty, amount, season_id')
         .in('season_id', [s1, s2]);
+      
+      // Filter invoices by customer IDs when a salesperson is selected
+      if (selectedSalespersonId && targetCustomerIds.length > 0) {
+        invoicesQuery.in('account_no', targetCustomerIds);
+      }
 
       const [statsRes, invoicesRes] = await Promise.all([
         statsQuery.limit(100000),
@@ -632,8 +648,6 @@ export default function StatisticsGeneralPage() {
         if (!itemCity && inv.account_no) itemCity = customerIndex?.byId?.[inv.account_no] ?? '';
         if (!itemCity && inv.customer_name) itemCity = customerIndex?.byName?.[inv.customer_name] ?? '';
         if (!itemCity) itemCity = '-';
-        // Use salesperson_id directly from invoice
-        const spId = inv.salesperson_id ?? null;
         const item = itemExisting ?? {
           account_no: inv.account_no ?? key,
           customer: inv.customer_name ?? '-',
@@ -643,8 +657,8 @@ export default function StatisticsGeneralPage() {
           s1Price: 0,
           s2Qty: 0,
           s2Price: 0,
-          salespersonId: spId,
-          salespersonName: spId ? (spNameById[spId] ?? 'Unknown') : '—'
+          salespersonId: null,
+          salespersonName: '—'
         } as RowOut;
         const qty = Number(inv.qty ?? 0) || 0;
         const amount = Number(inv.amount ?? 0) || 0;
