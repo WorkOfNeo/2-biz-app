@@ -13,6 +13,7 @@ import { scrapeStatisticsPerSize } from './jobs/scrapeStatisticsPerSize.js';
 import { fixInvoices as fixInvoicesJob } from './jobs/fixInvoices.js';
 import { scrapePurchaseOrders as scrapePurchaseOrdersJob } from './jobs/scrapePurchaseOrders.js';
 import { checkPurchaseOrders as checkPurchaseOrdersJob } from './jobs/checkPurchaseOrders.js';
+import { checkStockFix as checkStockFixJob } from './jobs/checkStockFix.js';
 import { scrapeEans as scrapeEansJob } from './jobs/scrapeEans.js';
 import { pushAppPoToSpy } from './jobs/pushAppPoToSpy.js';
 import { syncAppPoFromSpy } from './jobs/syncAppPoFromSpy.js';
@@ -863,6 +864,53 @@ async function runJob(job: JobRow) {
       }
       // Removed redundant STEP:style_stock_rows log (row count included in style_stock_style_done)
     }
+    
+    // Trigger check-stock-fix job only for full/selected runs (not checker runs) and only from root job
+    const isRootJob = rootId === job.id;
+    const requestedBy = (job.payload as any)?.requestedBy as string | undefined;
+    const mode = (job.payload as any)?.mode as string | undefined;
+    const isFullOrSelectedRun = mode === 'all' || (requestedBy && requestedBy !== 'checker' && requestedBy !== 'check-stock-fix');
+    
+    if (isRootJob && isFullOrSelectedRun && currentBatchIndex === 1) {
+      // Check if check_stock_fix has already been enqueued for this root job
+      const { data: existingCheckJob } = await supabase
+        .from('jobs')
+        .select('id')
+        .eq('type', 'check_stock_fix')
+        .contains('payload', { triggerJobId: rootId })
+        .maybeSingle();
+      
+      if (!existingCheckJob) {
+        try {
+          await log(job.id, 'info', 'STEP:check_stock_fix_enqueuing', { rootId, mode, requestedBy });
+          
+          // Enqueue check_stock_fix job with a delay to allow other batches to complete
+          await supabase
+            .from('jobs')
+            .insert({
+              type: 'check_stock_fix',
+              payload: {
+                triggerJobId: rootId,
+                mode,
+                requestedBy,
+                scheduledFor: new Date(Date.now() + 120_000).toISOString() // Delay 2 minutes
+              },
+              status: 'queued',
+              max_attempts: 2,
+              queue: 'default',
+              priority: 80, // Lower priority
+              run_after: new Date(Date.now() + 120_000).toISOString() // Delay 2 minutes
+            });
+          
+          await log(job.id, 'info', 'STEP:check_stock_fix_enqueued', { rootId });
+        } catch (e: any) {
+          await log(job.id, 'error', 'STEP:check_stock_fix_enqueue_failed', { error: e?.message || String(e) });
+        }
+      } else {
+        await log(job.id, 'info', 'STEP:check_stock_fix_already_enqueued', { existingJobId: existingCheckJob.id });
+      }
+    }
+    
     await saveResult(job.id, 'Style stock scrape completed', { totalRows });
     await log(job.id, 'info', 'STEP:complete', { totalRows });
     return;
@@ -918,6 +966,10 @@ async function runJob(job: JobRow) {
   }
   if ((job.type as any) === 'check_purchase_orders') {
     await checkPurchaseOrdersJob({ job, page: page!, log, saveResult, setJobFailedOrRequeue, setJobSucceeded, ensureNotCancelled, supabase });
+    return;
+  }
+  if ((job.type as any) === 'check_stock_fix') {
+    await checkStockFixJob({ job, page: page!, log, saveResult, setJobFailedOrRequeue, setJobSucceeded, ensureNotCancelled, supabase });
     return;
   }
   /* LEGACY export_overview handler (disabled)
