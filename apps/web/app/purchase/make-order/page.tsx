@@ -1063,7 +1063,7 @@ function Step3EnterQuantities({
                       </Button>
             </div>
 
-                    {/* Historical Sales Data Input */}
+            {/* Historical Sales Data Input */}
                     {historicalDataOpen[key] && (
                       <div className="bg-purple-50 border border-purple-200 rounded-lg p-3 space-y-2">
                         <div className="text-xs font-semibold text-purple-900">Historical Sales Data</div>
@@ -1105,7 +1105,7 @@ function Step3EnterQuantities({
                             </div>
                     )}
 
-                    <div className="overflow-x-auto">
+            <div className="overflow-x-auto">
                       <table className="min-w-full text-sm border border-slate-300">
                         <thead className="bg-slate-100">
                           <tr>
@@ -1247,7 +1247,8 @@ function Step3EnterQuantities({
                                 </tr>
                               </tbody>
                             </table>
-                          </div>
+            </div>
+          </div>
 
           {/* New Fill Options - Using Sales Total Pressure */}
           <div className="space-y-4 pt-4 border-t-2 border-slate-200">
