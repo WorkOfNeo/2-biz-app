@@ -969,7 +969,7 @@ async function runJob(job: JobRow) {
     return;
   }
   if ((job.type as any) === 'check_stock_fix') {
-    await checkStockFixJob({ job, page: page!, log, saveResult, setJobFailedOrRequeue, setJobSucceeded, ensureNotCancelled, supabase });
+    await checkStockFixJob({ job, page: page!, log, saveResult, setJobFailedOrRequeue, setJobSucceeded, ensureNotCancelled, supabase, SPY_BASE_URL, findFirst });
     return;
   }
   /* LEGACY export_overview handler (disabled)
