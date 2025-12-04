@@ -945,97 +945,43 @@ function Step3EnterQuantities({
   }
 
   // Extract and calculate all data for the current item
-  const itemData = React.useMemo(() => {
-    const { colorGroup, key, supplier, supplierItemIndex, supplierTotalItems } = currentItem;
-    const meta = styleMetadata?.get(colorGroup.style_no);
-    const inputs =
-      inputsByKey[key]?.length === colorGroup.sizes.length
-        ? inputsByKey[key]
-        : Array(colorGroup.sizes.length).fill(0);
+  const { colorGroup, key, supplier, supplierItemIndex, supplierTotalItems } = currentItem;
+  const meta = styleMetadata?.get(colorGroup.style_no);
+  const inputs =
+    inputsByKey[key]?.length === colorGroup.sizes.length
+      ? inputsByKey[key]
+      : Array(colorGroup.sizes.length).fill(0);
 
-    const salesInputs =
-      manualSalesData[key]?.length === colorGroup.sizes.length
-        ? manualSalesData[key]
-        : Array(colorGroup.sizes.length).fill(0);
+  const salesInputs =
+    manualSalesData[key]?.length === colorGroup.sizes.length
+      ? manualSalesData[key]
+      : Array(colorGroup.sizes.length).fill(0);
 
-    const historical = historicalData[key] || [];
-    const hasHistorical = historical.length === colorGroup.sizes.length;
-    const hasHistoricalFromDB = historicalSalesData && historicalSalesData[key] && Object.keys(historicalSalesData[key]).length > 0;
-    const historicalTotal = hasHistorical ? historical.reduce((a, b) => a + b, 0) : 0;
-    const historicalPressure = hasHistorical && historicalTotal > 0
-      ? historical.map((h) => ((h / historicalTotal) * 100).toFixed(1))
-      : [];
+  const historical = historicalData[key] || [];
+  const hasHistorical = historical.length === colorGroup.sizes.length;
+  const hasHistoricalFromDB = historicalSalesData && historicalSalesData[key] && Object.keys(historicalSalesData[key]).length > 0;
+  const historicalTotal = hasHistorical ? historical.reduce((a, b) => a + b, 0) : 0;
+  const historicalPressure = hasHistorical && historicalTotal > 0
+    ? historical.map((h) => ((h / historicalTotal) * 100).toFixed(1))
+    : [];
 
-    // Calculate Net Need = Stock + Purchase - Sold
-    const netNeed = colorGroup.stock.map((stock: number, i: number) => 
-      stock + (colorGroup.purchase[i] ?? 0) - (colorGroup.sold[i] ?? 0)
-    );
-    const netNeedTotal = sum(netNeed);
-    
-    // Calculate New Net Need = Net Need + Order
-    const newNetNeed = netNeed.map((n, i) => n + (inputs[i] ?? 0));
+  // Calculate Net Need = Stock + Purchase - Sold
+  const netNeed = colorGroup.stock.map((stock: number, i: number) => 
+    stock + (colorGroup.purchase[i] ?? 0) - (colorGroup.sold[i] ?? 0)
+  );
+  const netNeedTotal = sum(netNeed);
+  
+  // Calculate New Net Need = Net Need + Order
+  const newNetNeed = netNeed.map((n, i) => n + (inputs[i] ?? 0));
 
-    // Calculate pressure for each row
-    const stockPressure = calculatePressure(colorGroup.stock);
-    const soldPressure = calculatePressure(colorGroup.sold);
-    const purchasePressure = calculatePressure(colorGroup.purchase);
-    const salesPressure = calculatePressure(salesInputs);
-    const netNeedPressure = calculatePressure(netNeed.map((v) => Math.abs(v)));
-    const orderPressure = calculatePressure(inputs);
-    const newNetNeedPressure = calculatePressure(newNetNeed.map((v) => Math.abs(v)));
-
-    return {
-      colorGroup,
-      key,
-      supplier,
-      supplierItemIndex,
-      supplierTotalItems,
-      meta,
-      inputs,
-      salesInputs,
-      historical,
-      hasHistorical,
-      hasHistoricalFromDB,
-      historicalTotal,
-      historicalPressure,
-      netNeed,
-      netNeedTotal,
-      newNetNeed,
-      stockPressure,
-      soldPressure,
-      purchasePressure,
-      salesPressure,
-      netNeedPressure,
-      orderPressure,
-      newNetNeedPressure
-    };
-  }, [currentItem, styleMetadata, inputsByKey, manualSalesData, historicalData, historicalSalesData]);
-
-  const {
-    colorGroup,
-    key,
-    supplier,
-    supplierItemIndex,
-    supplierTotalItems,
-    meta,
-    inputs,
-    salesInputs,
-    historical,
-    hasHistorical,
-    hasHistoricalFromDB,
-    historicalTotal,
-    historicalPressure,
-    netNeed,
-    netNeedTotal,
-    newNetNeed,
-    stockPressure,
-    soldPressure,
-    purchasePressure,
-    salesPressure,
-    netNeedPressure,
-    orderPressure,
-    newNetNeedPressure
-  } = itemData;
+  // Calculate pressure for each row
+  const stockPressure = calculatePressure(colorGroup.stock);
+  const soldPressure = calculatePressure(colorGroup.sold);
+  const purchasePressure = calculatePressure(colorGroup.purchase);
+  const salesPressure = calculatePressure(salesInputs);
+  const netNeedPressure = calculatePressure(netNeed.map((v) => Math.abs(v)));
+  const orderPressure = calculatePressure(inputs);
+  const newNetNeedPressure = calculatePressure(newNetNeed.map((v) => Math.abs(v)));
 
   return (
     <div className="space-y-4">
