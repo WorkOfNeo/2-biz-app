@@ -69,7 +69,7 @@ export default function StockListPage() {
   const [scrapingMismatches, setScrapingMismatches] = React.useState<boolean>(false);
   const [scrapeProgress, setScrapeProgress] = React.useState<{ current: number; total: number } | null>(null);
   const [scrapeMessage, setScrapeMessage] = React.useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
-  const { data } = useSWR('style_stock:list', async () => {
+  const { data, mutate: mutateStockData } = useSWR('style_stock:list', async () => {
     // First, get the total count
     const { count, error: countError } = await supabase
       .from('style_stock')
@@ -105,7 +105,7 @@ export default function StockListPage() {
     
     setLoadingProgress(null); // Clear progress when done
     return rows as Row[];
-  }, { refreshInterval: 30000 });
+  }, { refreshInterval: 90000 }); // Refresh every 1.5 minutes
 
   // Collect distinct style numbers from current data
   const styleNos = React.useMemo(() => Array.from(new Set((data ?? []).map((r) => r.style_no))), [data]);
@@ -774,10 +774,10 @@ export default function StockListPage() {
             if (jobData.status === 'succeeded') {
               setScrapeMessage({ 
                 type: 'success', 
-                text: `Scraping complete! ${completedCount} styles scraped. Refreshing page...` 
+                text: `Scraping complete! ${completedCount} styles scraped. Refreshing data...` 
               });
-              // Refresh the stock data after a short delay
-              setTimeout(() => window.location.reload(), 2000);
+              // Refresh the stock data without reloading the page
+              setTimeout(() => mutateStockData(), 2000);
             } else {
               setScrapeMessage({ 
                 type: 'error', 
@@ -810,7 +810,7 @@ export default function StockListPage() {
         text: `Failed to start scraping: ${err.message}` 
       });
     }
-  }, [checkerResults, supabase, scrapingMismatches]);
+  }, [checkerResults, supabase, scrapingMismatches, mutateStockData]);
 
   // Export Checker results to Excel
   const exportCheckerToExcel = React.useCallback(() => {
@@ -1359,6 +1359,7 @@ export default function StockListPage() {
             listId={activeListId}
             styleIdsInList={Array.from(styleIdsInList)}
             listName={stockLists?.find(l => l.id === activeListId)?.name}
+            onDataRefresh={mutateStockData}
           />
               </div>
         )}
@@ -1990,7 +1991,7 @@ PO7332, 2100"
   );
 }
 
-function ScrapeActiveListButton({ listId, styleIdsInList, listName }: { listId: string; styleIdsInList: string[]; listName?: string }) {
+function ScrapeActiveListButton({ listId, styleIdsInList, listName, onDataRefresh }: { listId: string; styleIdsInList: string[]; listName?: string; onDataRefresh?: () => void }) {
   const supabase = createClientComponentClient();
   const [busy, setBusy] = React.useState(false);
   const [scraping, setScraping] = React.useState(false);
@@ -2026,7 +2027,7 @@ function ScrapeActiveListButton({ listId, styleIdsInList, listName }: { listId: 
         created_at: latest.created_at || new Date().toISOString()
       } as { id: string; title: string; public_url: string | null; created_at: string } : null;
     },
-    { refreshInterval: 30000 }
+    { refreshInterval: 90000 } // Refresh every 1.5 minutes
   );
 
   React.useEffect(() => {
@@ -2051,7 +2052,7 @@ function ScrapeActiveListButton({ listId, styleIdsInList, listName }: { listId: 
   };
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-2 w-full">
       <div className="flex items-center justify-between w-full">
         <div className="flex items-center gap-2">
           {latestExport && latestExport.public_url && (
@@ -2190,8 +2191,10 @@ function ScrapeActiveListButton({ listId, styleIdsInList, listName }: { listId: 
                               setMessage({ type: 'success', text: 'Export complete!' });
                               // Refresh exports list
                               await mutateExports();
-                              // Reload page after a delay to show updated data
-                              setTimeout(() => window.location.reload(), 2000);
+                              // Refresh stock data without reloading the page
+                              if (onDataRefresh) {
+                                setTimeout(() => onDataRefresh(), 2000);
+                              }
                             } else {
                               setMessage({ type: 'error', text: `Export ${exportJobData.status}. Check the Jobs page for details.` });
                             }
