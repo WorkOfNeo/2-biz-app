@@ -39,20 +39,29 @@ export async function exportStockList(ctx: Ctx) {
       // Fetch style meta (include supplier for grouping)
       const { data: styleRows } = await supabase.from('styles').select('id, style_no, style_name, image_url, supplier').in('id', styleIds);
       const metaByNo = new Map<string, { id: string | null; name: string | null; image: string | null; supplier: string | null }>();
+      const styleNoById = new Map<string, string>();
       const finalStyleNos: string[] = [];
       for (const r of (styleRows ?? []) as any[]) {
-        metaByNo.set(r.style_no, { id: (r.id as string) || null, name: r.style_name ?? null, image: r.image_url ?? null, supplier: r.supplier ?? null });
-        if (r.style_no) finalStyleNos.push(r.style_no as string);
+        const styleNo = r.style_no as string | undefined;
+        const styleId = (r.id as string) || null;
+        if (!styleNo) continue;
+        metaByNo.set(styleNo, { id: styleId, name: r.style_name ?? null, image: r.image_url ?? null, supplier: r.supplier ?? null });
+        if (styleId) styleNoById.set(styleId, styleNo);
+        finalStyleNos.push(styleNo);
       }
-      // Map colors per style_id -> colorLower -> style_color_id
+      // Map colors per style_id -> colorLower -> style_color_id (plus keep entries list for placeholders)
       const styleColorIdMap = new Map<string, Map<string, string>>();
+      const styleColorEntries = new Map<string, Array<{ id: string; colorLower: string; label: string }>>();
       if (styleIds.length) {
         const { data: cols } = await supabase.from('style_colors').select('id, style_id, color').in('style_id', styleIds);
         for (const c of (cols ?? []) as any[]) {
           const sid = String(c.style_id || '');
-          const key = String(c.color || '').trim().toLowerCase();
+          const label = String(c.color || '').trim();
+          const key = label.toLowerCase();
           if (!styleColorIdMap.has(sid)) styleColorIdMap.set(sid, new Map());
           styleColorIdMap.get(sid)!.set(key, c.id as string);
+          if (!styleColorEntries.has(sid)) styleColorEntries.set(sid, []);
+          styleColorEntries.get(sid)!.push({ id: c.id as string, colorLower: key, label: label || key });
         }
       }
       // Load per-list color rules; support blacklist (include=false) and legacy whitelist (include=true)
@@ -86,7 +95,7 @@ export async function exportStockList(ctx: Ctx) {
         if (!byColor.has(c)) byColor.set(c, []);
         byColor.get(c)!.push(rr as Row);
       }
-      const out: Array<{ style_no: string; color: string; sizes: string[]; stockArr: number[]; soldArr: number[]; purchaseArr: number[]; availableArr: number[]; stock: number; sold: number; purchase: number; available: number }> = [];
+      const out: Array<{ style_no: string; color: string; sizes: string[]; stockArr: number[]; soldArr: number[]; purchaseArr: number[]; availableArr: number[]; stock: number; sold: number; purchase: number; available: number; scrapedAt: string | null }> = [];
       for (const [style_no, byColor] of byStyle.entries()) {
         const metaEntry = metaByNo.get(style_no) || { id: null, name: null, image: null };
         const sid = metaEntry.id || null;
@@ -132,6 +141,12 @@ export async function exportStockList(ctx: Ctx) {
           const stockRow = latestRows.find(r => r.section === 'Stock');
           const soldRows = latestRows.filter(r => r.section === 'Sold');
           const purchaseRows = latestRows.filter(r => r.section === 'Purchase (Running + Shipped)');
+          const latestAt = latestRows.reduce<string | null>((max, row) => {
+            const ts = row.scraped_at || null;
+            if (!ts) return max;
+            if (!max) return ts;
+            return new Date(ts).getTime() > new Date(max).getTime() ? ts : max;
+          }, latestRows[0]?.scraped_at ?? null);
           const sizes = (stockRow?.sizes && Array.isArray(stockRow.sizes)) ? (stockRow.sizes as string[]) : (Array.isArray((latestRows[0] as any)?.sizes) ? ((latestRows[0] as any)?.sizes as string[]) : []);
           const num = sizes.length || 0;
           const zero = Array.from({ length: num }, () => 0);
@@ -161,7 +176,42 @@ export async function exportStockList(ctx: Ctx) {
           const sold = sum(soldArr);
           const purchase = sum(purchaseArr);
           const available = sum(availableArr);
-          out.push({ style_no, color, sizes, stockArr, soldArr, purchaseArr, availableArr, stock, sold, purchase, available });
+          out.push({ style_no, color, sizes, stockArr, soldArr, purchaseArr, availableArr, stock, sold, purchase, available, scrapedAt: latestAt });
+        }
+      }
+      // Ensure placeholder colors/styles (even without scraped data) so export matches UI view
+      const normalizeKey = (styleNo: string, color: string) => `${styleNo}|${String(color || '').trim().toLowerCase()}`;
+      const existingKeys = new Set(out.map((r) => normalizeKey(r.style_no, r.color)));
+      for (const sid of styleIds) {
+        const styleNo = styleNoById.get(String(sid));
+        if (!styleNo) continue;
+        const entries: Array<{ id: string; colorLower: string; label: string }> = styleColorEntries.get(String(sid)) ?? [];
+        const flags = byStyleFlags.get(String(sid)) || { hasIncludeTrue: false, hasIncludeFalse: false };
+        for (const entry of entries) {
+          let allow = true;
+          if (flags.hasIncludeFalse) {
+            allow = includeMap.get(entry.id) !== false;
+          } else if (flags.hasIncludeTrue) {
+            allow = includeMap.get(entry.id) === true;
+          }
+          if (!allow) continue;
+          const key = normalizeKey(styleNo, entry.colorLower);
+          if (existingKeys.has(key)) continue;
+          out.push({
+            style_no: styleNo,
+            color: entry.label || entry.colorLower,
+            sizes: [],
+            stockArr: [],
+            soldArr: [],
+            purchaseArr: [],
+            availableArr: [],
+            stock: 0,
+            sold: 0,
+            purchase: 0,
+            available: 0,
+            scrapedAt: null
+          });
+          existingKeys.add(key);
         }
       }
       // Establish a stable number of size columns across all styles in the list (min 8)
@@ -255,9 +305,11 @@ export async function exportStockList(ctx: Ctx) {
             Cell('Total', totalW, 'right', styles.th)
           );
           const rows: any[] = [];
+          const updatedLabel = formatRelativeTimeDa(c.scrapedAt);
+          const colorCellText = c.color ? `${c.color}\n${updatedLabel}` : updatedLabel;
           // Stock row
           rows.push(React.createElement(View, { style: styles.tableRow, key: `${style_no}-${c.color}-stock` },
-            Cell(c.color, colorW, 'left', styles.bold),
+            Cell(colorCellText, colorW, 'left', styles.bold),
             Cell('På lager', sectionW, 'left', styles.bold),
             ...Array.from({ length: maxSizeCount }, (_, i) => {
               const within = i < sizes.length;
@@ -387,6 +439,28 @@ async function ensureBuffer(data: any): Promise<Buffer> {
   }
   if (typeof data === 'string') return Buffer.from(data as string);
   return Buffer.from([]);
+}
+
+function formatRelativeTimeDa(iso?: string | null): string {
+  if (!iso) return 'Ikke opdateret endnu';
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return 'Ikke opdateret endnu';
+  const diffMs = Date.now() - date.getTime();
+  if (diffMs < 0) return 'Opdateret netop nu';
+  if (diffMs < 60000) return 'Opdateret for under et minut siden';
+  const diffMins = Math.floor(diffMs / 60000);
+  if (diffMins < 60) return `Opdateret for ${diffMins} min siden`;
+  const diffHours = Math.floor(diffMins / 60);
+  if (diffHours < 24) {
+    const label = diffHours === 1 ? 'time' : 'timer';
+    return `Opdateret for ${diffHours} ${label} siden`;
+  }
+  const diffDays = Math.floor(diffHours / 24);
+  if (diffDays < 7) {
+    const label = diffDays === 1 ? 'dag' : 'dage';
+    return `Opdateret for ${diffDays} ${label} siden`;
+  }
+  return `Opdateret ${date.toLocaleDateString('da-DK')}`;
 }
 
 

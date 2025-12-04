@@ -23,21 +23,27 @@ type Row = {
   scraped_at: string;
 };
 
-// Helper function to format relative time
+// Helper function to format relative time (Danish)
 function formatRelativeTime(isoString: string): string {
-  if (!isoString) return 'Never';
+  if (!isoString) return 'Aldrig opdateret';
   const date = new Date(isoString);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
+  if (Number.isNaN(date.getTime())) return 'Aldrig opdateret';
+  const diffMs = Date.now() - date.getTime();
+  if (diffMs < 0) return 'Opdateret netop nu';
   const diffMins = Math.floor(diffMs / 60000);
-  const diffHours = Math.floor(diffMs / 3600000);
-  const diffDays = Math.floor(diffMs / 86400000);
-  
-  if (diffMins < 1) return 'Just now';
-  if (diffMins < 60) return `${diffMins}m ago`;
-  if (diffHours < 24) return `${diffHours}h ago`;
-  if (diffDays < 7) return `${diffDays}d ago`;
-  return date.toLocaleDateString();
+  if (diffMins < 1) return 'Opdateret for under et minut siden';
+  if (diffMins < 60) return `Opdateret for ${diffMins} min siden`;
+  const diffHours = Math.floor(diffMins / 60);
+  if (diffHours < 24) {
+    const label = diffHours === 1 ? 'time' : 'timer';
+    return `Opdateret for ${diffHours} ${label} siden`;
+  }
+  const diffDays = Math.floor(diffHours / 24);
+  if (diffDays < 7) {
+    const label = diffDays === 1 ? 'dag' : 'dage';
+    return `Opdateret for ${diffDays} ${label} siden`;
+  }
+  return `Opdateret ${date.toLocaleDateString('da-DK')}`;
 }
 
 export default function StockListPage() {
@@ -506,7 +512,7 @@ export default function StockListPage() {
             'Supplier': meta.supplier || '',
             'Color': color.color,
             'Section': 'Stock',
-            'Scraped At': color.scrapedAt ? new Date(color.scrapedAt).toLocaleString() : 'Not scraped'
+            'Opdateret': color.scrapedAt ? formatRelativeTime(color.scrapedAt) : 'Ikke opdateret'
           };
           color.sizes.forEach((size, idx) => {
             stockRow[size] = color.stock[idx] ?? 0;
@@ -521,7 +527,7 @@ export default function StockListPage() {
             'Supplier': meta.supplier || '',
             'Color': color.color,
             'Section': 'Sold',
-            'Scraped At': color.scrapedAt ? new Date(color.scrapedAt).toLocaleString() : 'Not scraped'
+            'Opdateret': color.scrapedAt ? formatRelativeTime(color.scrapedAt) : 'Ikke opdateret'
           };
           color.sizes.forEach((size, idx) => {
             soldRow[size] = color.soldSum[idx] ?? 0;
@@ -536,7 +542,7 @@ export default function StockListPage() {
             'Supplier': meta.supplier || '',
             'Color': color.color,
             'Section': 'Purchase',
-            'Scraped At': color.scrapedAt ? new Date(color.scrapedAt).toLocaleString() : 'Not scraped'
+            'Opdateret': color.scrapedAt ? formatRelativeTime(color.scrapedAt) : 'Ikke opdateret'
           };
           color.sizes.forEach((size, idx) => {
             purchaseRow[size] = color.purchaseSum[idx] ?? 0;
@@ -551,7 +557,7 @@ export default function StockListPage() {
             'Supplier': meta.supplier || '',
             'Color': color.color,
             'Section': 'Available',
-            'Scraped At': color.scrapedAt ? new Date(color.scrapedAt).toLocaleString() : 'Not scraped'
+            'Opdateret': color.scrapedAt ? formatRelativeTime(color.scrapedAt) : 'Ikke opdateret'
           };
           color.sizes.forEach((size, idx) => {
             availableRow[size] = color.available[idx] ?? 0;
@@ -1008,13 +1014,13 @@ export default function StockListPage() {
         {loadingProgress && (
           <div className="fixed bottom-4 right-4 z-40 w-80 max-w-[calc(100vw-2rem)]">
             <Card className="shadow-lg">
-              <CardContent className="p-4">
-                <div className="text-sm text-gray-600 mb-2">
-                  Loading {loadingProgress.current.toLocaleString()} of {loadingProgress.total.toLocaleString()} rows...
-                </div>
-                <ProgressBar value={loadingProgress.current} max={loadingProgress.total} showLabel={true} />
-              </CardContent>
-            </Card>
+            <CardContent className="p-4">
+              <div className="text-sm text-gray-600 mb-2">
+                Loading {loadingProgress.current.toLocaleString()} of {loadingProgress.total.toLocaleString()} rows...
+              </div>
+              <ProgressBar value={loadingProgress.current} max={loadingProgress.total} showLabel={true} />
+            </CardContent>
+          </Card>
           </div>
         )}
         
@@ -1188,25 +1194,25 @@ export default function StockListPage() {
                       {/* Display seasons and scraped timestamp */}
                       <div className="flex items-center justify-between gap-2 mb-1">
                         <div>
-                          {(() => {
-                            const sid = styleMetaByNo[g.styleNo]?.id || null;
-                            const cmap = sid ? (styleColors?.idMap?.get(sid) || new Map<string, string>()) : new Map<string, string>();
-                            const scId = cmap.get((g.color || '').trim().toLowerCase()) || null;
-                            const set = (scId && colorSeasons) ? (colorSeasons.get(scId) || new Set<string>()) : new Set<string>();
-                            const labels = (seasons || []).filter(s => set.has(s.id));
-                            
-                            console.log('[stock-list] Season display for', g.styleNo, g.color, '- scId:', scId, 'seasonIds:', Array.from(set), 'labels:', labels);
-                            
-                            if (labels.length === 0) return null;
-                            
-                            const seasonText = labels.map(s => `${s.name}${s.year ? ` ${s.year}` : ''}`).join(', ');
-                            return (
+                      {(() => {
+                        const sid = styleMetaByNo[g.styleNo]?.id || null;
+                        const cmap = sid ? (styleColors?.idMap?.get(sid) || new Map<string, string>()) : new Map<string, string>();
+                        const scId = cmap.get((g.color || '').trim().toLowerCase()) || null;
+                        const set = (scId && colorSeasons) ? (colorSeasons.get(scId) || new Set<string>()) : new Set<string>();
+                        const labels = (seasons || []).filter(s => set.has(s.id));
+                        
+                        console.log('[stock-list] Season display for', g.styleNo, g.color, '- scId:', scId, 'seasonIds:', Array.from(set), 'labels:', labels);
+                        
+                        if (labels.length === 0) return null;
+                        
+                        const seasonText = labels.map(s => `${s.name}${s.year ? ` ${s.year}` : ''}`).join(', ');
+                        return (
                               <span className="text-[12px] text-gray-500">{seasonText}</span>
-                            );
-                          })()}
+                        );
+                      })()}
                         </div>
                         <div className="text-[11px] text-gray-400">
-                          {g.scrapedAt ? `Scraped: ${formatRelativeTime(g.scrapedAt)}` : 'Not scraped yet'}
+                          {g.scrapedAt ? formatRelativeTime(g.scrapedAt) : 'Ikke opdateret endnu'}
                         </div>
                       </div>
                     {/* Sizes table with image + color columns */}
