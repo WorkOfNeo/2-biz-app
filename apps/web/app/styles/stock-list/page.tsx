@@ -2043,16 +2043,39 @@ function ScrapeActiveListButton({ listId, styleIdsInList, listName }: { listId: 
     const diffHours = Math.floor(diffMs / 3600000);
     const diffDays = Math.floor(diffMs / 86400000);
     
-    if (diffMins < 1) return 'lige nu';
-    if (diffMins < 60) return `for ${diffMins} min siden`;
-    if (diffHours < 24) return `for ${diffHours} time${diffHours !== 1 ? 'r' : ''} siden`;
-    if (diffDays < 7) return `for ${diffDays} dag${diffDays !== 1 ? 'e' : ''} siden`;
-    return date.toLocaleDateString('da-DK');
+    if (diffMins < 1) return 'Dannet lige nu';
+    if (diffMins < 60) return `Dannet for ${diffMins} min siden`;
+    if (diffHours < 24) return `Dannet for ${diffHours} time${diffHours !== 1 ? 'r' : ''} siden`;
+    if (diffDays < 7) return `Dannet for ${diffDays} dag${diffDays !== 1 ? 'e' : ''} siden`;
+    return `Dannet ${date.toLocaleDateString('da-DK')}`;
   };
 
   return (
     <div className="space-y-2">
-      <div className="flex items-center gap-2">
+      <div className="flex items-center justify-between w-full">
+        <div className="flex items-center gap-2">
+          {latestExport && latestExport.public_url && (
+            <>
+              <a
+                href={latestExport.public_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-md transition-colors"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" />
+                  <polyline points="14 2 14 8 20 8" />
+                  <line x1="16" y1="13" x2="8" y2="13" />
+                  <line x1="16" y1="17" x2="8" y2="17" />
+                  <polyline points="10 9 9 9 8 9" />
+                </svg>
+                PDF
+              </a>
+              <span className="text-xs text-gray-500">{formatRelativeTime(latestExport.created_at)}</span>
+            </>
+          )}
+        </div>
+        
         <Button
           size="sm"
           variant={busy || scraping || exporting ? 'secondary' : 'default'}
@@ -2214,20 +2237,6 @@ function ScrapeActiveListButton({ listId, styleIdsInList, listName }: { listId: 
         >
           {busy ? 'Starting...' : scraping ? 'Scraping...' : exporting ? 'Exporting...' : 'Scrape List'}
         </Button>
-        
-        {latestExport && latestExport.public_url && (
-          <div className="flex items-center gap-2 text-xs text-gray-600">
-            <a
-              href={latestExport.public_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-blue-600 hover:text-blue-800 underline"
-            >
-              View Latest Export
-            </a>
-            <span className="text-gray-500">({formatRelativeTime(latestExport.created_at)})</span>
-          </div>
-        )}
       </div>
       
       {(scraping || exporting) && (
