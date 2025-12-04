@@ -358,10 +358,10 @@ export default function OverviewPage() {
     for (const inv of (invoices ?? [])) {
       const acc = inv.account_no ?? '';
       if (!acc || !targetAccounts.has(acc)) continue;
-      // Use salesperson's currency for consistency with sales_stats, fall back to invoice currency
+      // Use salesperson's currency for consistency with sales_stats, default to DKK if no salesperson (same as General page)
       const c = customerByIdForInv.get(acc);
       const spId = c?.salesperson_id ?? null;
-      const currency = spId ? (spCurrencyById[spId] ?? (String(inv.currency || 'DKK').toUpperCase())) : (String(inv.currency || 'DKK').toUpperCase());
+      const currency = spId ? (spCurrencyById[spId] ?? 'DKK') : 'DKK';
       const rateS1 = { ...baseRates, ...(ratesS1 ?? {}) }[currency] ?? 1;
       const rateS2 = { ...baseRates, ...(ratesS2 ?? {}) }[currency] ?? 1;
       const qty = Number(inv.qty || 0) || 0;
