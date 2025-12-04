@@ -972,16 +972,16 @@ function Step3EnterQuantities({
   const netNeedTotal = sum(netNeed);
   
   // Calculate New Net Need = Net Need + Order
-  const newNetNeed = netNeed.map((n, i) => n + (inputs[i] ?? 0));
+  const newNetNeed = netNeed.map((n: number, i: number) => n + ((inputs && inputs[i]) ?? 0));
 
   // Calculate pressure for each row
   const stockPressure = calculatePressure(colorGroup.stock);
   const soldPressure = calculatePressure(colorGroup.sold);
   const purchasePressure = calculatePressure(colorGroup.purchase);
-  const salesPressure = calculatePressure(salesInputs);
-  const netNeedPressure = calculatePressure(netNeed.map((v) => Math.abs(v)));
-  const orderPressure = calculatePressure(inputs);
-  const newNetNeedPressure = calculatePressure(newNetNeed.map((v) => Math.abs(v)));
+  const salesPressure = calculatePressure(salesInputs || []);
+  const netNeedPressure = calculatePressure(netNeed.map((v: number) => Math.abs(v)));
+  const orderPressure = calculatePressure(inputs || []);
+  const newNetNeedPressure = calculatePressure(newNetNeed.map((v: number) => Math.abs(v)));
 
   return (
     <div className="space-y-4">
@@ -1068,7 +1068,7 @@ function Step3EnterQuantities({
                       <div className="bg-purple-50 border border-purple-200 rounded-lg p-3 space-y-2">
                         <div className="text-xs font-semibold text-purple-900">Historical Sales Data</div>
                         <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${colorGroup.sizes.length}, minmax(0, 1fr))` }}>
-                          {colorGroup.sizes.map((size, i) => (
+                          {colorGroup.sizes.map((size: string, i: number) => (
                             <div key={i} className="space-y-1">
                               <label className="text-[10px] text-slate-600 font-medium block text-center">
                                 {size}
@@ -1110,7 +1110,7 @@ function Step3EnterQuantities({
                         <thead className="bg-slate-100">
                           <tr>
                             <th className="p-3 text-left font-semibold border-r border-slate-300 w-32">Metric</th>
-                            {colorGroup.sizes.map((size, i) => (
+                            {colorGroup.sizes.map((size: string, i: number) => (
                               <th key={i} className="p-3 text-center font-semibold border-r border-slate-300 min-w-[80px]">
                                 {size}
                                     </th>
@@ -1121,7 +1121,7 @@ function Step3EnterQuantities({
                               <tbody>
                           <tr className="border-t border-slate-300 hover:bg-slate-50">
                             <td className="p-3 font-medium border-r border-slate-300 bg-slate-50">Stock</td>
-                            {colorGroup.stock.map((v, i) => (
+                            {colorGroup.stock.map((v: number, i: number) => (
                               <td key={i} className="p-3 text-center border-r border-slate-300">
                                 <div className="font-semibold text-slate-900">
                                   {v}
@@ -1137,7 +1137,7 @@ function Step3EnterQuantities({
                                 </tr>
                           <tr className="border-t border-slate-300 hover:bg-slate-50">
                             <td className="p-3 font-medium border-r border-slate-300 bg-slate-50">Sold</td>
-                            {colorGroup.sold.map((v, i) => (
+                            {colorGroup.sold.map((v: number, i: number) => (
                               <td key={i} className="p-3 text-center border-r border-slate-300">
                                 <div className="font-semibold text-slate-900">
                                   {v}
@@ -1153,7 +1153,7 @@ function Step3EnterQuantities({
                                   </tr>
                           <tr className="border-t border-slate-300 hover:bg-slate-50">
                             <td className="p-3 font-medium border-r border-slate-300 bg-slate-50">Purchase</td>
-                            {colorGroup.purchase.map((v, i) => (
+                            {colorGroup.purchase.map((v: number, i: number) => (
                               <td key={i} className="p-3 text-center border-r border-slate-300">
                                 <div className="font-semibold text-slate-900">
                                   {v}
@@ -1169,13 +1169,13 @@ function Step3EnterQuantities({
                           </tr>
                           <tr className="border-t border-slate-300 bg-purple-50/50">
                             <td className="p-3 font-medium border-r border-slate-300 bg-purple-100/70">Sales Total</td>
-                            {colorGroup.sizes.map((_, i) => (
+                            {colorGroup.sizes.map((_: string, i: number) => (
                               <td key={i} className="p-3 border-r border-slate-300">
                                 <Input
                                   type="number"
                                   inputMode="numeric"
                                   className="w-full h-9 text-center mb-1 rounded-lg border-purple-200"
-                                  value={salesInputs[i]}
+                                  value={salesInputs ? salesInputs[i] : 0}
                                   onChange={(e) =>
                                     setSalesInput(key, i, Number(e.target.value || 0), colorGroup.sizes.length)
                                   }
@@ -1187,12 +1187,12 @@ function Step3EnterQuantities({
                               </td>
                             ))}
                             <td className="p-3 text-center font-bold text-purple-900">
-                              {sum(salesInputs)}
+                              {sum(salesInputs || [])}
                             </td>
                           </tr>
                           <tr className="border-t border-slate-300 bg-amber-50">
                             <td className="p-3 font-medium border-r border-slate-300 bg-amber-100">Net Need</td>
-                            {netNeed.map((v, i) => (
+                            {netNeed.map((v: number, i: number) => (
                               <td key={i} className="p-3 text-center border-r border-slate-300">
                                 <div className={`font-semibold ${v < 0 ? 'text-red-700' : v > 0 ? 'text-green-700' : 'text-slate-900'}`}>
                                   {v}
@@ -1208,13 +1208,13 @@ function Step3EnterQuantities({
                           </tr>
                           <tr className="border-t border-slate-300 bg-blue-50">
                             <td className="p-3 font-medium border-r border-slate-300 bg-blue-100">Order</td>
-                            {colorGroup.sizes.map((_, i) => (
+                            {colorGroup.sizes.map((_: string, i: number) => (
                               <td key={i} className="p-3 border-r border-slate-300">
                                 <Input
                                             type="number"
                                             inputMode="numeric"
                                   className="w-full h-9 text-center mb-1"
-                                  value={inputs[i]}
+                                  value={inputs ? inputs[i] : 0}
                                   onChange={(e) =>
                                     setInput(key, i, Number(e.target.value || 0), colorGroup.sizes.length)
                                   }
@@ -1226,12 +1226,12 @@ function Step3EnterQuantities({
                               </td>
                             ))}
                             <td className="p-3 text-center font-bold text-blue-900">
-                              {sum(inputs)}
+                              {sum(inputs || [])}
                                       </td>
                                     </tr>
                           <tr className="border-t border-slate-300 bg-green-50">
                             <td className="p-3 font-medium border-r border-slate-300 bg-green-100">New Net Need</td>
-                            {newNetNeed.map((v, i) => (
+                            {newNetNeed.map((v: number, i: number) => (
                               <td key={i} className="p-3 text-center border-r border-slate-300">
                                 <div className={`font-semibold ${v < 0 ? 'text-red-700' : v > 0 ? 'text-green-700' : 'text-slate-900'}`}>
                                   {v}
