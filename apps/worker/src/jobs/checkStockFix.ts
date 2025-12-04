@@ -89,9 +89,23 @@ export async function checkStockFix(ctx: Ctx) {
       check_all: false
     }))}`;
     
+    // Trigger download by creating a temporary link and clicking it
     const downloadPromise = page.waitForEvent('download', { timeout: 60000 });
-    await page.goto(excelUrl, { waitUntil: 'commit' });
+    await page.evaluate((url) => {
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'stock_status.xls';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    }, excelUrl);
+    
+    await log(job.id, 'info', 'STEP:check_stock_fix_download_triggered');
     const download = await downloadPromise;
+    await log(job.id, 'info', 'STEP:check_stock_fix_download_received', { 
+      filename: download.suggestedFilename() 
+    });
+    
     const buffer = await download.createReadStream().then(stream => {
       return new Promise<Buffer>((resolve, reject) => {
         const chunks: Buffer[] = [];
