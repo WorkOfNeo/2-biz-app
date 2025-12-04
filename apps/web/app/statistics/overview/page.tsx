@@ -7,6 +7,7 @@ import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { Modal } from '../../../components/Modal';
 
 type Person = { id: string; name: string; currency?: string | null };
 type StatsRow = { account_no: string | null; qty: number; price: number; season_id: string; salesperson_id: string | null };
@@ -30,6 +31,7 @@ function Donut({ pct }: { pct: number }) {
 
 export default function OverviewPage() {
   const [country, setCountry] = useState<typeof COUNTRIES[number]>('All');
+  const [indexModal, setIndexModal] = useState<{ mode: 'visited' | 'unvisited' } | null>(null);
 
   const { data: saved } = useSWR('app-settings:season-compare', async () => {
     const { data, error } = await supabase.from('app_settings').select('*').eq('key', 'season_compare').maybeSingle();
@@ -467,6 +469,33 @@ export default function OverviewPage() {
     const unvisitedS2Price = unvisited.reduce((a, v) => a + v.s2Price, 0);
     const prognosedQty = visitedS1Qty + (unvisitedS2Qty * qtyIndexRatio);
     const prognosedPrice = visitedS1Price + (unvisitedS2Price * priceIndexRatio);
+    type DetailRow = {
+      accountId: string;
+      customer: string;
+      city: string;
+      s1Qty: number;
+      s1Price: number;
+      s2Qty: number;
+      s2Price: number;
+    };
+    const formatRow = (bucket: Bucket): DetailRow => {
+      const meta = customersById.get(bucket.accountId);
+      return {
+        accountId: bucket.accountId,
+        customer: meta?.company ?? bucket.accountId,
+        city: meta?.city ?? '-',
+        s1Qty: bucket.s1Qty,
+        s1Price: bucket.s1Price,
+        s2Qty: bucket.s2Qty,
+        s2Price: bucket.s2Price,
+      };
+    };
+    const visitedRows = visited
+      .map(formatRow)
+      .sort((a, b) => b.s1Price - a.s1Price);
+    const unvisitedRows = unvisited
+      .map(formatRow)
+      .sort((a, b) => b.s2Price - a.s2Price);
     return {
       visitedS1Qty,
       visitedS2Qty,
@@ -476,6 +505,8 @@ export default function OverviewPage() {
       indexPrice,
       prognosedQty,
       prognosedPrice,
+      visitedRows,
+      unvisitedRows,
     };
   }, [customers, stats, invoices, country, s1, s2, currencyRatesRow, ratesS1, ratesS2, spCurrencyById, overrides, closedCustomers]);
 
@@ -665,6 +696,14 @@ export default function OverviewPage() {
               <div className="text-[11px] text-gray-400">
                 {collectedIndex.visitedS1Qty.toLocaleString('da-DK')} vs {collectedIndex.visitedS2Qty.toLocaleString('da-DK')} (visited)
               </div>
+              <button
+                type="button"
+                onClick={() => setIndexModal({ mode: 'visited' })}
+                className="mt-1 text-xs text-blue-600 underline underline-offset-2 disabled:text-gray-400 disabled:no-underline"
+                disabled={collectedIndex.visitedRows.length === 0}
+              >
+                View records
+              </button>
             </div>
             <div className="rounded-md border p-3">
               <div className="text-xs text-gray-500">Index PRICE</div>
@@ -672,20 +711,100 @@ export default function OverviewPage() {
               <div className="text-[11px] text-gray-400">
                 {Math.round(collectedIndex.visitedS1Price).toLocaleString('da-DK')} vs {Math.round(collectedIndex.visitedS2Price).toLocaleString('da-DK')} (visited · DKK)
               </div>
+              <button
+                type="button"
+                onClick={() => setIndexModal({ mode: 'visited' })}
+                className="mt-1 text-xs text-blue-600 underline underline-offset-2 disabled:text-gray-400 disabled:no-underline"
+                disabled={collectedIndex.visitedRows.length === 0}
+              >
+                View records
+              </button>
             </div>
             <div className="rounded-md border p-3">
               <div className="text-xs text-gray-500">Prognose QTY</div>
               <div className="text-xl font-semibold">{Math.round(collectedIndex.prognosedQty).toLocaleString('da-DK')}</div>
               <div className="text-[11px] text-gray-400">if index holds</div>
+              <button
+                type="button"
+                onClick={() => setIndexModal({ mode: 'unvisited' })}
+                className="mt-1 text-xs text-blue-600 underline underline-offset-2 disabled:text-gray-400 disabled:no-underline"
+                disabled={collectedIndex.unvisitedRows.length === 0}
+              >
+                View pending records
+              </button>
             </div>
             <div className="rounded-md border p-3">
               <div className="text-xs text-gray-500">Prognose PRICE</div>
               <div className="text-xl font-semibold">{Math.round(collectedIndex.prognosedPrice).toLocaleString('da-DK')} DKK</div>
               <div className="text-[11px] text-gray-400">if index holds</div>
+              <button
+                type="button"
+                onClick={() => setIndexModal({ mode: 'unvisited' })}
+                className="mt-1 text-xs text-blue-600 underline underline-offset-2 disabled:text-gray-400 disabled:no-underline"
+                disabled={collectedIndex.unvisitedRows.length === 0}
+              >
+                View pending records
+              </button>
             </div>
           </div>
         </div>
       )}
+
+      <Modal
+        open={Boolean(indexModal && collectedIndex)}
+        onClose={() => setIndexModal(null)}
+        title={
+          indexModal?.mode === 'visited'
+            ? 'Visited customers · Index basis'
+            : 'Pending customers · Prognosis basis'
+        }
+        maxWidth="max-w-4xl"
+        footer={
+          <button
+            type="button"
+            className="rounded border px-3 py-1.5 text-sm"
+            onClick={() => setIndexModal(null)}
+          >
+            Close
+          </button>
+        }
+      >
+        {(() => {
+          if (!indexModal || !collectedIndex) return null;
+          const rows = indexModal.mode === 'visited' ? collectedIndex.visitedRows : collectedIndex.unvisitedRows;
+          if (rows.length === 0) {
+            return <div className="p-4 text-sm text-gray-600">Nothing to show for this selection.</div>;
+          }
+          return (
+            <div className="max-h-[60vh] overflow-auto">
+              <table className="min-w-full text-sm">
+                <thead>
+                  <tr className="bg-gray-50 text-left">
+                    <th className="p-2 font-semibold">Customer</th>
+                    <th className="p-2 font-semibold">City</th>
+                    <th className="p-2 text-right font-semibold">S1 Qty</th>
+                    <th className="p-2 text-right font-semibold">S1 Price (DKK)</th>
+                    <th className="p-2 text-right font-semibold">S2 Qty</th>
+                    <th className="p-2 text-right font-semibold">S2 Price (DKK)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((row) => (
+                    <tr key={row.accountId} className="border-t">
+                      <td className="p-2">{row.customer}</td>
+                      <td className="p-2">{row.city || '-'}</td>
+                      <td className="p-2 text-right">{Number(row.s1Qty || 0).toLocaleString('da-DK')}</td>
+                      <td className="p-2 text-right">{Math.round(row.s1Price || 0).toLocaleString('da-DK')}</td>
+                      <td className="p-2 text-right">{Number(row.s2Qty || 0).toLocaleString('da-DK')}</td>
+                      <td className="p-2 text-right">{Math.round(row.s2Price || 0).toLocaleString('da-DK')}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          );
+        })()}
+      </Modal>
 
       {/* Currency Conversion Rates */}
       <div className="rounded-lg border bg-white">
