@@ -1358,6 +1358,7 @@ export default function StockListPage() {
           <ScrapeActiveListButton
             listId={activeListId}
             styleIdsInList={Array.from(styleIdsInList)}
+            listName={stockLists?.find(l => l.id === activeListId)?.name}
           />
               </div>
         )}
@@ -1989,55 +1990,272 @@ PO7332, 2100"
   );
 }
 
-function ScrapeActiveListButton({ listId, styleIdsInList }: { listId: string; styleIdsInList: string[] }) {
+function ScrapeActiveListButton({ listId, styleIdsInList, listName }: { listId: string; styleIdsInList: string[]; listName?: string }) {
   const supabase = createClientComponentClient();
   const [busy, setBusy] = React.useState(false);
-  const [done, setDone] = React.useState(false);
+  const [scraping, setScraping] = React.useState(false);
+  const [exporting, setExporting] = React.useState(false);
+  const [scrapeProgress, setScrapeProgress] = React.useState<{ current: number; total: number } | null>(null);
+  const [exportProgress, setExportProgress] = React.useState<{ current: number; total: number } | null>(null);
+  const [message, setMessage] = React.useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
+  const [latestExport, setLatestExport] = React.useState<{ id: string; title: string; public_url: string | null; created_at: string } | null>(null);
+
+  // Fetch latest export for this list
+  const { data: exportsData, mutate: mutateExports } = useSWR(
+    listName ? ['stock-list-exports', listId, listName] : null,
+    async () => {
+      if (!listName) return null;
+      // Query all stock list exports and filter by list name in metadata
+      const { data, error } = await supabase
+        .from('exports')
+        .select('id, title, public_url, created_at, meta')
+        .eq('kind', 'stock_list_pdf')
+        .order('created_at', { ascending: false })
+        .limit(100);
+      if (error) throw error;
+      // Filter by list name in metadata
+      const filtered = (data ?? []).filter((exp: any) => {
+        const meta = exp.meta || {};
+        return meta.list === listName || exp.title?.includes(listName);
+      });
+      const latest = filtered[0];
+      return latest ? {
+        id: latest.id,
+        title: latest.title || '',
+        public_url: latest.public_url || null,
+        created_at: latest.created_at || new Date().toISOString()
+      } as { id: string; title: string; public_url: string | null; created_at: string } : null;
+    },
+    { refreshInterval: 30000 }
+  );
+
+  React.useEffect(() => {
+    if (exportsData) {
+      setLatestExport(exportsData);
+    }
+  }, [exportsData]);
+
+  const formatRelativeTime = (dateStr: string) => {
+    const date = new Date(dateStr);
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMs / 3600000);
+    const diffDays = Math.floor(diffMs / 86400000);
+    
+    if (diffMins < 1) return 'lige nu';
+    if (diffMins < 60) return `for ${diffMins} min siden`;
+    if (diffHours < 24) return `for ${diffHours} time${diffHours !== 1 ? 'r' : ''} siden`;
+    if (diffDays < 7) return `for ${diffDays} dag${diffDays !== 1 ? 'e' : ''} siden`;
+    return date.toLocaleDateString('da-DK');
+  };
+
   return (
-    <Button
-      size="sm"
-      variant={busy ? 'secondary' : 'default'}
-      disabled={busy}
-      onClick={async () => {
-        try {
-          setBusy(true);
-          setDone(false);
-          // Resolve style_nos for styles in this list
-          const ids = Array.from(new Set(styleIdsInList || []));
-          if (ids.length === 0) {
-            alert('This list has no styles yet.');
-            setBusy(false);
-            return;
-          }
-          const { data: styles } = await supabase.from('styles').select('style_no').in('id', ids);
-          const nos = Array.from(new Set((styles ?? []).map((r: any) => String(r.style_no || '')).filter(Boolean)));
-          if (nos.length === 0) {
-            alert('No style numbers found for this list.');
-            setBusy(false);
-            return;
-          }
-          const { data: { session } } = await supabase.auth.getSession();
-          if (!session) { alert('Not signed in'); setBusy(false); return; }
-          const res = await fetch('/api/enqueue', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
-            body: JSON.stringify({ type: 'update_style_stock', payload: { requestedBy: session.user.email, styleNos: nos } })
-          });
-          if (!res.ok) {
-            const t = await res.text().catch(()=>'');
-            throw new Error(t || `Failed (${res.status})`);
-          }
-          // eslint-disable-next-line no-console
-          console.log('[stock-list] scrape list enqueued', { listId, count: nos.length });
-          setDone(true);
-        } catch (e: any) {
-          alert(e?.message || 'Failed to enqueue scrape');
-        } finally {
-          setBusy(false);
-        }
-      }}
-    >
-      {busy ? 'Scraping…' : (done ? 'Enqueued!' : 'Scrape this list')}
-    </Button>
+    <div className="space-y-2">
+      <div className="flex items-center gap-2">
+        <Button
+          size="sm"
+          variant={busy || scraping || exporting ? 'secondary' : 'default'}
+          disabled={busy || scraping || exporting}
+          onClick={async () => {
+            try {
+              setBusy(true);
+              setScraping(false);
+              setExporting(false);
+              setScrapeProgress(null);
+              setExportProgress(null);
+              setMessage(null);
+              
+              // Resolve style_nos for styles in this list
+              const ids = Array.from(new Set(styleIdsInList || []));
+              if (ids.length === 0) {
+                alert('This list has no styles yet.');
+                setBusy(false);
+                return;
+              }
+              const { data: styles } = await supabase.from('styles').select('style_no').in('id', ids);
+              const nos = Array.from(new Set((styles ?? []).map((r: any) => String(r.style_no || '')).filter(Boolean)));
+              if (nos.length === 0) {
+                alert('No style numbers found for this list.');
+                setBusy(false);
+                return;
+              }
+              const { data: { session } } = await supabase.auth.getSession();
+              if (!session) { alert('Not signed in'); setBusy(false); return; }
+              
+              // Enqueue scrape job
+              const res = await fetch('/api/enqueue', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+                body: JSON.stringify({ type: 'update_style_stock', payload: { requestedBy: session.user.email, styleNos: nos } })
+              });
+              if (!res.ok) {
+                const t = await res.text().catch(()=>'');
+                throw new Error(t || `Failed (${res.status})`);
+              }
+              
+              const { jobId } = await res.json();
+              setBusy(false);
+              setScraping(true);
+              setScrapeProgress({ current: 0, total: nos.length });
+              
+              // Poll for scrape progress
+              const scrapePollInterval = setInterval(async () => {
+                try {
+                  const { data: jobData } = await supabase
+                    .from('jobs')
+                    .select('status')
+                    .eq('id', jobId)
+                    .single();
+                  
+                  if (!jobData) return;
+                  
+                  // Check logs for progress
+                  const { data: logsData } = await supabase
+                    .from('job_logs')
+                    .select('msg, data')
+                    .eq('job_id', jobId)
+                    .eq('msg', 'STEP:style_stock_delete_all_success')
+                    .order('ts', { ascending: true });
+                  
+                  const completedCount = logsData?.length || 0;
+                  setScrapeProgress({ current: completedCount, total: nos.length });
+                  
+                  if (jobData.status === 'succeeded' || jobData.status === 'failed' || jobData.status === 'cancelled') {
+                    clearInterval(scrapePollInterval);
+                    setScraping(false);
+                    
+                    if (jobData.status === 'succeeded') {
+                      setMessage({ type: 'success', text: 'Scraping complete! Starting export...' });
+                      
+                      // Trigger export job
+                      setExporting(true);
+                      setExportProgress({ current: 0, total: 1 });
+                      
+                      const exportRes = await fetch('/api/enqueue', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+                        body: JSON.stringify({ type: 'export_stock_list', payload: {} })
+                      });
+                      
+                      if (!exportRes.ok) {
+                        const t = await exportRes.text().catch(()=>'');
+                        throw new Error(t || `Export failed (${exportRes.status})`);
+                      }
+                      
+                      const { jobId: exportJobId } = await exportRes.json();
+                      
+                      // Poll for export completion
+                      const exportPollInterval = setInterval(async () => {
+                        try {
+                          const { data: exportJobData } = await supabase
+                            .from('jobs')
+                            .select('status')
+                            .eq('id', exportJobId)
+                            .single();
+                          
+                          if (!exportJobData) return;
+                          
+                          setExportProgress({ current: 1, total: 1 });
+                          
+                          if (exportJobData.status === 'succeeded' || exportJobData.status === 'failed' || exportJobData.status === 'cancelled') {
+                            clearInterval(exportPollInterval);
+                            setExporting(false);
+                            setExportProgress(null);
+                            
+                            if (exportJobData.status === 'succeeded') {
+                              setMessage({ type: 'success', text: 'Export complete!' });
+                              // Refresh exports list
+                              await mutateExports();
+                              // Reload page after a delay to show updated data
+                              setTimeout(() => window.location.reload(), 2000);
+                            } else {
+                              setMessage({ type: 'error', text: `Export ${exportJobData.status}. Check the Jobs page for details.` });
+                            }
+                          }
+                        } catch (err: any) {
+                          console.error('Export poll error:', err);
+                        }
+                      }, 2000);
+                      
+                      // Stop polling after 5 minutes
+                      setTimeout(() => {
+                        clearInterval(exportPollInterval);
+                        if (exporting) {
+                          setExporting(false);
+                          setMessage({ type: 'info', text: 'Export is taking longer than expected. Check the Jobs page for status.' });
+                        }
+                      }, 300000);
+                    } else {
+                      setMessage({ type: 'error', text: `Scraping ${jobData.status}. Check the Jobs page for details.` });
+                    }
+                  }
+                } catch (err: any) {
+                  console.error('Scrape poll error:', err);
+                }
+              }, 2000);
+              
+              // Stop polling after 10 minutes
+              setTimeout(() => {
+                clearInterval(scrapePollInterval);
+                if (scraping) {
+                  setScraping(false);
+                  setMessage({ type: 'info', text: 'Scraping is taking longer than expected. Check the Jobs page for status.' });
+                }
+              }, 600000);
+              
+            } catch (e: any) {
+              setBusy(false);
+              setScraping(false);
+              setExporting(false);
+              alert(e?.message || 'Failed to enqueue scrape');
+            }
+          }}
+        >
+          {busy ? 'Starting...' : scraping ? 'Scraping...' : exporting ? 'Exporting...' : 'Scrape List'}
+        </Button>
+        
+        {latestExport && latestExport.public_url && (
+          <div className="flex items-center gap-2 text-xs text-gray-600">
+            <a
+              href={latestExport.public_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-blue-600 hover:text-blue-800 underline"
+            >
+              View Latest Export
+            </a>
+            <span className="text-gray-500">({formatRelativeTime(latestExport.created_at)})</span>
+          </div>
+        )}
+      </div>
+      
+      {(scraping || exporting) && (
+        <div className="space-y-2">
+          {scraping && scrapeProgress && (
+            <div className="space-y-1">
+              <div className="text-xs text-gray-600">Scraping progress: {scrapeProgress.current} / {scrapeProgress.total} styles</div>
+              <ProgressBar value={scrapeProgress.current} max={scrapeProgress.total} showLabel={true} />
+            </div>
+          )}
+          {exporting && exportProgress && (
+            <div className="space-y-1">
+              <div className="text-xs text-gray-600">Exporting stock list PDF...</div>
+              <ProgressBar value={exportProgress.current} max={exportProgress.total} showLabel={true} />
+            </div>
+          )}
+        </div>
+      )}
+      
+      {message && (
+        <div className={`text-xs p-2 rounded ${
+          message.type === 'success' ? 'bg-green-50 text-green-800' :
+          message.type === 'error' ? 'bg-red-50 text-red-800' :
+          'bg-blue-50 text-blue-800'
+        }`}>
+          {message.text}
+        </div>
+      )}
+    </div>
   );
 }
