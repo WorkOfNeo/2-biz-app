@@ -293,13 +293,17 @@ export default function StylesPage() {
               {(rows ?? []).map((r) => (
                 <tr
                   key={r.style_no}
-                  className={`hover:bg-gray-50 transition-colors ${r.inactive ? 'bg-red-50/70' : ''}`}
+                  className={`transition-colors ${r.inactive ? 'bg-red-100 opacity-70' : 'hover:bg-gray-50'}`}
                 >
-                  <td className="p-2 border-b cursor-pointer" onClick={() => { window.location.href = `/styles/${encodeURIComponent(r.style_no)}`; }}>{r.image_url ? <img src={r.image_url} alt="thumb" className="h-8 w-8 object-cover rounded" /> : null}</td>
-                  <td className="p-2 border-b underline text-slate-700 cursor-pointer" onClick={() => { window.location.href = `/styles/${encodeURIComponent(r.style_no)}`; }}>{r.style_no}</td>
-                  <td className="p-2 border-b cursor-pointer" onClick={() => { window.location.href = `/styles/${encodeURIComponent(r.style_no)}`; }}>{r.style_name ?? '—'}</td>
-                  <td className="p-2 border-b cursor-pointer" onClick={() => { window.location.href = `/styles/${encodeURIComponent(r.style_no)}`; }}>{r.supplier ?? '—'}</td>
-                  <td className="p-2 border-b cursor-pointer" onClick={() => { window.location.href = `/styles/${encodeURIComponent(r.style_no)}`; }}>{r.dg ?? '—'}</td>
+                  <td className="p-2 border-b cursor-pointer" onClick={() => { window.location.href = `/styles/${encodeURIComponent(r.style_no)}`; }}>
+                    <div className={r.inactive ? 'opacity-50 grayscale' : ''}>
+                      {r.image_url ? <img src={r.image_url} alt="thumb" className="h-8 w-8 object-cover rounded" /> : null}
+                    </div>
+                  </td>
+                  <td className={`p-2 border-b underline cursor-pointer ${r.inactive ? 'text-red-700 line-through' : 'text-slate-700'}`} onClick={() => { window.location.href = `/styles/${encodeURIComponent(r.style_no)}`; }}>{r.style_no}</td>
+                  <td className={`p-2 border-b cursor-pointer ${r.inactive ? 'text-gray-500 line-through' : ''}`} onClick={() => { window.location.href = `/styles/${encodeURIComponent(r.style_no)}`; }}>{r.style_name ?? '—'}</td>
+                  <td className={`p-2 border-b cursor-pointer ${r.inactive ? 'text-gray-500' : ''}`} onClick={() => { window.location.href = `/styles/${encodeURIComponent(r.style_no)}`; }}>{r.supplier ?? '—'}</td>
+                  <td className={`p-2 border-b cursor-pointer ${r.inactive ? 'text-gray-500' : ''}`} onClick={() => { window.location.href = `/styles/${encodeURIComponent(r.style_no)}`; }}>{r.dg ?? '—'}</td>
                   <td className="p-2 border-b cursor-pointer" onClick={() => { window.location.href = `/styles/${encodeURIComponent(r.style_no)}`; }}>
                     {r.stock_all_zeros ? (
                       <span className="text-red-600 font-medium">Yes</span>
@@ -315,26 +319,49 @@ export default function StylesPage() {
                     )}
                   </td>
                   <td className="p-2 border-b">
-                    <div className="flex items-center gap-2">
-                      {r.maybe_inactive && !r.inactive && <span className="text-[10px] px-1.5 py-0.5 bg-yellow-100 text-yellow-800 rounded">Maybe Inactive</span>}
-                      {r.inactive && <span className="text-[10px] px-1.5 py-0.5 bg-red-100 text-red-800 rounded">Inactive</span>}
-                      {r.stock_all_zeros && <span className="text-[10px] px-1.5 py-0.5 bg-orange-100 text-orange-800 rounded" title="All zeros or scrape error - will be skipped in future scrapes">All Zeros</span>}
-                      {r.needs_enrichment && <span className="text-[10px] px-1.5 py-0.5 bg-blue-100 text-blue-800 rounded" title="Needs enrichment - will be processed by enrich_styles job">Needs Enrichment</span>}
-                      <button
-                        onClick={async (e) => {
-                          e.stopPropagation();
-                          try {
-                            const newInactive = !r.inactive;
-                            await supabase.from('styles').update({ inactive: newInactive }).eq('id', r.id);
-                            await mutate();
-                          } catch (err) {
-                            console.error('Failed to toggle inactive', err);
-                          }
-                        }}
-                        className={`text-[10px] px-2 py-1 rounded border ${r.inactive ? 'bg-green-50 text-green-700 border-green-300 hover:bg-green-100' : 'bg-gray-50 text-gray-700 border-gray-300 hover:bg-gray-100'}`}
-                      >
-                        {r.inactive ? 'Set Active' : 'Set Inactive'}
-                      </button>
+                    <div className="flex flex-col gap-1.5">
+                      {r.inactive ? (
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm px-3 py-1.5 bg-red-600 text-white rounded font-bold uppercase">🚫 IS INACTIVE</span>
+                          <button
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              try {
+                                await supabase.from('styles').update({ inactive: false }).eq('id', r.id);
+                                await mutate();
+                              } catch (err) {
+                                console.error('Failed to toggle inactive', err);
+                              }
+                            }}
+                            className="text-xs px-3 py-1.5 rounded border bg-green-50 text-green-700 border-green-300 hover:bg-green-100 font-medium"
+                          >
+                            ✓ Set Active
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm px-3 py-1.5 bg-green-100 text-green-800 rounded font-semibold">✓ Active</span>
+                          <button
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              try {
+                                await supabase.from('styles').update({ inactive: true }).eq('id', r.id);
+                                await mutate();
+                              } catch (err) {
+                                console.error('Failed to toggle inactive', err);
+                              }
+                            }}
+                            className="text-xs px-3 py-1.5 rounded border bg-gray-50 text-gray-700 border-gray-300 hover:bg-gray-100"
+                          >
+                            Set Inactive
+                          </button>
+                        </div>
+                      )}
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {r.maybe_inactive && !r.inactive && <span className="text-[10px] px-1.5 py-0.5 bg-yellow-100 text-yellow-800 rounded">Maybe Inactive</span>}
+                        {r.stock_all_zeros && <span className="text-[10px] px-1.5 py-0.5 bg-orange-100 text-orange-800 rounded" title="All zeros or scrape error - will be skipped in future scrapes">All Zeros</span>}
+                        {r.needs_enrichment && <span className="text-[10px] px-1.5 py-0.5 bg-blue-100 text-blue-800 rounded" title="Needs enrichment - will be processed by enrich_styles job">Needs Enrichment</span>}
+                      </div>
                     </div>
                   </td>
                   <td className="p-2 border-b">{r.link_href ? <a className="underline" href={r.link_href} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>Open</a> : '—'}</td>
