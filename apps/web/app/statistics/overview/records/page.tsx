@@ -101,13 +101,12 @@ function RecordsInner() {
     for (const inv of (invoices ?? [])) {
       const acc = inv.account_no as string | null;
       if (!acc || !byCustomer.has(acc)) continue;
-      // Note: invoices don't have salesperson_id in DB, but customer is already filtered by sp
       const fake: StatsRow & { isInvoice?: boolean; invoice_no?: string | null } = {
         account_no: inv.account_no,
         qty: Number(inv.qty || 0),
         price: Number(inv.amount || 0),
         season_id: inv.season_id,
-        salesperson_id: sp, // Use the selected salesperson since customer is already filtered
+        salesperson_id: inv.salesperson_id,
         isInvoice: true,
         invoice_no: inv.invoice_no
       };

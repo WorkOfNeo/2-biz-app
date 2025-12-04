@@ -546,8 +546,9 @@ export default function OverviewPage() {
     const unvisited = values.filter((v) => v.s1Qty === 0 && v.s1Price === 0 && !v.isNulled);
     const unvisitedS2Qty = unvisited.reduce((a, v) => a + v.s2Qty, 0);
     const unvisitedS2Price = unvisited.reduce((a, v) => a + v.s2Price, 0);
-    const prognosedQty = visitedS1Qty + (unvisitedS2Qty * qtyIndexRatio);
-    const prognosedPrice = visitedS1Price + (unvisitedS2Price * priceIndexRatio);
+    // Prognosis = Current sales (S1) from visited + Same sales from not visited (S2 from last year)
+    const prognosedQty = visitedS1Qty + unvisitedS2Qty;
+    const prognosedPrice = visitedS1Price + unvisitedS2Price;
     type DetailRow = {
       accountId: string;
       customer: string;
