@@ -1144,7 +1144,7 @@ export default function StockListPage() {
             <div className="grid grid-cols-1 lg:grid-cols-[200px_1fr] gap-4 sl-style-grid">
               {/* Left: style header */}
               <div className="sl-style-left">
-                <div className="flex items-start gap-3 sl-style-header">
+                <div className="flex items-start gap-5 sl-style-header">
                   <div className="shrink-0 sl-style-image">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     {meta.image ? <img src={meta.image} alt={meta.name ?? styleNo} className="h-20 w-20 object-cover rounded border" /> : <div className="h-20 w-20 rounded border bg-gray-50" />}
@@ -1192,26 +1192,23 @@ export default function StockListPage() {
                   return (
                   <div key={key} className="space-y-1 sl-color-block">
                       {/* Display seasons and scraped timestamp */}
-                      <div className="flex items-center justify-between gap-2 mb-1">
-                        <div>
-                      {(() => {
-                        const sid = styleMetaByNo[g.styleNo]?.id || null;
-                        const cmap = sid ? (styleColors?.idMap?.get(sid) || new Map<string, string>()) : new Map<string, string>();
-                        const scId = cmap.get((g.color || '').trim().toLowerCase()) || null;
-                        const set = (scId && colorSeasons) ? (colorSeasons.get(scId) || new Set<string>()) : new Set<string>();
-                        const labels = (seasons || []).filter(s => set.has(s.id));
-                        
-                        console.log('[stock-list] Season display for', g.styleNo, g.color, '- scId:', scId, 'seasonIds:', Array.from(set), 'labels:', labels);
-                        
-                        if (labels.length === 0) return null;
-                        
-                        const seasonText = labels.map(s => `${s.name}${s.year ? ` ${s.year}` : ''}`).join(', ');
-                        return (
-                              <span className="text-[12px] text-gray-500">{seasonText}</span>
-                        );
-                      })()}
+                      <div className="mb-1 flex flex-wrap items-center gap-2">
+                        <div className="text-[12px] text-gray-500">
+                          {(() => {
+                            const sid = styleMetaByNo[g.styleNo]?.id || null;
+                            const cmap = sid ? (styleColors?.idMap?.get(sid) || new Map<string, string>()) : new Map<string, string>();
+                            const scId = cmap.get((g.color || '').trim().toLowerCase()) || null;
+                            const set = (scId && colorSeasons) ? (colorSeasons.get(scId) || new Set<string>()) : new Set<string>();
+                            const labels = (seasons || []).filter(s => set.has(s.id));
+                            
+                            console.log('[stock-list] Season display for', g.styleNo, g.color, '- scId:', scId, 'seasonIds:', Array.from(set), 'labels:', labels);
+                            
+                            if (labels.length === 0) return null;
+                            
+                            return labels.map(s => `${s.name}${s.year ? ` ${s.year}` : ''}`).join(', ');
+                          })()}
                         </div>
-                        <div className="text-[11px] text-gray-400">
+                        <div className="ml-auto text-[10px] text-gray-400 italic">
                           {g.scrapedAt ? formatRelativeTime(g.scrapedAt) : 'Ikke opdateret endnu'}
                         </div>
                       </div>

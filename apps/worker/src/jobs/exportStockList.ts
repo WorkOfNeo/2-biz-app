@@ -45,13 +45,13 @@ export async function exportStockList(ctx: Ctx) {
         const styleNo = r.style_no as string | undefined;
         const styleId = (r.id as string) || null;
         if (!styleNo) continue;
-        metaByNo.set(styleNo, { id: styleId, name: r.style_name ?? null, image: r.image_url ?? null, supplier: r.supplier ?? null });
+        const scaledImage = scaleImageUrl(r.image_url ?? null);
+        metaByNo.set(styleNo, { id: styleId, name: r.style_name ?? null, image: scaledImage, supplier: r.supplier ?? null });
         if (styleId) styleNoById.set(styleId, styleNo);
         finalStyleNos.push(styleNo);
       }
-      // Map colors per style_id -> colorLower -> style_color_id (plus keep entries list for placeholders)
+      // Map colors per style_id -> colorLower -> style_color_id
       const styleColorIdMap = new Map<string, Map<string, string>>();
-      const styleColorEntries = new Map<string, Array<{ id: string; colorLower: string; label: string }>>();
       if (styleIds.length) {
         const { data: cols } = await supabase.from('style_colors').select('id, style_id, color').in('style_id', styleIds);
         for (const c of (cols ?? []) as any[]) {
@@ -60,8 +60,6 @@ export async function exportStockList(ctx: Ctx) {
           const key = label.toLowerCase();
           if (!styleColorIdMap.has(sid)) styleColorIdMap.set(sid, new Map());
           styleColorIdMap.get(sid)!.set(key, c.id as string);
-          if (!styleColorEntries.has(sid)) styleColorEntries.set(sid, []);
-          styleColorEntries.get(sid)!.push({ id: c.id as string, colorLower: key, label: label || key });
         }
       }
       // Load per-list color rules; support blacklist (include=false) and legacy whitelist (include=true)
@@ -176,42 +174,12 @@ export async function exportStockList(ctx: Ctx) {
           const sold = sum(soldArr);
           const purchase = sum(purchaseArr);
           const available = sum(availableArr);
-          out.push({ style_no, color, sizes, stockArr, soldArr, purchaseArr, availableArr, stock, sold, purchase, available, scrapedAt: latestAt });
-        }
-      }
-      // Ensure placeholder colors/styles (even without scraped data) so export matches UI view
-      const normalizeKey = (styleNo: string, color: string) => `${styleNo}|${String(color || '').trim().toLowerCase()}`;
-      const existingKeys = new Set(out.map((r) => normalizeKey(r.style_no, r.color)));
-      for (const sid of styleIds) {
-        const styleNo = styleNoById.get(String(sid));
-        if (!styleNo) continue;
-        const entries: Array<{ id: string; colorLower: string; label: string }> = styleColorEntries.get(String(sid)) ?? [];
-        const flags = byStyleFlags.get(String(sid)) || { hasIncludeTrue: false, hasIncludeFalse: false };
-        for (const entry of entries) {
-          let allow = true;
-          if (flags.hasIncludeFalse) {
-            allow = includeMap.get(entry.id) !== false;
-          } else if (flags.hasIncludeTrue) {
-            allow = includeMap.get(entry.id) === true;
+          const hasValues = stock !== 0 || sold !== 0 || purchase !== 0 || available !== 0;
+          const hasScraped = Boolean(latestAt);
+          if (!hasValues || !hasScraped) {
+            continue;
           }
-          if (!allow) continue;
-          const key = normalizeKey(styleNo, entry.colorLower);
-          if (existingKeys.has(key)) continue;
-          out.push({
-            style_no: styleNo,
-            color: entry.label || entry.colorLower,
-            sizes: [],
-            stockArr: [],
-            soldArr: [],
-            purchaseArr: [],
-            availableArr: [],
-            stock: 0,
-            sold: 0,
-            purchase: 0,
-            available: 0,
-            scrapedAt: null
-          });
-          existingKeys.add(key);
+          out.push({ style_no, color, sizes, stockArr, soldArr, purchaseArr, availableArr, stock, sold, purchase, available, scrapedAt: latestAt });
         }
       }
       // Establish a stable number of size columns across all styles in the list (min 8)
@@ -230,13 +198,15 @@ export async function exportStockList(ctx: Ctx) {
         // Center title and add extra spacing before first style block
         h1: { fontSize: s(14), marginBottom: s(20), textAlign: 'center' as any },
         block: { marginBottom: s(10), borderBottom: 0.5, borderColor: '#e5e7eb', paddingBottom: s(6) },
-        row: { flexDirection: 'row', gap: s(8) },
+        row: { flexDirection: 'row', gap: s(12) },
         left: { width: s(84) },
-        leftPanel: { width: s(120) },
+        leftPanel: { width: s(140) },
         // Ensure images never get cut off
         img: { width: s(80), height: s(80), objectFit: 'contain' as any },
         meta: { fontSize: s(9), marginBottom: s(4) },
         colorTable: { marginBottom: s(22) },
+        tableMeta: { flexDirection: 'row', justifyContent: 'flex-end', marginBottom: s(4) },
+        tableMetaRight: { fontSize: s(7), color: '#94a3b8', textAlign: 'right' as any },
         tableHeader: { flexDirection: 'row', backgroundColor: '#f7f7f7', color: '#000', borderBottom: 0.5, borderColor: '#cbd5e1' },
         tableRow: { flexDirection: 'row', borderBottom: 0.5, borderColor: '#e2e8f0' },
         th: { padding: s(3), fontSize: s(8), fontWeight: 700 as any },
@@ -245,7 +215,9 @@ export async function exportStockList(ctx: Ctx) {
         rightCell: { textAlign: 'right' as any },
         bold: { fontWeight: 700 as any },
         green: { color: '#16a34a' },
-        red: { color: '#dc2626' }
+        red: { color: '#dc2626' },
+        footer: { marginTop: s(16), gap: s(4) },
+        footerValue: { fontSize: s(16), fontWeight: 700 as any }
       });
       const Cell = (txt: string, w: string | number, align: 'left' | 'right' = 'left', extra?: any) =>
         React.createElement(Text, { style: [{ width: w }, styles.cell, align === 'left' ? styles.leftCell : styles.rightCell, extra || {}] }, txt);
@@ -306,10 +278,12 @@ export async function exportStockList(ctx: Ctx) {
           );
           const rows: any[] = [];
           const updatedLabel = formatRelativeTimeDa(c.scrapedAt);
-          const colorCellText = c.color ? `${c.color}\n${updatedLabel}` : updatedLabel;
+          const metaRow = React.createElement(View, { style: styles.tableMeta },
+            React.createElement(Text, { style: styles.tableMetaRight }, updatedLabel)
+          );
           // Stock row
           rows.push(React.createElement(View, { style: styles.tableRow, key: `${style_no}-${c.color}-stock` },
-            Cell(colorCellText, colorW, 'left', styles.bold),
+            Cell(c.color || '', colorW, 'left', styles.bold),
             Cell('På lager', sectionW, 'left', styles.bold),
             ...Array.from({ length: maxSizeCount }, (_, i) => {
               const within = i < sizes.length;
@@ -352,8 +326,8 @@ export async function exportStockList(ctx: Ctx) {
             }),
             Cell(c.available ? fmt(c.available) : '', totalW, 'right', [styles.bold, (c.available < 0 ? styles.red : (c.available > 0 ? styles.green : undefined))].filter(Boolean))
           ));
-          // Push one color table (header + 4 rows) with spacing
-          colorTables.push(React.createElement(View, { style: styles.colorTable, key: `${style_no}-${c.color}` }, tableHead, ...rows));
+          // Push one color table (meta + header + rows) with spacing
+          colorTables.push(React.createElement(View, { style: styles.colorTable, key: `${style_no}-${c.color}` }, metaRow, tableHead, ...rows));
         }
         // A style "block" now contains the left image/meta column and a vertical stack of color tables on the right
         const leftColumn = React.createElement(View, { style: styles.leftPanel },
@@ -373,11 +347,11 @@ export async function exportStockList(ctx: Ctx) {
         for (const r of out) { s += r.stock; so += r.sold; p += r.purchase; a += r.available; }
         return { stock: s, sold: so, purchase: p, available: a };
       })();
-      const footer = React.createElement(View, { style: { marginTop: 16 } as any },
-        React.createElement(Text, null, `På lager: ${fmt(totalsAll.stock)}`),
-        React.createElement(Text, null, `Solgt: ${fmt(Math.abs(totalsAll.sold))}`),
-        React.createElement(Text, null, `Indkøbt: ${fmt(totalsAll.purchase)}`),
-        React.createElement(Text, null, `Disponibel: ${fmt(totalsAll.available)}`)
+      const footer = React.createElement(View, { style: styles.footer },
+        React.createElement(Text, { style: styles.footerValue }, `På lager: ${fmt(totalsAll.stock)}`),
+        React.createElement(Text, { style: styles.footerValue }, `Solgt: ${fmt(Math.abs(totalsAll.sold))}`),
+        React.createElement(Text, { style: styles.footerValue }, `Indkøbt: ${fmt(totalsAll.purchase)}`),
+        React.createElement(Text, { style: styles.footerValue }, `Disponibel: ${fmt(totalsAll.available)}`)
       );
       const doc = React.createElement(Document, null, React.createElement(PdfPage, { size: 'A4', orientation: 'portrait', style: styles.page }, React.createElement(Text, { style: styles.h1 }, `Stock List · ${listName}`), ...blocks, footer));
       let outPdf = await pdf(doc).toBuffer();
@@ -439,6 +413,14 @@ async function ensureBuffer(data: any): Promise<Buffer> {
   }
   if (typeof data === 'string') return Buffer.from(data as string);
   return Buffer.from([]);
+}
+
+function scaleImageUrl(input?: string | null, size = 160): string | null {
+  if (!input) return null;
+  const token = `s${size}`;
+  let next = input.replace(/\/s\d+(?:-[a-z])?\//gi, `/${token}/`);
+  next = next.replace(/=s\d+/gi, `=${token}`);
+  return next;
 }
 
 function formatRelativeTimeDa(iso?: string | null): string {
