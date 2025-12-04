@@ -4,18 +4,67 @@ import { MoreHorizontal } from 'lucide-react';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import useSWR from 'swr';
 import { SearchSelect } from '../../components/SearchSelect';
+import { Button } from '../../components/ui/button';
+
+// Helper function to format relative time
+function formatRelativeTime(isoString: string | null): string {
+  if (!isoString) return 'Never';
+  const date = new Date(isoString);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMs / 3600000);
+  const diffDays = Math.floor(diffMs / 86400000);
+  
+  if (diffMins < 1) return 'Just now';
+  if (diffMins < 60) return `${diffMins}m ago`;
+  if (diffHours < 24) return `${diffHours}h ago`;
+  if (diffDays < 7) return `${diffDays}d ago`;
+  return date.toLocaleDateString();
+}
 
 export default function StylesPage() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [q, setQ] = useState('');
   const [supplierFilter, setSupplierFilter] = useState('');
+  const [stockAllZerosFilter, setStockAllZerosFilter] = useState<boolean | null>(null);
+  const [seasonFilter, setSeasonFilter] = useState('');
+  const [settingInactive, setSettingInactive] = useState(false);
   const supabase = createClientComponentClient();
 
-  const { data: rows, mutate } = useSWR(['styles:list', q, supplierFilter], async () => {
+  // Fetch seasons for dropdown
+  const { data: seasons } = useSWR('seasons:list', async () => {
+    const { data, error } = await supabase
+      .from('seasons')
+      .select('id, name')
+      .order('name', { ascending: false });
+    if (error) throw error;
+    return data;
+  });
+
+  // Fetch last scraped dates for all styles
+  const { data: scrapedDates } = useSWR('styles:scraped_dates', async () => {
+    const { data, error } = await supabase
+      .from('style_stock')
+      .select('style_no, scraped_at')
+      .order('scraped_at', { ascending: false });
+    if (error) throw error;
+    
+    // Get the latest scraped_at for each style_no
+    const map = new Map<string, string>();
+    for (const row of data || []) {
+      if (!map.has(row.style_no)) {
+        map.set(row.style_no, row.scraped_at);
+      }
+    }
+    return map;
+  });
+
+  const { data: rows, mutate } = useSWR(['styles:list', q, supplierFilter, stockAllZerosFilter, seasonFilter], async () => {
     // Build base query
     let baseQuery = supabase
       .from('styles')
-      .select('id, style_no, style_name, supplier, image_url, link_href, maybe_inactive, inactive, stock_all_zeros, missing_from_spy, needs_enrichment')
+      .select('id, style_no, style_name, supplier, image_url, link_href, maybe_inactive, inactive, stock_all_zeros, missing_from_spy, needs_enrichment, dg')
       .order('updated_at', { ascending: false });
     
     // Search in both style_no and style_name
@@ -27,6 +76,11 @@ export default function StylesPage() {
     // Filter by supplier
     if (supplierFilter && supplierFilter.trim().length > 0) {
       baseQuery = baseQuery.eq('supplier', supplierFilter);
+    }
+    
+    // Filter by stock_all_zeros
+    if (stockAllZerosFilter !== null) {
+      baseQuery = baseQuery.eq('stock_all_zeros', stockAllZerosFilter);
     }
     
     // Paginate to get all rows (Supabase default limit is ~1000, so we'll paginate)
@@ -45,7 +99,35 @@ export default function StylesPage() {
       from += pageSize;
     }
     
-    return allRows;
+    // Filter by season on client-side (requires joining with style_colors and style_color_seasons)
+    let filtered = allRows;
+    if (seasonFilter && seasonFilter.trim().length > 0) {
+      // Get style IDs that have colors in the selected season
+      const { data: styleColorSeasons } = await supabase
+        .from('style_color_seasons')
+        .select('style_color_id')
+        .eq('season_id', seasonFilter);
+      
+      if (styleColorSeasons && styleColorSeasons.length > 0) {
+        const styleColorIds = styleColorSeasons.map(s => s.style_color_id);
+        
+        const { data: styleColors } = await supabase
+          .from('style_colors')
+          .select('style_id')
+          .in('id', styleColorIds);
+        
+        if (styleColors && styleColors.length > 0) {
+          const styleIds = new Set(styleColors.map(sc => sc.style_id));
+          filtered = allRows.filter(r => styleIds.has(r.id));
+        } else {
+          filtered = [];
+        }
+      } else {
+        filtered = [];
+      }
+    }
+    
+    return filtered;
   });
 
   // Get unique suppliers for the dropdown
@@ -60,6 +142,34 @@ export default function StylesPage() {
       .sort((a, b) => a.localeCompare(b))
       .map((s) => ({ value: s, label: s }));
   }, [rows]);
+
+  // Season options for dropdown
+  const seasonOptions = useMemo(() => {
+    return (seasons ?? []).map((s) => ({ value: s.id, label: s.name }));
+  }, [seasons]);
+
+  // "Set all visible to Inactive" function
+  async function setAllVisibleInactive() {
+    if (!rows || rows.length === 0) return;
+    if (!confirm(`Are you sure you want to set all ${rows.length} visible styles to Inactive?`)) return;
+    
+    setSettingInactive(true);
+    try {
+      const styleIds = rows.map(r => r.id);
+      const { error } = await supabase
+        .from('styles')
+        .update({ inactive: true })
+        .in('id', styleIds);
+      
+      if (error) throw error;
+      await mutate();
+      alert(`Successfully set ${styleIds.length} styles to Inactive`);
+    } catch (err: any) {
+      alert(`Failed to set styles inactive: ${err.message}`);
+    } finally {
+      setSettingInactive(false);
+    }
+  }
 
   async function enqueueUpdate() {
     try {
@@ -115,7 +225,31 @@ export default function StylesPage() {
             placeholder="Filter by supplier..."
             clearable={true}
           />
-          {(q || supplierFilter) && (
+          <SearchSelect
+            items={seasonOptions}
+            value={seasonFilter}
+            onChange={setSeasonFilter}
+            placeholder="Filter by season..."
+            clearable={true}
+          />
+          <label className="flex items-center gap-2 border rounded px-3 py-2 cursor-pointer hover:bg-gray-50">
+            <input
+              type="checkbox"
+              checked={stockAllZerosFilter === true}
+              onChange={(e) => setStockAllZerosFilter(e.target.checked ? true : null)}
+              className="h-4 w-4 rounded"
+            />
+            <span className="text-sm">Stock All Zeros</span>
+          </label>
+          <Button 
+            onClick={setAllVisibleInactive}
+            disabled={settingInactive || !rows || rows.length === 0}
+            variant="destructive"
+            size="sm"
+          >
+            {settingInactive ? 'Setting Inactive...' : 'Set All Visible to Inactive'}
+          </Button>
+          {(q || supplierFilter || seasonFilter || stockAllZerosFilter !== null) && (
             <div className="text-xs text-gray-500">
               Found {(rows ?? []).length} style{(rows ?? []).length !== 1 ? 's' : ''}
             </div>
@@ -129,7 +263,8 @@ export default function StylesPage() {
                 <th className="text-left p-2 border-b">Style No.</th>
                 <th className="text-left p-2 border-b">Style Name</th>
                 <th className="text-left p-2 border-b">Supplier</th>
-              <th className="text-left p-2 border-b">DG</th>
+                <th className="text-left p-2 border-b">DG</th>
+                <th className="text-left p-2 border-b">Last Scraped</th>
                 <th className="text-left p-2 border-b">Stock All Zeros</th>
                 <th className="text-left p-2 border-b">Missing from SPY</th>
                 <th className="text-left p-2 border-b">Status</th>
@@ -139,20 +274,27 @@ export default function StylesPage() {
             <tbody>
               {(rows ?? []).length === 0 && (
                 <tr>
-                  <td colSpan={9} className="p-4 text-center text-gray-500">
-                    No styles found. {(q || supplierFilter) ? 'Try adjusting your filters.' : ''}
+                  <td colSpan={10} className="p-4 text-center text-gray-500">
+                    No styles found. {(q || supplierFilter || seasonFilter || stockAllZerosFilter !== null) ? 'Try adjusting your filters.' : ''}
                   </td>
                 </tr>
               )}
-              {(rows ?? []).map((r) => (
+              {(rows ?? []).map((r) => {
+                const lastScraped = scrapedDates?.get(r.style_no) || null;
+                return (
                 <tr key={r.style_no} className="hover:bg-gray-50">
                   <td className="p-2 border-b cursor-pointer" onClick={() => { window.location.href = `/styles/${encodeURIComponent(r.style_no)}`; }}>{r.image_url ? <img src={r.image_url} alt="thumb" className="h-8 w-8 object-cover rounded" /> : null}</td>
                   <td className="p-2 border-b underline text-slate-700 cursor-pointer" onClick={() => { window.location.href = `/styles/${encodeURIComponent(r.style_no)}`; }}>{r.style_no}</td>
                   <td className="p-2 border-b cursor-pointer" onClick={() => { window.location.href = `/styles/${encodeURIComponent(r.style_no)}`; }}>{r.style_name ?? '—'}</td>
                   <td className="p-2 border-b cursor-pointer" onClick={() => { window.location.href = `/styles/${encodeURIComponent(r.style_no)}`; }}>{r.supplier ?? '—'}</td>
-                  <td className="p-2 border-b cursor-pointer" onClick={() => { window.location.href = `/styles/${encodeURIComponent(r.style_no)}`; }}>{(r as any).dg ?? '—'}</td>
+                  <td className="p-2 border-b cursor-pointer" onClick={() => { window.location.href = `/styles/${encodeURIComponent(r.style_no)}`; }}>{r.dg ?? '—'}</td>
                   <td className="p-2 border-b cursor-pointer" onClick={() => { window.location.href = `/styles/${encodeURIComponent(r.style_no)}`; }}>
-                    {(r as any).stock_all_zeros ? (
+                    <span className={lastScraped ? 'text-gray-600' : 'text-gray-400'}>
+                      {formatRelativeTime(lastScraped)}
+                    </span>
+                  </td>
+                  <td className="p-2 border-b cursor-pointer" onClick={() => { window.location.href = `/styles/${encodeURIComponent(r.style_no)}`; }}>
+                    {r.stock_all_zeros ? (
                       <span className="text-red-600 font-medium">Yes</span>
                     ) : (
                       <span className="text-gray-400">No</span>
@@ -169,7 +311,7 @@ export default function StylesPage() {
                     <div className="flex items-center gap-2">
                       {r.maybe_inactive && !r.inactive && <span className="text-[10px] px-1.5 py-0.5 bg-yellow-100 text-yellow-800 rounded">Maybe Inactive</span>}
                       {r.inactive && <span className="text-[10px] px-1.5 py-0.5 bg-red-100 text-red-800 rounded">Inactive</span>}
-                      {(r as any).stock_all_zeros && <span className="text-[10px] px-1.5 py-0.5 bg-orange-100 text-orange-800 rounded" title="All zeros or scrape error - will be skipped in future scrapes">All Zeros</span>}
+                      {r.stock_all_zeros && <span className="text-[10px] px-1.5 py-0.5 bg-orange-100 text-orange-800 rounded" title="All zeros or scrape error - will be skipped in future scrapes">All Zeros</span>}
                       {r.needs_enrichment && <span className="text-[10px] px-1.5 py-0.5 bg-blue-100 text-blue-800 rounded" title="Needs enrichment - will be processed by enrich_styles job">Needs Enrichment</span>}
                       <button
                         onClick={async (e) => {
@@ -190,7 +332,8 @@ export default function StylesPage() {
                   </td>
                   <td className="p-2 border-b">{r.link_href ? <a className="underline" href={r.link_href} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>Open</a> : '—'}</td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>
