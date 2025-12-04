@@ -140,17 +140,60 @@ export async function checkStockFix(ctx: Ctx) {
       .order('scraped_at', { ascending: false })
       .limit(100000);
     
-    // Aggregate stock data per style
+    // Aggregate stock data per style using same logic as stock-list page
+    // Need to deduplicate by (style_no, color, section, row_label) keeping only latest
     const dbStockByStyleNo = new Map<string, number>();
     
-    for (const row of (stockData ?? [])) {
-      if (row.section !== 'Stock') continue;
-      const styleNo = row.style_no;
-      const values = Array.isArray(row.values) ? row.values : JSON.parse(String(row.values || '[]'));
-      const total = Array.isArray(values) ? values.reduce((sum: number, v: any) => sum + (Number(v) || 0), 0) : Number(values) || 0;
+    // Group by style_no -> color
+    const byStyle = new Map<string, Map<string, any[]>>();
+    for (const r of (stockData ?? [])) {
+      if (!byStyle.has(r.style_no)) byStyle.set(r.style_no, new Map());
+      const byColor = byStyle.get(r.style_no)!;
+      if (!byColor.has(r.color)) byColor.set(r.color, []);
+      byColor.get(r.color)!.push(r);
+    }
+    
+    // For each style, aggregate across all colors
+    for (const [styleNo, byColor] of byStyle.entries()) {
+      let styleTotal = 0;
       
-      const existing = dbStockByStyleNo.get(styleNo) || 0;
-      dbStockByStyleNo.set(styleNo, existing + total);
+      for (const [color, rows] of byColor.entries()) {
+        // Deduplicate: keep latest per (section, row_label)
+        const latestMap = new Map<string, any>();
+        let uniqueIdCounter = 0;
+        
+        for (const r of rows) {
+          const normalizedLabel = String(r.row_label ?? '').trim();
+          
+          if (normalizedLabel) {
+            // Has a PO number: deduplicate by keeping only latest scraped_at for this PO
+            const key = `${r.section}|${normalizedLabel}`;
+            const curr = latestMap.get(key);
+            if (!curr || new Date(r.scraped_at).getTime() > new Date(curr.scraped_at).getTime()) {
+              latestMap.set(key, r);
+            }
+          } else {
+            // No PO number (NULL/empty): treat each row as a unique unnamed PO
+            latestMap.set(`${r.section}|__unnamed_${uniqueIdCounter++}`, r);
+          }
+        }
+        
+        // Get the Stock section row for this color
+        const latestRows = Array.from(latestMap.values());
+        const stockRow = latestRows.find(r => r.section === 'Stock');
+        
+        if (stockRow) {
+          const values = Array.isArray(stockRow.values) 
+            ? stockRow.values 
+            : JSON.parse(String(stockRow.values || '[]'));
+          const colorTotal = Array.isArray(values) 
+            ? values.reduce((sum: number, v: any) => sum + (Number(v) || 0), 0) 
+            : Number(values) || 0;
+          styleTotal += colorTotal;
+        }
+      }
+      
+      dbStockByStyleNo.set(styleNo, styleTotal);
     }
     
     // Compare and find mismatches
