@@ -572,6 +572,14 @@ function Step3EnterQuantities({
   
   // Global navigation state - single index across all items
   const [globalIndex, setGlobalIndex] = React.useState<number>(0);
+  
+  // Helper functions defined early
+  const sum = (arr: number[]) => arr.reduce((a, b) => a + b, 0);
+  
+  const calculatePressure = (arr: number[]) => {
+    const total = sum(arr);
+    return arr.map((v) => total > 0 ? ((v / total) * 100).toFixed(1) : '0.0');
+  };
 
   // Fetch style metadata (including supplier)
   const { data: styleMetadata } = useSWR(
@@ -827,14 +835,6 @@ function Step3EnterQuantities({
       return { ...prev, [key]: base };
     });
   }
-
-  const sum = (arr: number[]) => arr.reduce((a, b) => a + b, 0);
-
-  // Helper to calculate pressure percentages
-  const calculatePressure = (arr: number[]) => {
-    const total = sum(arr);
-    return arr.map((v) => total > 0 ? ((v / total) * 100).toFixed(1) : '0.0');
-  };
 
   // Option 1: Distribute by Sales Pressure
   const fillBySalesPressure = (key: string, colorGroup: any) => {
