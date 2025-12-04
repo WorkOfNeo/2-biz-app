@@ -446,7 +446,7 @@ export default function OverviewPage() {
       rows.push({
         source: 'invoice',
         account_no: acc,
-        customer_name: customer?.company ?? inv.customer_name ?? '-',
+        customer_name: customer?.company ?? '-',
         city: customer?.city ?? '-',
         qty: Number(inv.qty || 0),
         price: Number(inv.amount || 0),
