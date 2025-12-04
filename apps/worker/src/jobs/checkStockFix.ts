@@ -1,5 +1,6 @@
 import type { Page } from 'playwright-core';
 import type { JobRow } from '@shared/types';
+import * as XLSX from 'xlsx';
 
 type Ctx = {
   job: JobRow;
@@ -49,79 +50,122 @@ export async function checkStockFix(ctx: Ctx) {
       await page.waitForTimeout(2000);
     }
     
-    // Parse the table rows
-    await log(job.id, 'info', 'STEP:check_stock_fix_parsing_table');
-    const parsedRows = await page.$$eval('.spy-container table.standardList tbody tr', (trs) => {
-      const out: Array<{ 
-        style_no: string | null; 
-        style_name: string | null; 
-        season: string | null;
-        landed: number | null;
-        invoiced: number | null;
-        correction: number | null;
-        stock: number | null;
-        consignment: number | null;
-        on_hold: number | null;
-        total: number | null;
-      }> = [];
-      
-      function txt(el?: Element | null): string {
-        return ((el as HTMLElement | null)?.textContent || '').replace(/\s+/g, ' ').trim();
+    // Extract collection UUID for Excel download
+    await log(job.id, 'info', 'STEP:check_stock_fix_extracting_uuid');
+    const collectionUUID = await page.evaluate(() => {
+      const downloadLink = document.querySelector('a[href*="DownloadExcel"]') as HTMLAnchorElement;
+      if (downloadLink) {
+        const url = new URL(downloadLink.href, window.location.href);
+        return url.searchParams.get('strCollectionUUID');
       }
       
-      function parseNumber(str: string): number | null {
-        if (!str) return null;
-        const norm = str.replace(/\./g, '').replace(/\s+/g, '').replace(/,([0-9]{1,2})$/, '.$1');
-        const m = norm.match(/-?\d+(?:\.\d+)?/);
-        return m ? Math.round(Number(m[0])) : null;
+      const allLinks = Array.from(document.querySelectorAll('a[href*="strCollectionUUID"]'));
+      for (const link of allLinks) {
+        const url = new URL((link as HTMLAnchorElement).href, window.location.href);
+        const uuid = url.searchParams.get('strCollectionUUID');
+        if (uuid) return uuid;
       }
       
-      for (const tr of Array.from(trs) as HTMLTableRowElement[]) {
-        const tds = Array.from(tr.querySelectorAll('td')) as HTMLElement[];
-        if (!tds.length || tds.length < 12) continue;
-        
-        // Based on the HTML structure provided:
-        // td[1] = Style No link
-        // td[2] = Style Name
-        // td[3] = Season
-        // td[4] = Landed (price in DKK)
-        // td[5] = Invoiced (price in EUR)
-        // td[6] = empty
-        // td[7] = Correction
-        // td[8] = Stock
-        // td[9] = ??? (index 9)
-        // td[10] = Consignment
-        // td[11] = On Hold / In Progress
-        // td[12] = Total (might not exist, depends on structure)
-        
-        const styleNoLink = tds[1]?.querySelector('a');
-        const style_no = styleNoLink ? txt(styleNoLink) : null;
-        const style_name = txt(tds[2]?.querySelector('.textoverflow, div'));
-        const season = txt(tds[3]?.querySelector('.textoverflow, div'));
-        const correction = parseNumber(txt(tds[7]));
-        const stock = parseNumber(txt(tds[8]));
-        const consignment = parseNumber(txt(tds[10]));
-        const on_hold = parseNumber(txt(tds[11]));
-        const total = tds[12] ? parseNumber(txt(tds[12])) : null;
-        
-        if (style_no) {
-          out.push({
-            style_no,
-            style_name,
-            season,
-            landed: null, // Not used for comparison
-            invoiced: null, // Not used for comparison
-            correction,
-            stock,
-            consignment,
-            on_hold,
-            total
-          });
-        }
-      }
-      
-      return out;
+      return null;
     });
+    
+    if (!collectionUUID) {
+      await log(job.id, 'error', 'STEP:check_stock_fix_no_uuid');
+      throw new Error('Collection UUID not found');
+    }
+    
+    await log(job.id, 'info', 'STEP:check_stock_fix_uuid_found', { uuid: collectionUUID });
+    
+    // Download Excel file
+    await log(job.id, 'info', 'STEP:check_stock_fix_downloading_excel');
+    const excelUrl = `${SPY_BASE_URL}/?controller=Shared%5CTable&action=DownloadExcel&strRendererClass=Spy%5CView%5CStyle%5CStockStatus%5CListTableRenderer&strCollectionUUID=${encodeURIComponent(collectionUUID)}&type=xls&options=${encodeURIComponent(JSON.stringify({
+      columns: { "1": true, "2": true, "7": true, "8": true, "10": true, "12": true, "13": true },
+      check_all: false
+    }))}`;
+    
+    const downloadPromise = page.waitForEvent('download', { timeout: 60000 });
+    await page.goto(excelUrl, { waitUntil: 'commit' });
+    const download = await downloadPromise;
+    const buffer = await download.createReadStream().then(stream => {
+      return new Promise<Buffer>((resolve, reject) => {
+        const chunks: Buffer[] = [];
+        stream.on('data', chunk => chunks.push(chunk));
+        stream.on('end', () => resolve(Buffer.concat(chunks)));
+        stream.on('error', reject);
+      });
+    });
+    
+    await log(job.id, 'info', 'STEP:check_stock_fix_excel_downloaded', { size: buffer.length });
+    
+    // Parse Excel
+    const workbook = XLSX.read(buffer, { type: 'buffer' });
+    const sheetName = workbook.SheetNames[0];
+    const sheet = workbook.Sheets[sheetName];
+    const rawData = XLSX.utils.sheet_to_json(sheet, { header: 1 }) as any[][];
+    
+    await log(job.id, 'info', 'STEP:check_stock_fix_excel_parsed', { 
+      rows: rawData.length,
+      headers: rawData[0],
+      sample: rawData.slice(1, 3)
+    });
+    
+    // Parse Excel data into structured format
+    await log(job.id, 'info', 'STEP:check_stock_fix_parsing_excel_data');
+    const parsedRows: Array<{ 
+      style_no: string | null; 
+      style_name: string | null; 
+      season: string | null;
+      landed: number | null;
+      invoiced: number | null;
+      correction: number | null;
+      stock: number | null;
+      consignment: number | null;
+      on_hold: number | null;
+      total: number | null;
+    }> = [];
+    
+    function parseExcelNumber(val: any): number | null {
+      if (val === null || val === undefined || val === '') return null;
+      const num = Number(val);
+      return isNaN(num) ? null : Math.round(num);
+    }
+    
+    function parseExcelString(val: any): string | null {
+      if (val === null || val === undefined) return null;
+      return String(val).trim() || null;
+    }
+    
+    // Parse Excel rows (skip header row at index 0)
+    for (const row of rawData.slice(1)) {
+      // Excel columns based on options: Style No, Style Name, Correction, Stock, Consignment, On Hold, Total
+      // The column indexes may vary, so let's find them by header
+      const style_no = parseExcelString(row[0]);
+      const style_name = parseExcelString(row[1]);
+      
+      // Find numeric columns (Correction, Stock, Consignment, On Hold, Total)
+      // Based on the columns option: 1=StyleNo, 2=StyleName, 7=Correction, 8=Stock, 10=Consignment, 12=OnHold, 13=Total
+      // But in Excel output, they'll be in order of enabled columns
+      const correction = parseExcelNumber(row[2]);
+      const stock = parseExcelNumber(row[3]);
+      const consignment = parseExcelNumber(row[4]);
+      const on_hold = parseExcelNumber(row[5]);
+      const total = parseExcelNumber(row[6]);
+      
+      if (style_no) {
+        parsedRows.push({
+          style_no,
+          style_name,
+          season: null,
+          landed: null,
+          invoiced: null,
+          correction,
+          stock,
+          consignment,
+          on_hold,
+          total
+        });
+      }
+    }
     
     await log(job.id, 'info', 'STEP:check_stock_fix_parsed', { rowCount: parsedRows.length });
     
@@ -133,12 +177,24 @@ export async function checkStockFix(ctx: Ctx) {
     const styleNos = Array.from(new Set(parsedRows.map(r => r.style_no).filter(Boolean)));
     await log(job.id, 'info', 'STEP:check_stock_fix_fetching_db_stock', { styleCount: styleNos.length });
     
-    const { data: stockData } = await supabase
+    const { data: stockData, error: stockError } = await supabase
       .from('style_stock')
       .select('style_no, color, sizes, section, row_label, values, scraped_at')
       .in('style_no', styleNos)
       .order('scraped_at', { ascending: false })
       .limit(100000);
+    
+    if (stockError) {
+      await log(job.id, 'error', 'STEP:check_stock_fix_db_error', { error: stockError.message });
+      throw new Error(`Failed to fetch stock data: ${stockError.message}`);
+    }
+    
+    await log(job.id, 'info', 'STEP:check_stock_fix_db_rows_fetched', { 
+      total_rows: stockData?.length || 0,
+      unique_styles: styleNos.length,
+      sample_style: styleNos[0],
+      sample_rows: stockData?.filter(r => r.style_no === styleNos[0]).length || 0
+    });
     
     // Aggregate stock data per style using same logic as stock-list page
     // Need to deduplicate by (style_no, color, section, row_label) keeping only latest
@@ -199,6 +255,20 @@ export async function checkStockFix(ctx: Ctx) {
     // Compare and find mismatches
     const mismatches: Array<{ style_no: string; spy_stock: number | null; db_stock: number; diff: number }> = [];
     
+    // Log first 10 comparisons for debugging
+    const debugSample = parsedRows.slice(0, 10).map(row => {
+      const spyStock = row.stock ?? 0;
+      const dbStock = dbStockByStyleNo.get(row.style_no) ?? 0;
+      return {
+        style_no: row.style_no,
+        spy_stock: spyStock,
+        db_stock: dbStock,
+        match: spyStock === dbStock
+      };
+    });
+    
+    await log(job.id, 'info', 'STEP:check_stock_fix_comparison_sample', { sample: debugSample });
+    
     for (const row of parsedRows) {
       if (!row.style_no) continue;
       const spyStock = row.stock ?? 0;
@@ -213,6 +283,16 @@ export async function checkStockFix(ctx: Ctx) {
           db_stock: dbStock,
           diff
         });
+        
+        // Log detailed info for first 5 mismatches
+        if (mismatches.length <= 5) {
+          await log(job.id, 'info', 'STEP:check_stock_fix_mismatch_detail', {
+            style_no: row.style_no,
+            spy_values: { stock: row.stock, correction: row.correction, consignment: row.consignment, on_hold: row.on_hold },
+            db_stock: dbStock,
+            colors_in_db: byStyle.get(row.style_no)?.size || 0
+          });
+        }
       }
     }
     
