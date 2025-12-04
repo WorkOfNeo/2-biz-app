@@ -295,7 +295,10 @@ export default function StylesPage() {
                 </tr>
               )}
               {(rows ?? []).map((r) => (
-                <tr key={r.style_no} className="hover:bg-gray-50">
+                <tr
+                  key={r.style_no}
+                  className={`hover:bg-gray-50 transition-colors ${r.inactive ? 'bg-red-50/70' : ''}`}
+                >
                   <td className="p-2 border-b cursor-pointer" onClick={() => { window.location.href = `/styles/${encodeURIComponent(r.style_no)}`; }}>{r.image_url ? <img src={r.image_url} alt="thumb" className="h-8 w-8 object-cover rounded" /> : null}</td>
                   <td className="p-2 border-b underline text-slate-700 cursor-pointer" onClick={() => { window.location.href = `/styles/${encodeURIComponent(r.style_no)}`; }}>{r.style_no}</td>
                   <td className="p-2 border-b cursor-pointer" onClick={() => { window.location.href = `/styles/${encodeURIComponent(r.style_no)}`; }}>{r.style_name ?? '—'}</td>
@@ -334,7 +337,7 @@ export default function StylesPage() {
                         }}
                         className={`text-[10px] px-2 py-1 rounded border ${r.inactive ? 'bg-green-50 text-green-700 border-green-300 hover:bg-green-100' : 'bg-gray-50 text-gray-700 border-gray-300 hover:bg-gray-100'}`}
                       >
-                        {r.inactive ? 'Activate' : 'Set Inactive'}
+                        {r.inactive ? 'Set Active' : 'Set Inactive'}
                       </button>
                     </div>
                   </td>
