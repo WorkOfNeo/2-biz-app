@@ -691,9 +691,27 @@ export default function StockListPage() {
     if (!checkerResults) return;
     
     // Get style numbers that have mismatches
-    const mismatchStyleNos = checkerResults.differences
-      .filter((d: any) => d.status === 'mismatch')
-      .map((d: any) => d.styleNo);
+    let mismatchStyleNos: string[] = [];
+    
+    if (checkerResults.mode === 'po') {
+      // For PO mode, extract unique style numbers from mismatch details
+      const styleNosSet = new Set<string>();
+      for (const diff of checkerResults.differences) {
+        if (diff.status === 'mismatch' && diff.details) {
+          for (const row of diff.details) {
+            if (row.style_no) {
+              styleNosSet.add(row.style_no);
+            }
+          }
+        }
+      }
+      mismatchStyleNos = Array.from(styleNosSet);
+    } else {
+      // For styles mode, use styleNo directly
+      mismatchStyleNos = checkerResults.differences
+        .filter((d: any) => d.status === 'mismatch')
+        .map((d: any) => d.styleNo);
+    }
     
     if (mismatchStyleNos.length === 0) {
       setScrapeMessage({ type: 'info', text: 'No mismatches to scrape' });
@@ -1720,16 +1738,38 @@ PO7332, 2100"
             >
               Check Differences
             </Button>
-            {checkerResults && checkerResults.mismatches > 0 && checkerResults.mode === 'styles' && (
-              <Button 
-                onClick={scrapeMismatches} 
-                variant="default"
-                disabled={scrapingMismatches}
-                className="bg-orange-600 hover:bg-orange-700"
-              >
-                {scrapingMismatches ? 'Scraping...' : `Scrape ${checkerResults.mismatches} Mismatches`}
-              </Button>
-            )}
+            {checkerResults && checkerResults.mismatches > 0 && (() => {
+              let scrapeText = 'Scraping...';
+              if (!scrapingMismatches) {
+                if (checkerResults.mode === 'po') {
+                  // Calculate unique style count from mismatch details
+                  const styleNosSet = new Set<string>();
+                  for (const diff of checkerResults.differences) {
+                    if (diff.status === 'mismatch' && diff.details) {
+                      for (const row of diff.details) {
+                        if (row.style_no) {
+                          styleNosSet.add(row.style_no);
+                        }
+                      }
+                    }
+                  }
+                  const styleCount = styleNosSet.size;
+                  scrapeText = `Scrape ${styleCount} Style${styleCount !== 1 ? 's' : ''} (PO Mismatches)`;
+                } else {
+                  scrapeText = `Scrape ${checkerResults.mismatches} Mismatches`;
+                }
+              }
+              return (
+                <Button 
+                  onClick={scrapeMismatches} 
+                  variant="default"
+                  disabled={scrapingMismatches}
+                  className="bg-orange-600 hover:bg-orange-700"
+                >
+                  {scrapeText}
+                </Button>
+              );
+            })()}
             {checkerResults && (
               <Button onClick={exportCheckerToExcel} variant="outline" disabled={scrapingMismatches}>
                 Export to Excel
