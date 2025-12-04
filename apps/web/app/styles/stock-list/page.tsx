@@ -700,15 +700,15 @@ export default function StockListPage() {
         pastedData.set(styleNo, { name: styleName, total });
       }
       
-      // Calculate totals per style from ALL stock data (unfiltered, available quantity)
+      // Calculate totals per style from ALL stock data (unfiltered, STOCK ONLY - not Available)
       // Use groupedByStyle instead of filteredForView to get ALL styles regardless of current filters
       const currentData = new Map<string, { name: string | null; total: number }>();
       for (const { styleNo, colors } of groupedByStyle) {
         const meta = styleMetaByNo[styleNo] || { name: null };
         let styleTotal = 0;
-        // Sum available across ALL colors for this style
+        // Sum STOCK (not available) across ALL colors for this style
         for (const color of colors) {
-          styleTotal += color.available.reduce((sum, v) => sum + (Number(v) || 0), 0);
+          styleTotal += color.stock.reduce((sum, v) => sum + (Number(v) || 0), 0);
         }
         currentData.set(styleNo, { name: meta.name, total: styleTotal });
       }
@@ -1263,7 +1263,7 @@ export default function StockListPage() {
               Paste your data in the format: <code className="bg-gray-100 px-1 rounded">Style No. [TAB] Style Name [TAB] Total</code>
             </p>
             <p className="text-xs text-gray-500 mb-3">
-              The checker will compare the pasted totals with the current <strong>Available</strong> quantities (Stock - Sold + Purchase) displayed on this page.
+              The checker will compare the pasted totals with the current <strong>Stock</strong> quantities (all colors combined).
             </p>
             <textarea
               className="w-full h-64 p-3 border rounded font-mono text-xs"
