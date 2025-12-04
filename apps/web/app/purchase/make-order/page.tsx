@@ -839,7 +839,7 @@ function Step3EnterQuantities({
   }
 
   // Option 1: Distribute by Sales Pressure
-  const fillBySalesPressure = (key: string, colorGroup: any) => {
+  const fillBySalesPressure = React.useCallback((key: string, colorGroup: any) => {
     const total = Number(fillOption1Amount[key] || 0);
     if (total <= 0) return;
 
@@ -859,10 +859,10 @@ function Step3EnterQuantities({
     
     // Clear the input
     setFillOption1Amount((prev) => ({ ...prev, [key]: '' }));
-  };
+  }, [fillOption1Amount, manualSalesData]);
 
   // Option 2: Match Sales Pressure
-  const matchSalesPressure = (key: string, colorGroup: any) => {
+  const matchSalesPressure = React.useCallback((key: string, colorGroup: any) => {
     const total = Number(fillOption2Amount[key] || 0);
     if (total <= 0) return;
 
@@ -890,10 +890,10 @@ function Step3EnterQuantities({
     
     // Clear the input
     setFillOption2Amount((prev) => ({ ...prev, [key]: '' }));
-  };
+  }, [fillOption2Amount, manualSalesData]);
 
   // Option 3: Fill Gaps to Target
-  const fillGapsToTarget = (key: string, colorGroup: any) => {
+  const fillGapsToTarget = React.useCallback((key: string, colorGroup: any) => {
     const targetTotal = Number(fillOption3Amount[key] || 0);
     if (targetTotal <= 0) return;
 
@@ -921,7 +921,7 @@ function Step3EnterQuantities({
     
     // Clear the input
     setFillOption3Amount((prev) => ({ ...prev, [key]: '' }));
-  };
+  }, [fillOption3Amount, manualSalesData]);
 
   // Show loading state if no items
   if (!currentItem || totalItems === 0) {
