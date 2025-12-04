@@ -59,6 +59,8 @@ export default function StockListPage() {
   const [showCheckerModal, setShowCheckerModal] = React.useState<boolean>(false);
   const [checkerInput, setCheckerInput] = React.useState<string>('');
   const [checkerResults, setCheckerResults] = React.useState<any>(null);
+  const [scrapingMismatches, setScrapingMismatches] = React.useState<boolean>(false);
+  const [scrapeProgress, setScrapeProgress] = React.useState<{ current: number; total: number } | null>(null);
   const { data } = useSWR('style_stock:list', async () => {
     // First, get the total count
     const { count, error: countError } = await supabase
@@ -675,6 +677,101 @@ export default function StockListPage() {
     
     return { stock, sold, purchase, available };
   }, [filteredForView]);
+
+  // Scrape mismatches function
+  const scrapeMismatches = React.useCallback(async () => {
+    if (!checkerResults) return;
+    
+    // Get style numbers that have mismatches
+    const mismatchStyleNos = checkerResults.differences
+      .filter((d: any) => d.status === 'mismatch')
+      .map((d: any) => d.styleNo);
+    
+    if (mismatchStyleNos.length === 0) {
+      alert('No mismatches to scrape');
+      return;
+    }
+    
+    try {
+      setScrapingMismatches(true);
+      setScrapeProgress({ current: 0, total: mismatchStyleNos.length });
+      
+      // Enqueue the scrape job
+      const res = await fetch('/api/enqueue', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'update_style_stock',
+          payload: { styleNos: mismatchStyleNos, requestedBy: 'checker' }
+        })
+      });
+      
+      if (!res.ok) {
+        const txt = await res.text().catch(() => '');
+        throw new Error(txt || `Failed (${res.status})`);
+      }
+      
+      const { jobId } = await res.json();
+      
+      // Poll for progress
+      const pollInterval = setInterval(async () => {
+        try {
+          // Check job status from Supabase
+          const { data: jobData, error: jobError } = await supabase
+            .from('jobs')
+            .select('status')
+            .eq('id', jobId)
+            .single();
+          
+          if (jobError) {
+            clearInterval(pollInterval);
+            return;
+          }
+          
+          // Check logs for progress
+          const { data: logsData } = await supabase
+            .from('job_logs')
+            .select('msg, data')
+            .eq('job_id', jobId)
+            .eq('msg', 'STEP:style_stock_style_done')
+            .order('created_at', { ascending: true });
+          
+          const completedCount = logsData?.length || 0;
+          setScrapeProgress({ current: completedCount, total: mismatchStyleNos.length });
+          
+          // Check if job is finished
+          if (jobData.status === 'succeeded' || jobData.status === 'failed' || jobData.status === 'cancelled') {
+            clearInterval(pollInterval);
+            setScrapingMismatches(false);
+            
+            if (jobData.status === 'succeeded') {
+              alert(`Scraping complete! ${completedCount} styles scraped.`);
+              // Refresh the stock data
+              window.location.reload();
+            } else {
+              alert(`Scraping ${jobData.status}. Check the Jobs page for details.`);
+            }
+          }
+        } catch (err: any) {
+          console.error('Poll error:', err);
+        }
+      }, 2000); // Poll every 2 seconds
+      
+      // Stop polling after 10 minutes
+      setTimeout(() => {
+        clearInterval(pollInterval);
+        if (scrapingMismatches) {
+          setScrapingMismatches(false);
+          alert('Scraping is taking longer than expected. Check the Jobs page for status.');
+        }
+      }, 600000);
+      
+    } catch (err: any) {
+      setScrapingMismatches(false);
+      setScrapeProgress(null);
+      alert(`Failed to start scraping: ${err.message}`);
+    }
+  }, [checkerResults, supabase, scrapingMismatches]);
 
   // Export Checker results to Excel
   const exportCheckerToExcel = React.useCallback(() => {
@@ -1335,12 +1432,22 @@ export default function StockListPage() {
             />
           </div>
           
-          <div className="flex gap-2">
-            <Button onClick={runChecker} disabled={!checkerInput.trim()}>
+          <div className="flex gap-2 flex-wrap">
+            <Button onClick={runChecker} disabled={!checkerInput.trim() || scrapingMismatches}>
               Check Differences
             </Button>
+            {checkerResults && checkerResults.mismatches > 0 && (
+              <Button 
+                onClick={scrapeMismatches} 
+                variant="default"
+                disabled={scrapingMismatches}
+                className="bg-orange-600 hover:bg-orange-700"
+              >
+                {scrapingMismatches ? 'Scraping...' : `Scrape ${checkerResults.mismatches} Mismatches`}
+              </Button>
+            )}
             {checkerResults && (
-              <Button onClick={exportCheckerToExcel} variant="default">
+              <Button onClick={exportCheckerToExcel} variant="outline" disabled={scrapingMismatches}>
                 Export to Excel
               </Button>
             )}
@@ -1349,11 +1456,31 @@ export default function StockListPage() {
               onClick={() => {
                 setCheckerInput('');
                 setCheckerResults(null);
+                setScrapeProgress(null);
               }}
+              disabled={scrapingMismatches}
             >
               Clear
             </Button>
           </div>
+          
+          {scrapingMismatches && scrapeProgress && (
+            <div className="mt-4 p-4 bg-blue-50 border border-blue-200 rounded">
+              <p className="text-sm font-semibold text-blue-900 mb-2">
+                ⚠️ Scraping in progress - This might take a few minutes, please don't close this popup
+              </p>
+              <div className="mb-2">
+                <div className="text-sm text-blue-700">
+                  Progress: {scrapeProgress.current} / {scrapeProgress.total} styles scraped
+                </div>
+              </div>
+              <ProgressBar 
+                value={scrapeProgress.current} 
+                max={scrapeProgress.total} 
+                showLabel={true}
+              />
+            </div>
+          )}
           
           {checkerResults && (
             <div className="mt-4 space-y-4">
