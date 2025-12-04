@@ -15,7 +15,8 @@ export default function PurchaseMakeOrderPage() {
     returnPath: 'makeOrder.process1.returnPath',
     selectedStyles: 'makeOrder.process1.selectedStyles',
     selections: 'makeOrder.process1.selections',
-    inputs: 'makeOrder.process1.inputs'
+    inputs: 'makeOrder.process1.inputs',
+    manualSales: 'makeOrder.process1.manualSales'
   }), []);
 
   const [started, setStarted] = React.useState<boolean>(false);
@@ -34,6 +35,9 @@ export default function PurchaseMakeOrderPage() {
   // Step 3: Inputs per style/color/size
   type InputRecord = Record<string, number[]>; // key: "style_no|color"
   const [inputsByKey, setInputsByKey] = React.useState<InputRecord>({});
+  
+  // Manual sales data per style/color/size
+  const [manualSalesData, setManualSalesData] = React.useState<InputRecord>({});
 
   // Load persisted state
   React.useEffect(() => {
@@ -44,6 +48,7 @@ export default function PurchaseMakeOrderPage() {
       const styles = localStorage.getItem(STORAGE_KEYS.selectedStyles);
       const sel = localStorage.getItem(STORAGE_KEYS.selections);
       const inp = localStorage.getItem(STORAGE_KEYS.inputs);
+      const manSales = localStorage.getItem(STORAGE_KEYS.manualSales);
       
       if (s === '1') setStarted(true);
       if (typeof r === 'string') setReturnPath(r);
@@ -59,6 +64,9 @@ export default function PurchaseMakeOrderPage() {
       }
       if (inp) {
         try { setInputsByKey(JSON.parse(inp) as InputRecord); } catch {}
+      }
+      if (manSales) {
+        try { setManualSalesData(JSON.parse(manSales) as InputRecord); } catch {}
       }
     } catch {}
   }, [STORAGE_KEYS]);
@@ -79,6 +87,10 @@ export default function PurchaseMakeOrderPage() {
   React.useEffect(() => {
     try { localStorage.setItem(STORAGE_KEYS.inputs, JSON.stringify(inputsByKey)); } catch {}
   }, [inputsByKey, STORAGE_KEYS.inputs]);
+  
+  React.useEffect(() => {
+    try { localStorage.setItem(STORAGE_KEYS.manualSales, JSON.stringify(manualSalesData)); } catch {}
+  }, [manualSalesData, STORAGE_KEYS.manualSales]);
 
   function startProcess() {
     try {
@@ -108,6 +120,7 @@ export default function PurchaseMakeOrderPage() {
       setSelectedStyles([]);
       setSelections([]);
       setInputsByKey({});
+      setManualSalesData({});
       setReturnPath(null);
     } catch {}
   }
@@ -194,7 +207,7 @@ export default function PurchaseMakeOrderPage() {
 
       {started && step === 1 && <Step1ChooseStyles selectedStyles={selectedStyles} setSelectedStyles={setSelectedStyles} onContinue={() => setStep(2)} />}
       {started && step === 2 && <Step2ChooseColors selectedStyles={selectedStyles} selections={selections} setSelections={setSelections} onBack={() => setStep(1)} onContinue={() => setStep(3)} />}
-      {started && step === 3 && <Step3EnterQuantities selections={selections} inputsByKey={inputsByKey} setInputsByKey={setInputsByKey} onBack={() => setStep(2)} onContinue={() => setStep(4)} />}
+      {started && step === 3 && <Step3EnterQuantities selections={selections} inputsByKey={inputsByKey} setInputsByKey={setInputsByKey} manualSalesData={manualSalesData} setManualSalesData={setManualSalesData} onBack={() => setStep(2)} onContinue={() => setStep(4)} />}
       {started && step === 4 && <Step4Review selections={selections} inputsByKey={inputsByKey} onBack={() => setStep(3)} onReset={resetProcess} />}
     </div>
   );
@@ -488,19 +501,19 @@ function Step2ChooseColors({
   );
 }
 
-// Helper function to distribute total by sold pressure
-function distributeBySoldPressure(total: number, soldArray: number[]): number[] {
-  const soldTotal = soldArray.reduce((a, b) => a + b, 0);
+// Helper function to distribute total by pressure array (generic)
+function distributeByPressure(total: number, pressureArray: number[]): number[] {
+  const pressureTotal = pressureArray.reduce((a, b) => a + b, 0);
   
-  if (soldTotal === 0) {
-    // If no sold data, distribute evenly
-    const perSize = Math.floor(total / soldArray.length);
-    const remainder = total % soldArray.length;
-    return soldArray.map((_, i) => perSize + (i < remainder ? 1 : 0));
+  if (pressureTotal === 0) {
+    // If no pressure data, distribute evenly
+    const perSize = Math.floor(total / pressureArray.length);
+    const remainder = total % pressureArray.length;
+    return pressureArray.map((_, i) => perSize + (i < remainder ? 1 : 0));
   }
 
   // Calculate pressure percentages
-  const pressures = soldArray.map((s) => s / soldTotal);
+  const pressures = pressureArray.map((s) => s / pressureTotal);
   
   // Distribute with largest remainder method
   const exact = pressures.map((p) => p * total);
@@ -530,12 +543,16 @@ function Step3EnterQuantities({
   selections,
   inputsByKey,
   setInputsByKey,
+  manualSalesData,
+  setManualSalesData,
   onBack,
   onContinue
 }: {
   selections: Array<{ style_no: string; color: string }>;
   inputsByKey: Record<string, number[]>;
   setInputsByKey: React.Dispatch<React.SetStateAction<Record<string, number[]>>>;
+  manualSalesData: Record<string, number[]>;
+  setManualSalesData: React.Dispatch<React.SetStateAction<Record<string, number[]>>>;
   onBack: () => void;
   onContinue: () => void;
 }) {
@@ -544,15 +561,17 @@ function Step3EnterQuantities({
     [selections]
   );
 
-  // State for bulk order amounts per color
-  const [bulkOrderAmounts, setBulkOrderAmounts] = React.useState<Record<string, string>>({});
+  // State for fill option inputs (3 new options)
+  const [fillOption1Amount, setFillOption1Amount] = React.useState<Record<string, string>>({});
+  const [fillOption2Amount, setFillOption2Amount] = React.useState<Record<string, string>>({});
+  const [fillOption3Amount, setFillOption3Amount] = React.useState<Record<string, string>>({});
   
   // State for historical sales data per color
   const [historicalDataOpen, setHistoricalDataOpen] = React.useState<Record<string, boolean>>({});
   const [historicalData, setHistoricalData] = React.useState<Record<string, number[]>>({});
   
-  // State for current item index per supplier
-  const [currentIndexBySupplier, setCurrentIndexBySupplier] = React.useState<Record<string, number>>({});
+  // Global navigation state - single index across all items
+  const [globalIndex, setGlobalIndex] = React.useState<number>(0);
 
   // Fetch style metadata (including supplier)
   const { data: styleMetadata } = useSWR(
@@ -750,8 +769,59 @@ function Step3EnterQuantities({
     return result;
   }, [selections, styleMetadata, stockData]);
 
+  // Flatten grouped items for global navigation
+  const flattenedItems = React.useMemo(() => {
+    if (!groupedBySupplier || groupedBySupplier.length === 0) return [];
+    
+    type FlatItem = {
+      supplier: string;
+      supplierIndex: number;
+      supplierItemIndex: number;
+      supplierTotalItems: number;
+      colorGroup: any;
+      key: string;
+    };
+    
+    const items: FlatItem[] = [];
+    groupedBySupplier.forEach((supplierGroup, supplierIndex) => {
+      supplierGroup.colors.forEach((colorGroup, itemIndex) => {
+        items.push({
+          supplier: supplierGroup.supplier,
+          supplierIndex,
+          supplierItemIndex: itemIndex,
+          supplierTotalItems: supplierGroup.colors.length,
+          colorGroup,
+          key: `${colorGroup.style_no}|${colorGroup.color}`.toLowerCase()
+        });
+      });
+    });
+    return items;
+  }, [groupedBySupplier]);
+
+  // Get current item
+  const currentItem = flattenedItems[globalIndex];
+  const totalItems = flattenedItems.length;
+  const totalSuppliers = groupedBySupplier.length;
+
+  // Navigation functions
+  const goToPrevious = () => {
+    if (globalIndex > 0) setGlobalIndex(globalIndex - 1);
+  };
+  
+  const goToNext = () => {
+    if (globalIndex < totalItems - 1) setGlobalIndex(globalIndex + 1);
+  };
+
   function setInput(key: string, sizeIndex: number, value: number, sizesLength: number) {
     setInputsByKey((prev) => {
+      const base = prev[key]?.length === sizesLength ? [...prev[key]] : Array(sizesLength).fill(0);
+      base[sizeIndex] = Math.max(0, value);
+      return { ...prev, [key]: base };
+    });
+  }
+  
+  function setSalesInput(key: string, sizeIndex: number, value: number, sizesLength: number) {
+    setManualSalesData((prev) => {
       const base = prev[key]?.length === sizesLength ? [...prev[key]] : Array(sizesLength).fill(0);
       base[sizeIndex] = Math.max(0, value);
       return { ...prev, [key]: base };
@@ -760,12 +830,25 @@ function Step3EnterQuantities({
 
   const sum = (arr: number[]) => arr.reduce((a, b) => a + b, 0);
 
-  const applyBulkOrder = (key: string, colorGroup: any) => {
-    const total = Number(bulkOrderAmounts[key] || 0);
+  // Helper to calculate pressure percentages
+  const calculatePressure = (arr: number[]) => {
+    const total = sum(arr);
+    return arr.map((v) => total > 0 ? ((v / total) * 100).toFixed(1) : '0.0');
+  };
+
+  // Option 1: Distribute by Sales Pressure
+  const fillBySalesPressure = (key: string, colorGroup: any) => {
+    const total = Number(fillOption1Amount[key] || 0);
     if (total <= 0) return;
 
-    // Distribute based on sold pressure
-    const distributed = distributeBySoldPressure(total, colorGroup.sold);
+    const salesTotal = manualSalesData[key];
+    if (!salesTotal || salesTotal.length !== colorGroup.sizes.length) {
+      alert('Please enter Sales Total data first');
+      return;
+    }
+
+    // Distribute based on sales pressure
+    const distributed = distributeByPressure(total, salesTotal);
     
     setInputsByKey((prev) => ({
       ...prev,
@@ -773,65 +856,129 @@ function Step3EnterQuantities({
     }));
     
     // Clear the input
-    setBulkOrderAmounts((prev) => ({ ...prev, [key]: '' }));
+    setFillOption1Amount((prev) => ({ ...prev, [key]: '' }));
   };
 
-  const fillGaps = (key: string, colorGroup: any) => {
-    const total = Number(bulkOrderAmounts[key] || 0);
+  // Option 2: Match Sales Pressure
+  const matchSalesPressure = (key: string, colorGroup: any) => {
+    const total = Number(fillOption2Amount[key] || 0);
     if (total <= 0) return;
 
-    const historical = historicalData[key];
-    if (!historical || historical.length !== colorGroup.sizes.length) {
-      // Fallback to normal distribution if no historical data
-      applyBulkOrder(key, colorGroup);
+    const salesTotal = manualSalesData[key];
+    if (!salesTotal || salesTotal.length !== colorGroup.sizes.length) {
+      alert('Please enter Sales Total data first');
       return;
     }
 
-    // Calculate current net need per size
+    // Calculate target New Net Need distribution using Sales Total pressure
+    const targetDistribution = distributeByPressure(total, salesTotal);
+    
+    // Calculate current Net Need
     const netNeed = colorGroup.stock.map((stock: number, i: number) => 
       stock + (colorGroup.purchase[i] ?? 0) - (colorGroup.sold[i] ?? 0)
     );
-
-    // Calculate historical pressure
-    const historicalTotal = historical.reduce((a, b) => a + b, 0);
-    const historicalPressure = historical.map((h) => 
-      historicalTotal > 0 ? h / historicalTotal : 0
-    );
-
-    // Target distribution: total amount distributed by historical pressure
-    const targetDistribution = historicalPressure.map((p) => Math.round(p * total));
     
-    // Calculate what each size needs to reach its target from current net need
-    // If net need is -10 and we want target of 20, we need to add 30
-    const orderNeeded = targetDistribution.map((target, i) => 
-      Math.max(0, target - netNeed[i])
-    );
-
-    // Adjust to match exact total
-    let currentSum = orderNeeded.reduce((a, b) => a + b, 0);
-    const diff = total - currentSum;
+    // Calculate Order = Target - Current Net Need
+    const order = targetDistribution.map((target, i) => Math.max(0, target - netNeed[i]));
     
-    if (diff !== 0) {
-      // Distribute difference based on historical pressure
-      const adjustment = distributeBySoldPressure(Math.abs(diff), historical);
-      const finalOrder = orderNeeded.map((o, i) => 
-        diff > 0 ? o + (adjustment[i] ?? 0) : Math.max(0, o - (adjustment[i] ?? 0))
-      );
-      
-      setInputsByKey((prev) => ({
-        ...prev,
-        [key]: finalOrder
-      }));
-    } else {
-      setInputsByKey((prev) => ({
-        ...prev,
-        [key]: orderNeeded
-      }));
-    }
+    setInputsByKey((prev) => ({
+      ...prev,
+      [key]: order
+    }));
     
     // Clear the input
-    setBulkOrderAmounts((prev) => ({ ...prev, [key]: '' }));
+    setFillOption2Amount((prev) => ({ ...prev, [key]: '' }));
   };
+
+  // Option 3: Fill Gaps to Target
+  const fillGapsToTarget = (key: string, colorGroup: any) => {
+    const targetTotal = Number(fillOption3Amount[key] || 0);
+    if (targetTotal <= 0) return;
+
+    const salesTotal = manualSalesData[key];
+    if (!salesTotal || salesTotal.length !== colorGroup.sizes.length) {
+      alert('Please enter Sales Total data first');
+      return;
+    }
+
+    // Calculate what target should look like using Sales Total pressure
+    const targetDistribution = distributeByPressure(targetTotal, salesTotal);
+    
+    // Calculate current Net Need
+    const netNeed = colorGroup.stock.map((stock: number, i: number) => 
+      stock + (colorGroup.purchase[i] ?? 0) - (colorGroup.sold[i] ?? 0)
+    );
+    
+    // Calculate Order = Target - Current Net Need
+    const order = targetDistribution.map((target, i) => Math.max(0, target - netNeed[i]));
+    
+    setInputsByKey((prev) => ({
+      ...prev,
+      [key]: order
+    }));
+    
+    // Clear the input
+    setFillOption3Amount((prev) => ({ ...prev, [key]: '' }));
+  };
+
+  // Show loading state if no items
+  if (!currentItem || totalItems === 0) {
+    return (
+      <div className="space-y-4">
+        <Card>
+          <CardHeader>
+            <CardTitle>Step 3: Enter Order Quantities</CardTitle>
+            <CardDescription>
+              Review stock data and enter order quantities.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="text-center py-8 text-slate-500">
+              {totalItems === 0 ? 'No items to display. Please go back and select colors.' : 'Loading...'}
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  const { colorGroup, key, supplier, supplierItemIndex, supplierTotalItems } = currentItem;
+  const meta = styleMetadata?.get(colorGroup.style_no);
+  const inputs =
+    inputsByKey[key]?.length === colorGroup.sizes.length
+      ? inputsByKey[key]
+      : Array(colorGroup.sizes.length).fill(0);
+
+  const salesInputs =
+    manualSalesData[key]?.length === colorGroup.sizes.length
+      ? manualSalesData[key]
+      : Array(colorGroup.sizes.length).fill(0);
+
+  // Calculate Net Need = Stock + Purchase - Sold
+  const netNeed = colorGroup.stock.map((stock: number, i: number) => 
+    stock + (colorGroup.purchase[i] ?? 0) - (colorGroup.sold[i] ?? 0)
+  );
+  const netNeedTotal = sum(netNeed);
+  
+  // Calculate New Net Need = Net Need + Order
+  const newNetNeed = netNeed.map((n, i) => n + (inputs[i] ?? 0));
+
+  // Calculate pressure for each row
+  const stockPressure = calculatePressure(colorGroup.stock);
+  const soldPressure = calculatePressure(colorGroup.sold);
+  const purchasePressure = calculatePressure(colorGroup.purchase);
+  const salesPressure = calculatePressure(salesInputs);
+  const netNeedPressure = calculatePressure(netNeed.map(v => Math.abs(v)));
+  const orderPressure = calculatePressure(inputs);
+  const newNetNeedPressure = calculatePressure(newNetNeed.map(v => Math.abs(v)));
+
+  const historical = historicalData[key] || [];
+  const hasHistorical = historical.length === colorGroup.sizes.length;
+  const hasHistoricalFromDB = historicalSalesData && historicalSalesData[key] && Object.keys(historicalSalesData[key]).length > 0;
+  const historicalTotal = hasHistorical ? historical.reduce((a, b) => a + b, 0) : 0;
+  const historicalPressure = hasHistorical && historicalTotal > 0
+    ? historical.map((h) => ((h / historicalTotal) * 100).toFixed(1))
+    : [];
 
   return (
     <div className="space-y-4">
@@ -839,107 +986,47 @@ function Step3EnterQuantities({
         <CardHeader>
           <CardTitle>Step 3: Enter Order Quantities</CardTitle>
           <CardDescription>
-            Review stock data and enter order quantities, grouped by supplier.
+            Review stock data and enter order quantities - one style/color at a time.
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-8">
-          {groupedBySupplier.map((supplierGroup) => {
-            const currentIndex = currentIndexBySupplier[supplierGroup.supplier] ?? 0;
-            const totalItems = supplierGroup.colors.length;
-            const colorGroup = supplierGroup.colors[currentIndex];
+        <CardContent className="space-y-6">
+          {/* Top Navigation Bar */}
+          <div className="flex items-center justify-between gap-4 p-4 bg-gradient-to-r from-slate-50 to-slate-100 rounded-lg border-2 border-slate-200">
+            <Button
+              size="lg"
+              variant="outline"
+              onClick={goToPrevious}
+              disabled={globalIndex === 0}
+              className="px-6 py-3 rounded-full font-semibold disabled:opacity-50"
+            >
+              ← PREVIOUS
+            </Button>
             
-            if (!colorGroup) return null;
+            <div className="flex-1 text-center space-y-1">
+              <div className="text-lg font-bold text-slate-900">{supplier}</div>
+              <div className="text-sm text-slate-600">
+                Item {supplierItemIndex + 1} of {supplierTotalItems} in Supplier | 
+                Supplier {currentItem.supplierIndex + 1} of {totalSuppliers}
+              </div>
+              <div className="text-xs text-slate-500">
+                Overall: {globalIndex + 1} of {totalItems}
+              </div>
+            </div>
             
-            const goToPrevious = () => {
-              setCurrentIndexBySupplier((prev) => ({
-                ...prev,
-                [supplierGroup.supplier]: Math.max(0, currentIndex - 1)
-              }));
-            };
-            
-            const goToNext = () => {
-              setCurrentIndexBySupplier((prev) => ({
-                ...prev,
-                [supplierGroup.supplier]: Math.min(totalItems - 1, currentIndex + 1)
-              }));
-            };
-            
-            return (
-              <div key={supplierGroup.supplier} className="space-y-4">
-                <div className="flex items-center justify-between pb-3 border-b-2 border-slate-900">
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-lg font-semibold">{supplierGroup.supplier}</h3>
-                    <Badge>{totalItems} item{totalItems !== 1 ? 's' : ''}</Badge>
-      </div>
-
-                  {/* Pagination controls */}
-                  <div className="flex items-center gap-3">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={goToPrevious}
-                      disabled={currentIndex === 0}
-                    >
-                      ← Previous
-                    </Button>
-                    <div className="text-sm font-semibold px-3 py-1 bg-slate-100 rounded">
-                      {currentIndex + 1} / {totalItems}
-        </div>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={goToNext}
-                      disabled={currentIndex === totalItems - 1}
-                    >
-                      Next →
-                    </Button>
-          </div>
+            <Button
+              size="lg"
+              variant="outline"
+              onClick={goToNext}
+              disabled={globalIndex === totalItems - 1}
+              className="px-6 py-3 rounded-full font-semibold disabled:opacity-50"
+            >
+              NEXT →
+            </Button>
           </div>
 
-                {(() => {
-                const key = `${colorGroup.style_no}|${colorGroup.color}`.toLowerCase();
-                const meta = styleMetadata?.get(colorGroup.style_no);
-                const inputs =
-                  inputsByKey[key]?.length === colorGroup.sizes.length
-                    ? inputsByKey[key]
-                    : Array(colorGroup.sizes.length).fill(0);
-
-                // Calculate Net Need = Stock + Purchase - Sold
-                // Negative (red) = shortage, need to order
-                // Positive (green) = surplus, have extra
-                const netNeed = colorGroup.stock.map((stock, i) => 
-                  stock + (colorGroup.purchase[i] ?? 0) - (colorGroup.sold[i] ?? 0)
-                );
-                const netNeedTotal = sum(netNeed);
-                
-                // Helper function to calculate pressure percentages for any array
-                const calculatePressure = (arr: number[]) => {
-                  const total = sum(arr);
-                  return arr.map((v) => total > 0 ? ((v / total) * 100).toFixed(1) : '0.0');
-                };
-
-                // Calculate pressure for each row
-                const stockPressure = calculatePressure(colorGroup.stock);
-                const soldPressure = calculatePressure(colorGroup.sold);
-                const purchasePressure = calculatePressure(colorGroup.purchase);
-                const netNeedPressure = calculatePressure(netNeed.map(v => Math.abs(v))); // Use absolute for pressure calc
-                
-                // Calculate New Net Need = Net Need + Order (what you'll have after ordering)
-                const newNetNeed = netNeed.map((n, i) => n + (inputs[i] ?? 0));
-                const orderPressure = calculatePressure(inputs);
-                const newNetNeedPressure = calculatePressure(newNetNeed.map(v => Math.abs(v))); // Use absolute for pressure calc
-
-                const historical = historicalData[key] || [];
-                const hasHistorical = historical.length === colorGroup.sizes.length;
-                const hasHistoricalFromDB = historicalSalesData && historicalSalesData[key] && Object.keys(historicalSalesData[key]).length > 0;
-                const historicalTotal = hasHistorical ? historical.reduce((a, b) => a + b, 0) : 0;
-                const historicalPressure = hasHistorical && historicalTotal > 0
-                  ? historical.map((h) => ((h / historicalTotal) * 100).toFixed(1))
-                  : [];
-
-                return (
-                  <div key={key} className="space-y-3 pb-4 border-b last:border-b-0">
-                    <div className="flex items-start justify-between gap-3">
+          {/* Style/Color Header */}
+          <div className="space-y-3 pb-4 border-b">
+            <div className="flex items-start justify-between gap-3">
                       <div className="flex items-start gap-3">
                         {meta?.image ? (
                           // eslint-disable-next-line @next/next/no-img-element
@@ -1070,13 +1157,36 @@ function Step3EnterQuantities({
                                 </div>
                                 <div className="text-[10px] text-slate-400 mt-1">
                                   {purchasePressure[i]}%
-                                          </div>
-                                        </td>
-                                      ))}
+                                </div>
+                              </td>
+                            ))}
                             <td className="p-3 text-center font-bold text-slate-900">
                               {sum(colorGroup.purchase)}
-                                      </td>
-                                    </tr>
+                            </td>
+                          </tr>
+                          <tr className="border-t border-slate-300 bg-purple-50/50">
+                            <td className="p-3 font-medium border-r border-slate-300 bg-purple-100/70">Sales Total</td>
+                            {colorGroup.sizes.map((_, i) => (
+                              <td key={i} className="p-3 border-r border-slate-300">
+                                <Input
+                                  type="number"
+                                  inputMode="numeric"
+                                  className="w-full h-9 text-center mb-1 rounded-lg border-purple-200"
+                                  value={salesInputs[i]}
+                                  onChange={(e) =>
+                                    setSalesInput(key, i, Number(e.target.value || 0), colorGroup.sizes.length)
+                                  }
+                                  min={0}
+                                />
+                                <div className="text-[10px] text-[#B8A8D8] text-center font-medium">
+                                  {salesPressure[i]}%
+                                </div>
+                              </td>
+                            ))}
+                            <td className="p-3 text-center font-bold text-purple-900">
+                              {sum(salesInputs)}
+                            </td>
+                          </tr>
                           <tr className="border-t border-slate-300 bg-amber-50">
                             <td className="p-3 font-medium border-r border-slate-300 bg-amber-100">Net Need</td>
                             {netNeed.map((v, i) => (
@@ -1136,45 +1246,115 @@ function Step3EnterQuantities({
                             </table>
                           </div>
 
-                    {/* Bulk Order Distribution Tool */}
-                    <div className="flex items-center gap-2 pt-2 flex-wrap">
-                      <label className="text-xs text-slate-600 font-medium">Total Order Amount:</label>
-                      <Input
-                        type="number"
-                        inputMode="numeric"
-                        className="w-24 h-8 text-sm"
-                        placeholder="0"
-                        value={bulkOrderAmounts[key] || ''}
-                        onChange={(e) => setBulkOrderAmounts((prev) => ({ ...prev, [key]: e.target.value }))}
-                        min={0}
-                      />
-                      <Button
-                        size="sm"
-                        onClick={() => applyBulkOrder(key, colorGroup)}
-                        disabled={!bulkOrderAmounts[key] || Number(bulkOrderAmounts[key]) <= 0}
-                      >
-                        ADD
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        onClick={() => fillGaps(key, colorGroup)}
-                        disabled={!bulkOrderAmounts[key] || Number(bulkOrderAmounts[key]) <= 0 || !hasHistorical}
-                      >
-                        Fill Gaps
-                      </Button>
-                      <span className="text-xs text-slate-500">
-                        {hasHistorical 
-                          ? '(ADD: by current sold | Fill Gaps: by historical pressure)' 
-                          : '(Distributes by sold pressure - add historical data for Fill Gaps)'}
-                      </span>
-                    </div>
-                  </div>
-                );
-              })()}
+          {/* New Fill Options - Using Sales Total Pressure */}
+          <div className="space-y-4 pt-4 border-t-2 border-slate-200">
+            <div className="text-sm font-semibold text-slate-700">Fill Order Using Sales Total Pressure:</div>
+            
+            {/* Option 1: Fill by Sales Pressure */}
+            <div className="bg-gradient-to-r from-blue-50 to-blue-100/50 border border-blue-200 rounded-lg p-4 space-y-2">
+              <div className="text-xs font-semibold text-blue-900">Option 1: Distribute by Sales Pressure</div>
+              <div className="text-xs text-blue-700 mb-2">Distributes the total across sizes by Sales Total pressure</div>
+              <div className="flex items-center gap-2">
+                <label className="text-xs text-slate-600 font-medium whitespace-nowrap">Total Order:</label>
+                <Input
+                  type="number"
+                  inputMode="numeric"
+                  className="w-28 h-9 text-sm rounded-lg"
+                  placeholder="0"
+                  value={fillOption1Amount[key] || ''}
+                  onChange={(e) => setFillOption1Amount((prev) => ({ ...prev, [key]: e.target.value }))}
+                  min={0}
+                />
+                <Button
+                  size="sm"
+                  onClick={() => fillBySalesPressure(key, colorGroup)}
+                  disabled={!fillOption1Amount[key] || Number(fillOption1Amount[key]) <= 0}
+                  className="rounded-full px-4"
+                >
+                  Fill by Sales %
+                </Button>
               </div>
-            );
-          })}
+            </div>
+
+            {/* Option 2: Match Sales Pressure */}
+            <div className="bg-gradient-to-r from-purple-50 to-purple-100/50 border border-purple-200 rounded-lg p-4 space-y-2">
+              <div className="text-xs font-semibold text-purple-900">Option 2: Match Sales Pressure</div>
+              <div className="text-xs text-purple-700 mb-2">Makes New Net Need percentages match Sales Total pressure</div>
+              <div className="flex items-center gap-2">
+                <label className="text-xs text-slate-600 font-medium whitespace-nowrap">New Net Need Total:</label>
+                <Input
+                  type="number"
+                  inputMode="numeric"
+                  className="w-28 h-9 text-sm rounded-lg"
+                  placeholder="0"
+                  value={fillOption2Amount[key] || ''}
+                  onChange={(e) => setFillOption2Amount((prev) => ({ ...prev, [key]: e.target.value }))}
+                  min={0}
+                />
+                <Button
+                  size="sm"
+                  onClick={() => matchSalesPressure(key, colorGroup)}
+                  disabled={!fillOption2Amount[key] || Number(fillOption2Amount[key]) <= 0}
+                  className="rounded-full px-4"
+                >
+                  Match Sales %
+                </Button>
+              </div>
+            </div>
+
+            {/* Option 3: Fill Gaps to Target */}
+            <div className="bg-gradient-to-r from-green-50 to-green-100/50 border border-green-200 rounded-lg p-4 space-y-2">
+              <div className="text-xs font-semibold text-green-900">Option 3: Fill Gaps to Target</div>
+              <div className="text-xs text-green-700 mb-2">Fills to target using Sales Total pressure distribution</div>
+              <div className="flex items-center gap-2">
+                <label className="text-xs text-slate-600 font-medium whitespace-nowrap">Target Net Need:</label>
+                <Input
+                  type="number"
+                  inputMode="numeric"
+                  className="w-28 h-9 text-sm rounded-lg"
+                  placeholder="0"
+                  value={fillOption3Amount[key] || ''}
+                  onChange={(e) => setFillOption3Amount((prev) => ({ ...prev, [key]: e.target.value }))}
+                  min={0}
+                />
+                <Button
+                  size="sm"
+                  onClick={() => fillGapsToTarget(key, colorGroup)}
+                  disabled={!fillOption3Amount[key] || Number(fillOption3Amount[key]) <= 0}
+                  className="rounded-full px-4"
+                >
+                  Fill Gaps to Target
+                </Button>
+              </div>
+            </div>
+          </div>
+
+          {/* Bottom Navigation Bar */}
+          <div className="flex items-center justify-between gap-4 pt-6 mt-6 border-t-2 border-slate-200">
+            <Button
+              size="lg"
+              variant="outline"
+              onClick={goToPrevious}
+              disabled={globalIndex === 0}
+              className="px-6 py-3 rounded-full font-semibold disabled:opacity-50"
+            >
+              ← PREVIOUS
+            </Button>
+            
+            <div className="text-sm text-slate-600">
+              {globalIndex + 1} of {totalItems}
+            </div>
+            
+            <Button
+              size="lg"
+              variant="outline"
+              onClick={goToNext}
+              disabled={globalIndex === totalItems - 1}
+              className="px-6 py-3 rounded-full font-semibold disabled:opacity-50"
+            >
+              NEXT →
+            </Button>
+          </div>
 
           <div className="flex items-center justify-between pt-4 border-t">
             <Button variant="outline" onClick={onBack}>
