@@ -50,60 +50,105 @@ function Truncated({ text, expanded, onToggle }: { text: string; expanded: boole
 
 // Component for displaying unified progress across multiple batch jobs
 function UnifiedBatchProgress({ jobs }: { jobs: Array<{ id: string; type: string; started_at: string; payload: any }> }) {
-  // Fetch latest logs for all batch jobs
-  const jobIds = jobs.map(j => j.id);
-  const { data: allLogs } = useSWR(
-    ['batch:logs', jobIds.join(',')],
-    async () => {
-      if (jobIds.length === 0) return [];
-      const { data, error } = await supabase
-        .from('job_logs')
-        .select('job_id, msg, data, ts')
-        .in('job_id', jobIds)
-        .order('ts', { ascending: false })
-        .limit(jobIds.length * 2); // Get latest 2 logs per job
-      if (error) throw new Error(error.message);
-      return (data ?? []) as Array<{ job_id: string; msg: string; data: any; ts: string }>;
-    },
-    { refreshInterval: 1000 }
+  const mainJob = jobs[0];
+  if (!mainJob) return null;
+  
+  const rootId = mainJob.payload?.rootId || mainJob.id;
+  
+  // Aggregate progress across all batches using the same logic as scraper page
+  const { data: progress } = useSWR(['batch:aggregate-progress', rootId], async () => {
+    if (!rootId) return null;
+    
+    // Get all jobs for this root (including the root itself)
+    const jobIds = jobs.map(j => j.id);
+    
+    // Get all progress logs from all jobs
+    const { data: allLogs } = await supabase
+      .from('job_logs')
+      .select('job_id, msg, data, ts')
+      .in('job_id', jobIds)
+      .in('msg', ['STEP:update_style_stock_progress', 'STEP:style_stock_filtered', 'STEP:complete', 'STEP:style_stock_total_requested', 'STEP:style_stock_style_done'])
+      .order('ts', { ascending: true })
+      .limit(5000);
+    
+    if (!allLogs) return null;
+    
+    // Find total requested count (from root job's initial log)
+    let totalRequested = 0;
+    for (const log of allLogs) {
+      if (log.job_id === rootId && log.msg === 'STEP:style_stock_total_requested') {
+        totalRequested = log.data?.totalRequested || 0;
+        break;
+      }
+    }
+    
+    // Count total active styles (sum of filtered counts from all batches)
+    let totalActive = 0;
+    let totalSkippedInactive = 0;
+    const seenBatches = new Set<string>();
+    for (const log of allLogs) {
+      if (log.msg === 'STEP:style_stock_filtered' && !seenBatches.has(log.job_id)) {
+        seenBatches.add(log.job_id);
+        totalActive += log.data?.activeCount || 0;
+        totalSkippedInactive += log.data?.skippedInactive || 0;
+      }
+    }
+    
+    // Count completed styles (using style_stock_style_done logs)
+    const completedStyles = new Set<string>();
+    for (const log of allLogs) {
+      if (log.msg === 'STEP:style_stock_style_done' && log.data?.style_no) {
+        completedStyles.add(log.data.style_no);
+      }
+    }
+    
+    // Get the most recent style being processed
+    let currentStyleNo: string | null = null;
+    let currentStyleName: string | null = null;
+    for (let i = allLogs.length - 1; i >= 0; i--) {
+      const log = allLogs[i];
+      if (log && log.msg === 'STEP:update_style_stock_progress' && log.data?.style_no) {
+        currentStyleNo = log.data.style_no;
+        currentStyleName = log.data.style_name || null;
+        break;
+      }
+    }
+    
+    const completed = completedStyles.size;
+    const total = totalActive || 1;
+    const percent = Math.min(100, Math.floor((completed / total) * 100));
+    
+    // Calculate estimated time remaining
+    let estimatedSecondsRemaining: number | null = null;
+    const firstDoneLog = allLogs.find(l => l.msg === 'STEP:style_stock_style_done');
+    if (firstDoneLog && completed > 0) {
+      const startTime = new Date(firstDoneLog.ts).getTime();
+      const elapsed = Date.now() - startTime;
+      const avgTimePerStyle = elapsed / completed;
+      const remaining = total - completed;
+      estimatedSecondsRemaining = Math.floor((remaining * avgTimePerStyle) / 1000);
+    }
+    
+    return {
+      index: completed,
+      total: total,
+      totalRequested,
+      skippedInactive: totalSkippedInactive,
+      percent,
+      style_no: currentStyleNo,
+      style_name: currentStyleName,
+      estimatedSecondsRemaining
+    };
+  }, { refreshInterval: 2000 });
+  
+  const batchCount = jobs.length;
+  const oldestStartTime = jobs.reduce((oldest, job) => 
+    job.started_at < oldest ? job.started_at : oldest, 
+    jobs[0]?.started_at || new Date().toISOString()
   );
-
-  // Get the most recent progress log for each job
-  const progressByJob = new Map<string, any>();
-  for (const log of (allLogs ?? [])) {
-    if (!progressByJob.has(log.job_id) && log.msg?.includes('progress')) {
-      progressByJob.set(log.job_id, log.data || {});
-    }
-  }
-
-  // Aggregate progress across all batches
-  let totalIndex = 0;
-  let totalTotal = 0;
-  let oldestStartTime = jobs[0]?.started_at || new Date().toISOString();
   
-  for (const job of jobs) {
-    const progress = progressByJob.get(job.id) || {};
-    totalIndex += Number(progress.index || 0);
-    totalTotal += Number(progress.total || 0);
-    if (job.started_at && job.started_at < oldestStartTime) {
-      oldestStartTime = job.started_at;
-    }
-  }
-
-  const percent = totalTotal > 0 ? Math.round((totalIndex / totalTotal) * 100) : 0;
-  
-  // Calculate ETA
   const elapsedMs = Date.now() - new Date(oldestStartTime).getTime();
   const elapsedMin = Math.floor(elapsedMs / 60000);
-  const remainingItems = totalTotal - totalIndex;
-  const itemsPerMin = totalIndex > 0 ? totalIndex / (elapsedMs / 60000) : 0;
-  const etaMin = itemsPerMin > 0 ? Math.ceil(remainingItems / itemsPerMin) : 0;
-
-  const mainJob = jobs[0];
-  const batchCount = jobs.length;
-
-  // Safety check: if no jobs, don't render (shouldn't happen but prevents TypeScript error)
-  if (!mainJob) return null;
 
   return (
     <div className="rounded-lg border bg-blue-50 border-blue-200 p-4">
@@ -124,11 +169,18 @@ function UnifiedBatchProgress({ jobs }: { jobs: Array<{ id: string; type: string
         </span>
       </div>
       <div className="text-sm text-blue-800 mb-3">
-        {totalIndex}/{totalTotal} styles ({percent}%)
-        {etaMin > 0 && (
-          <span className="ml-2 text-blue-600">
-            • ETA: {etaMin < 60 ? `${etaMin}m` : `${Math.floor(etaMin / 60)}h ${etaMin % 60}m`}
-          </span>
+        {progress ? (
+          <>
+            {progress.index}/{progress.total} styles ({progress.percent}%)
+            {progress.skippedInactive > 0 && <span className="text-xs text-blue-500 ml-1">({progress.skippedInactive} inactive skipped)</span>}
+            {progress.estimatedSecondsRemaining !== null && progress.estimatedSecondsRemaining > 0 && (
+              <span className="ml-2 text-blue-600">
+                • ETA: {progress.estimatedSecondsRemaining < 60 ? `${progress.estimatedSecondsRemaining}s` : progress.estimatedSecondsRemaining < 3600 ? `${Math.floor(progress.estimatedSecondsRemaining / 60)}m` : `${Math.floor(progress.estimatedSecondsRemaining / 3600)}h ${Math.floor((progress.estimatedSecondsRemaining % 3600) / 60)}m`}
+              </span>
+            )}
+          </>
+        ) : (
+          <>Waiting for progress...</>
         )}
         {elapsedMin > 0 && (
           <span className="ml-2 text-xs text-blue-500">
@@ -139,7 +191,7 @@ function UnifiedBatchProgress({ jobs }: { jobs: Array<{ id: string; type: string
       <div className="relative h-2 bg-blue-200 rounded-full overflow-hidden">
         <div 
           className="absolute inset-0 bg-blue-600 transition-all duration-500 ease-out" 
-          style={{ width: `${percent}%` }} 
+          style={{ width: `${progress?.percent || 0}%` }} 
         />
         <div 
           className="absolute inset-0 bg-gradient-to-r from-transparent via-white to-transparent opacity-30"
@@ -154,41 +206,63 @@ function UnifiedBatchProgress({ jobs }: { jobs: Array<{ id: string; type: string
 }
 
 // Component for displaying a single running job's progress
-function RunningJobProgress({ job }: { job: { id: string; type: string; started_at: string } }) {
-  // Fetch latest progress log for this specific job
-  const { data: progressLog } = useSWR(
-    ['job:progress', job.id],
-    async () => {
-      const { data, error } = await supabase
-        .from('job_logs')
-        .select('msg, data, ts')
-        .eq('job_id', job.id)
-        .order('ts', { ascending: false })
-        .limit(10); // Get latest 10 logs to find progress
-      if (error) throw new Error(error.message);
-      const logs = (data ?? []) as Array<{ msg: string; data: any; ts: string }>;
-      // Find the most recent progress log
-      for (const log of logs) {
-        if (log.msg?.includes('progress') || (log.data && typeof log.data === 'object' && ('index' in log.data || 'percent' in log.data))) {
-          return log;
-        }
+function RunningJobProgress({ job }: { job: { id: string; type: string; started_at: string; payload?: any } }) {
+  // Use the same aggregation logic for standalone jobs
+  const { data: progress } = useSWR(['job:aggregate-progress', job.id], async () => {
+    const { data: allLogs } = await supabase
+      .from('job_logs')
+      .select('job_id, msg, data, ts')
+      .eq('job_id', job.id)
+      .in('msg', ['STEP:update_style_stock_progress', 'STEP:style_stock_filtered', 'STEP:complete', 'STEP:style_stock_total_requested', 'STEP:style_stock_style_done'])
+      .order('ts', { ascending: true })
+      .limit(1000);
+    
+    if (!allLogs || allLogs.length === 0) return null;
+    
+    // Count total active styles
+    let totalActive = 0;
+    let totalSkippedInactive = 0;
+    for (const log of allLogs) {
+      if (log.msg === 'STEP:style_stock_filtered') {
+        totalActive += log.data?.activeCount || 0;
+        totalSkippedInactive += log.data?.skippedInactive || 0;
       }
-      return null;
-    },
-    { refreshInterval: 1000 }
-  );
+    }
+    
+    // Count completed styles
+    const completedStyles = new Set<string>();
+    for (const log of allLogs) {
+      if (log.msg === 'STEP:style_stock_style_done' && log.data?.style_no) {
+        completedStyles.add(log.data.style_no);
+      }
+    }
+    
+    const completed = completedStyles.size;
+    const total = totalActive || 1;
+    const percent = Math.min(100, Math.floor((completed / total) * 100));
+    
+    // Calculate ETA
+    let estimatedSecondsRemaining: number | null = null;
+    const firstDoneLog = allLogs.find(l => l.msg === 'STEP:style_stock_style_done');
+    if (firstDoneLog && completed > 0) {
+      const startTime = new Date(firstDoneLog.ts).getTime();
+      const elapsed = Date.now() - startTime;
+      const avgTimePerStyle = elapsed / completed;
+      const remaining = total - completed;
+      estimatedSecondsRemaining = Math.floor((remaining * avgTimePerStyle) / 1000);
+    }
+    
+    return {
+      index: completed,
+      total: total,
+      skippedInactive: totalSkippedInactive,
+      percent,
+      estimatedSecondsRemaining
+    };
+  }, { refreshInterval: 2000 });
 
-  const progress = progressLog?.data || {};
-  const index = Number(progress.index || 0);
-  const total = Number(progress.total || 0);
-  const percent = total > 0 ? Math.round((index / total) * 100) : (progress.percent ? Number(progress.percent) : 0);
-  
-  // Calculate ETA
   const elapsedMs = Date.now() - new Date(job.started_at).getTime();
   const elapsedMin = Math.floor(elapsedMs / 60000);
-  const remainingItems = total - index;
-  const itemsPerMin = index > 0 && elapsedMs > 0 ? index / (elapsedMs / 60000) : 0;
-  const etaMin = itemsPerMin > 0 && remainingItems > 0 ? Math.ceil(remainingItems / itemsPerMin) : 0;
 
   return (
     <div className="rounded-lg border bg-blue-50 border-blue-200 p-4">
@@ -204,35 +278,29 @@ function RunningJobProgress({ job }: { job: { id: string; type: string; started_
         </span>
       </div>
       <div className="text-sm text-blue-800 mb-3">
-        {total > 0 ? (
+        {progress ? (
           <>
-            {index}/{total} styles ({percent}%)
-            {etaMin > 0 && (
+            {progress.index}/{progress.total} styles ({progress.percent}%)
+            {progress.skippedInactive > 0 && <span className="text-xs text-blue-500 ml-1">({progress.skippedInactive} inactive skipped)</span>}
+            {progress.estimatedSecondsRemaining !== null && progress.estimatedSecondsRemaining > 0 && (
               <span className="ml-2 text-blue-600">
-                • ETA: {etaMin < 60 ? `${etaMin}m` : `${Math.floor(etaMin / 60)}h ${etaMin % 60}m`}
-              </span>
-            )}
-            {elapsedMin > 0 && (
-              <span className="ml-2 text-xs text-blue-500">
-                (Elapsed: {elapsedMin}m)
+                • ETA: {progress.estimatedSecondsRemaining < 60 ? `${progress.estimatedSecondsRemaining}s` : progress.estimatedSecondsRemaining < 3600 ? `${Math.floor(progress.estimatedSecondsRemaining / 60)}m` : `${Math.floor(progress.estimatedSecondsRemaining / 3600)}h ${Math.floor((progress.estimatedSecondsRemaining % 3600) / 60)}m`}
               </span>
             )}
           </>
         ) : (
-          <>
-            {progressLog ? 'Initializing...' : 'Waiting for progress...'}
-            {elapsedMin > 0 && (
-              <span className="ml-2 text-xs text-blue-500">
-                (Elapsed: {elapsedMin}m)
-              </span>
-            )}
-          </>
+          <>Waiting for progress...</>
+        )}
+        {elapsedMin > 0 && (
+          <span className="ml-2 text-xs text-blue-500">
+            (Elapsed: {elapsedMin}m)
+          </span>
         )}
       </div>
       <div className="relative h-2 bg-blue-200 rounded-full overflow-hidden">
         <div 
           className="absolute inset-0 bg-blue-600 transition-all duration-500 ease-out" 
-          style={{ width: `${Math.min(100, Math.max(0, percent))}%` }} 
+          style={{ width: `${progress?.percent || 0}%` }} 
         />
         <div 
           className="absolute inset-0 bg-gradient-to-r from-transparent via-white to-transparent opacity-30"
