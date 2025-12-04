@@ -846,14 +846,13 @@ function Step3EnterQuantities({
     const total = Number(fillOption1Amount[key] || 0);
     if (total <= 0) return;
 
+    // Use Sales Total if available, otherwise fall back to Sold data
     const salesTotal = manualSalesData[key];
-    if (!salesTotal || salesTotal.length !== colorGroup.sizes.length) {
-      alert('Please enter Sales Total data first');
-      return;
-    }
+    const hasSalesTotal = salesTotal && salesTotal.length === colorGroup.sizes.length && salesTotal.some((v: number) => v > 0);
+    const pressureSource = hasSalesTotal ? salesTotal : colorGroup.sold;
 
     // Distribute based on sales pressure
-    const distributed = distributeByPressure(total, salesTotal);
+    const distributed = distributeByPressure(total, pressureSource);
     
     setInputsByKey((prev) => ({
       ...prev,
@@ -869,14 +868,13 @@ function Step3EnterQuantities({
     const total = Number(fillOption2Amount[key] || 0);
     if (total <= 0) return;
 
+    // Use Sales Total if available, otherwise fall back to Sold data
     const salesTotal = manualSalesData[key];
-    if (!salesTotal || salesTotal.length !== colorGroup.sizes.length) {
-      alert('Please enter Sales Total data first');
-      return;
-    }
+    const hasSalesTotal = salesTotal && salesTotal.length === colorGroup.sizes.length && salesTotal.some((v: number) => v > 0);
+    const pressureSource = hasSalesTotal ? salesTotal : colorGroup.sold;
 
     // Calculate target New Net Need distribution using Sales Total pressure
-    const targetDistribution = distributeByPressure(total, salesTotal);
+    const targetDistribution = distributeByPressure(total, pressureSource);
     
     // Calculate current Net Need
     const netNeed = colorGroup.stock.map((stock: number, i: number) => 
@@ -900,14 +898,13 @@ function Step3EnterQuantities({
     const targetTotal = Number(fillOption3Amount[key] || 0);
     if (targetTotal <= 0) return;
 
+    // Use Sales Total if available, otherwise fall back to Sold data
     const salesTotal = manualSalesData[key];
-    if (!salesTotal || salesTotal.length !== colorGroup.sizes.length) {
-      alert('Please enter Sales Total data first');
-      return;
-    }
+    const hasSalesTotal = salesTotal && salesTotal.length === colorGroup.sizes.length && salesTotal.some((v: number) => v > 0);
+    const pressureSource = hasSalesTotal ? salesTotal : colorGroup.sold;
 
     // Calculate what target should look like using Sales Total pressure
-    const targetDistribution = distributeByPressure(targetTotal, salesTotal);
+    const targetDistribution = distributeByPressure(targetTotal, pressureSource);
     
     // Calculate current Net Need
     const netNeed = colorGroup.stock.map((stock: number, i: number) => 
@@ -1295,7 +1292,7 @@ function Step3EnterQuantities({
               {/* Conditional content based on selected option */}
               {(selectedFillOption[key] || 1) === 1 && (
                 <div className="space-y-1">
-                  <div className="text-xs text-slate-600">Distributes the total across sizes by Sales Total pressure</div>
+                  <div className="text-xs text-slate-600">Distributes by Sales Total (or Sold if empty)</div>
                   <div className="flex items-center gap-2">
                     <label className="text-xs text-slate-600 font-medium whitespace-nowrap">Total Order:</label>
                     <Input
@@ -1321,7 +1318,7 @@ function Step3EnterQuantities({
 
               {selectedFillOption[key] === 2 && (
                 <div className="space-y-1">
-                  <div className="text-xs text-slate-600">Makes New Net Need percentages match Sales Total pressure</div>
+                  <div className="text-xs text-slate-600">Matches New Net Need % to Sales Total (or Sold if empty)</div>
                   <div className="flex items-center gap-2">
                     <label className="text-xs text-slate-600 font-medium whitespace-nowrap">New Net Need Total:</label>
                     <Input
@@ -1347,7 +1344,7 @@ function Step3EnterQuantities({
 
               {selectedFillOption[key] === 3 && (
                 <div className="space-y-1">
-                  <div className="text-xs text-slate-600">Fills to target using Sales Total pressure distribution</div>
+                  <div className="text-xs text-slate-600">Fills to target using Sales Total (or Sold if empty)</div>
                   <div className="flex items-center gap-2">
                     <label className="text-xs text-slate-600 font-medium whitespace-nowrap">Target Net Need:</label>
                     <Input
