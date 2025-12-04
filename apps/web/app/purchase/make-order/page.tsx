@@ -574,12 +574,14 @@ function Step3EnterQuantities({
   const [globalIndex, setGlobalIndex] = React.useState<number>(0);
   
   // Helper functions defined early
-  const sum = (arr: number[]) => arr.reduce((a, b) => a + b, 0);
+  function sum(arr: number[]): number {
+    return arr.reduce((a, b) => a + b, 0);
+  }
   
-  const calculatePressure = (arr: number[]) => {
+  function calculatePressure(arr: number[]): string[] {
     const total = sum(arr);
     return arr.map((v) => total > 0 ? ((v / total) * 100).toFixed(1) : '0.0');
-  };
+  }
 
   // Fetch style metadata (including supplier)
   const { data: styleMetadata } = useSWR(
@@ -954,6 +956,14 @@ function Step3EnterQuantities({
       ? manualSalesData[key]
       : Array(colorGroup.sizes.length).fill(0);
 
+  const historical = historicalData[key] || [];
+  const hasHistorical = historical.length === colorGroup.sizes.length;
+  const hasHistoricalFromDB = historicalSalesData && historicalSalesData[key] && Object.keys(historicalSalesData[key]).length > 0;
+  const historicalTotal = hasHistorical ? historical.reduce((a, b) => a + b, 0) : 0;
+  const historicalPressure = hasHistorical && historicalTotal > 0
+    ? historical.map((h) => ((h / historicalTotal) * 100).toFixed(1))
+    : [];
+
   // Calculate Net Need = Stock + Purchase - Sold
   const netNeed = colorGroup.stock.map((stock: number, i: number) => 
     stock + (colorGroup.purchase[i] ?? 0) - (colorGroup.sold[i] ?? 0)
@@ -968,17 +978,9 @@ function Step3EnterQuantities({
   const soldPressure = calculatePressure(colorGroup.sold);
   const purchasePressure = calculatePressure(colorGroup.purchase);
   const salesPressure = calculatePressure(salesInputs);
-  const netNeedPressure = calculatePressure(netNeed.map(v => Math.abs(v)));
+  const netNeedPressure = calculatePressure(netNeed.map((v) => Math.abs(v)));
   const orderPressure = calculatePressure(inputs);
-  const newNetNeedPressure = calculatePressure(newNetNeed.map(v => Math.abs(v)));
-
-  const historical = historicalData[key] || [];
-  const hasHistorical = historical.length === colorGroup.sizes.length;
-  const hasHistoricalFromDB = historicalSalesData && historicalSalesData[key] && Object.keys(historicalSalesData[key]).length > 0;
-  const historicalTotal = hasHistorical ? historical.reduce((a, b) => a + b, 0) : 0;
-  const historicalPressure = hasHistorical && historicalTotal > 0
-    ? historical.map((h) => ((h / historicalTotal) * 100).toFixed(1))
-    : [];
+  const newNetNeedPressure = calculatePressure(newNetNeed.map((v) => Math.abs(v)));
 
   return (
     <div className="space-y-4">
