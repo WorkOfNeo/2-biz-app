@@ -21,8 +21,9 @@ export default function StylesPage() {
   const { data: seasons } = useSWR('seasons:list', async () => {
     const { data, error } = await supabase
       .from('seasons')
-      .select('id, name, start_date, end_date')
-      .order('name', { ascending: false });
+      .select('id, name, year')
+      .order('year', { ascending: false })
+      .order('name', { ascending: true });
     if (error) throw error;
     return data;
   });
@@ -124,13 +125,8 @@ export default function StylesPage() {
   // Season options for dropdown with year
   const seasonOptions = useMemo(() => {
     return (seasons ?? []).map((s) => {
-      // Extract year from start_date or end_date
-      let year = '';
-      if (s.start_date) {
-        year = new Date(s.start_date).getFullYear().toString();
-      } else if (s.end_date) {
-        year = new Date(s.end_date).getFullYear().toString();
-      }
+      // Use the year field directly
+      const year = s.year ? String(s.year) : '';
       
       // Combine name with year if year exists and not already in name
       const label = year && !s.name.includes(year) ? `${s.name} ${year}` : s.name;
