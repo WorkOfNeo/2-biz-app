@@ -6,23 +6,6 @@ import useSWR from 'swr';
 import { SearchSelect } from '../../components/SearchSelect';
 import { Button } from '../../components/ui/button';
 
-// Helper function to format relative time
-function formatRelativeTime(isoString: string | null): string {
-  if (!isoString) return 'Never';
-  const date = new Date(isoString);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffMins = Math.floor(diffMs / 60000);
-  const diffHours = Math.floor(diffMs / 3600000);
-  const diffDays = Math.floor(diffMs / 86400000);
-  
-  if (diffMins < 1) return 'Just now';
-  if (diffMins < 60) return `${diffMins}m ago`;
-  if (diffHours < 24) return `${diffHours}h ago`;
-  if (diffDays < 7) return `${diffDays}d ago`;
-  return date.toLocaleDateString();
-}
-
 export default function StylesPage() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [q, setQ] = useState('');
@@ -38,28 +21,10 @@ export default function StylesPage() {
   const { data: seasons } = useSWR('seasons:list', async () => {
     const { data, error } = await supabase
       .from('seasons')
-      .select('id, name')
+      .select('id, name, start_date, end_date')
       .order('name', { ascending: false });
     if (error) throw error;
     return data;
-  });
-
-  // Fetch last scraped dates for all styles
-  const { data: scrapedDates } = useSWR('styles:scraped_dates', async () => {
-    const { data, error } = await supabase
-      .from('style_stock')
-      .select('style_no, scraped_at')
-      .order('scraped_at', { ascending: false });
-    if (error) throw error;
-    
-    // Get the latest scraped_at for each style_no
-    const map = new Map<string, string>();
-    for (const row of data || []) {
-      if (!map.has(row.style_no)) {
-        map.set(row.style_no, row.scraped_at);
-      }
-    }
-    return map;
   });
 
   const { data: rows, mutate } = useSWR(['styles:list', q, supplierFilter, supplierInvert, stockAllZerosFilter, seasonFilter, seasonInvert], async () => {
@@ -156,9 +121,21 @@ export default function StylesPage() {
       .map((s) => ({ value: s, label: s }));
   }, [rows]);
 
-  // Season options for dropdown
+  // Season options for dropdown with year
   const seasonOptions = useMemo(() => {
-    return (seasons ?? []).map((s) => ({ value: s.id, label: s.name }));
+    return (seasons ?? []).map((s) => {
+      // Extract year from start_date or end_date
+      let year = '';
+      if (s.start_date) {
+        year = new Date(s.start_date).getFullYear().toString();
+      } else if (s.end_date) {
+        year = new Date(s.end_date).getFullYear().toString();
+      }
+      
+      // Combine name with year if year exists and not already in name
+      const label = year && !s.name.includes(year) ? `${s.name} ${year}` : s.name;
+      return { value: s.id, label };
+    });
   }, [seasons]);
 
   // "Set all visible to Inactive" function
@@ -303,7 +280,6 @@ export default function StylesPage() {
                 <th className="text-left p-2 border-b">Style Name</th>
                 <th className="text-left p-2 border-b">Supplier</th>
                 <th className="text-left p-2 border-b">DG</th>
-                <th className="text-left p-2 border-b">Last Scraped</th>
                 <th className="text-left p-2 border-b">Stock All Zeros</th>
                 <th className="text-left p-2 border-b">Missing from SPY</th>
                 <th className="text-left p-2 border-b">Status</th>
@@ -313,25 +289,18 @@ export default function StylesPage() {
             <tbody>
               {(rows ?? []).length === 0 && (
                 <tr>
-                  <td colSpan={10} className="p-4 text-center text-gray-500">
+                  <td colSpan={9} className="p-4 text-center text-gray-500">
                     No styles found. {(q || supplierFilter || seasonFilter || stockAllZerosFilter !== null) ? 'Try adjusting your filters.' : ''}
                   </td>
                 </tr>
               )}
-              {(rows ?? []).map((r) => {
-                const lastScraped = scrapedDates?.get(r.style_no) || null;
-                return (
+              {(rows ?? []).map((r) => (
                 <tr key={r.style_no} className="hover:bg-gray-50">
                   <td className="p-2 border-b cursor-pointer" onClick={() => { window.location.href = `/styles/${encodeURIComponent(r.style_no)}`; }}>{r.image_url ? <img src={r.image_url} alt="thumb" className="h-8 w-8 object-cover rounded" /> : null}</td>
                   <td className="p-2 border-b underline text-slate-700 cursor-pointer" onClick={() => { window.location.href = `/styles/${encodeURIComponent(r.style_no)}`; }}>{r.style_no}</td>
                   <td className="p-2 border-b cursor-pointer" onClick={() => { window.location.href = `/styles/${encodeURIComponent(r.style_no)}`; }}>{r.style_name ?? '—'}</td>
                   <td className="p-2 border-b cursor-pointer" onClick={() => { window.location.href = `/styles/${encodeURIComponent(r.style_no)}`; }}>{r.supplier ?? '—'}</td>
                   <td className="p-2 border-b cursor-pointer" onClick={() => { window.location.href = `/styles/${encodeURIComponent(r.style_no)}`; }}>{r.dg ?? '—'}</td>
-                  <td className="p-2 border-b cursor-pointer" onClick={() => { window.location.href = `/styles/${encodeURIComponent(r.style_no)}`; }}>
-                    <span className={lastScraped ? 'text-gray-600' : 'text-gray-400'}>
-                      {formatRelativeTime(lastScraped)}
-                    </span>
-                  </td>
                   <td className="p-2 border-b cursor-pointer" onClick={() => { window.location.href = `/styles/${encodeURIComponent(r.style_no)}`; }}>
                     {r.stock_all_zeros ? (
                       <span className="text-red-600 font-medium">Yes</span>
@@ -371,8 +340,7 @@ export default function StylesPage() {
                   </td>
                   <td className="p-2 border-b">{r.link_href ? <a className="underline" href={r.link_href} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>Open</a> : '—'}</td>
                 </tr>
-                );
-              })}
+              ))}
             </tbody>
           </table>
         </div>
