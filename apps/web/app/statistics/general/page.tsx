@@ -1140,42 +1140,83 @@ export default function StatisticsGeneralPage() {
               {/* Removed sticky overlay totals; separate TOTALS section below */}
               {/* KPI cards when a salesperson is selected */}
               {activePerson && (
-                <div className="border-t p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+                <div className="border-t p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-3">
                   {(() => {
-                    const rates = { DKK: 1, ...(currencyRatesRow ?? {}) } as Record<string, number>;
-                    const s1Local = items.reduce((a,b)=>a+b.s1Price,0);
-                    const s2Local = items.reduce((a,b)=>a+b.s2Price,0);
-                    const s1Dkk = Math.round(items.reduce((a, r) => { const c = r.salespersonId ? (spCurrencyById[r.salespersonId] ?? 'DKK') : 'DKK'; const rate = rates[c] ?? 1; return a + r.s1Price * rate; }, 0));
-                    const s2Dkk = Math.round(items.reduce((a, r) => { const c = r.salespersonId ? (spCurrencyById[r.salespersonId] ?? 'DKK') : 'DKK'; const rate = rates[c] ?? 1; return a + r.s2Price * rate; }, 0));
                     const nulledSeasonal = new Set(overrides?.value.nulled ?? []);
-                    const nulledCount = items.reduce((a, r) => a + (nulledSeasonal.has(r.account_no) ? 1 : 0), 0);
-                    const permClosedCount = items.reduce((a, r) => a + (closedCustomers?.setClosed.has(r.account_no) ? 1 : 0), 0);
+                    
+                    // Total customers (already filtered by visibility)
+                    const totalCustomers = items.length;
+                    
+                    // Customers visited: has any S1 activity
+                    const visitedRows = items.filter(r => r.s1Qty > 0 || r.s1Price > 0);
+                    const customersVisited = visitedRows.length;
+                    
+                    // Customers to visit: no S1 activity AND not nulled/closed
+                    const customersToVisit = items.filter(r => {
+                      const hasS1Activity = r.s1Qty > 0 || r.s1Price > 0;
+                      const isExcluded = isNulled(r.account_no);
+                      return !hasS1Activity && !isExcluded;
+                    }).length;
+                    
+                    // Aggregate visited customers S1/S2 totals for index calculation
+                    const visitedS1Qty = visitedRows.reduce((a, r) => a + r.s1Qty, 0);
+                    const visitedS2Qty = visitedRows.reduce((a, r) => a + r.s2Qty, 0);
+                    const visitedS1Price = visitedRows.reduce((a, r) => a + r.s1Price, 0);
+                    const visitedS2Price = visitedRows.reduce((a, r) => a + r.s2Price, 0);
+                    
+                    // Index ratios (visited S1 vs S2, with safe zero-div handling)
+                    const qtyIndexRatio = visitedS2Qty === 0 ? 1 : visitedS1Qty / visitedS2Qty;
+                    const priceIndexRatio = visitedS2Price === 0 ? 1 : visitedS1Price / visitedS2Price;
+                    const indexQty = visitedS2Qty === 0 ? 100 : (qtyIndexRatio * 100);
+                    const indexPrice = visitedS2Price === 0 ? 100 : (priceIndexRatio * 100);
+                    
+                    // Prognosis: apply current index to unvisited customers' S2 totals, add visited S1 totals
+                    const unvisitedRows = items.filter(r => {
+                      const hasS1Activity = r.s1Qty > 0 || r.s1Price > 0;
+                      const isExcluded = isNulled(r.account_no);
+                      return !hasS1Activity && !isExcluded;
+                    });
+                    const unvisitedS2Qty = unvisitedRows.reduce((a, r) => a + r.s2Qty, 0);
+                    const unvisitedS2Price = unvisitedRows.reduce((a, r) => a + r.s2Price, 0);
+                    
+                    const prognosedQty = visitedS1Qty + (unvisitedS2Qty * qtyIndexRatio);
+                    const prognosedPrice = visitedS1Price + (unvisitedS2Price * priceIndexRatio);
+                    
                     return (
                       <>
                         <div className="rounded-md border p-3">
                           <div className="text-xs text-gray-500">Total customers</div>
-                          <div className="text-xl font-semibold">{items.length}</div>
+                          <div className="text-xl font-semibold">{totalCustomers}</div>
                         </div>
                         <div className="rounded-md border p-3">
-                          <div className="text-xs text-gray-500">Season 1 total</div>
-                          <div className="text-xl font-semibold">{s1Dkk.toLocaleString('da-DK')} DKK</div>
-                          <div className="text-[11px] text-gray-400">{s1Local.toLocaleString('da-DK')} local</div>
+                          <div className="text-xs text-gray-500">Customers visited</div>
+                          <div className="text-xl font-semibold">{customersVisited}</div>
+                          <div className="text-[11px] text-gray-400">with Season 1 entry</div>
                         </div>
                         <div className="rounded-md border p-3">
-                          <div className="text-xs text-gray-500">Season 2 total</div>
-                          <div className="text-xl font-semibold">{s2Dkk.toLocaleString('da-DK')} DKK</div>
-                          <div className="text-[11px] text-gray-400">{s2Local.toLocaleString('da-DK')} local</div>
+                          <div className="text-xs text-gray-500">Customers to visit</div>
+                          <div className="text-xl font-semibold">{customersToVisit}</div>
+                          <div className="text-[11px] text-gray-400">not nulled/closed</div>
                         </div>
                         <div className="rounded-md border p-3">
-                          <div className="text-xs text-gray-500">Growth</div>
-                          <div className={"text-xl font-semibold " + ((s1Dkk - s2Dkk)>=0? 'text-green-700':'text-red-700')}>
-                            {(s1Dkk - s2Dkk).toLocaleString('da-DK')} DKK
-                          </div>
-                          <div className="text-[11px] text-gray-400">based on visible customers</div>
+                          <div className="text-xs text-gray-500">Index QTY</div>
+                          <div className="text-xl font-semibold">{indexQty.toFixed(1)}</div>
+                          <div className="text-[11px] text-gray-400">vs last season (visited)</div>
                         </div>
                         <div className="rounded-md border p-3">
-                          <div className="text-xs text-gray-500">Nulled · Perm Closed</div>
-                          <div className="text-xl font-semibold">{nulledCount} · {permClosedCount}</div>
+                          <div className="text-xs text-gray-500">Index PRICE</div>
+                          <div className="text-xl font-semibold">{indexPrice.toFixed(1)}</div>
+                          <div className="text-[11px] text-gray-400">vs last season (visited)</div>
+                        </div>
+                        <div className="rounded-md border p-3">
+                          <div className="text-xs text-gray-500">Prognose QTY</div>
+                          <div className="text-xl font-semibold">{Math.round(prognosedQty).toLocaleString('da-DK')}</div>
+                          <div className="text-[11px] text-gray-400">if index holds</div>
+                        </div>
+                        <div className="rounded-md border p-3">
+                          <div className="text-xs text-gray-500">Prognose PRICE</div>
+                          <div className="text-xl font-semibold">{Math.round(prognosedPrice).toLocaleString('da-DK')}</div>
+                          <div className="text-[11px] text-gray-400">if index holds</div>
                         </div>
                       </>
                     );
