@@ -61,6 +61,7 @@ export default function StockListPage() {
   const [checkerResults, setCheckerResults] = React.useState<any>(null);
   const [scrapingMismatches, setScrapingMismatches] = React.useState<boolean>(false);
   const [scrapeProgress, setScrapeProgress] = React.useState<{ current: number; total: number } | null>(null);
+  const [scrapeMessage, setScrapeMessage] = React.useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
   const { data } = useSWR('style_stock:list', async () => {
     // First, get the total count
     const { count, error: countError } = await supabase
@@ -688,13 +689,14 @@ export default function StockListPage() {
       .map((d: any) => d.styleNo);
     
     if (mismatchStyleNos.length === 0) {
-      alert('No mismatches to scrape');
+      setScrapeMessage({ type: 'info', text: 'No mismatches to scrape' });
       return;
     }
     
     try {
       setScrapingMismatches(true);
       setScrapeProgress({ current: 0, total: mismatchStyleNos.length });
+      setScrapeMessage(null);
       
       // Enqueue the scrape job
       const res = await fetch('/api/enqueue', {
@@ -728,12 +730,12 @@ export default function StockListPage() {
             return;
           }
           
-          // Check logs for progress
+          // Check logs for progress - count delete_all_success which happens for each style
           const { data: logsData } = await supabase
             .from('job_logs')
             .select('msg, data')
             .eq('job_id', jobId)
-            .eq('msg', 'STEP:style_stock_style_done')
+            .eq('msg', 'STEP:style_stock_delete_all_success')
             .order('ts', { ascending: true });
           
           const completedCount = logsData?.length || 0;
@@ -745,11 +747,17 @@ export default function StockListPage() {
             setScrapingMismatches(false);
             
             if (jobData.status === 'succeeded') {
-              alert(`Scraping complete! ${completedCount} styles scraped.`);
-              // Refresh the stock data
-              window.location.reload();
+              setScrapeMessage({ 
+                type: 'success', 
+                text: `Scraping complete! ${completedCount} styles scraped. Refreshing page...` 
+              });
+              // Refresh the stock data after a short delay
+              setTimeout(() => window.location.reload(), 2000);
             } else {
-              alert(`Scraping ${jobData.status}. Check the Jobs page for details.`);
+              setScrapeMessage({ 
+                type: 'error', 
+                text: `Scraping ${jobData.status}. Check the Jobs page for details.` 
+              });
             }
           }
         } catch (err: any) {
@@ -762,14 +770,20 @@ export default function StockListPage() {
         clearInterval(pollInterval);
         if (scrapingMismatches) {
           setScrapingMismatches(false);
-          alert('Scraping is taking longer than expected. Check the Jobs page for status.');
+          setScrapeMessage({ 
+            type: 'info', 
+            text: 'Scraping is taking longer than expected. Check the Jobs page for status.' 
+          });
         }
       }, 600000);
       
     } catch (err: any) {
       setScrapingMismatches(false);
       setScrapeProgress(null);
-      alert(`Failed to start scraping: ${err.message}`);
+      setScrapeMessage({ 
+        type: 'error', 
+        text: `Failed to start scraping: ${err.message}` 
+      });
     }
   }, [checkerResults, supabase, scrapingMismatches]);
 
@@ -1479,6 +1493,25 @@ export default function StockListPage() {
                 max={scrapeProgress.total} 
                 showLabel={true}
               />
+            </div>
+          )}
+          
+          {scrapeMessage && (
+            <div className={`mt-4 p-4 border rounded ${
+              scrapeMessage.type === 'success' ? 'bg-green-50 border-green-200' :
+              scrapeMessage.type === 'error' ? 'bg-red-50 border-red-200' :
+              'bg-blue-50 border-blue-200'
+            }`}>
+              <p className={`text-sm font-semibold ${
+                scrapeMessage.type === 'success' ? 'text-green-900' :
+                scrapeMessage.type === 'error' ? 'text-red-900' :
+                'text-blue-900'
+              }`}>
+                {scrapeMessage.type === 'success' ? '✓ ' : 
+                 scrapeMessage.type === 'error' ? '✗ ' : 
+                 'ℹ️ '}
+                {scrapeMessage.text}
+              </p>
             </div>
           )}
           
