@@ -100,6 +100,17 @@ export default function StockScraperPage() {
   const [showRelated, setShowRelated] = React.useState(false);
   const [startFrom, setStartFrom] = React.useState<string>('0');
   const [limit, setLimit] = React.useState<string>('25');
+  const [singleStyle, setSingleStyle] = React.useState<string>('');
+
+  const { data: styleChoices } = useSWR('stock-scraper:style-dropdown', async () => {
+    const { data, error } = await supabase
+      .from('styles')
+      .select('id, style_no, style_name, supplier')
+      .order('style_no', { ascending: true })
+      .limit(1000);
+    if (error) throw new Error(error.message);
+    return (data ?? []) as Array<{ id: string; style_no: string; style_name?: string | null; supplier?: string | null }>;
+  }, { refreshInterval: 0 });
 
   const { data: recent } = useSWR('stock-scraper:recent', async () => {
     const { data, error } = await supabase
@@ -143,6 +154,46 @@ export default function StockScraperPage() {
 
   async function enqueueSelected() {
     await fetch('/api/cron/update-stock-selected', { method: 'POST' });
+  }
+
+  async function enqueueSingleStyle() {
+    if (!singleStyle) {
+      alert('Select a style number first');
+      return;
+    }
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        alert('Not signed in');
+        return;
+      }
+      const styleEntry = (styleChoices ?? []).find((s) => String(s.style_no) === singleStyle);
+      const styleNo = styleEntry?.style_no || singleStyle;
+      if (!styleNo) {
+        alert('Selected style missing style number');
+        return;
+      }
+      const res = await fetch('/api/enqueue', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({
+          type: 'update_style_stock',
+          payload: {
+            requestedBy: session.user.email,
+            styleNos: [styleNo]
+          }
+        })
+      });
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        throw new Error(text || `Failed (${res.status})`);
+      }
+      setSingleStyle('');
+      alert(`Enqueued scrape for style ${styleNo}`);
+    } catch (e: any) {
+      alert(e?.message || 'Failed to enqueue style');
+      console.error('[stock-scraper] enqueueSingleStyle error', e);
+    }
   }
 
   async function enqueueWithLimit() {
@@ -210,6 +261,29 @@ export default function StockScraperPage() {
         <div className="mb-3 flex items-center gap-2 flex-wrap">
           <button onClick={enqueueAll} disabled={!!running} className="rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-60">Scrape all</button>
           <button onClick={enqueueSelected} disabled={!!running} className="rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-60">Scrape selected</button>
+          <div className="flex items-center gap-2 border rounded-md px-3 py-1.5">
+            <label className="text-sm text-gray-600 whitespace-nowrap">Scrape style:</label>
+            <select
+              value={singleStyle}
+              onChange={(e) => setSingleStyle(e.target.value)}
+              className="min-w-[220px] rounded border px-2 py-1 text-sm"
+              disabled={!!running || !styleChoices}
+            >
+              <option value="">Select style…</option>
+              {(styleChoices ?? []).map((s) => (
+                <option key={s.id} value={s.style_no}>
+                  {s.style_no}{s.style_name ? ` · ${s.style_name}` : ''}{s.supplier ? ` (${s.supplier})` : ''}
+                </option>
+              ))}
+            </select>
+            <button
+              onClick={enqueueSingleStyle}
+              disabled={!!running || !singleStyle}
+              className="rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-60"
+            >
+              Scrape style
+            </button>
+          </div>
           <div className="flex items-center gap-2 border rounded-md px-3 py-1.5">
             <label className="text-sm text-gray-600">Start from:</label>
             <input

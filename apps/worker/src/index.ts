@@ -677,14 +677,10 @@ async function runJob(job: JobRow) {
                 continue;
               }
               if (cls.includes('stylecolor-expanded--sub')) {
-                const nextEl = (rows[r + 1] as HTMLTableRowElement | undefined) || undefined;
-                const nextCls = nextEl ? (nextEl.className || '') : '';
-                const nextLabel = nextEl ? text((Array.from(nextEl.querySelectorAll('td')) as HTMLElement[])[0] || null) : '';
                 const isDedicatedLabel = /(Stock\s+Dedicated|Pre\s+Dedicated)/i.test(label);
-                const nextIsDedicatedLabel = /(Stock\s+Dedicated|Pre\s+Dedicated)/i.test(nextLabel);
-                if (!isDedicatedLabel && nextEl && nextCls.includes('stylecolor-expanded--sub') && nextIsDedicatedLabel) { continue; }
+                if (isDedicatedLabel) { continue; }
                 let po_link: string | null = null;
-              const poA = rowEl.querySelector('a[href*="purchase_orders.php"]') as HTMLAnchorElement | null;
+                const poA = rowEl.querySelector('a[href*="purchase_orders.php"]') as HTMLAnchorElement | null;
                 po_link = poA ? (poA.getAttribute('href') || null) : null;
                 if (!po_link && lastPurchaseHeading) po_link = lastPurchaseHeading.link;
                 const key = normalizeLabel(label || 'Row') + '|' + String(po_link || '');

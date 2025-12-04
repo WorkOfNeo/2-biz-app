@@ -204,6 +204,10 @@ export async function exportStockList(ctx: Ctx) {
         // Ensure images never get cut off
         img: { width: s(80), height: s(80), objectFit: 'contain' as any },
         meta: { fontSize: s(9), marginBottom: s(4) },
+        kpiRow: { flexDirection: 'row', gap: s(12), marginBottom: s(16) },
+        kpiCard: { flex: 1, padding: s(8), border: 0.5, borderColor: '#d4d4d8', borderRadius: s(6), backgroundColor: '#f8fafc' },
+        kpiLabel: { fontSize: s(9), color: '#475569', marginBottom: s(6) },
+        kpiValue: { fontSize: s(16), fontWeight: 700 as any, color: '#0f172a' },
         colorTable: { marginBottom: s(22) },
         tableMeta: { flexDirection: 'row', justifyContent: 'flex-end', marginBottom: s(4) },
         tableMetaRight: { fontSize: s(7), color: '#94a3b8', textAlign: 'right' as any },
@@ -347,13 +351,32 @@ export async function exportStockList(ctx: Ctx) {
         for (const r of out) { s += r.stock; so += r.sold; p += r.purchase; a += r.available; }
         return { stock: s, sold: so, purchase: p, available: a };
       })();
-      const footer = React.createElement(View, { style: styles.footer },
-        React.createElement(Text, { style: styles.footerValue }, `På lager: ${fmt(totalsAll.stock)}`),
-        React.createElement(Text, { style: styles.footerValue }, `Solgt: ${fmt(Math.abs(totalsAll.sold))}`),
-        React.createElement(Text, { style: styles.footerValue }, `Indkøbt: ${fmt(totalsAll.purchase)}`),
-        React.createElement(Text, { style: styles.footerValue }, `Disponibel: ${fmt(totalsAll.available)}`)
+      const kpiRow = React.createElement(View, { style: styles.kpiRow },
+        React.createElement(View, { style: styles.kpiCard },
+          React.createElement(Text, { style: styles.kpiLabel }, 'På lager'),
+          React.createElement(Text, { style: styles.kpiValue }, fmt(totalsAll.stock))
+        ),
+        React.createElement(View, { style: styles.kpiCard },
+          React.createElement(Text, { style: styles.kpiLabel }, 'Solgt'),
+          React.createElement(Text, { style: styles.kpiValue }, fmt(Math.abs(totalsAll.sold)))
+        ),
+        React.createElement(View, { style: styles.kpiCard },
+          React.createElement(Text, { style: styles.kpiLabel }, 'Indkøbt'),
+          React.createElement(Text, { style: styles.kpiValue }, fmt(totalsAll.purchase))
+        ),
+        React.createElement(View, { style: styles.kpiCard },
+          React.createElement(Text, { style: styles.kpiLabel }, 'Disponibel'),
+          React.createElement(Text, { style: styles.kpiValue }, fmt(totalsAll.available))
+        )
       );
-      const doc = React.createElement(Document, null, React.createElement(PdfPage, { size: 'A4', orientation: 'portrait', style: styles.page }, React.createElement(Text, { style: styles.h1 }, `Stock List · ${listName}`), ...blocks, footer));
+
+      const doc = React.createElement(Document, null,
+        React.createElement(PdfPage, { size: 'A4', orientation: 'portrait', style: styles.page },
+          React.createElement(Text, { style: styles.h1 }, `Stock List · ${listName}`),
+          kpiRow,
+          ...blocks
+        )
+      );
       let outPdf = await pdf(doc).toBuffer();
       let buf = await ensureBuffer(outPdf);
       // Safety: if renderer produced an empty buffer, emit a tiny placeholder so we don't upload 0 bytes
