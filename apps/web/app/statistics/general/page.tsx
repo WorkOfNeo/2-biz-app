@@ -1140,7 +1140,7 @@ export default function StatisticsGeneralPage() {
               {/* Removed sticky overlay totals; separate TOTALS section below */}
               {/* KPI cards when a salesperson is selected */}
               {activePerson && (
-                <div className="border-t p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-3">
+                <div className="border-t p-4 space-y-4">
                   {(() => {
                     const nulledSeasonal = new Set(overrides?.value.nulled ?? []);
                     
@@ -1157,6 +1157,10 @@ export default function StatisticsGeneralPage() {
                       const isExcluded = isNulled(r.account_no);
                       return !hasS1Activity && !isExcluded;
                     }).length;
+                    
+                    // Nulled and permanently closed counts
+                    const nulledCount = items.reduce((a, r) => a + (nulledSeasonal.has(r.account_no) ? 1 : 0), 0);
+                    const permClosedCount = items.reduce((a, r) => a + (closedCustomers?.setClosed.has(r.account_no) ? 1 : 0), 0);
                     
                     // Aggregate visited customers S1/S2 totals for index calculation
                     const visitedS1Qty = visitedRows.reduce((a, r) => a + r.s1Qty, 0);
@@ -1184,39 +1188,56 @@ export default function StatisticsGeneralPage() {
                     
                     return (
                       <>
-                        <div className="rounded-md border p-3">
-                          <div className="text-xs text-gray-500">Total customers</div>
-                          <div className="text-xl font-semibold">{totalCustomers}</div>
+                        {/* GENERAL Section */}
+                        <div className="rounded-lg border bg-white p-4">
+                          <h3 className="text-sm font-semibold text-gray-700 mb-3">GENERAL</h3>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                            <div className="rounded-md border p-3">
+                              <div className="text-xs text-gray-500">Total customers</div>
+                              <div className="text-xl font-semibold">{totalCustomers}</div>
+                            </div>
+                            <div className="rounded-md border p-3">
+                              <div className="text-xs text-gray-500">Customers visited</div>
+                              <div className="text-xl font-semibold">{customersVisited}</div>
+                              <div className="text-[11px] text-gray-400">with Season 1 entry</div>
+                            </div>
+                            <div className="rounded-md border p-3">
+                              <div className="text-xs text-gray-500">Customers to visit</div>
+                              <div className="text-xl font-semibold">{customersToVisit}</div>
+                              <div className="text-[11px] text-gray-400">not nulled/closed</div>
+                            </div>
+                            <div className="rounded-md border p-3">
+                              <div className="text-xs text-gray-500">Nulled · Perm Closed</div>
+                              <div className="text-xl font-semibold">{nulledCount} · {permClosedCount}</div>
+                            </div>
+                          </div>
                         </div>
-                        <div className="rounded-md border p-3">
-                          <div className="text-xs text-gray-500">Customers visited</div>
-                          <div className="text-xl font-semibold">{customersVisited}</div>
-                          <div className="text-[11px] text-gray-400">with Season 1 entry</div>
-                        </div>
-                        <div className="rounded-md border p-3">
-                          <div className="text-xs text-gray-500">Customers to visit</div>
-                          <div className="text-xl font-semibold">{customersToVisit}</div>
-                          <div className="text-[11px] text-gray-400">not nulled/closed</div>
-                        </div>
-                        <div className="rounded-md border p-3">
-                          <div className="text-xs text-gray-500">Index QTY</div>
-                          <div className="text-xl font-semibold">{indexQty.toFixed(1)}</div>
-                          <div className="text-[11px] text-gray-400">vs last season (visited)</div>
-                        </div>
-                        <div className="rounded-md border p-3">
-                          <div className="text-xs text-gray-500">Index PRICE</div>
-                          <div className="text-xl font-semibold">{indexPrice.toFixed(1)}</div>
-                          <div className="text-[11px] text-gray-400">vs last season (visited)</div>
-                        </div>
-                        <div className="rounded-md border p-3">
-                          <div className="text-xs text-gray-500">Prognose QTY</div>
-                          <div className="text-xl font-semibold">{Math.round(prognosedQty).toLocaleString('da-DK')}</div>
-                          <div className="text-[11px] text-gray-400">if index holds</div>
-                        </div>
-                        <div className="rounded-md border p-3">
-                          <div className="text-xs text-gray-500">Prognose PRICE</div>
-                          <div className="text-xl font-semibold">{Math.round(prognosedPrice).toLocaleString('da-DK')}</div>
-                          <div className="text-[11px] text-gray-400">if index holds</div>
+                        
+                        {/* CALCULATIONS Section */}
+                        <div className="rounded-lg border bg-white p-4">
+                          <h3 className="text-sm font-semibold text-gray-700 mb-3">CALCULATIONS</h3>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                            <div className="rounded-md border p-3">
+                              <div className="text-xs text-gray-500">Index QTY</div>
+                              <div className="text-xl font-semibold">{indexQty.toFixed(1)}</div>
+                              <div className="text-[11px] text-gray-400">{visitedS1Qty} vs {visitedS2Qty} (visited)</div>
+                            </div>
+                            <div className="rounded-md border p-3">
+                              <div className="text-xs text-gray-500">Index PRICE</div>
+                              <div className="text-xl font-semibold">{indexPrice.toFixed(1)}</div>
+                              <div className="text-[11px] text-gray-400">{Math.round(visitedS1Price).toLocaleString('da-DK')} vs {Math.round(visitedS2Price).toLocaleString('da-DK')} (visited)</div>
+                            </div>
+                            <div className="rounded-md border p-3">
+                              <div className="text-xs text-gray-500">Prognose QTY</div>
+                              <div className="text-xl font-semibold">{Math.round(prognosedQty).toLocaleString('da-DK')}</div>
+                              <div className="text-[11px] text-gray-400">if index holds</div>
+                            </div>
+                            <div className="rounded-md border p-3">
+                              <div className="text-xs text-gray-500">Prognose PRICE</div>
+                              <div className="text-xl font-semibold">{Math.round(prognosedPrice).toLocaleString('da-DK')}</div>
+                              <div className="text-[11px] text-gray-400">if index holds</div>
+                            </div>
+                          </div>
                         </div>
                       </>
                     );
