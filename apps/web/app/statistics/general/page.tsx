@@ -480,6 +480,34 @@ export default function StatisticsGeneralPage() {
     }
   }
 
+  async function fixMissingCustomer(account_no: string, customer_name: string, city: string, salesperson_id: string | null) {
+    if (!account_no) {
+      alert('No account number available');
+      return;
+    }
+    if (!confirm(`Create customer "${customer_name}" (${account_no}) in the customers database?`)) {
+      return;
+    }
+    try {
+      const { error } = await supabase.from('customers').insert({
+        customer_id: account_no,
+        company: customer_name || account_no,
+        city: city || null,
+        salesperson_id: salesperson_id || null,
+        country: null, // Will need to be set manually later
+      });
+      if (error) throw error;
+      alert(`✓ Customer created successfully!\n\nAccount: ${account_no}\nName: ${customer_name}\nSalesperson: ${salesperson_id || 'None'}`);
+      // Refresh customers list
+      if (typeof window !== 'undefined') {
+        window.location.reload();
+      }
+    } catch (err: any) {
+      alert(`Failed to create customer: ${err.message}`);
+      console.error('[general] fixMissingCustomer error', err);
+    }
+  }
+
   async function saveComment() {
     if (!commentCustomerId || !s1) return;
     try {
@@ -1040,15 +1068,29 @@ export default function StatisticsGeneralPage() {
                           <td className={"relative p-2 font-medium " + (nulled ? '' : '')}>
                             <div className="flex items-center gap-1.5">
                               {row.customer}
-                              {!row.isGroupTotal && (
-                                <button
-                                  onClick={() => openCommentModal(row.account_no)}
-                                  className={commentsMap?.[row.account_no] ? "text-blue-600 hover:text-blue-800" : "text-gray-400 hover:text-gray-600 opacity-0 group-hover:opacity-100"}
-                                  title={commentsMap?.[row.account_no]?.comment || 'Add comment'}
-                                >
-                                  <MessageCircle className="h-4 w-4" />
-                                </button>
-                              )}
+                              {!row.isGroupTotal && (() => {
+                                const customerExists = (allCustomers ?? []).some(c => c.customer_id === row.account_no);
+                                return (
+                                  <>
+                                    {!customerExists && row.account_no && (
+                                      <button
+                                        onClick={() => fixMissingCustomer(row.account_no, row.customer, row.city, row.salespersonId)}
+                                        className="px-2 py-0.5 text-xs bg-orange-500 text-white rounded hover:bg-orange-600"
+                                        title="This customer doesn't exist in the customers table. Click to create."
+                                      >
+                                        Fix
+                                      </button>
+                                    )}
+                                    <button
+                                      onClick={() => openCommentModal(row.account_no)}
+                                      className={commentsMap?.[row.account_no] ? "text-blue-600 hover:text-blue-800" : "text-gray-400 hover:text-gray-600 opacity-0 group-hover:opacity-100"}
+                                      title={commentsMap?.[row.account_no]?.comment || 'Add comment'}
+                                    >
+                                      <MessageCircle className="h-4 w-4" />
+                                    </button>
+                                  </>
+                                );
+                              })()}
                             </div>
                             {nulled && <div className="pointer-events-none absolute inset-x-0 top-1/2 -translate-y-1/2 h-px bg-gray-500/70" />}
                           </td>
