@@ -15,6 +15,7 @@ export default function StylesPage() {
   const [seasonFilter, setSeasonFilter] = useState('');
   const [seasonInvert, setSeasonInvert] = useState(false);
   const [settingInactive, setSettingInactive] = useState(false);
+  const [updatingStyleId, setUpdatingStyleId] = useState<string | null>(null);
   const supabase = createClientComponentClient();
 
   // Fetch seasons for dropdown
@@ -136,22 +137,41 @@ export default function StylesPage() {
 
   // "Set all visible to Inactive" function
   async function setAllVisibleInactive() {
-    if (!rows || rows.length === 0) return;
-    if (!confirm(`Are you sure you want to set all ${rows.length} visible styles to Inactive?`)) return;
+    if (!rows || rows.length === 0) {
+      alert('No styles to set inactive');
+      return;
+    }
+    
+    const activeRows = rows.filter(r => !r.inactive);
+    if (activeRows.length === 0) {
+      alert('All visible styles are already inactive');
+      return;
+    }
+    
+    if (!confirm(`⚠️ Are you sure you want to set ${activeRows.length} visible ACTIVE styles to INACTIVE?\n\nThis will prevent them from being scraped in future runs.\n\n${rows.length - activeRows.length} styles are already inactive and will not be affected.`)) return;
     
     setSettingInactive(true);
     try {
-      const styleIds = rows.map(r => r.id);
-      const { error } = await supabase
+      console.log('[styles] Setting multiple styles to inactive:', activeRows.map(r => r.style_no));
+      const styleIds = activeRows.map(r => r.id);
+      
+      const { data, error } = await supabase
         .from('styles')
         .update({ inactive: true })
-        .in('id', styleIds);
+        .in('id', styleIds)
+        .select();
       
-      if (error) throw error;
+      if (error) {
+        console.error('[styles] Bulk update error:', error);
+        throw error;
+      }
+      
+      console.log('[styles] Bulk update successful:', data);
       await mutate();
-      alert(`Successfully set ${styleIds.length} styles to Inactive`);
+      alert(`✓ Successfully set ${styleIds.length} styles to INACTIVE\n\nThese styles will now be skipped in all future scraping runs.`);
     } catch (err: any) {
-      alert(`Failed to set styles inactive: ${err.message}`);
+      console.error('[styles] Bulk update failed:', err);
+      alert(`❌ Failed to set styles inactive:\n\n${err?.message || 'Unknown error'}\n\nDetails: ${JSON.stringify(err, null, 2)}`);
     } finally {
       setSettingInactive(false);
     }
@@ -326,16 +346,35 @@ export default function StylesPage() {
                           <button
                             onClick={async (e) => {
                               e.stopPropagation();
+                              setUpdatingStyleId(r.id);
                               try {
-                                await supabase.from('styles').update({ inactive: false }).eq('id', r.id);
+                                console.log('[styles] Setting style to ACTIVE:', r.id, r.style_no);
+                                const { data, error } = await supabase
+                                  .from('styles')
+                                  .update({ inactive: false })
+                                  .eq('id', r.id)
+                                  .select();
+                                
+                                if (error) {
+                                  console.error('[styles] Supabase error:', error);
+                                  alert(`Failed to activate style: ${error.message}\n\nDetails: ${JSON.stringify(error, null, 2)}`);
+                                  return;
+                                }
+                                
+                                console.log('[styles] Update successful:', data);
                                 await mutate();
-                              } catch (err) {
-                                console.error('Failed to toggle inactive', err);
+                                alert(`✓ Style ${r.style_no} is now ACTIVE and will be scraped`);
+                              } catch (err: any) {
+                                console.error('[styles] Failed to toggle inactive', err);
+                                alert(`Error: ${err?.message || 'Unknown error occurred'}`);
+                              } finally {
+                                setUpdatingStyleId(null);
                               }
                             }}
-                            className="text-xs px-3 py-1.5 rounded border bg-green-50 text-green-700 border-green-300 hover:bg-green-100 font-medium"
+                            disabled={updatingStyleId === r.id}
+                            className="text-xs px-3 py-1.5 rounded border bg-green-50 text-green-700 border-green-300 hover:bg-green-100 font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                           >
-                            ✓ Set Active
+                            {updatingStyleId === r.id ? '⏳ Updating...' : '✓ Set Active'}
                           </button>
                         </div>
                       ) : (
@@ -344,16 +383,36 @@ export default function StylesPage() {
                           <button
                             onClick={async (e) => {
                               e.stopPropagation();
+                              if (!confirm(`Set style ${r.style_no} to INACTIVE?\n\nThis will prevent it from being scraped in future runs.`)) return;
+                              setUpdatingStyleId(r.id);
                               try {
-                                await supabase.from('styles').update({ inactive: true }).eq('id', r.id);
+                                console.log('[styles] Setting style to INACTIVE:', r.id, r.style_no);
+                                const { data, error } = await supabase
+                                  .from('styles')
+                                  .update({ inactive: true })
+                                  .eq('id', r.id)
+                                  .select();
+                                
+                                if (error) {
+                                  console.error('[styles] Supabase error:', error);
+                                  alert(`Failed to set inactive: ${error.message}\n\nDetails: ${JSON.stringify(error, null, 2)}`);
+                                  return;
+                                }
+                                
+                                console.log('[styles] Update successful:', data);
                                 await mutate();
-                              } catch (err) {
-                                console.error('Failed to toggle inactive', err);
+                                alert(`✓ Style ${r.style_no} is now INACTIVE and will be skipped in scraping`);
+                              } catch (err: any) {
+                                console.error('[styles] Failed to toggle inactive', err);
+                                alert(`Error: ${err?.message || 'Unknown error occurred'}`);
+                              } finally {
+                                setUpdatingStyleId(null);
                               }
                             }}
-                            className="text-xs px-3 py-1.5 rounded border bg-gray-50 text-gray-700 border-gray-300 hover:bg-gray-100"
+                            disabled={updatingStyleId === r.id}
+                            className="text-xs px-3 py-1.5 rounded border bg-gray-50 text-gray-700 border-gray-300 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
                           >
-                            Set Inactive
+                            {updatingStyleId === r.id ? '⏳ Setting...' : 'Set Inactive'}
                           </button>
                         </div>
                       )}
