@@ -56,6 +56,9 @@ export default function StockListPage() {
   const [selectedSeasons, setSelectedSeasons] = React.useState<string[]>([]);
   const [hideZeros, setHideZeros] = React.useState<boolean>(false);
   const [loadingProgress, setLoadingProgress] = React.useState<{ total: number; current: number } | null>(null);
+  const [showCheckerModal, setShowCheckerModal] = React.useState<boolean>(false);
+  const [checkerInput, setCheckerInput] = React.useState<string>('');
+  const [checkerResults, setCheckerResults] = React.useState<any>(null);
   const { data } = useSWR('style_stock:list', async () => {
     // First, get the total count
     const { count, error: countError } = await supabase
@@ -673,6 +676,123 @@ export default function StockListPage() {
     return { stock, sold, purchase, available };
   }, [filteredForView]);
 
+  // Checker function: parse pasted data and compare with current stock
+  const runChecker = React.useCallback(() => {
+    try {
+      const lines = checkerInput.trim().split('\n');
+      const pastedData = new Map<string, { name: string; total: number }>();
+      
+      // Parse pasted data (skip header if present)
+      for (const line of lines) {
+        const parts = line.trim().split('\t');
+        if (parts.length < 3) continue;
+        
+        const styleNo = parts[0].trim();
+        const styleName = parts[1].trim();
+        const totalStr = parts[2].trim();
+        
+        // Skip header row
+        if (styleNo === 'Style No.' || styleNo === 'Style no' || !styleNo) continue;
+        
+        const total = parseInt(totalStr.replace(/[^0-9-]/g, ''), 10);
+        if (isNaN(total)) continue;
+        
+        pastedData.set(styleNo, { name: styleName, total });
+      }
+      
+      // Calculate totals per style from current stock list (available quantity)
+      const currentData = new Map<string, { name: string | null; total: number }>();
+      for (const { styleNo, colors } of filteredForView) {
+        const meta = styleMetaByNo[styleNo] || { name: null };
+        let styleTotal = 0;
+        for (const color of colors) {
+          styleTotal += color.available.reduce((sum, v) => sum + (Number(v) || 0), 0);
+        }
+        currentData.set(styleNo, { name: meta.name, total: styleTotal });
+      }
+      
+      // Compare and find differences
+      const differences: Array<{
+        styleNo: string;
+        name: string | null;
+        pastedTotal: number;
+        currentTotal: number;
+        diff: number;
+        status: 'missing_in_pasted' | 'missing_in_current' | 'mismatch' | 'match';
+      }> = [];
+      
+      // Check all pasted styles
+      for (const [styleNo, pastedInfo] of pastedData.entries()) {
+        const current = currentData.get(styleNo);
+        if (!current) {
+          differences.push({
+            styleNo,
+            name: pastedInfo.name,
+            pastedTotal: pastedInfo.total,
+            currentTotal: 0,
+            diff: -pastedInfo.total,
+            status: 'missing_in_current'
+          });
+        } else if (current.total !== pastedInfo.total) {
+          differences.push({
+            styleNo,
+            name: current.name || pastedInfo.name,
+            pastedTotal: pastedInfo.total,
+            currentTotal: current.total,
+            diff: current.total - pastedInfo.total,
+            status: 'mismatch'
+          });
+        } else {
+          differences.push({
+            styleNo,
+            name: current.name || pastedInfo.name,
+            pastedTotal: pastedInfo.total,
+            currentTotal: current.total,
+            diff: 0,
+            status: 'match'
+          });
+        }
+      }
+      
+      // Check for styles in current but not in pasted
+      for (const [styleNo, currentInfo] of currentData.entries()) {
+        if (!pastedData.has(styleNo)) {
+          differences.push({
+            styleNo,
+            name: currentInfo.name,
+            pastedTotal: 0,
+            currentTotal: currentInfo.total,
+            diff: currentInfo.total,
+            status: 'missing_in_pasted'
+          });
+        }
+      }
+      
+      // Sort: mismatches first, then by absolute diff descending
+      differences.sort((a, b) => {
+        if (a.status === 'mismatch' && b.status !== 'mismatch') return -1;
+        if (a.status !== 'mismatch' && b.status === 'mismatch') return 1;
+        if (a.status === 'missing_in_current' && b.status !== 'missing_in_current') return -1;
+        if (a.status !== 'missing_in_current' && b.status === 'missing_in_current') return 1;
+        if (a.status === 'missing_in_pasted' && b.status !== 'missing_in_pasted') return -1;
+        if (a.status !== 'missing_in_pasted' && b.status === 'missing_in_pasted') return 1;
+        return Math.abs(b.diff) - Math.abs(a.diff);
+      });
+      
+      setCheckerResults({
+        pastedCount: pastedData.size,
+        currentCount: currentData.size,
+        differences,
+        mismatches: differences.filter(d => d.status === 'mismatch').length,
+        missingInCurrent: differences.filter(d => d.status === 'missing_in_current').length,
+        missingInPasted: differences.filter(d => d.status === 'missing_in_pasted').length,
+        matches: differences.filter(d => d.status === 'match').length
+      });
+    } catch (err: any) {
+      alert(`Error parsing data: ${err.message}`);
+    }
+  }, [checkerInput, filteredForView, styleMetaByNo]);
+
   return (
     <div className="space-y-4 sl-root">
       <div>
@@ -697,6 +817,17 @@ export default function StockListPage() {
             disabled={exporting || filteredForView.length === 0}
           >
             {exporting ? 'Exporting...' : 'Export to Excel'}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              setShowCheckerModal(true);
+              setCheckerResults(null);
+              setCheckerInput('');
+            }}
+          >
+            Checker
           </Button>
         </div>
         
@@ -1166,6 +1297,158 @@ function ScrapeActiveListButton({ listId, styleIdsInList }: { listId: string; st
     >
       {busy ? 'Scraping…' : (done ? 'Enqueued!' : 'Scrape this list')}
     </Button>
+  );
+}
+
+      {/* Checker Modal */}
+      <Modal
+        isOpen={showCheckerModal}
+        onClose={() => {
+          setShowCheckerModal(false);
+          setCheckerResults(null);
+          setCheckerInput('');
+        }}
+        title="Stock Checker"
+      >
+        <div className="space-y-4">
+          <div>
+            <p className="text-sm text-gray-600 mb-2">
+              Paste your data in the format: <code className="bg-gray-100 px-1 rounded">Style No. [TAB] Style Name [TAB] Total</code>
+            </p>
+            <p className="text-xs text-gray-500 mb-3">
+              The checker will compare the pasted totals with the current <strong>Available</strong> quantities (Stock - Sold + Purchase) displayed on this page.
+            </p>
+            <textarea
+              className="w-full h-64 p-3 border rounded font-mono text-xs"
+              placeholder="1010191	RANY	1545
+1011609	ILLIE	948
+1011396	KARCEMONA	899"
+              value={checkerInput}
+              onChange={(e) => setCheckerInput(e.target.value)}
+            />
+          </div>
+          
+          <div className="flex gap-2">
+            <Button onClick={runChecker} disabled={!checkerInput.trim()}>
+              Check Differences
+            </Button>
+            <Button 
+              variant="outline" 
+              onClick={() => {
+                setCheckerInput('');
+                setCheckerResults(null);
+              }}
+            >
+              Clear
+            </Button>
+          </div>
+          
+          {checkerResults && (
+            <div className="mt-4 space-y-4">
+              {/* Summary */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <Card className="shadow-sm">
+                  <CardContent className="p-3">
+                    <div className="text-xs text-gray-600">Pasted Styles</div>
+                    <div className="text-xl font-bold">{checkerResults.pastedCount}</div>
+                  </CardContent>
+                </Card>
+                <Card className="shadow-sm">
+                  <CardContent className="p-3">
+                    <div className="text-xs text-gray-600">Current Styles</div>
+                    <div className="text-xl font-bold">{checkerResults.currentCount}</div>
+                  </CardContent>
+                </Card>
+                <Card className="shadow-sm">
+                  <CardContent className="p-3">
+                    <div className="text-xs text-gray-600">Mismatches</div>
+                    <div className="text-xl font-bold text-orange-600">{checkerResults.mismatches}</div>
+                  </CardContent>
+                </Card>
+                <Card className="shadow-sm">
+                  <CardContent className="p-3">
+                    <div className="text-xs text-gray-600">Matches</div>
+                    <div className="text-xl font-bold text-green-600">{checkerResults.matches}</div>
+                  </CardContent>
+                </Card>
+              </div>
+              
+              {checkerResults.missingInCurrent > 0 && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded">
+                  <div className="text-sm font-semibold text-red-800">
+                    {checkerResults.missingInCurrent} style(s) in pasted data but NOT in current stock list
+                  </div>
+                </div>
+              )}
+              
+              {checkerResults.missingInPasted > 0 && (
+                <div className="p-3 bg-blue-50 border border-blue-200 rounded">
+                  <div className="text-sm font-semibold text-blue-800">
+                    {checkerResults.missingInPasted} style(s) in current stock list but NOT in pasted data
+                  </div>
+                </div>
+              )}
+              
+              {/* Differences Table */}
+              <div className="border rounded overflow-hidden">
+                <div className="overflow-auto max-h-96">
+                  <table className="min-w-full text-sm">
+                    <thead className="bg-gray-100 sticky top-0">
+                      <tr>
+                        <th className="p-2 text-left font-semibold">Style No</th>
+                        <th className="p-2 text-left font-semibold">Name</th>
+                        <th className="p-2 text-right font-semibold">Pasted</th>
+                        <th className="p-2 text-right font-semibold">Current</th>
+                        <th className="p-2 text-right font-semibold">Diff</th>
+                        <th className="p-2 text-left font-semibold">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {checkerResults.differences.map((diff: any, idx: number) => (
+                        <tr 
+                          key={idx} 
+                          className={
+                            diff.status === 'mismatch' ? 'bg-orange-50' :
+                            diff.status === 'missing_in_current' ? 'bg-red-50' :
+                            diff.status === 'missing_in_pasted' ? 'bg-blue-50' :
+                            'bg-white'
+                          }
+                        >
+                          <td className="p-2 border-t font-mono text-xs">{diff.styleNo}</td>
+                          <td className="p-2 border-t">{diff.name || '-'}</td>
+                          <td className="p-2 border-t text-right font-mono">{diff.pastedTotal.toLocaleString()}</td>
+                          <td className="p-2 border-t text-right font-mono">{diff.currentTotal.toLocaleString()}</td>
+                          <td className={`p-2 border-t text-right font-mono font-semibold ${
+                            diff.diff > 0 ? 'text-green-600' :
+                            diff.diff < 0 ? 'text-red-600' :
+                            'text-gray-600'
+                          }`}>
+                            {diff.diff > 0 ? `+${diff.diff.toLocaleString()}` : diff.diff.toLocaleString()}
+                          </td>
+                          <td className="p-2 border-t">
+                            <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${
+                              diff.status === 'match' ? 'bg-green-100 text-green-800' :
+                              diff.status === 'mismatch' ? 'bg-orange-100 text-orange-800' :
+                              diff.status === 'missing_in_current' ? 'bg-red-100 text-red-800' :
+                              'bg-blue-100 text-blue-800'
+                            }`}>
+                              {diff.status === 'match' ? '✓ Match' :
+                               diff.status === 'mismatch' ? 'Mismatch' :
+                               diff.status === 'missing_in_current' ? 'Not in current' :
+                               'Not in pasted'}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </Modal>
+    </div>
   );
 }
 
