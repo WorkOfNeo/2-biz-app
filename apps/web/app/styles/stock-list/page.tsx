@@ -687,12 +687,12 @@ export default function StockListPage() {
         const parts = line.trim().split('\t');
         if (parts.length < 3) continue;
         
-        const styleNo = parts[0].trim();
-        const styleName = parts[1].trim();
-        const totalStr = parts[2].trim();
+        const styleNo = parts[0]?.trim() || '';
+        const styleName = parts[1]?.trim() || '';
+        const totalStr = parts[2]?.trim() || '';
         
-        // Skip header row
-        if (styleNo === 'Style No.' || styleNo === 'Style no' || !styleNo) continue;
+        // Skip header row or empty data
+        if (!styleNo || styleNo === 'Style No.' || styleNo === 'Style no') continue;
         
         const total = parseInt(totalStr.replace(/[^0-9-]/g, ''), 10);
         if (isNaN(total)) continue;
