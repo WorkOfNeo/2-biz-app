@@ -379,6 +379,106 @@ export default function OverviewPage() {
     return out;
   }, [customers, stats, invoices, country, s1, s2, currencyRatesRow, ratesS1, ratesS2, spCurrencyById, overrides, closedCustomers]);
 
+  const collectedIndex = useMemo(() => {
+    if (!customers || !stats || !s1 || !s2) return null;
+    const targetCountry = country === 'All' ? null : country.toUpperCase();
+    const customersById = new Map<string, Customer>();
+    const allowedAccounts = new Set<string>();
+    const nulledAccounts = new Set<string>();
+    for (const c of customers as Customer[]) {
+      if (!c.customer_id) continue;
+      customersById.set(c.customer_id, c);
+      if (isHidden(c.customer_id)) continue;
+      const cCountry = String(c.country ?? '').toUpperCase();
+      if (targetCountry && cCountry !== targetCountry) continue;
+      allowedAccounts.add(c.customer_id);
+      if (isNulled(c.customer_id)) {
+        nulledAccounts.add(c.customer_id);
+      }
+    }
+    if (allowedAccounts.size === 0) return null;
+    const baseRates = { DKK: 1, ...(currencyRatesRow ?? {}) } as Record<string, number>;
+    const seasonRatesS1 = { ...baseRates, ...(ratesS1 ?? {}) };
+    const seasonRatesS2 = { ...baseRates, ...(ratesS2 ?? {}) };
+    type Bucket = { accountId: string; s1Qty: number; s1Price: number; s2Qty: number; s2Price: number; isNulled: boolean };
+    const buckets = new Map<string, Bucket>();
+    const ensureBucket = (accountId: string) => {
+      const existing = buckets.get(accountId);
+      if (existing) return existing;
+      const created: Bucket = { accountId, s1Qty: 0, s1Price: 0, s2Qty: 0, s2Price: 0, isNulled: nulledAccounts.has(accountId) };
+      buckets.set(accountId, created);
+      return created;
+    };
+    allowedAccounts.forEach((acc) => ensureBucket(acc));
+    const safeCurrency = (value: string | null | undefined, fallback = 'DKK') => {
+      const base = value ?? fallback ?? 'DKK';
+      return String(base).toUpperCase();
+    };
+    for (const r of (stats ?? []) as StatsRow[]) {
+      const acc = r.account_no ?? '';
+      if (!acc || !allowedAccounts.has(acc)) continue;
+      const bucket = ensureBucket(acc);
+      const qty = Number(r.qty || 0);
+      const price = Number(r.price || 0);
+      const currency = safeCurrency(r.salesperson_id ? spCurrencyById[r.salesperson_id] : null);
+      if (r.season_id === s1) {
+        if (!bucket.isNulled) {
+          bucket.s1Qty += qty;
+          bucket.s1Price += price * (seasonRatesS1[currency] ?? 1);
+        }
+      } else if (r.season_id === s2) {
+        bucket.s2Qty += qty;
+        bucket.s2Price += price * (seasonRatesS2[currency] ?? 1);
+      }
+    }
+    for (const inv of (invoices ?? [])) {
+      const acc = inv.account_no ?? '';
+      if (!acc || !allowedAccounts.has(acc)) continue;
+      const bucket = ensureBucket(acc);
+      const qty = Number(inv.qty || 0) || 0;
+      const amount = Number(inv.amount || 0) || 0;
+      const meta = customersById.get(acc);
+      const spId = meta?.salesperson_id ?? null;
+      const fallbackCurrency = safeCurrency(inv.currency);
+      const currency = spId ? safeCurrency(spCurrencyById[spId], fallbackCurrency) : fallbackCurrency;
+      if (inv.season_id === s1) {
+        if (!bucket.isNulled) {
+          bucket.s1Qty += qty;
+          bucket.s1Price += amount * (seasonRatesS1[currency] ?? 1);
+        }
+      } else if (inv.season_id === s2) {
+        bucket.s2Qty += qty;
+        bucket.s2Price += amount * (seasonRatesS2[currency] ?? 1);
+      }
+    }
+    const values = Array.from(buckets.values());
+    if (values.length === 0) return null;
+    const visited = values.filter((v) => v.s1Qty > 0 || v.s1Price > 0);
+    const visitedS1Qty = visited.reduce((a, v) => a + v.s1Qty, 0);
+    const visitedS1Price = visited.reduce((a, v) => a + v.s1Price, 0);
+    const visitedS2Qty = visited.reduce((a, v) => a + v.s2Qty, 0);
+    const visitedS2Price = visited.reduce((a, v) => a + v.s2Price, 0);
+    const qtyIndexRatio = visitedS2Qty === 0 ? 1 : visitedS1Qty / visitedS2Qty;
+    const priceIndexRatio = visitedS2Price === 0 ? 1 : visitedS1Price / visitedS2Price;
+    const indexQty = visitedS2Qty === 0 ? 100 : qtyIndexRatio * 100;
+    const indexPrice = visitedS2Price === 0 ? 100 : priceIndexRatio * 100;
+    const unvisited = values.filter((v) => v.s1Qty === 0 && v.s1Price === 0 && !v.isNulled);
+    const unvisitedS2Qty = unvisited.reduce((a, v) => a + v.s2Qty, 0);
+    const unvisitedS2Price = unvisited.reduce((a, v) => a + v.s2Price, 0);
+    const prognosedQty = visitedS1Qty + (unvisitedS2Qty * qtyIndexRatio);
+    const prognosedPrice = visitedS1Price + (unvisitedS2Price * priceIndexRatio);
+    return {
+      visitedS1Qty,
+      visitedS2Qty,
+      visitedS1Price,
+      visitedS2Price,
+      indexQty,
+      indexPrice,
+      prognosedQty,
+      prognosedPrice,
+    };
+  }, [customers, stats, invoices, country, s1, s2, currencyRatesRow, ratesS1, ratesS2, spCurrencyById, overrides, closedCustomers]);
+
   // navigation helper
   function buildDetailsHref(spId: string, mode: 'nulled' | 'not_visited' | 'visited') {
     return {
@@ -554,6 +654,38 @@ export default function OverviewPage() {
           </table>
         </div>
       </div>
+
+      {collectedIndex && (
+        <div className="rounded-lg border bg-white">
+          <div className="border-b p-3 text-sm font-semibold">Collected Index & Prognosis</div>
+          <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="rounded-md border p-3">
+              <div className="text-xs text-gray-500">Index QTY</div>
+              <div className="text-xl font-semibold">{collectedIndex.indexQty.toFixed(1)}</div>
+              <div className="text-[11px] text-gray-400">
+                {collectedIndex.visitedS1Qty.toLocaleString('da-DK')} vs {collectedIndex.visitedS2Qty.toLocaleString('da-DK')} (visited)
+              </div>
+            </div>
+            <div className="rounded-md border p-3">
+              <div className="text-xs text-gray-500">Index PRICE</div>
+              <div className="text-xl font-semibold">{collectedIndex.indexPrice.toFixed(1)}</div>
+              <div className="text-[11px] text-gray-400">
+                {Math.round(collectedIndex.visitedS1Price).toLocaleString('da-DK')} vs {Math.round(collectedIndex.visitedS2Price).toLocaleString('da-DK')} (visited · DKK)
+              </div>
+            </div>
+            <div className="rounded-md border p-3">
+              <div className="text-xs text-gray-500">Prognose QTY</div>
+              <div className="text-xl font-semibold">{Math.round(collectedIndex.prognosedQty).toLocaleString('da-DK')}</div>
+              <div className="text-[11px] text-gray-400">if index holds</div>
+            </div>
+            <div className="rounded-md border p-3">
+              <div className="text-xs text-gray-500">Prognose PRICE</div>
+              <div className="text-xl font-semibold">{Math.round(collectedIndex.prognosedPrice).toLocaleString('da-DK')} DKK</div>
+              <div className="text-[11px] text-gray-400">if index holds</div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Currency Conversion Rates */}
       <div className="rounded-lg border bg-white">
