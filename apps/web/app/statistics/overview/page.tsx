@@ -32,6 +32,7 @@ function Donut({ pct }: { pct: number }) {
 export default function OverviewPage() {
   const [country, setCountry] = useState<typeof COUNTRIES[number]>('All');
   const [indexModal, setIndexModal] = useState<{ mode: 'visited' | 'unvisited' } | null>(null);
+  const [detailModal, setDetailModal] = useState<{ salespersonId: string; salespersonName: string; season: 's1' | 's2'; seasonLabel: string } | null>(null);
 
   const { data: saved } = useSWR('app-settings:season-compare', async () => {
     const { data, error } = await supabase.from('app_settings').select('*').eq('key', 'season_compare').maybeSingle();
@@ -381,6 +382,84 @@ export default function OverviewPage() {
     return out;
   }, [customers, stats, invoices, country, s1, s2, currencyRatesRow, ratesS1, ratesS2, spCurrencyById, overrides, closedCustomers]);
 
+  // Detail rows for modal
+  const detailRows = useMemo(() => {
+    if (!detailModal || !stats || !invoices || !customers) return [];
+    const { salespersonId, season } = detailModal;
+    const seasonId = season === 's1' ? s1 : s2;
+    
+    type DetailRow = {
+      source: 'stats' | 'invoice';
+      account_no: string;
+      customer_name: string;
+      city: string;
+      qty: number;
+      price: number;
+      currency: string;
+      rate: number;
+      priceDkk: number;
+      isNulled: boolean;
+    };
+    
+    const rows: DetailRow[] = [];
+    const customerById = new Map<string, Customer>();
+    for (const c of customers) { if (c.customer_id) customerById.set(c.customer_id, c); }
+    
+    const baseRates = { DKK: 1, ...(currencyRatesRow ?? {}) } as Record<string, number>;
+    const seasonRates = season === 's1' ? { ...baseRates, ...(ratesS1 ?? {}) } : { ...baseRates, ...(ratesS2 ?? {}) };
+    const currency = spCurrencyById[salespersonId] ?? 'DKK';
+    const rate = seasonRates[currency] ?? 1;
+    
+    // Add stats rows
+    for (const r of stats) {
+      if (r.salesperson_id !== salespersonId) continue;
+      if (r.season_id !== seasonId) continue;
+      const acc = r.account_no ?? '';
+      if (!acc) continue;
+      if (isHidden(acc)) continue;
+      
+      const customer = customerById.get(acc);
+      rows.push({
+        source: 'stats',
+        account_no: acc,
+        customer_name: customer?.company ?? '-',
+        city: customer?.city ?? '-',
+        qty: Number(r.qty || 0),
+        price: Number(r.price || 0),
+        currency,
+        rate,
+        priceDkk: Number(r.price || 0) * rate,
+        isNulled: isNulled(acc)
+      });
+    }
+    
+    // Add invoice rows
+    for (const inv of invoices) {
+      if (inv.season_id !== seasonId) continue;
+      const acc = inv.account_no ?? '';
+      if (!acc) continue;
+      if (isHidden(acc)) continue;
+      
+      const customer = customerById.get(acc);
+      if (customer?.salesperson_id !== salespersonId) continue;
+      
+      rows.push({
+        source: 'invoice',
+        account_no: acc,
+        customer_name: customer?.company ?? inv.customer_name ?? '-',
+        city: customer?.city ?? '-',
+        qty: Number(inv.qty || 0),
+        price: Number(inv.amount || 0),
+        currency,
+        rate,
+        priceDkk: Number(inv.amount || 0) * rate,
+        isNulled: isNulled(acc)
+      });
+    }
+    
+    return rows.sort((a, b) => b.priceDkk - a.priceDkk);
+  }, [detailModal, stats, invoices, customers, s1, s2, spCurrencyById, currencyRatesRow, ratesS1, ratesS2, overrides, closedCustomers]);
+
   const collectedIndex = useMemo(() => {
     if (!customers || !stats || !s1 || !s2) return null;
     const targetCountry = country === 'All' ? null : country.toUpperCase();
@@ -598,11 +677,39 @@ export default function OverviewPage() {
                 <td className="p-2"><Link className="underline underline-offset-2" href={buildDetailsHref(r.id, 'visited')}>{r.visited}/{r.effectiveTotal}</Link></td>
                 <td className="p-2"><Link className="underline underline-offset-2" href={buildDetailsHref(r.id, 'not_visited')}>{r.notVisited}</Link></td>
                 <td className="p-2"><Donut pct={r.visitedPct} /></td>
-                <td className="p-2 text-center">{r.s1Qty}</td>
-                <td className="p-2 text-center">{Math.round(r.s1Price).toLocaleString('da-DK')}</td>
+                <td className="p-2 text-center">
+                  <button 
+                    onClick={() => setDetailModal({ salespersonId: r.id, salespersonName: r.name, season: 's1', seasonLabel: getSeasonLabel(s1) })}
+                    className="underline underline-offset-2 hover:text-blue-600"
+                  >
+                    {r.s1Qty}
+                  </button>
+                </td>
+                <td className="p-2 text-center">
+                  <button 
+                    onClick={() => setDetailModal({ salespersonId: r.id, salespersonName: r.name, season: 's1', seasonLabel: getSeasonLabel(s1) })}
+                    className="underline underline-offset-2 hover:text-blue-600"
+                  >
+                    {Math.round(r.s1Price).toLocaleString('da-DK')}
+                  </button>
+                </td>
                 <td className="p-2 text-center">{Math.round(r.s1Avg).toLocaleString('da-DK')}</td>
-                <td className="p-2 text-center">{r.s2Qty}</td>
-                <td className="p-2 text-center">{Math.round(r.s2Price).toLocaleString('da-DK')}</td>
+                <td className="p-2 text-center">
+                  <button 
+                    onClick={() => setDetailModal({ salespersonId: r.id, salespersonName: r.name, season: 's2', seasonLabel: getSeasonLabel(s2) })}
+                    className="underline underline-offset-2 hover:text-blue-600"
+                  >
+                    {r.s2Qty}
+                  </button>
+                </td>
+                <td className="p-2 text-center">
+                  <button 
+                    onClick={() => setDetailModal({ salespersonId: r.id, salespersonName: r.name, season: 's2', seasonLabel: getSeasonLabel(s2) })}
+                    className="underline underline-offset-2 hover:text-blue-600"
+                  >
+                    {Math.round(r.s2Price).toLocaleString('da-DK')}
+                  </button>
+                </td>
                 <td className="p-2 text-center">{Math.round(r.s2Avg).toLocaleString('da-DK')}</td>
                 {(() => {
                   const qtyPct = r.s2Qty === 0 ? 0 : ((r.s1Qty - r.s2Qty) / r.s2Qty) * 100;
@@ -838,6 +945,98 @@ export default function OverviewPage() {
           </table>
         </div>
       </div>
+
+      {/* Detail Modal for QTY/Price breakdown */}
+      <Modal
+        open={Boolean(detailModal)}
+        onClose={() => setDetailModal(null)}
+        title={detailModal ? `${detailModal.salespersonName} · ${detailModal.seasonLabel} · Detail Rows` : 'Details'}
+        maxWidth="max-w-6xl"
+        footer={
+          <button
+            type="button"
+            className="rounded border px-3 py-1.5 text-sm"
+            onClick={() => setDetailModal(null)}
+          >
+            Close
+          </button>
+        }
+      >
+        {detailModal && detailRows.length > 0 ? (
+          <div>
+            <div className="mb-3 text-sm text-gray-600">
+              Currency: <span className="font-semibold">{spCurrencyById[detailModal.salespersonId] ?? 'DKK'}</span>
+              {' · '}
+              Rate to DKK: <span className="font-semibold">
+                {(() => {
+                  const baseRates = { DKK: 1, ...(currencyRatesRow ?? {}) } as Record<string, number>;
+                  const seasonRates = detailModal.season === 's1' ? { ...baseRates, ...(ratesS1 ?? {}) } : { ...baseRates, ...(ratesS2 ?? {}) };
+                  const currency = spCurrencyById[detailModal.salespersonId] ?? 'DKK';
+                  const rate = seasonRates[currency] ?? 1;
+                  return rate.toFixed(4);
+                })()}
+              </span>
+            </div>
+            <div className="max-h-[60vh] overflow-auto">
+              <table className="min-w-full text-sm">
+                <thead className="bg-gray-50 sticky top-0">
+                  <tr>
+                    <th className="p-2 text-left font-semibold">Source</th>
+                    <th className="p-2 text-left font-semibold">Account</th>
+                    <th className="p-2 text-left font-semibold">Customer</th>
+                    <th className="p-2 text-left font-semibold">City</th>
+                    <th className="p-2 text-right font-semibold">Qty</th>
+                    <th className="p-2 text-right font-semibold">Price (Local)</th>
+                    <th className="p-2 text-right font-semibold">Price (DKK)</th>
+                    <th className="p-2 text-center font-semibold">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {detailRows.map((row, idx) => (
+                    <tr key={idx} className={`border-t ${row.isNulled ? 'bg-red-50 opacity-60' : ''}`}>
+                      <td className="p-2 text-xs">
+                        <span className={`px-1.5 py-0.5 rounded ${row.source === 'stats' ? 'bg-blue-100 text-blue-800' : 'bg-purple-100 text-purple-800'}`}>
+                          {row.source}
+                        </span>
+                      </td>
+                      <td className="p-2">{row.account_no}</td>
+                      <td className="p-2">{row.customer_name}</td>
+                      <td className="p-2">{row.city}</td>
+                      <td className="p-2 text-right">{row.qty.toLocaleString('da-DK')}</td>
+                      <td className="p-2 text-right">{Math.round(row.price).toLocaleString('da-DK')}</td>
+                      <td className="p-2 text-right font-semibold">{Math.round(row.priceDkk).toLocaleString('da-DK')}</td>
+                      <td className="p-2 text-center">
+                        {row.isNulled && (
+                          <span className="text-xs px-1.5 py-0.5 bg-red-100 text-red-800 rounded">
+                            Nulled{detailModal.season === 's1' ? ' (excluded)' : ''}
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot className="bg-gray-50 border-t-2 font-semibold">
+                  <tr>
+                    <td className="p-2" colSpan={4}>TOTAL</td>
+                    <td className="p-2 text-right">
+                      {detailRows.reduce((sum, r) => detailModal.season === 's1' && r.isNulled ? sum : sum + r.qty, 0).toLocaleString('da-DK')}
+                    </td>
+                    <td className="p-2 text-right">
+                      {Math.round(detailRows.reduce((sum, r) => detailModal.season === 's1' && r.isNulled ? sum : sum + r.price, 0)).toLocaleString('da-DK')}
+                    </td>
+                    <td className="p-2 text-right">
+                      {Math.round(detailRows.reduce((sum, r) => detailModal.season === 's1' && r.isNulled ? sum : sum + r.priceDkk, 0)).toLocaleString('da-DK')}
+                    </td>
+                    <td className="p-2"></td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </div>
+        ) : (
+          <div className="p-4 text-sm text-gray-600">No detail rows to display.</div>
+        )}
+      </Modal>
 
     </div>
   );
