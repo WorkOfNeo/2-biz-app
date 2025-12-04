@@ -700,11 +700,13 @@ export default function StockListPage() {
         pastedData.set(styleNo, { name: styleName, total });
       }
       
-      // Calculate totals per style from current stock list (available quantity)
+      // Calculate totals per style from ALL stock data (unfiltered, available quantity)
+      // Use groupedByStyle instead of filteredForView to get ALL styles regardless of current filters
       const currentData = new Map<string, { name: string | null; total: number }>();
-      for (const { styleNo, colors } of filteredForView) {
+      for (const { styleNo, colors } of groupedByStyle) {
         const meta = styleMetaByNo[styleNo] || { name: null };
         let styleTotal = 0;
+        // Sum available across ALL colors for this style
         for (const color of colors) {
           styleTotal += color.available.reduce((sum, v) => sum + (Number(v) || 0), 0);
         }
