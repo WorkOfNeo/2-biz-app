@@ -32,21 +32,101 @@ export default function StockScraperPage() {
 
   const jobId = running?.id || null;
   const rootId = (running?.payload as any)?.rootId || running?.id || null;
-  const { data: progress } = useSWR(jobId ? `stock-scraper:progress:${jobId}` : null, async () => {
-    const { data, error } = await supabase
+  
+  // Aggregate progress across all batches for this root job
+  const { data: progress } = useSWR(rootId ? `stock-scraper:aggregate-progress:${rootId}` : null, async () => {
+    if (!rootId) return null;
+    
+    // Get all jobs for this root (including the root itself)
+    const { data: allJobs } = await supabase
+      .from('jobs')
+      .select('id, status')
+      .eq('type', 'update_style_stock')
+      .or(`id.eq.${rootId},payload->>rootId.eq.${rootId}`)
+      .in('status', ['running', 'succeeded', 'queued']);
+    
+    if (!allJobs || allJobs.length === 0) return null;
+    
+    const jobIds = allJobs.map(j => j.id);
+    
+    // Get all progress logs from all jobs
+    const { data: allLogs } = await supabase
       .from('job_logs')
-      .select('msg, data, ts')
-      .eq('job_id', jobId!)
-      .order('ts', { ascending: false })
-      .limit(10);
-    if (error) throw new Error(error.message);
-    const rows = (data ?? []) as Array<{ msg: string; data: any; ts: string }>;
-    for (const r of rows) {
-      if (r.msg === 'STEP:update_style_stock_progress') return r.data as { index: number; total: number; percent?: number; style_no?: string; style_name?: string };
-      if (r.msg === 'STEP:complete') return { index: 1, total: 1, percent: 100 };
+      .select('job_id, msg, data, ts')
+      .in('job_id', jobIds)
+      .in('msg', ['STEP:update_style_stock_progress', 'STEP:style_stock_filtered', 'STEP:complete', 'STEP:style_stock_total_requested', 'STEP:style_stock_style_done'])
+      .order('ts', { ascending: true })
+      .limit(5000);
+    
+    if (!allLogs) return null;
+    
+    // Find total requested count (from root job's initial log)
+    let totalRequested = 0;
+    for (const log of allLogs) {
+      if (log.job_id === rootId && log.msg === 'STEP:style_stock_total_requested') {
+        totalRequested = log.data?.totalRequested || 0;
+        break;
+      }
     }
-    return null;
-  }, { refreshInterval: 1500 });
+    
+    // Count total active styles (sum of filtered counts from all batches)
+    let totalActive = 0;
+    let totalSkippedInactive = 0;
+    const seenBatches = new Set<string>();
+    for (const log of allLogs) {
+      if (log.msg === 'STEP:style_stock_filtered' && !seenBatches.has(log.job_id)) {
+        seenBatches.add(log.job_id);
+        totalActive += log.data?.activeCount || 0;
+        totalSkippedInactive += log.data?.skippedInactive || 0;
+      }
+    }
+    
+    // Count completed styles (using style_stock_style_done logs)
+    const completedStyles = new Set<string>();
+    for (const log of allLogs) {
+      if (log.msg === 'STEP:style_stock_style_done' && log.data?.style_no) {
+        completedStyles.add(log.data.style_no);
+      }
+    }
+    
+    // Get the most recent style being processed
+    let currentStyleNo: string | null = null;
+    let currentStyleName: string | null = null;
+    for (let i = allLogs.length - 1; i >= 0; i--) {
+      const log = allLogs[i];
+      if (log && log.msg === 'STEP:update_style_stock_progress' && log.data?.style_no) {
+        currentStyleNo = log.data.style_no;
+        currentStyleName = log.data.style_name || null;
+        break;
+      }
+    }
+    
+    const completed = completedStyles.size;
+    const total = totalActive || 1;
+    const percent = Math.min(100, Math.floor((completed / total) * 100));
+    
+    // Calculate estimated time remaining
+    let estimatedSecondsRemaining: number | null = null;
+    const firstDoneLog = allLogs.find(l => l.msg === 'STEP:style_stock_style_done');
+    if (firstDoneLog && completed > 0) {
+      const startTime = new Date(firstDoneLog.ts).getTime();
+      const elapsed = Date.now() - startTime;
+      const avgTimePerStyle = elapsed / completed;
+      const remaining = total - completed;
+      estimatedSecondsRemaining = Math.floor((remaining * avgTimePerStyle) / 1000);
+    }
+    
+    return {
+      index: completed,
+      total: total,
+      totalRequested,
+      skippedInactive: totalSkippedInactive,
+      percent,
+      style_no: currentStyleNo,
+      style_name: currentStyleName,
+      estimatedSecondsRemaining
+    };
+  }, { refreshInterval: 2000 });
 
   const { data: processed } = useSWR(jobId ? `stock-scraper:processed:${jobId}` : null, async () => {
     const { data, error } = await supabase
@@ -146,6 +226,16 @@ export default function StockScraperPage() {
     const s = total % 60;
     const pad = (n: number) => String(n).padStart(2, '0');
     return `${pad(h)}:${pad(m)}:${pad(s)}`;
+  }
+
+  function formatEstimatedTime(seconds: number): string {
+    if (seconds < 60) return `${seconds} seconds`;
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    if (mins < 60) return `${mins}m ${secs}s`;
+    const hours = Math.floor(mins / 60);
+    const remainingMins = mins % 60;
+    return `${hours}h ${remainingMins}m`;
   }
 
   async function enqueueAll() {
@@ -318,10 +408,21 @@ export default function StockScraperPage() {
             <div className="text-sm">Started: {running.started_at ? new Date(running.started_at).toLocaleString() : '—'} ({timeAgo(running.started_at)})</div>
             {progress ? (
               <div className="space-y-1">
-                <div className="text-sm">Progress: {progress.percent || Math.floor((progress.index / Math.max(1, progress.total)) * 100)}% - {progress.index}/{progress.total}{progress.style_name ? ` (${progress.style_name})` : (progress.style_no ? ` (style ${progress.style_no})` : '')}</div>
-                <div className="h-2 w-full overflow-hidden rounded bg-gray-100">
-                  <div className="h-2 bg-blue-600 transition-all duration-500" style={{ width: `${progress.percent || Math.min(100, Math.floor((progress.index / Math.max(1, progress.total)) * 100))}%` }} />
+                <div className="text-sm">
+                  Progress: {progress.percent}% - <span className="font-semibold">{progress.index}/{progress.total}</span> styles completed
+                  {progress.skippedInactive > 0 && <span className="text-xs text-gray-500 ml-2">({progress.skippedInactive} inactive skipped)</span>}
                 </div>
+                {progress.style_name && (
+                  <div className="text-xs text-gray-600">Currently processing: {progress.style_name} ({progress.style_no})</div>
+                )}
+                <div className="h-2 w-full overflow-hidden rounded bg-gray-100">
+                  <div className="h-2 bg-blue-600 transition-all duration-500" style={{ width: `${progress.percent}%` }} />
+                </div>
+                {progress.estimatedSecondsRemaining !== null && progress.estimatedSecondsRemaining > 0 && (
+                  <div className="text-xs text-gray-600">
+                    Estimated time remaining: {formatEstimatedTime(progress.estimatedSecondsRemaining)}
+                  </div>
+                )}
               </div>
             ) : (
               <div className="text-sm text-gray-500">Waiting for progress…</div>

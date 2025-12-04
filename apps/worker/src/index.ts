@@ -326,6 +326,10 @@ async function runJob(job: JobRow) {
         } catch {}
       }
       await log(job.id, 'info', 'STEP:style_stock_fanout', { batchSize: BATCH_SIZE, total: styleNos.length, enqueued: rest.length, rootId, batchIndex: currentBatchIndex, batchTotal });
+      // Also log to the root job for easy frontend lookup
+      if (currentBatchIndex === 1 && rootId === job.id) {
+        await log(rootId, 'info', 'STEP:style_stock_total_requested', { totalRequested: styleNos.length, batchTotal });
+      }
       styleNos = styleNos.slice(0, BATCH_SIZE);
     }
     // Log batch info for this job (even when <= BATCH_SIZE)
@@ -342,6 +346,17 @@ async function runJob(job: JobRow) {
     // Fetch style hrefs from styles table (exclude inactive styles)
     const { data: styles } = await supabase.from('styles').select('id, style_no, style_name, link_href, scrape_enabled, inactive').in('style_no', styleNos).eq('inactive', false);
     const totalStyles = (styles ?? []).length;
+    const skippedInactive = styleNos.length - totalStyles;
+    
+    // Log the actual count after filtering (important for frontend progress calculation)
+    await log(job.id, 'info', 'STEP:style_stock_filtered', { 
+      requestedCount: styleNos.length, 
+      activeCount: totalStyles, 
+      skippedInactive, 
+      rootId, 
+      batchIndex: currentBatchIndex 
+    });
+    
     let processedStyles = 0;
     const startedAt = Date.now();
     const maxDurationMs = Math.max(0, Number((job.payload as any)?.maxDurationMs || process.env.STOCK_MAX_MS || 0) || 0);
