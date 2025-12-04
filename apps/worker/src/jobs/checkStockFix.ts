@@ -76,10 +76,14 @@ export async function checkStockFix(ctx: Ctx) {
     
     await log(job.id, 'info', 'STEP:check_stock_fix_uuid_found', { uuid: collectionUUID });
     
-    // Download Excel file
+    // Download Excel file with only essential columns: Style No, Style Name, Stock
     await log(job.id, 'info', 'STEP:check_stock_fix_downloading_excel');
     const excelUrl = `${SPY_BASE_URL}/?controller=Shared%5CTable&action=DownloadExcel&strRendererClass=Spy%5CView%5CStyle%5CStockStatus%5CListTableRenderer&strCollectionUUID=${encodeURIComponent(collectionUUID)}&type=xls&options=${encodeURIComponent(JSON.stringify({
-      columns: { "1": true, "2": true, "7": true, "8": true, "10": true, "12": true, "13": true },
+      columns: { 
+        "1": true,  // Style No
+        "2": true,  // Style Name
+        "8": true   // Stock
+      },
       check_all: false
     }))}`;
     
@@ -106,7 +110,7 @@ export async function checkStockFix(ctx: Ctx) {
     await log(job.id, 'info', 'STEP:check_stock_fix_excel_parsed', { 
       rows: rawData.length,
       headers: rawData[0],
-      sample: rawData.slice(1, 3)
+      sample: rawData.slice(1, 5)
     });
     
     // Parse Excel data into structured format
@@ -114,14 +118,7 @@ export async function checkStockFix(ctx: Ctx) {
     const parsedRows: Array<{ 
       style_no: string | null; 
       style_name: string | null; 
-      season: string | null;
-      landed: number | null;
-      invoiced: number | null;
-      correction: number | null;
       stock: number | null;
-      consignment: number | null;
-      on_hold: number | null;
-      total: number | null;
     }> = [];
     
     function parseExcelNumber(val: any): number | null {
@@ -136,33 +133,17 @@ export async function checkStockFix(ctx: Ctx) {
     }
     
     // Parse Excel rows (skip header row at index 0)
+    // Columns: Style No (0), Style Name (1), Stock (2)
     for (const row of rawData.slice(1)) {
-      // Excel columns based on options: Style No, Style Name, Correction, Stock, Consignment, On Hold, Total
-      // The column indexes may vary, so let's find them by header
       const style_no = parseExcelString(row[0]);
       const style_name = parseExcelString(row[1]);
-      
-      // Find numeric columns (Correction, Stock, Consignment, On Hold, Total)
-      // Based on the columns option: 1=StyleNo, 2=StyleName, 7=Correction, 8=Stock, 10=Consignment, 12=OnHold, 13=Total
-      // But in Excel output, they'll be in order of enabled columns
-      const correction = parseExcelNumber(row[2]);
-      const stock = parseExcelNumber(row[3]);
-      const consignment = parseExcelNumber(row[4]);
-      const on_hold = parseExcelNumber(row[5]);
-      const total = parseExcelNumber(row[6]);
+      const stock = parseExcelNumber(row[2]);
       
       if (style_no) {
         parsedRows.push({
           style_no,
           style_name,
-          season: null,
-          landed: null,
-          invoiced: null,
-          correction,
-          stock,
-          consignment,
-          on_hold,
-          total
+          stock
         });
       }
     }
@@ -288,7 +269,8 @@ export async function checkStockFix(ctx: Ctx) {
         if (mismatches.length <= 5) {
           await log(job.id, 'info', 'STEP:check_stock_fix_mismatch_detail', {
             style_no: row.style_no,
-            spy_values: { stock: row.stock, correction: row.correction, consignment: row.consignment, on_hold: row.on_hold },
+            style_name: row.style_name,
+            spy_stock: row.stock,
             db_stock: dbStock,
             colors_in_db: byStyle.get(row.style_no)?.size || 0
           });
