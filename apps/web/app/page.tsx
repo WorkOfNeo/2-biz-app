@@ -5,7 +5,7 @@ import useSWR from 'swr';
 import Link from 'next/link';
 import { supabase } from '../lib/supabaseClient';
 
-// Reuse Donut component from overview
+// Reuse Donut component from overview (smaller for dense layout)
 function Donut({ pct }: { pct: number }) {
   const p = Math.max(0, Math.min(100, Math.round(pct)));
   const isGreen = p === 100;
@@ -13,12 +13,12 @@ function Donut({ pct }: { pct: number }) {
     ? `conic-gradient(#10b981 ${p}%, #e5e7eb 0)` // green-500
     : `conic-gradient(#0f172a ${p}%, #e5e7eb 0)`; // slate-900
   return (
-    <div className="inline-flex items-center gap-2">
-      <div className="relative" style={{ width: 28, height: 28 }}>
-        <div className="rounded-full" style={{ width: 28, height: 28, background: bg }} />
-        <div className="absolute inset-1 rounded-full bg-white" />
+    <div className="inline-flex items-center gap-1">
+      <div className="relative" style={{ width: 20, height: 20 }}>
+        <div className="rounded-full" style={{ width: 20, height: 20, background: bg }} />
+        <div className="absolute inset-0.5 rounded-full bg-white" />
       </div>
-      <span className="text-xs text-gray-700">{p}%</span>
+      <span className="text-[10px] text-gray-700">{p}%</span>
     </div>
   );
 }
@@ -133,20 +133,22 @@ export default function HomePage() {
     return (data ?? []) as InvoiceRow[];
   });
 
-  // Get seasonal overrides
+  // Get seasonal overrides (same structure as overview)
   const { data: overrides } = useSWR(s1 ? `season:${s1}:overrides` : null, async () => {
     const key = `season_overrides:${s1}`;
-    const { data } = await supabase.from('app_settings').select('value').eq('key', key).maybeSingle();
-    return ((data?.value as any) || { nulled: [], hidden: [] }) as { nulled: string[]; hidden: string[] };
-  });
+    const { data, error } = await supabase.from('app_settings').select('*').eq('key', key).maybeSingle();
+    if (error) throw new Error(error.message);
+    return { id: data?.id || null, value: ((data?.value as any) || { nulled: [], hidden: [] }) as { nulled: string[]; hidden: string[] } };
+  }, { refreshInterval: 0 });
 
-  // Get closed customers
-  const { data: closedCustomers } = useSWR('customers:closed', async () => {
+  // Get closed customers (same structure as overview)
+  const { data: closedCustomers } = useSWR('overview:customers-closed', async () => {
+    const { data, error } = await supabase.from('customers').select('customer_id, permanently_closed, excluded, nulled');
+    if (error) throw new Error(error.message);
     const setClosed = new Set<string>();
     const setExcluded = new Set<string>();
     const setNulled = new Set<string>();
-    for (const c of (customers ?? [])) {
-      if (!c.customer_id) continue;
+    for (const c of (data ?? []) as any[]) {
       if (c.permanently_closed) setClosed.add(c.customer_id);
       if (c.excluded) setExcluded.add(c.customer_id);
       if (c.nulled) setNulled.add(c.customer_id);
@@ -154,12 +156,13 @@ export default function HomePage() {
     return { setClosed, setExcluded, setNulled };
   });
 
+  // Helper functions to check if customer is hidden or nulled (same logic as Overview page)
   function isHidden(account: string): boolean {
-    return Boolean(overrides?.hidden.includes(account));
+    return Boolean(overrides?.value.hidden.includes(account)) || Boolean(closedCustomers?.setExcluded.has(account));
   }
 
   function isNulled(account: string): boolean {
-    return Boolean(overrides?.nulled.includes(account)) || Boolean(closedCustomers?.setNulled.has(account)) || Boolean(closedCustomers?.setClosed.has(account));
+    return Boolean(overrides?.value.nulled.includes(account)) || Boolean(closedCustomers?.setNulled.has(account)) || Boolean(closedCustomers?.setClosed.has(account));
   }
 
   // Calculate data per country and salesperson (reuse overview logic)
@@ -424,29 +427,25 @@ export default function HomePage() {
               if (rows.length === 0) return null;
 
               return (
-                <div key={countryName} className="rounded-md border p-4">
-                  <h2 className="text-lg font-semibold mb-3">{countryName}</h2>
-                  <div className="space-y-2">
+                <div key={countryName} className="rounded-md border p-2">
+                  <h2 className="text-sm font-semibold mb-1.5">{countryName}</h2>
+                  <div className="space-y-1">
                     {rows.map((row) => (
-                      <div key={row.id} className="flex items-center justify-between p-3 bg-gray-50 rounded border">
-                        <div className="flex-1">
-                          <div className="font-medium text-sm">{row.name}</div>
-                          <div className="flex items-center gap-4 mt-1 text-xs text-gray-600">
-                            <div className="flex items-center gap-2">
-                              <span>Progress:</span>
-                              <Donut pct={row.visitedPct} />
-                              <span>{row.visitedCount}/{row.validTotal}</span>
-                            </div>
-                            <div>
-                              <span>Index: QTY {Math.round(row.indexQty).toLocaleString('da-DK')} | PRICE {Math.round(row.indexPrice).toLocaleString('da-DK')}</span>
-                              {row.visitedNoS2 > 0 && (
-                                <span className="text-orange-600 ml-1">({row.visitedNoS2} visited, no S2)</span>
-                              )}
-                            </div>
-                            <div>
-                              <span>Prognose: QTY {Math.round(row.prognosedQty).toLocaleString('da-DK')} | PRICE {Math.round(row.prognosedPrice).toLocaleString('da-DK')}</span>
-                            </div>
-                          </div>
+                      <div key={row.id} className="flex items-center gap-3 px-2 py-1.5 bg-gray-50 rounded text-xs">
+                        <div className="font-medium text-xs min-w-[120px]">{row.name}</div>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-gray-600">Fremskridt:</span>
+                          <Donut pct={row.visitedPct} />
+                          <span className="text-gray-700">{row.visitedCount}/{row.validTotal}</span>
+                        </div>
+                        <div className="flex items-center gap-2 text-gray-700">
+                          <span>Index: {Math.round(row.indexQty).toLocaleString('da-DK')} stk | {Math.round(row.indexPrice).toLocaleString('da-DK')} Oms.</span>
+                          {row.visitedNoS2 > 0 && (
+                            <span className="text-orange-600">({row.visitedNoS2} visited, no S2)</span>
+                          )}
+                        </div>
+                        <div className="text-gray-700">
+                          <span>Prognose: {Math.round(row.prognosedQty).toLocaleString('da-DK')} stk | {Math.round(row.prognosedPrice).toLocaleString('da-DK')} Oms.</span>
                         </div>
                       </div>
                     ))}
