@@ -113,9 +113,17 @@ async function scrapeSpyStock(): Promise<SpyStockRow[]> {
         // Extract text content from each cell
         // Column indices based on the HTML structure provided:
         // 0: empty, 1: Style No., 2: Style Name, 3: Season, 4: Landed, 5: Invoiced, 6: empty, 7: Correction, 8: Stock, ...
-        const styleNoText = await cells[1].textContent();
-        const styleNameText = await cells[2].textContent();
-        const stockText = await cells[8].textContent();
+        const styleNoCell = cells[1];
+        const styleNameCell = cells[2];
+        const stockCell = cells[8];
+        
+        if (!styleNoCell || !styleNameCell || !stockCell) {
+          continue;
+        }
+        
+        const styleNoText = await styleNoCell.textContent();
+        const styleNameText = await styleNameCell.textContent();
+        const stockText = await stockCell.textContent();
         
         const styleNo = styleNoText?.trim() || '';
         const styleName = styleNameText?.trim() || '';
