@@ -37,10 +37,15 @@ export default function SuppliersPage() {
   // Convert Excel column letter to 0-based array index
   // E.g., 'A' -> 0, 'B' -> 1, 'Z' -> 25, 'AA' -> 26, 'AN' -> 39
   function excelColToIndex(col: string): number {
+    if (!col || col.length === 0) return 0;
     let result = 0;
     for (let i = 0; i < col.length; i++) {
-      const char = col[i].toUpperCase();
-      result = result * 26 + (char.charCodeAt(0) - 'A'.charCodeAt(0) + 1);
+      const char = col[i];
+      if (char === undefined) continue;
+      const upperChar = char.toUpperCase();
+      const code = upperChar.charCodeAt(0);
+      if (isNaN(code)) continue;
+      result = result * 26 + (code - 'A'.charCodeAt(0) + 1);
     }
     return result - 1; // Convert to 0-based index
   }
