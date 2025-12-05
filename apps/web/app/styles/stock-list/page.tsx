@@ -288,7 +288,6 @@ export default function StockListPage() {
       }
     }
     const uniqueIds = Array.from(new Set(out));
-    console.log('[stock-list] colorIds computed:', uniqueIds.length, uniqueIds.slice(0, 5));
     return uniqueIds;
   }, [groups, styleRows, styleColors, styleMetaByNo]);
   
@@ -300,14 +299,12 @@ export default function StockListPage() {
       .in('style_color_id', colorIds)
       .limit(100000);
     if (error) throw new Error(error.message);
-    console.log('[stock-list] colorSeasons raw data:', data);
     const map = new Map<string, Set<string>>();
     for (const r of (data ?? []) as any[]) {
       const set = map.get(r.style_color_id) || new Set<string>();
       set.add(r.season_id);
       map.set(r.style_color_id, set);
     }
-    console.log('[stock-list] colorSeasons map:', map);
     return map as Map<string, Set<string>>;
   }, { refreshInterval: 0 });
 
@@ -440,9 +437,6 @@ export default function StockListPage() {
     
     // Filter by seasons - only show colors that have at least one of the selected seasons
     if (selectedSeasons.length > 0 && styleColors && colorSeasons) {
-      console.log('[stock-list] Filtering by seasons:', selectedSeasons);
-      console.log('[stock-list] styleColors available:', !!styleColors, 'colorSeasons available:', !!colorSeasons);
-      
       base = base.map(({ styleNo, colors }) => {
         const sid = styleMetaByNo[styleNo]?.id || null;
         if (!sid) return { styleNo, colors: [] };
@@ -453,31 +447,21 @@ export default function StockListPage() {
         const filteredColors = colors.filter((c) => {
           const colorKey = (c.color || '').trim().toLowerCase();
           const scId = cmap.get(colorKey);
-          if (!scId) {
-            console.log('[stock-list] No scId for color:', c.color, 'in style:', styleNo);
-            return false;
-          }
+          if (!scId) return false;
           
           const thisColorSeasons = colorSeasons.get(scId);
-          if (!thisColorSeasons) {
-            console.log('[stock-list] No seasons for scId:', scId);
-            return false;
-          }
+          if (!thisColorSeasons) return false;
           
           // Color must have at least one of the selected seasons
-          const hasMatch = selectedSeasons.some(seasonId => thisColorSeasons.has(seasonId));
-          console.log('[stock-list] Color:', c.color, 'seasons:', Array.from(thisColorSeasons), 'matches:', hasMatch);
-          return hasMatch;
+          return selectedSeasons.some(seasonId => thisColorSeasons.has(seasonId));
         });
         
         return { styleNo, colors: filteredColors };
       }).filter(({ colors }) => colors.length > 0);
-      console.log('[stock-list] After season filter:', base.length, 'styles');
     }
     
     // Filter out colors with all zeros
     if (hideZeros) {
-      console.log('[stock-list] Filtering out zeros');
       base = base.map(({ styleNo, colors }) => {
         const filteredColors = colors.filter((c) => {
           const hasNonZero = c.stock.some(v => v !== 0) || 
@@ -488,10 +472,8 @@ export default function StockListPage() {
         });
         return { styleNo, colors: filteredColors };
       }).filter(({ colors }) => colors.length > 0);
-      console.log('[stock-list] After zero filter:', base.length, 'styles');
     }
     
-    console.log('[stock-list] Final filtered:', base.length, 'styles');
     return base;
   }, [groupedByStyle, activeListId, styleIdsInList.size, searchQuery, styleMetaByNo, selectedSeasons, hideZeros, styleColors, colorSeasons]);
 
@@ -1658,8 +1640,6 @@ export default function StockListPage() {
                         const scId = cmap.get((g.color || '').trim().toLowerCase()) || null;
                         const set = (scId && colorSeasons) ? (colorSeasons.get(scId) || new Set<string>()) : new Set<string>();
                         const labels = (seasons || []).filter(s => set.has(s.id));
-                        
-                        console.log('[stock-list] Season display for', g.styleNo, g.color, '- scId:', scId, 'seasonIds:', Array.from(set), 'labels:', labels);
                         
                         if (labels.length === 0) return null;
                         
