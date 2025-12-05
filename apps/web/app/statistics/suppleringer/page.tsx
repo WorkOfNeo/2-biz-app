@@ -91,7 +91,9 @@ export default function SuppliersPage() {
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(false);
   const [savedData, setSavedData] = useState<SavedStatistic[] | null>(null);
+  const [savedRows, setSavedRows] = useState<ParsedRow[] | null>(null);
   const [previousYearData, setPreviousYearData] = useState<SavedStatistic[] | null>(null);
+  const [previousYearRows, setPreviousYearRows] = useState<ParsedRow[] | null>(null);
   const [viewMode, setViewMode] = useState<'upload' | 'saved'>('upload');
 
   // Convert Excel column letter to 0-based array index
@@ -384,16 +386,23 @@ export default function SuppliersPage() {
     return summaries;
   }, [parsedRows]);
 
-  // Get customer groups for selected salesperson
+  // Get customer groups for selected salesperson (works for both upload and saved views)
   const customerGroups = useMemo(() => {
     if (!selectedSalesperson) return [];
     
-    const summary = salespersonSummaries.find(s => s.salesPerson === selectedSalesperson);
-    if (!summary) return [];
+    // Use saved rows if in saved view, otherwise use parsed rows
+    const rowsToUse = viewMode === 'saved' && savedRows 
+      ? savedRows.filter(row => row.salesPerson === selectedSalesperson)
+      : (() => {
+          const summary = salespersonSummaries.find(s => s.salesPerson === selectedSalesperson);
+          return summary?.rows || [];
+        })();
+
+    if (rowsToUse.length === 0) return [];
 
     const byCustomer = new Map<string, ParsedRow[]>();
     
-    for (const row of summary.rows) {
+    for (const row of rowsToUse) {
       const key = `${row.customerName}|${row.accountNo}`;
       if (!byCustomer.has(key)) {
         byCustomer.set(key, []);
@@ -419,7 +428,7 @@ export default function SuppliersPage() {
     groups.sort((a, b) => a.customerName.localeCompare(b.customerName));
 
     return groups;
-  }, [selectedSalesperson, salespersonSummaries]);
+  }, [selectedSalesperson, salespersonSummaries, viewMode, savedRows]);
 
   // Format price from cents to currency (e.g., 50730 -> 507.30)
   function formatPrice(cents: number): string {
@@ -578,7 +587,43 @@ export default function SuppliersPage() {
         });
       }
 
-      // Upsert records (update if exists, insert if not)
+      // Delete existing rows for this month first (to replace with new data)
+      const { error: deleteError } = await supabase
+        .from('supp_statistic_rows')
+        .delete()
+        .eq('year_month', yearMonth);
+
+      if (deleteError) console.warn('Warning: Could not delete existing rows:', deleteError);
+
+      // Save individual rows
+      const rowsToSave = monthRows.map((row) => ({
+        year_month: yearMonth,
+        order_type: row.orderType,
+        channel: row.channel,
+        customer_name: row.customerName,
+        account_no: row.accountNo,
+        salesperson_name: row.salesPerson,
+        qty_ordered: row.qtyOrdered,
+        qty_delivered: row.qtyDelivered,
+        price: row.price,
+        date: row.date || null,
+      }));
+
+      // Insert rows in batches
+      const batchSize = 500;
+      for (let i = 0; i < rowsToSave.length; i += batchSize) {
+        const batch = rowsToSave.slice(i, i + batchSize);
+        const { error: rowsError } = await supabase
+          .from('supp_statistic_rows')
+          .insert(batch);
+        
+        if (rowsError) {
+          console.error('Error saving rows batch:', rowsError);
+          throw new Error(`Fejl ved gemning af rækker: ${rowsError.message}`);
+        }
+      }
+
+      // Upsert aggregated records (update if exists, insert if not)
       const { error } = await supabase
         .from('supp_statistic')
         .upsert(recordsToSave, {
@@ -587,7 +632,7 @@ export default function SuppliersPage() {
 
       if (error) throw error;
 
-      alert(`Data gemt for ${yearMonth} (${recordsToSave.length} sælgere)`);
+      alert(`Data gemt for ${formatMonthName(yearMonth)} (${recordsToSave.length} sælgere, ${monthRows.length} rækker)`);
       
       // Refresh saved months list
       const { data: monthsData } = await supabase
@@ -629,6 +674,31 @@ export default function SuppliersPage() {
       setSavedData(data as SavedStatistic[]);
       setViewMode('saved');
 
+      // Load individual rows for current month
+      const { data: rowsData, error: rowsError } = await supabase
+        .from('supp_statistic_rows')
+        .select('*')
+        .eq('year_month', month)
+        .order('salesperson_name, customer_name');
+
+      if (!rowsError && rowsData) {
+        // Convert saved rows to ParsedRow format
+        const convertedRows: ParsedRow[] = rowsData.map((row: any) => ({
+          orderType: row.order_type,
+          channel: row.channel,
+          customerName: row.customer_name,
+          accountNo: row.account_no,
+          salesPerson: row.salesperson_name,
+          qtyOrdered: Number(row.qty_ordered || 0),
+          qtyDelivered: Number(row.qty_delivered || 0),
+          price: Number(row.price || 0),
+          date: row.date || null,
+        }));
+        setSavedRows(convertedRows);
+      } else {
+        setSavedRows(null);
+      }
+
       // Load previous year's same month
       const parts = month.split('-');
       const year = parts[0];
@@ -650,6 +720,30 @@ export default function SuppliersPage() {
         setPreviousYearData(prevData as SavedStatistic[]);
       } else {
         setPreviousYearData(null);
+      }
+
+      // Load individual rows for previous year
+      const { data: prevRowsData, error: prevRowsError } = await supabase
+        .from('supp_statistic_rows')
+        .select('*')
+        .eq('year_month', prevYearMonth)
+        .order('salesperson_name, customer_name');
+
+      if (!prevRowsError && prevRowsData) {
+        const convertedPrevRows: ParsedRow[] = prevRowsData.map((row: any) => ({
+          orderType: row.order_type,
+          channel: row.channel,
+          customerName: row.customer_name,
+          accountNo: row.account_no,
+          salesPerson: row.salesperson_name,
+          qtyOrdered: Number(row.qty_ordered || 0),
+          qtyDelivered: Number(row.qty_delivered || 0),
+          price: Number(row.price || 0),
+          date: row.date || null,
+        }));
+        setPreviousYearRows(convertedPrevRows);
+      } else {
+        setPreviousYearRows(null);
       }
       
     } catch (err: any) {
@@ -834,20 +928,16 @@ export default function SuppliersPage() {
               <div
                 className="bg-gray-50 p-3 cursor-pointer hover:bg-gray-100"
                 onClick={() => {
-                  if (viewMode === 'upload') {
-                    setSelectedSalesperson(
-                      selectedSalesperson === summary.salesPerson ? null : summary.salesPerson
-                    );
-                  }
+                  setSelectedSalesperson(
+                    selectedSalesperson === summary.salesPerson ? null : summary.salesPerson
+                  );
                 }}
               >
                 <div className="flex items-center justify-between">
                   <h3 className="font-semibold text-lg">{summary.salesPerson}</h3>
-                  {viewMode === 'upload' && (
-                    <span className="text-sm text-gray-500">
-                      {selectedSalesperson === summary.salesPerson ? '▼' : '▶'}
-                    </span>
-                  )}
+                  <span className="text-sm text-gray-500">
+                    {selectedSalesperson === summary.salesPerson ? '▼' : '▶'}
+                  </span>
                 </div>
               </div>
               
@@ -990,8 +1080,8 @@ export default function SuppliersPage() {
                 )}
               </div>
 
-              {/* Customer Details - Aggregated per customer (only for upload view) */}
-              {viewMode === 'upload' && selectedSalesperson === summary.salesPerson && customerGroups.length > 0 && (
+              {/* Customer Details - Aggregated per customer */}
+              {selectedSalesperson === summary.salesPerson && customerGroups.length > 0 && (
                 <div className="border-t bg-white">
                   <div className="p-3">
                     <h4 className="font-semibold text-sm mb-3 text-gray-700">Kunder:</h4>
