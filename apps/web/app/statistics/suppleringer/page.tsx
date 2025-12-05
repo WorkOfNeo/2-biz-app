@@ -630,7 +630,13 @@ export default function SuppliersPage() {
       setViewMode('saved');
 
       // Load previous year's same month
-      const [year, monthNum] = month.split('-');
+      const parts = month.split('-');
+      const year = parts[0];
+      const monthNum = parts[1];
+      if (!year || !monthNum) {
+        setLoading(false);
+        return;
+      }
       const prevYear = String(parseInt(year, 10) - 1);
       const prevYearMonth = `${prevYear}-${monthNum}`;
       
