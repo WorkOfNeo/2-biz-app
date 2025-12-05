@@ -97,14 +97,18 @@ export default function SuppliersPage() {
       const excelEpoch = new Date(1899, 11, 30); // Dec 30, 1899
       const date = new Date(excelEpoch.getTime() + num * 86400000);
       if (!isNaN(date.getTime())) {
-        return date.toISOString().split('T')[0]; // Return YYYY-MM-DD format
+        const isoStr = date.toISOString();
+        const datePart = isoStr.split('T')[0];
+        return datePart || null; // Return YYYY-MM-DD format
       }
     }
     
     // Try to parse as ISO date string
     const date = new Date(str);
     if (!isNaN(date.getTime())) {
-      return date.toISOString().split('T')[0]; // Return YYYY-MM-DD format
+      const isoStr = date.toISOString();
+      const datePart = isoStr.split('T')[0];
+      return datePart || null; // Return YYYY-MM-DD format
     }
     
     // Return as-is if it looks like YYYY-MM-DD
