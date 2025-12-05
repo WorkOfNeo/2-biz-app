@@ -124,27 +124,63 @@ export default function StatisticsGeneralPage() {
     if (s1 || s2) setShowSave(true);
   }, [s1, s2]);
 
-  // Read salesperson from URL hash on load; default to first salesperson
+  // Read salesperson from URL hash on load and listen for hash changes
   useEffect(() => {
-    const hash = typeof window !== 'undefined' ? window.location.hash : '';
-    const m = hash.match(/(^#|&)sp=([^&]+)/);
-    if (m && m[2]) {
-      try {
-        const decoded = decodeURIComponent(m[2]);
-        const exists = (salespersons ?? []).some(sp => sp.name === decoded);
-        if (exists) setActivePerson(decoded);
-        console.log('[stats] read salesperson from hash', decoded);
-      } catch {}
-    }
-    if ((!m || !m[2]) && (salespersons ?? []).length > 0 && !activePerson) {
-      const first = ((salespersons ?? [])[0] as any)?.name as string | undefined;
-      if (first) {
-        setActivePerson(first);
-        console.log('[stats] default salesperson', first);
+    if (typeof window === 'undefined' || !salespersons || salespersons.length === 0) return;
+
+    const readHashFromURL = (): string | null => {
+      const hash = window.location.hash || '';
+      // Match #sp=value
+      const m = hash.match(/^#sp=([^&]+)/);
+      if (m && m[1]) {
+        try {
+          const decoded = decodeURIComponent(m[1]);
+          const exists = salespersons.some(sp => sp.name === decoded);
+          if (exists) {
+            return decoded;
+          }
+        } catch (err) {
+          console.warn('[stats] failed to decode hash', err);
+        }
       }
-    }
+      return null;
+    };
+
+    const handleHashChange = () => {
+      const decoded = readHashFromURL();
+      if (decoded) {
+        // Hash found - use it (this takes priority)
+        setActivePerson(decoded);
+        console.log('[stats] read salesperson from hash', decoded);
+      } else {
+        // No valid hash found - check if we should default
+        const hasSpHash = window.location.hash && window.location.hash.includes('sp=');
+        if (!hasSpHash && !activePerson) {
+          // Only default if no hash parameter exists and activePerson is not set
+          const first = (salespersons[0] as any)?.name as string | undefined;
+          if (first) {
+            setActivePerson(first);
+            console.log('[stats] default salesperson (no hash)', first);
+          }
+        }
+      }
+    };
+
+    // Check hash immediately
+    handleHashChange();
+
+    // Listen for hashchange events (e.g., when navigating from homepage)
+    window.addEventListener('hashchange', handleHashChange);
+    
+    // Also check after a short delay to catch Next.js client-side navigation
+    const timeoutId = setTimeout(handleHashChange, 100);
+    
+    return () => {
+      window.removeEventListener('hashchange', handleHashChange);
+      clearTimeout(timeoutId);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [salespersons?.length]);
+  }, [salespersons?.length]); // Re-run when salespersons list loads/changes
   // Update hash when selecting a salesperson
   useEffect(() => {
     if (typeof window === 'undefined') return;
