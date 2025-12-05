@@ -89,6 +89,7 @@ export default function SuppliersPage() {
   const [savedMonths, setSavedMonths] = useState<string[]>([]);
   const [selectedMonth, setSelectedMonth] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [saveProgress, setSaveProgress] = useState<{ step: string; current: number; total: number } | null>(null);
   const [loading, setLoading] = useState(false);
   const [savedData, setSavedData] = useState<SavedStatistic[] | null>(null);
   const [savedRows, setSavedRows] = useState<ParsedRow[] | null>(null);
@@ -510,8 +511,12 @@ export default function SuppliersPage() {
     }
 
     setSaving(true);
+    setSaveProgress({ step: 'Forbereder data...', current: 0, total: 100 });
     try {
       const yearMonth = getMonthFromRows();
+      
+      setSaveProgress({ step: 'Filtrerer rækker for måned...', current: 5, total: 100 });
+      await new Promise(resolve => setTimeout(resolve, 50));
       
       // Aggregate data per salesperson for this month
       const monthRows = parsedRows.filter(row => extractYearMonth(row.date) === yearMonth);
@@ -519,6 +524,7 @@ export default function SuppliersPage() {
       if (monthRows.length === 0) {
         alert(`Ingen data fundet for måned ${yearMonth}. Tjek datoerne i filen.`);
         setSaving(false);
+        setSaveProgress(null);
         return;
       }
 
@@ -587,6 +593,8 @@ export default function SuppliersPage() {
         });
       }
 
+      setSaveProgress({ step: 'Sletter eksisterende rækker...', current: 10, total: 100 });
+      
       // Delete existing rows for this month first (to replace with new data)
       const { error: deleteError } = await supabase
         .from('supp_statistic_rows')
@@ -594,6 +602,9 @@ export default function SuppliersPage() {
         .eq('year_month', yearMonth);
 
       if (deleteError) console.warn('Warning: Could not delete existing rows:', deleteError);
+
+      setSaveProgress({ step: 'Forbereder rækker til gemning...', current: 15, total: 100 });
+      await new Promise(resolve => setTimeout(resolve, 50));
 
       // Save individual rows
       const rowsToSave = monthRows.map((row) => ({
@@ -610,8 +621,18 @@ export default function SuppliersPage() {
       }));
 
       // Insert rows in batches
+      setSaveProgress({ step: 'Gemmer individuelle rækker...', current: 20, total: 100 });
       const batchSize = 500;
+      const totalBatches = Math.ceil(rowsToSave.length / batchSize);
       for (let i = 0; i < rowsToSave.length; i += batchSize) {
+        const batchIndex = Math.floor(i / batchSize);
+        const progress = 20 + Math.round((batchIndex / totalBatches) * 60); // 20-80%
+        setSaveProgress({ 
+          step: `Gemmer rækker batch ${batchIndex + 1} af ${totalBatches}...`, 
+          current: progress, 
+          total: 100 
+        });
+        
         const batch = rowsToSave.slice(i, i + batchSize);
         const { error: rowsError } = await supabase
           .from('supp_statistic_rows')
@@ -621,7 +642,13 @@ export default function SuppliersPage() {
           console.error('Error saving rows batch:', rowsError);
           throw new Error(`Fejl ved gemning af rækker: ${rowsError.message}`);
         }
+        
+        // Small delay to allow UI update
+        await new Promise(resolve => setTimeout(resolve, 10));
       }
+
+      setSaveProgress({ step: 'Gemmer aggregerede data...', current: 85, total: 100 });
+      await new Promise(resolve => setTimeout(resolve, 50));
 
       // Upsert aggregated records (update if exists, insert if not)
       const { error } = await supabase
@@ -632,6 +659,11 @@ export default function SuppliersPage() {
 
       if (error) throw error;
 
+      setSaveProgress({ step: 'Opdaterer månedliste...', current: 95, total: 100 });
+
+      setSaveProgress({ step: 'Færdig!', current: 100, total: 100 });
+      await new Promise(resolve => setTimeout(resolve, 200));
+      
       alert(`Data gemt for ${formatMonthName(yearMonth)} (${recordsToSave.length} sælgere, ${monthRows.length} rækker)`);
       
       // Refresh saved months list
@@ -643,7 +675,10 @@ export default function SuppliersPage() {
       const uniqueMonths = Array.from(new Set((monthsData || []).map((r: any) => r.year_month))).sort().reverse();
       setSavedMonths(uniqueMonths as string[]);
       
+      setSaveProgress(null);
+      
     } catch (err: any) {
+      setSaveProgress(null);
       alert(`Fejl ved gemning: ${err.message}`);
       console.error('Save error:', err);
     } finally {
@@ -868,7 +903,7 @@ export default function SuppliersPage() {
         )}
       </div>
 
-      {/* Progress Indicator */}
+      {/* Progress Indicator for File Processing */}
       {processing && progress && (
         <div className="rounded-md border p-4 bg-blue-50 border-blue-200 animate-in fade-in slide-in-from-top-2 duration-300">
           <div className="flex items-center gap-3 mb-3">
@@ -887,6 +922,31 @@ export default function SuppliersPage() {
               <div 
                 className="bg-blue-600 h-full transition-all duration-500 ease-out rounded-full shadow-sm"
                 style={{ width: `${Math.min(100, Math.max(0, (progress.current / progress.total) * 100))}%` }}
+              />
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Progress Indicator for Saving */}
+      {saving && saveProgress && (
+        <div className="rounded-md border p-4 bg-green-50 border-green-200 animate-in fade-in slide-in-from-top-2 duration-300">
+          <div className="flex items-center gap-3 mb-3">
+            <Loader2 className="h-5 w-5 animate-spin text-green-600" />
+            <div className="flex-1">
+              <div className="text-sm font-medium text-green-900">{saveProgress.step}</div>
+              {saveProgress.total > 0 && (
+                <div className="text-xs text-green-700 mt-0.5">
+                  {Math.round((saveProgress.current / saveProgress.total) * 100)}% complete
+                </div>
+              )}
+            </div>
+          </div>
+          {saveProgress.total > 0 && (
+            <div className="w-full bg-green-200 rounded-full h-2.5 overflow-hidden">
+              <div 
+                className="bg-green-600 h-full transition-all duration-500 ease-out rounded-full shadow-sm"
+                style={{ width: `${Math.min(100, Math.max(0, (saveProgress.current / saveProgress.total) * 100))}%` }}
               />
             </div>
           )}
@@ -958,7 +1018,6 @@ export default function SuppliersPage() {
                       <table className="min-w-full text-sm">
                         <thead className="bg-gray-50 border-b">
                           <tr>
-                            <th className="px-4 py-2 text-left">Total leveret</th>
                             <th className="px-4 py-2 text-left">Telefon stk</th>
                             <th className="px-4 py-2 text-right">Telefon beløb</th>
                             <th className="px-4 py-2 text-left">B2B stk</th>
@@ -971,7 +1030,6 @@ export default function SuppliersPage() {
                         </thead>
                         <tbody>
                           <tr className="border-b">
-                            <td className="px-4 py-2">{summary.previousYear.totalDeliveredQty.toLocaleString('da-DK')}</td>
                             <td className="px-4 py-2">{summary.previousYear.byChannel.telefon.stk.toLocaleString('da-DK')}</td>
                             <td className="px-4 py-2 text-right">{formatPrice(summary.previousYear.byChannel.telefon.beløb)}</td>
                             <td className="px-4 py-2">{summary.previousYear.byChannel.b2bShop.stk.toLocaleString('da-DK')}</td>
@@ -996,7 +1054,6 @@ export default function SuppliersPage() {
                     <table className="min-w-full text-sm">
                       <thead className="bg-gray-50 border-b">
                         <tr>
-                          <th className="px-4 py-2 text-left">Total leveret</th>
                           <th className="px-4 py-2 text-left">Telefon stk</th>
                           <th className="px-4 py-2 text-right">Telefon beløb</th>
                           <th className="px-4 py-2 text-left">B2B stk</th>
@@ -1009,7 +1066,6 @@ export default function SuppliersPage() {
                       </thead>
                       <tbody>
                         <tr className="border-b">
-                          <td className="px-4 py-2 font-medium">{summary.totalDeliveredQty.toLocaleString('da-DK')}</td>
                           <td className="px-4 py-2">{summary.byChannel.telefon.stk.toLocaleString('da-DK')}</td>
                           <td className="px-4 py-2 text-right">{formatPrice(summary.byChannel.telefon.beløb)}</td>
                           <td className="px-4 py-2">{summary.byChannel.b2bShop.stk.toLocaleString('da-DK')}</td>
@@ -1032,7 +1088,6 @@ export default function SuppliersPage() {
                       <table className="min-w-full text-sm">
                         <thead className="bg-gray-50 border-b">
                           <tr>
-                            <th className="px-4 py-2 text-left">Total leveret</th>
                             <th className="px-4 py-2 text-left">Telefon stk</th>
                             <th className="px-4 py-2 text-right">Telefon beløb</th>
                             <th className="px-4 py-2 text-left">B2B stk</th>
@@ -1045,9 +1100,6 @@ export default function SuppliersPage() {
                         </thead>
                         <tbody>
                           <tr className="border-b">
-                            <td className={`px-4 py-2 font-medium ${summary.development.totalDeliveredQty >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                              {summary.development.totalDeliveredQty >= 0 ? '+' : ''}{summary.development.totalDeliveredQty.toLocaleString('da-DK')}
-                            </td>
                             <td className={`px-4 py-2 ${summary.development.byChannel.telefon.stk >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                               {summary.development.byChannel.telefon.stk >= 0 ? '+' : ''}{summary.development.byChannel.telefon.stk.toLocaleString('da-DK')}
                             </td>
@@ -1090,7 +1142,6 @@ export default function SuppliersPage() {
                         <thead className="bg-gray-50 border-b">
                           <tr>
                             <th className="px-3 py-2 text-left">Kunde</th>
-                            <th className="px-3 py-2 text-left">Total leveret</th>
                             <th className="px-3 py-2 text-left">Telefon stk</th>
                             <th className="px-3 py-2 text-right">Telefon beløb</th>
                             <th className="px-3 py-2 text-left">B2B stk</th>
@@ -1154,7 +1205,6 @@ export default function SuppliersPage() {
                                     {dateRange && <div className="text-xs text-gray-400">{dateRange}</div>}
                                   </div>
                                 </td>
-                                <td className="px-3 py-2">{totalLeveret.toLocaleString('da-DK')}</td>
                                 <td className="px-3 py-2">{telefon.stk.toLocaleString('da-DK')}</td>
                                 <td className="px-3 py-2 text-right">{formatPrice(telefon.beløb)}</td>
                                 <td className="px-3 py-2">{b2bShop.stk.toLocaleString('da-DK')}</td>
