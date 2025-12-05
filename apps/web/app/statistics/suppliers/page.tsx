@@ -218,7 +218,10 @@ export default function SuppliersPage() {
     const groups: CustomerGroup[] = [];
     
     for (const [key, rows] of byCustomer.entries()) {
-      const [customerName, accountNo] = key.split('|');
+      const parts = key.split('|');
+      const customerName: string = parts[0] ?? '';
+      const accountNo: string = parts[1] ?? '';
+      if (!customerName || !accountNo) continue; // Skip invalid entries
       groups.push({
         customerName,
         accountNo,
