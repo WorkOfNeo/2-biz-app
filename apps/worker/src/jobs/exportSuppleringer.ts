@@ -115,14 +115,33 @@ export async function exportSuppleringer(ctx: Ctx) {
       .eq('year_month', yearMonth)
       .order('salesperson_name, customer_name');
 
+    await log(job.id, 'info', 'STEP:export_suppleringer_rows_loaded', { 
+      rowCount: currentRows ? currentRows.length : 0,
+      salespersonCount: currentData.length
+    });
+
     // Group rows by salesperson and customer
     const rowsBySalesperson = new Map<string, any[]>();
     const rowsBySalespersonCustomer = new Map<string, Map<string, any[]>>();
     
+    // Initialize customer maps for all salespersons in currentData (even if no rows exist)
+    // This ensures all salespersons get customer PDFs created
+    for (const stat of currentData) {
+      const spName = stat.salesperson_name;
+      if (!rowsBySalespersonCustomer.has(spName)) {
+        rowsBySalespersonCustomer.set(spName, new Map());
+        rowsBySalesperson.set(spName, []);
+      }
+    }
+    
+    // Group customer rows by salesperson
     for (const row of currentRows || []) {
       const spName = row.salesperson_name;
       const customerName = row.customer_name;
       
+      if (!spName || !customerName) continue; // Skip invalid rows
+      
+      // Ensure map exists (should already exist from initialization above)
       if (!rowsBySalesperson.has(spName)) {
         rowsBySalesperson.set(spName, []);
         rowsBySalespersonCustomer.set(spName, new Map());
@@ -135,6 +154,16 @@ export async function exportSuppleringer(ctx: Ctx) {
       }
       customerMap.get(customerName)!.push(row);
     }
+
+    // Log salesperson mapping for debugging
+    await log(job.id, 'info', 'STEP:export_suppleringer_salesperson_mapping', {
+      salespersonsInData: currentData.map(s => s.salesperson_name),
+      salespersonsInRows: Array.from(rowsBySalespersonCustomer.keys()),
+      rowCountsBySalesperson: Object.fromEntries(
+        Array.from(rowsBySalespersonCustomer.entries()).map(([sp, map]) => [sp, map.size])
+      ),
+      totalRowsLoaded: currentRows ? currentRows.length : 0
+    });
 
     const styles = StyleSheet.create({
       page: { padding: 16, fontSize: 9, color: '#0f172a' },
@@ -320,21 +349,33 @@ export async function exportSuppleringer(ctx: Ctx) {
       });
 
       // 2. CUSTOMER STATS PDF per salesperson
+      // Always create customer PDF for ALL salespersons that have data
       const customerRows = rowsBySalespersonCustomer.get(salespersonName);
-      if (customerRows && customerRows.size > 0) {
-        const customerHeader = React.createElement(View, { style: styles.tableHeader },
-          Cell('Kunde', '20%', 'left', styles.headerCell),
-          Cell('Telefon stk', '10%', 'left', styles.headerCell),
-          Cell('Telefon beløb', '12%', 'right', styles.headerCell),
-          Cell('B2B stk', '10%', 'left', styles.headerCell),
-          Cell('B2B beløb', '12%', 'right', styles.headerCell),
-          Cell('Krediteret stk', '10%', 'left', styles.headerCell),
-          Cell('Krediteret beløb', '12%', 'right', styles.headerCell),
-          Cell('Samlet stk', '7%', 'left', styles.headerCell),
-          Cell('Samlet beløb', '7%', 'right', styles.headerCell)
-        );
+      
+      await log(job.id, 'info', 'STEP:export_suppleringer_customer_check', { 
+        salesperson: salespersonName,
+        hasCustomerRows: !!customerRows,
+        customerRowCount: customerRows ? customerRows.size : 0,
+        totalRowsInDb: currentRows ? currentRows.length : 0
+      });
+      
+      // Always create customer PDF for ALL salespersons (even if no customer rows)
+      const customerHeader = React.createElement(View, { style: styles.tableHeader },
+        Cell('Kunde', '20%', 'left', styles.headerCell),
+        Cell('Telefon stk', '10%', 'left', styles.headerCell),
+        Cell('Telefon beløb', '12%', 'right', styles.headerCell),
+        Cell('B2B stk', '10%', 'left', styles.headerCell),
+        Cell('B2B beløb', '12%', 'right', styles.headerCell),
+        Cell('Krediteret stk', '10%', 'left', styles.headerCell),
+        Cell('Krediteret beløb', '12%', 'right', styles.headerCell),
+        Cell('Samlet stk', '7%', 'left', styles.headerCell),
+        Cell('Samlet beløb', '7%', 'right', styles.headerCell)
+      );
 
-        const customerBodyRows: any[] = [];
+      const customerBodyRows: any[] = [];
+      
+      // If customer rows exist, process them; otherwise show empty table
+      if (customerRows && customerRows.size > 0) {
         for (const [customerName, rows] of customerRows.entries()) {
           // Aggregate customer rows
           const telefon = { stk: 0, beløb: 0 };
@@ -371,36 +412,42 @@ export async function exportSuppleringer(ctx: Ctx) {
             )
           );
         }
+      }
+      // If no customer rows, customerBodyRows will be empty (shows empty table)
 
-        const customerPage = React.createElement(PdfPage, { size: 'A4', orientation: 'landscape', style: styles.page },
-          React.createElement(Text, { style: styles.h1 }, `Suppleringer · ${salespersonName}`),
-          React.createElement(Text, { style: styles.h2 }, 'Kunder'),
-          React.createElement(Text, { style: styles.small }, formatMonthName(yearMonth)),
-          customerHeader,
-          ...customerBodyRows
-        );
+      const customerPage = React.createElement(PdfPage, { size: 'A4', orientation: 'landscape', style: styles.page },
+        React.createElement(Text, { style: styles.h1 }, `Suppleringer · ${salespersonName}`),
+        React.createElement(Text, { style: styles.h2 }, 'Kunder'),
+        React.createElement(Text, { style: styles.small }, formatMonthName(yearMonth)),
+        customerHeader,
+        ...customerBodyRows
+      );
 
-        const customerDoc = React.createElement(Document, null, customerPage);
-        const customerPdf = await pdf(customerDoc).toBuffer();
-        const customerBuf = await ensureBuffer(customerPdf);
-        const customerPath = `Suppleringer/${job.id}/customers/${safeName}.pdf`;
-        
-        for (let attempt = 1; attempt <= 3; attempt++) {
+      const customerDoc = React.createElement(Document, null, customerPage);
+      const customerPdf = await pdf(customerDoc).toBuffer();
+      const customerBuf = await ensureBuffer(customerPdf);
+      const customerPath = `Suppleringer/${job.id}/customers/${safeName}.pdf`;
+      
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          const ab = customerBuf.buffer.slice(customerBuf.byteOffset, customerBuf.byteOffset + customerBuf.byteLength);
+          await supabase.storage.from('exports').upload(customerPath, ab as ArrayBuffer, { contentType: 'application/pdf', upsert: true });
+          let publicUrl: string | null = null;
           try {
-            const ab = customerBuf.buffer.slice(customerBuf.byteOffset, customerBuf.byteOffset + customerBuf.byteLength);
-            await supabase.storage.from('exports').upload(customerPath, ab as ArrayBuffer, { contentType: 'application/pdf', upsert: true });
-            let publicUrl: string | null = null;
-            try {
-              const { data: pub } = supabase.storage.from('exports').getPublicUrl(customerPath);
-              publicUrl = pub?.publicUrl ?? null;
-            } catch {}
-            customerFiles.push({ name: `${salespersonName} · Kunder`, path: customerPath, publicUrl, salesperson_name: salespersonName });
-            allCustomerPages.push(customerPage);
-            break;
-          } catch (e: any) {
-            if (attempt === 3) {
-              await log(job.id, 'error', 'STEP:export_suppleringer_customers_failed', { name: salespersonName, error: e?.message || String(e) });
-            }
+            const { data: pub } = supabase.storage.from('exports').getPublicUrl(customerPath);
+            publicUrl = pub?.publicUrl ?? null;
+          } catch {}
+          customerFiles.push({ name: `${salespersonName} · Kunder`, path: customerPath, publicUrl, salesperson_name: salespersonName });
+          allCustomerPages.push(customerPage);
+          await log(job.id, 'info', 'STEP:export_suppleringer_customer_created', { 
+            salesperson: salespersonName,
+            customerCount: customerBodyRows.length,
+            path: customerPath
+          });
+          break;
+        } catch (e: any) {
+          if (attempt === 3) {
+            await log(job.id, 'error', 'STEP:export_suppleringer_customers_failed', { name: salespersonName, error: e?.message || String(e) });
           }
         }
       }
