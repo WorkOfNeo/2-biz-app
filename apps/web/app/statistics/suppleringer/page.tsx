@@ -857,7 +857,10 @@ export default function SuppliersPage() {
                   <div>
                     <h4 className="text-sm font-semibold text-gray-700 mb-2">
                       {(() => {
-                        const [year] = selectedMonth.split('-');
+                        if (!selectedMonth) return '';
+                        const parts = selectedMonth.split('-');
+                        const year = parts[0];
+                        if (!year) return '';
                         return `${parseInt(year, 10) - 1} (Sidste år)`;
                       })()}
                     </h4>
