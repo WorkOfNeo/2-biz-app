@@ -384,12 +384,43 @@ export default function HomePage() {
     return result;
   }, [people, customers, stats, invoices, s1, s2, currencyRatesRow, ratesS1, ratesS2, spCurrencyById, overrides, closedCustomers]);
 
-  // Get top 15 styles
+  // Get top 15 styles (with exclusions matching top10 page)
   const defaultSeasonId = React.useMemo(() => (seasons ?? []).find(s => (s as any).is_current)?.id || (seasons ?? [])[0]?.id || null, [seasons?.length]);
-  const { data: topStyles } = useSWR(defaultSeasonId ? ['top-styles', defaultSeasonId] : null, async () => {
-    const { data } = await supabase.from('top_styles').select('*').eq('season_id', defaultSeasonId).order('qty', { ascending: false }).limit(15);
+  
+  // Load all items for season (will filter/exclude and slice locally)
+  const { data: allTopStyles } = useSWR(defaultSeasonId ? ['top-styles', defaultSeasonId] : null, async () => {
+    const { data } = await supabase.from('top_styles').select('*').eq('season_id', defaultSeasonId).order('qty', { ascending: false });
     return (data ?? []) as any[];
   });
+
+  // Excluded styles per season (by style_no)
+  const { data: excludedSet } = useSWR(defaultSeasonId ? ['top-styles:excluded', defaultSeasonId] : null, async () => {
+    const key = `top_styles_excluded:${defaultSeasonId}`;
+    const { data } = await supabase.from('app_settings').select('value').eq('key', key).maybeSingle();
+    const list = (((data?.value as any)?.styleNos as string[] | undefined) ?? []).filter(Boolean);
+    return new Set(list);
+  });
+
+  // Global exclusions across all seasons
+  const { data: excludedGlobal } = useSWR('top-styles:excluded-global', async () => {
+    const key = 'top_styles_excluded_global';
+    const { data } = await supabase.from('app_settings').select('id, value').eq('key', key).maybeSingle();
+    const list = (((data?.value as any)?.styleNos as string[] | undefined) ?? []).filter(Boolean);
+    return { id: (data as any)?.id as string | null, list } as { id: string | null; list: string[] };
+  });
+
+  const excludedGlobalSet = React.useMemo(() => new Set((excludedGlobal?.list || []).map(s => String(s))), [excludedGlobal?.id, excludedGlobal?.list?.length]);
+
+  // Filter and slice to top 15 (same logic as top10 page)
+  const topStyles = React.useMemo(() => {
+    const list = (allTopStyles ?? []) as Array<any>;
+    const ex = excludedSet as Set<string> | undefined;
+    let filtered = ex ? list.filter((r) => !ex.has(r.style_no)) : list;
+    if (excludedGlobalSet && excludedGlobalSet.size > 0) {
+      filtered = filtered.filter((r) => !excludedGlobalSet.has(String(r.style_no)));
+    }
+    return filtered.slice(0, 15);
+  }, [allTopStyles, excludedSet, excludedGlobalSet]);
 
   const { data: supplierMap } = useSWR(topStyles && topStyles.length ? ['suppliers', topStyles.map(i => i.style_no).join(',')] : null, async () => {
     const { data } = await supabase.from('styles').select('style_no, supplier').in('style_no', (topStyles ?? []).map((i: any) => i.style_no));
