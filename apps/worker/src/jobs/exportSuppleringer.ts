@@ -93,8 +93,10 @@ export async function exportSuppleringer(ctx: Ctx) {
     }
 
     // Load previous year data
-    const [year, month] = yearMonth.split('-');
-    const prevYear = String(parseInt(year || '2024', 10) - 1);
+    const [yearStr, monthStr] = yearMonth.split('-');
+    const year: string = yearStr || '2024';
+    const month: string = monthStr || '01';
+    const prevYear = String(parseInt(year, 10) - 1);
     const prevYearMonth = `${prevYear}-${month}`;
     
     const { data: prevData } = await supabase
@@ -157,7 +159,7 @@ export async function exportSuppleringer(ctx: Ctx) {
 
     // Log salesperson mapping for debugging
     await log(job.id, 'info', 'STEP:export_suppleringer_salesperson_mapping', {
-      salespersonsInData: currentData.map(s => s.salesperson_name),
+      salespersonsInData: currentData.map((s: any) => s.salesperson_name),
       salespersonsInRows: Array.from(rowsBySalespersonCustomer.keys()),
       rowCountsBySalesperson: Object.fromEntries(
         Array.from(rowsBySalespersonCustomer.entries()).map(([sp, map]) => [sp, map.size])
@@ -193,10 +195,8 @@ export async function exportSuppleringer(ctx: Ctx) {
     const allSummaryPages: any[] = [];
     const allCustomerPages: any[] = [];
 
-    // Extract year from yearMonth for previous year header
-    const parts = yearMonth.split('-');
-    const year = parts[0] || '2024';
-    const monthNum = parts[1];
+    // Extract month number from yearMonth for headers (year already extracted above)
+    const monthNum = month;
     
     // Generate PDFs per salesperson
     for (const stat of currentData) {
