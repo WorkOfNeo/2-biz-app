@@ -77,130 +77,37 @@ export async function checkStockFix(ctx: Ctx) {
       await page.waitForTimeout(2000);
     }
     
-    // Extract collection UUID for Excel download
-    await log(job.id, 'info', 'STEP:check_stock_fix_extracting_uuid');
-    const collectionUUID = await page.evaluate(() => {
-      const downloadLink = document.querySelector('a[href*="DownloadExcel"]') as HTMLAnchorElement;
-      if (downloadLink) {
-        const url = new URL(downloadLink.href, window.location.href);
-        return url.searchParams.get('strCollectionUUID');
+    // Parse the HTML table directly (no need to download Excel)
+    await log(job.id, 'info', 'STEP:check_stock_fix_parsing_table');
+    const parsedRows = await page.evaluate(() => {
+      const rows = document.querySelectorAll('.spy-container table.standardList tbody tr');
+      const data: Array<{ 
+        style_no: string | null; 
+        style_name: string | null; 
+        stock: number | null;
+      }> = [];
+      
+      for (const row of rows) {
+        const cells = row.querySelectorAll('td');
+        if (cells.length < 9) continue;
+        
+        // Column indices: 0: empty, 1: Style No., 2: Style Name, ..., 8: Stock
+        const styleNoText = cells[1]?.textContent?.trim() || null;
+        const styleNameText = cells[2]?.textContent?.trim() || null;
+        const stockText = cells[8]?.textContent?.trim() || null;
+        
+        if (styleNoText) {
+          const stockNum = stockText ? parseInt(stockText.replace(/[^0-9-]/g, ''), 10) : null;
+          data.push({
+            style_no: styleNoText,
+            style_name: styleNameText,
+            stock: isNaN(stockNum!) ? null : stockNum
+          });
+        }
       }
       
-      const allLinks = Array.from(document.querySelectorAll('a[href*="strCollectionUUID"]'));
-      for (const link of allLinks) {
-        const url = new URL((link as HTMLAnchorElement).href, window.location.href);
-        const uuid = url.searchParams.get('strCollectionUUID');
-        if (uuid) return uuid;
-      }
-      
-      return null;
+      return data;
     });
-    
-    if (!collectionUUID) {
-      await log(job.id, 'error', 'STEP:check_stock_fix_no_uuid');
-      throw new Error('Collection UUID not found');
-    }
-    
-    await log(job.id, 'info', 'STEP:check_stock_fix_uuid_found', { uuid: collectionUUID });
-    
-    // Download Excel file with only essential columns: Style No, Style Name, Stock
-    await log(job.id, 'info', 'STEP:check_stock_fix_downloading_excel');
-    const excelUrl = `${SPY_BASE_URL}/?controller=Shared%5CTable&action=DownloadExcel&strRendererClass=Spy%5CView%5CStyle%5CStockStatus%5CListTableRenderer&strCollectionUUID=${encodeURIComponent(collectionUUID)}&type=xls&options=${encodeURIComponent(JSON.stringify({
-      columns: { 
-        "1": true,  // Style No
-        "2": true,  // Style Name
-        "8": true   // Stock
-      },
-      check_all: false
-    }))}`;
-    
-    // Trigger download by creating a temporary link and clicking it
-    const downloadPromise = page.waitForEvent('download', { timeout: 60000 });
-    await page.evaluate((url) => {
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'stock_status.xls';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-    }, excelUrl);
-    
-    await log(job.id, 'info', 'STEP:check_stock_fix_download_triggered');
-    const download = await downloadPromise;
-    await log(job.id, 'info', 'STEP:check_stock_fix_download_received', { 
-      filename: download.suggestedFilename() 
-    });
-    
-    // Save download to a temporary file
-    const fs = await import('fs');
-    const os = await import('os');
-    const path = await import('path');
-    const tmpDir = os.tmpdir();
-    const tmpFile = path.join(tmpDir, `stock_check_${Date.now()}.xlsx`);
-    
-    await download.saveAs(tmpFile);
-    await log(job.id, 'info', 'STEP:check_stock_fix_download_saved', { path: tmpFile });
-    
-    // Read the downloaded file
-    const buffer = await fs.promises.readFile(tmpFile);
-    
-    // Clean up temp file
-    await fs.promises.unlink(tmpFile).catch(() => null);
-    
-    await log(job.id, 'info', 'STEP:check_stock_fix_excel_downloaded', { size: buffer.length });
-    
-    // Parse Excel
-    const workbook = XLSX.read(buffer, { type: 'buffer' });
-    const sheetName = workbook.SheetNames[0];
-    if (!sheetName) {
-      throw new Error('Excel workbook has no sheets');
-    }
-    const sheet = workbook.Sheets[sheetName];
-    if (!sheet) {
-      throw new Error(`Sheet ${sheetName} not found in workbook`);
-    }
-    const rawData = XLSX.utils.sheet_to_json(sheet, { header: 1 }) as any[][];
-    
-    await log(job.id, 'info', 'STEP:check_stock_fix_excel_parsed', { 
-      rows: rawData.length,
-      headers: rawData[0],
-      sample: rawData.slice(1, 5)
-    });
-    
-    // Parse Excel data into structured format
-    await log(job.id, 'info', 'STEP:check_stock_fix_parsing_excel_data');
-    const parsedRows: Array<{ 
-      style_no: string | null; 
-      style_name: string | null; 
-      stock: number | null;
-    }> = [];
-    
-    function parseExcelNumber(val: any): number | null {
-      if (val === null || val === undefined || val === '') return null;
-      const num = Number(val);
-      return isNaN(num) ? null : Math.round(num);
-    }
-    
-    function parseExcelString(val: any): string | null {
-      if (val === null || val === undefined) return null;
-      return String(val).trim() || null;
-    }
-    
-    // Parse Excel rows (skip header row at index 0)
-    // Columns: Style No (0), Style Name (1), Stock (2)
-    for (const row of rawData.slice(1)) {
-      const style_no = parseExcelString(row[0]);
-      const style_name = parseExcelString(row[1]);
-      const stock = parseExcelNumber(row[2]);
-      
-      if (style_no) {
-        parsedRows.push({
-          style_no,
-          style_name,
-          stock
-        });
-      }
-    }
     
     await log(job.id, 'info', 'STEP:check_stock_fix_parsed', { rowCount: parsedRows.length });
     
