@@ -80,7 +80,7 @@ export async function checkStockFix(ctx: Ctx) {
     // Parse the HTML table directly (no need to download Excel)
     await log(job.id, 'info', 'STEP:check_stock_fix_parsing_table');
     const parsedRows = await page.evaluate(() => {
-      const rows = document.querySelectorAll('.spy-container table.standardList tbody tr');
+      const rows = Array.from(document.querySelectorAll('.spy-container table.standardList tbody tr'));
       const data: Array<{ 
         style_no: string | null; 
         style_name: string | null; 
@@ -88,7 +88,7 @@ export async function checkStockFix(ctx: Ctx) {
       }> = [];
       
       for (const row of rows) {
-        const cells = row.querySelectorAll('td');
+        const cells = Array.from(row.querySelectorAll('td'));
         if (cells.length < 9) continue;
         
         // Column indices: 0: empty, 1: Style No., 2: Style Name, ..., 8: Stock
