@@ -61,6 +61,13 @@ export default function HomePage() {
   const [s1, setS1] = React.useState<string>('');
   const [s2, setS2] = React.useState<string>('');
 
+  function getSeasonLabel(seasonId: string | undefined) {
+    if (!seasonId) return '';
+    const s = (seasons ?? []).find((x) => x.id === seasonId);
+    if (!s) return '';
+    return `${s.name}${s.year ? ' ' + s.year : ''}`;
+  }
+
   React.useEffect(() => {
     if (saved?.value) {
       if (saved.value.s1) setS1(saved.value.s1);
@@ -167,9 +174,9 @@ export default function HomePage() {
 
   // Calculate data per country and salesperson (reuse overview logic)
   const countryData = React.useMemo(() => {
-    if (!people || !customers || !stats || !invoices || !s1 || !s2) return {} as Record<string, any[]>;
+    if (!people || !customers || !stats || !invoices || !s1 || !s2) return {} as Record<string, { rows: any[]; totals: any }>;
 
-    const result: Record<string, any[]> = {};
+    const result: Record<string, { rows: any[]; totals: { s1Qty: number; s1PriceDkk: number; s2Qty: number; s2PriceDkk: number } }> = {};
 
     for (const countryName of COUNTRIES) {
       const targetCountry = countryName.toUpperCase();
@@ -376,8 +383,28 @@ export default function HomePage() {
         }
       }
 
+      // Calculate totals for this country (similar to overview page)
+      const countryTotals = {
+        s1Qty: 0,
+        s1PriceDkk: 0,
+        s2Qty: 0,
+        s2PriceDkk: 0,
+      };
+
+      // Calculate totals from aggregated data
+      for (const sp of people) {
+        const a = agg.get(sp.id)!;
+        countryTotals.s1Qty += a.s1Qty;
+        countryTotals.s1PriceDkk += a.s1Price;
+        countryTotals.s2Qty += a.s2Qty;
+        countryTotals.s2PriceDkk += a.s2Price;
+      }
+
       if (countryRows.length > 0) {
-        result[countryName] = countryRows;
+        result[countryName] = {
+          rows: countryRows,
+          totals: countryTotals,
+        };
       }
     }
 
@@ -454,25 +481,11 @@ export default function HomePage() {
 
             {/* Combined Table for All Countries */}
             {React.useMemo(() => {
-              const allRows: Array<{ country: string; row: any; isFirst: boolean; rowSpan: number }> = [];
-              COUNTRIES.forEach((countryName) => {
-                const rows = countryData[countryName] || [];
-                rows.forEach((row, idx) => {
-                  allRows.push({
-                    country: countryName,
-                    row,
-                    isFirst: idx === 0,
-                    rowSpan: rows.length,
-                  });
-                });
-              });
-
               return (
                 <div className="rounded-md border overflow-hidden">
                   <table className="min-w-full text-xs">
                     <thead className="bg-gray-100">
                       <tr>
-                        <th className="px-2 py-1.5 text-left font-semibold border-r">Land</th>
                         <th className="px-2 py-1.5 text-left font-semibold border-r">Sælger</th>
                         <th className="px-2 py-1.5 text-center font-semibold border-r">Fremskridt</th>
                         <th className="px-2 py-1.5 text-right font-semibold border-r">Index stk</th>
@@ -482,49 +495,99 @@ export default function HomePage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {allRows.map((item) => (
-                        <tr key={`${item.country}-${item.row.id}`} className="border-t hover:bg-gray-50">
-                          {item.isFirst && (
-                            <td rowSpan={item.rowSpan} className="px-2 py-1 border-r align-top font-medium bg-gray-50">
-                              {item.country}
-                            </td>
-                          )}
-                          <td className="px-2 py-1 border-r">
-                            <Link 
-                              href={`/statistics/general#sp=${encodeURIComponent(item.row.name)}`}
-                              className="font-medium text-blue-600 hover:underline"
-                            >
-                              {item.row.name}
-                            </Link>
-                            {item.row.visitedNoS2 > 0 && (
-                              <span className="text-orange-600 ml-1 text-[10px]">({item.row.visitedNoS2} visited, no S2)</span>
-                            )}
-                          </td>
-                          <td className="px-2 py-1 border-r text-center">
-                            <div className="flex items-center justify-center gap-1">
-                              <Donut pct={item.row.visitedPct} />
-                              <span className="text-gray-700">{item.row.visitedCount}/{item.row.validTotal}</span>
-                            </div>
-                          </td>
-                          <td className="px-2 py-1 border-r text-right font-mono text-[11px]">
-                            {Math.round(item.row.indexQty).toLocaleString('da-DK')}
-                          </td>
-                          <td className="px-2 py-1 border-r text-right font-mono text-[11px]">
-                            {Math.round(item.row.indexPrice).toLocaleString('da-DK')}
-                          </td>
-                          <td className="px-2 py-1 border-r text-right font-mono text-[11px]">
-                            {Math.round(item.row.prognosedQty).toLocaleString('da-DK')}
-                          </td>
-                          <td className="px-2 py-1 text-right font-mono text-[11px]">
-                            {Math.round(item.row.prognosedPrice).toLocaleString('da-DK')}
-                          </td>
-                        </tr>
-                      ))}
+                      {COUNTRIES.map((countryName) => {
+                        const countryInfo = countryData[countryName];
+                        if (!countryInfo || !countryInfo.rows || countryInfo.rows.length === 0) return null;
+
+                        const rows = countryInfo.rows;
+                        const totals = countryInfo.totals;
+
+                        // Calculate progression percentages
+                        const s1Qty = Math.round(totals.s1Qty);
+                        const s1Price = Math.round(totals.s1PriceDkk);
+                        const s2Qty = Math.round(totals.s2Qty);
+                        const s2Price = Math.round(totals.s2PriceDkk);
+                        const diffQtyPct = s2Qty === 0 ? 0 : ((s1Qty - s2Qty) / s2Qty) * 100;
+                        const diffPricePct = s2Price === 0 ? 0 : ((s1Price - s2Price) / s2Price) * 100;
+                        const qtyCls = diffQtyPct > 0 ? 'text-green-700' : diffQtyPct < 0 ? 'text-red-700' : '';
+                        const priceCls = diffPricePct > 0 ? 'text-green-700' : diffPricePct < 0 ? 'text-red-700' : '';
+
+                        return (
+                          <React.Fragment key={countryName}>
+                            {/* Country Header Row */}
+                            <tr className="bg-gray-200 border-t-2 border-gray-300">
+                              <td colSpan={6} className="px-2 py-1.5 font-semibold">
+                                {countryName}
+                              </td>
+                            </tr>
+                            
+                            {/* Salesperson Rows */}
+                            {rows.map((row: any) => (
+                              <tr key={`${countryName}-${row.id}`} className="border-t hover:bg-gray-50">
+                                <td className="px-2 py-1 border-r">
+                                  <Link 
+                                    href={`/statistics/general#sp=${encodeURIComponent(row.name)}`}
+                                    className="font-medium text-blue-600 hover:underline"
+                                  >
+                                    {row.name}
+                                  </Link>
+                                  {row.visitedNoS2 > 0 && (
+                                    <span className="text-orange-600 ml-1 text-[10px]">({row.visitedNoS2} besøgt uden {getSeasonLabel(s2)} tal)</span>
+                                  )}
+                                </td>
+                                <td className="px-2 py-1 border-r text-center">
+                                  <div className="flex items-center justify-center gap-1">
+                                    <Donut pct={row.visitedPct} />
+                                    <span className="text-gray-700">{row.visitedCount}/{row.validTotal}</span>
+                                  </div>
+                                </td>
+                                <td className="px-2 py-1 border-r text-right font-mono text-[11px]">
+                                  {Math.round(row.indexQty).toLocaleString('da-DK')}
+                                </td>
+                                <td className="px-2 py-1 border-r text-right font-mono text-[11px]">
+                                  {Math.round(row.indexPrice).toLocaleString('da-DK')}
+                                </td>
+                                <td className="px-2 py-1 border-r text-right font-mono text-[11px]">
+                                  {Math.round(row.prognosedQty).toLocaleString('da-DK')}
+                                </td>
+                                <td className="px-2 py-1 text-right font-mono text-[11px]">
+                                  {Math.round(row.prognosedPrice).toLocaleString('da-DK')}
+                                </td>
+                              </tr>
+                            ))}
+
+                            {/* Totals Row for Country */}
+                            <tr className="bg-gray-100 border-t-2 border-gray-300 font-medium">
+                              <td colSpan={2} className="px-2 py-1 border-r">TOTAL</td>
+                              <td className="px-2 py-1 border-r text-right font-mono text-[11px]">
+                                {s1Qty.toLocaleString('da-DK')} stk<br />
+                                <span className="text-gray-500 text-[10px]">vs {s2Qty.toLocaleString('da-DK')}</span><br />
+                                <span className={qtyCls}>
+                                  {diffQtyPct > 0 ? '+' : ''}{diffQtyPct.toFixed(1)}%
+                                </span>
+                              </td>
+                              <td className="px-2 py-1 border-r text-right font-mono text-[11px]">
+                                {s1Price.toLocaleString('da-DK')} Oms.<br />
+                                <span className="text-gray-500 text-[10px]">vs {s2Price.toLocaleString('da-DK')}</span><br />
+                                <span className={priceCls}>
+                                  {diffPricePct > 0 ? '+' : ''}{diffPricePct.toFixed(1)}%
+                                </span>
+                              </td>
+                              <td className="px-2 py-1 border-r text-right font-mono text-[11px]">
+                                —
+                              </td>
+                              <td className="px-2 py-1 text-right font-mono text-[11px]">
+                                —
+                              </td>
+                            </tr>
+                          </React.Fragment>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
               );
-            }, [countryData])}
+            }, [countryData, s1, s2])}
           </div>
 
           {/* Right sidebar - 1 column */}
