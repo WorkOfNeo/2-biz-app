@@ -580,17 +580,17 @@ export default function HomePage() {
           {/* Left side - 2 columns */}
           <div className="lg:col-span-2 space-y-4">
             {/* Quick Links */}
-            <div className="flex gap-2">
-              <Link href="/statistics/general" className="px-4 py-2 rounded border hover:bg-gray-50 text-sm font-medium">
-                General
-              </Link>
-              <Link href="/statistics/overview" className="px-4 py-2 rounded border hover:bg-gray-50 text-sm font-medium">
-                Overview
-              </Link>
-              <Link href="/statistics/countries" className="px-4 py-2 rounded border hover:bg-gray-50 text-sm font-medium">
-                Countries
-              </Link>
-            </div>
+                <div className="flex gap-2">
+                  <Link href="/statistics/general" className="px-4 py-2 rounded border hover:bg-gray-50 text-sm font-medium">
+                    Sælgere
+                  </Link>
+                  <Link href="/statistics/overview" className="px-4 py-2 rounded border hover:bg-gray-50 text-sm font-medium">
+                    Overblik
+                  </Link>
+                  <Link href="/statistics/countries" className="px-4 py-2 rounded border hover:bg-gray-50 text-sm font-medium">
+                    Lande
+                  </Link>
+                </div>
 
             {/* Combined Table for All Countries */}
             {React.useMemo(() => {
