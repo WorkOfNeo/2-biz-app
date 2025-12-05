@@ -456,7 +456,7 @@ export async function exportOverview(ctx: Ctx) {
       };
       const { s1, s2 } = await getSeasonCompare();
       if (!s1 || !s2) throw new Error('Missing season compare (s1/s2)');
-      const countries = ['Denmark', 'Norway', 'Sweden', 'Finland'];
+      const countries = ['Denmark', 'Norway', 'Sweden', 'Finland', 'Internal'];
       // Season info for codes
       const getSeason = async (id: string | null): Promise<{ name: string; year: number | null; code: string } | null> => {
         if (!id) return null;
@@ -515,8 +515,10 @@ export async function exportOverview(ctx: Ctx) {
       // Stats rows (already have country via join; fall back to customers map)
       for (const r of (stats ?? []) as any[]) {
         const acc = String(r.account_no || '');
-        const ctry = String(r.customers?.country ?? customerCountryById.get(acc) ?? '').trim();
-        if (!countries.includes(ctry)) continue;
+        let ctry = String(r.customers?.country ?? customerCountryById.get(acc) ?? '').trim();
+        // Map non-standard countries to Internal
+        const standardCountries = ['Denmark', 'Norway', 'Sweden', 'Finland'];
+        if (!standardCountries.includes(ctry)) ctry = 'Internal';
         // Filters
         if (acc) {
           // Exclude hidden/excluded entirely
@@ -547,8 +549,10 @@ export async function exportOverview(ctx: Ctx) {
         if (!acc) continue;
         if (seasonalHidden.has(acc)) continue;
         if (excludedSet.has(acc)) continue;
-        const ctry = String(customerCountryById.get(acc) || '').trim();
-        if (!countries.includes(ctry)) continue;
+        let ctry = String(customerCountryById.get(acc) || '').trim();
+        // Map non-standard countries to Internal
+        const standardCountries = ['Denmark', 'Norway', 'Sweden', 'Finland'];
+        if (!standardCountries.includes(ctry)) ctry = 'Internal';
         let bucket = totals[ctry];
         if (!bucket) { bucket = totals[ctry] = { s1Qty: 0, s2Qty: 0, s1Price: 0, s2Price: 0 }; }
         const cur = (String(inv.currency || 'DKK').toUpperCase());
