@@ -1,6 +1,7 @@
 'use client';
 import { useMemo, useState } from 'react';
 import * as XLSX from 'xlsx';
+import { Loader2 } from 'lucide-react';
 
 type ParsedRow = {
   orderType: string;
@@ -24,8 +25,12 @@ type SalespersonSummary = {
   rows: ParsedRow[];
   // Split by channel
   byChannel: {
-    telefon: { orderedQty: number; deliveredQty: number; price: number; credittedQty: number; credittedPrice: number };
-    b2bShop: { orderedQty: number; deliveredQty: number; price: number; credittedQty: number; credittedPrice: number };
+    telefon: { stk: number; beløb: number };
+    b2bShop: { stk: number; beløb: number };
+    credittedStk: number;
+    credittedBeløb: number;
+    samletStk: number;
+    samletBeløb: number;
   };
 };
 
@@ -39,8 +44,9 @@ export default function SuppliersPage() {
   const [file, setFile] = useState<File | null>(null);
   const [parsedRows, setParsedRows] = useState<ParsedRow[]>([]);
   const [selectedSalesperson, setSelectedSalesperson] = useState<string | null>(null);
-  const [selectedCustomer, setSelectedCustomer] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
+  const [processing, setProcessing] = useState(false);
+  const [progress, setProgress] = useState<{ step: string; current: number; total: number } | null>(null);
 
   // Convert Excel column letter to 0-based array index
   // E.g., 'A' -> 0, 'B' -> 1, 'Z' -> 25, 'AA' -> 26, 'AN' -> 39
@@ -132,18 +138,29 @@ export default function SuppliersPage() {
 
   async function parseFile(selectedFile: File) {
     try {
+      setProcessing(true);
+      setProgress({ step: 'Reading file...', current: 0, total: 100 });
+      
+      // Small delay to show progress
+      await new Promise(resolve => setTimeout(resolve, 50));
+      
+      setProgress({ step: 'Loading Excel data...', current: 10, total: 100 });
       const buf = await selectedFile.arrayBuffer();
+      
+      setProgress({ step: 'Parsing spreadsheet...', current: 20, total: 100 });
       const wb = XLSX.read(buf, { type: 'array' });
       const sheetName = wb.SheetNames?.[0];
       if (!sheetName) throw new Error('No sheet found');
       const sheet = wb.Sheets[sheetName];
       if (!sheet) throw new Error('Empty sheet');
 
+      setProgress({ step: 'Extracting data rows...', current: 30, total: 100 });
       // Read as array of arrays to access by column index
       const data = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' }) as any[][];
       if (data.length === 0) throw new Error('Empty sheet');
 
       const rows: ParsedRow[] = [];
+      const totalRows = data.length - 1; // Exclude header
       
       // Calculate column indices using Excel column letters
       const colB = excelColToIndex('B'); // Order type
@@ -156,8 +173,22 @@ export default function SuppliersPage() {
       const colAW = excelColToIndex('AW'); // Sales Price Base Exchange Total
       const colBO = excelColToIndex('BO'); // Date
 
+      setProgress({ step: 'Processing rows...', current: 40, total: 100 });
+
       // Skip header row (index 0), start from row 1
       for (let i = 1; i < data.length; i++) {
+        // Update progress every 50 rows or at key milestones
+        if (i % 50 === 0 || i === 1 || i === Math.floor(totalRows / 4) || i === Math.floor(totalRows / 2) || i === Math.floor(totalRows * 3 / 4)) {
+          const progressPct = 40 + Math.round((i / totalRows) * 50); // 40-90%
+          setProgress({ 
+            step: `Processing row ${i} of ${totalRows}...`, 
+            current: progressPct, 
+            total: 100 
+          });
+          // Small delay to allow UI update
+          await new Promise(resolve => setTimeout(resolve, 10));
+        }
+        
         const row = data[i] || [];
         
         const orderType = String(row[colB] || '').trim(); // Column B
@@ -193,11 +224,29 @@ export default function SuppliersPage() {
         });
       }
 
+      setProgress({ step: 'Calculating totals...', current: 90, total: 100 });
+      await new Promise(resolve => setTimeout(resolve, 50));
+
+      setProgress({ step: 'Aggregating sales data...', current: 95, total: 100 });
+      await new Promise(resolve => setTimeout(resolve, 50));
+      
       setParsedRows(rows);
       setFile(selectedFile);
       setSelectedSalesperson(null);
-      setSelectedCustomer(null);
+      
+      // Allow time for aggregation to complete
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
+      setProgress({ step: 'Complete!', current: 100, total: 100 });
+      
+      // Clear progress after a moment
+      setTimeout(() => {
+        setProgress(null);
+        setProcessing(false);
+      }, 500);
     } catch (err: any) {
+      setProcessing(false);
+      setProgress(null);
       alert(`Error parsing file: ${err.message}`);
       console.error('Parse error:', err);
     }
@@ -224,36 +273,43 @@ export default function SuppliersPage() {
       let credittedQty = 0;
       let credittedPrice = 0;
 
-      // Split by channel
-      const telefon = { orderedQty: 0, deliveredQty: 0, price: 0, credittedQty: 0, credittedPrice: 0 };
-      const b2bShop = { orderedQty: 0, deliveredQty: 0, price: 0, credittedQty: 0, credittedPrice: 0 };
+      // Split by channel - calculate all values
+      const telefon = { stk: 0, beløb: 0 }; // Only positive values
+      const b2bShop = { stk: 0, beløb: 0 }; // Only positive values
+      let credittedStk = 0; // Negative quantities as positive
+      let credittedBeløb = 0; // Negative prices as positive
+      let samletStk = 0; // All quantities (positive - negative)
+      let samletBeløb = 0; // All prices (positive - negative)
 
       for (const row of rows) {
         const isTelefon = row.channel === 'Telefon';
         const channelData = isTelefon ? telefon : b2bShop;
         
-        // Main totals: sum only positive values
-        if (row.qtyOrdered > 0) {
-          totalOrderedQty += row.qtyOrdered;
-          channelData.orderedQty += row.qtyOrdered;
-        }
+        // Add to total delivered (only positive)
         if (row.qtyDelivered > 0) {
           totalDeliveredQty += row.qtyDelivered;
-          channelData.deliveredQty += row.qtyDelivered;
-        }
-        if (row.price > 0) {
-          totalPrice += row.price;
-          channelData.price += row.price;
         }
         
-        // Creditted: sum absolute values of negative numbers
+        // Telefon/B2B: only positive values
+        if (row.qtyOrdered > 0) {
+          channelData.stk += row.qtyOrdered;
+          samletStk += row.qtyOrdered;
+        }
+        if (row.price > 0) {
+          channelData.beløb += row.price;
+          samletBeløb += row.price;
+        }
+        
+        // Creditted: negative values as positive
         if (row.qtyOrdered < 0) {
-          credittedQty += Math.abs(row.qtyOrdered);
-          channelData.credittedQty += Math.abs(row.qtyOrdered);
+          const absQty = Math.abs(row.qtyOrdered);
+          credittedStk += absQty;
+          samletStk -= absQty; // Subtract from samlet
         }
         if (row.price < 0) {
-          credittedPrice += Math.abs(row.price);
-          channelData.credittedPrice += Math.abs(row.price);
+          const absPrice = Math.abs(row.price);
+          credittedBeløb += absPrice;
+          samletBeløb -= absPrice; // Subtract from samlet
         }
       }
 
@@ -262,12 +318,16 @@ export default function SuppliersPage() {
         totalOrderedQty,
         totalDeliveredQty,
         totalPrice,
-        credittedQty,
-        credittedPrice,
+        credittedQty: credittedStk,
+        credittedPrice: credittedBeløb,
         rows,
         byChannel: {
           telefon,
           b2bShop,
+          credittedStk,
+          credittedBeløb,
+          samletStk,
+          samletBeløb,
         },
       });
     }
@@ -361,6 +421,31 @@ export default function SuppliersPage() {
         )}
       </div>
 
+      {/* Progress Indicator */}
+      {processing && progress && (
+        <div className="rounded-md border p-4 bg-blue-50 border-blue-200 animate-in fade-in slide-in-from-top-2 duration-300">
+          <div className="flex items-center gap-3 mb-3">
+            <Loader2 className="h-5 w-5 animate-spin text-blue-600" />
+            <div className="flex-1">
+              <div className="text-sm font-medium text-blue-900">{progress.step}</div>
+              {progress.total > 0 && (
+                <div className="text-xs text-blue-700 mt-0.5">
+                  {Math.round((progress.current / progress.total) * 100)}% complete
+                </div>
+              )}
+            </div>
+          </div>
+          {progress.total > 0 && (
+            <div className="w-full bg-blue-200 rounded-full h-2.5 overflow-hidden">
+              <div 
+                className="bg-blue-600 h-full transition-all duration-500 ease-out rounded-full shadow-sm"
+                style={{ width: `${Math.min(100, (progress.current / progress.total) * 100)}%` }}
+              />
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Salesperson Summaries */}
       {salespersonSummaries.length > 0 && (
         <div className="space-y-4">
@@ -384,113 +469,122 @@ export default function SuppliersPage() {
                 <table className="min-w-full text-sm">
                   <thead className="bg-gray-50 border-b">
                     <tr>
-                      <th className="px-4 py-2 text-left" colSpan={3}>Total</th>
-                      <th className="px-4 py-2 text-left" colSpan={3}>Telefon</th>
-                      <th className="px-4 py-2 text-left" colSpan={3}>B2B Shop</th>
-                      <th className="px-4 py-2 text-left" colSpan={2}>Krediteret</th>
-                    </tr>
-                    <tr className="bg-gray-50 border-b">
-                      <th className="px-4 py-2 text-left">Bestilt stk</th>
-                      <th className="px-4 py-2 text-left">Leveret stk</th>
-                      <th className="px-4 py-2 text-right">Pris</th>
-                      <th className="px-4 py-2 text-left">Bestilt stk</th>
-                      <th className="px-4 py-2 text-left">Leveret stk</th>
-                      <th className="px-4 py-2 text-right">Pris</th>
-                      <th className="px-4 py-2 text-left">Bestilt stk</th>
-                      <th className="px-4 py-2 text-left">Leveret stk</th>
-                      <th className="px-4 py-2 text-right">Pris</th>
-                      <th className="px-4 py-2 text-left">stk</th>
-                      <th className="px-4 py-2 text-right">Pris</th>
+                      <th className="px-4 py-2 text-left">Total leveret</th>
+                      <th className="px-4 py-2 text-left">Telefon stk</th>
+                      <th className="px-4 py-2 text-right">Telefon beløb</th>
+                      <th className="px-4 py-2 text-left">B2B stk</th>
+                      <th className="px-4 py-2 text-right">B2B beløb</th>
+                      <th className="px-4 py-2 text-left">Krediteret stk</th>
+                      <th className="px-4 py-2 text-right">Krediteret beløb</th>
+                      <th className="px-4 py-2 text-left">Samlet stk</th>
+                      <th className="px-4 py-2 text-right">Samlet beløb</th>
                     </tr>
                   </thead>
                   <tbody>
                     <tr className="border-b">
-                      <td className="px-4 py-2 font-medium">{summary.totalOrderedQty.toLocaleString('da-DK')}</td>
-                      <td className="px-4 py-2">{summary.totalDeliveredQty.toLocaleString('da-DK')}</td>
-                      <td className="px-4 py-2 text-right font-medium">{formatPrice(summary.totalPrice)}</td>
-                      <td className="px-4 py-2">{summary.byChannel.telefon.orderedQty.toLocaleString('da-DK')}</td>
-                      <td className="px-4 py-2">{summary.byChannel.telefon.deliveredQty.toLocaleString('da-DK')}</td>
-                      <td className="px-4 py-2 text-right">{formatPrice(summary.byChannel.telefon.price)}</td>
-                      <td className="px-4 py-2">{summary.byChannel.b2bShop.orderedQty.toLocaleString('da-DK')}</td>
-                      <td className="px-4 py-2">{summary.byChannel.b2bShop.deliveredQty.toLocaleString('da-DK')}</td>
-                      <td className="px-4 py-2 text-right">{formatPrice(summary.byChannel.b2bShop.price)}</td>
-                      <td className="px-4 py-2">{summary.credittedQty.toLocaleString('da-DK')}</td>
-                      <td className="px-4 py-2 text-right">{formatPrice(summary.credittedPrice)}</td>
+                      <td className="px-4 py-2 font-medium">{summary.totalDeliveredQty.toLocaleString('da-DK')}</td>
+                      <td className="px-4 py-2">{summary.byChannel.telefon.stk.toLocaleString('da-DK')}</td>
+                      <td className="px-4 py-2 text-right">{formatPrice(summary.byChannel.telefon.beløb)}</td>
+                      <td className="px-4 py-2">{summary.byChannel.b2bShop.stk.toLocaleString('da-DK')}</td>
+                      <td className="px-4 py-2 text-right">{formatPrice(summary.byChannel.b2bShop.beløb)}</td>
+                      <td className="px-4 py-2">{summary.byChannel.credittedStk.toLocaleString('da-DK')}</td>
+                      <td className="px-4 py-2 text-right">{formatPrice(summary.byChannel.credittedBeløb)}</td>
+                      <td className="px-4 py-2 font-medium">{summary.byChannel.samletStk.toLocaleString('da-DK')}</td>
+                      <td className="px-4 py-2 text-right font-medium">{formatPrice(summary.byChannel.samletBeløb)}</td>
                     </tr>
                   </tbody>
                 </table>
               </div>
 
-              {/* Customer Details */}
+              {/* Customer Details - Aggregated per customer */}
               {selectedSalesperson === summary.salesPerson && customerGroups.length > 0 && (
                 <div className="border-t bg-white">
-                  <div className="p-2 space-y-1.5">
-                    <h4 className="font-semibold text-xs mb-1 text-gray-700">Kunder:</h4>
-                    {customerGroups.map((group, idx) => (
-                      <div
-                        key={`${group.customerName}-${group.accountNo}-${idx}`}
-                        className="border rounded p-1.5 cursor-pointer hover:bg-gray-50"
-                        onClick={() => setSelectedCustomer(
-                          selectedCustomer === `${group.customerName}|${group.accountNo}` 
-                            ? null 
-                            : `${group.customerName}|${group.accountNo}`
-                        )}
-                      >
-                        <div className="flex items-center justify-between">
-                          <div className="text-xs">
-                            <span className="font-medium">{group.customerName}</span>
-                            <span className="text-gray-500 ml-1.5">({group.accountNo})</span>
-                          </div>
-                          <span className="text-[10px] text-gray-500">
-                            {selectedCustomer === `${group.customerName}|${group.accountNo}` ? '▼' : '▶'} {group.rows.length}
-                          </span>
-                        </div>
-                        
-                        {selectedCustomer === `${group.customerName}|${group.accountNo}` && (
-                          <div className="mt-2 overflow-x-auto">
-                            {(() => {
-                              // Group rows by date range (from - to)
-                              const sortedRows = [...group.rows].sort((a, b) => {
-                                const dateA = a.date || '';
-                                const dateB = b.date || '';
-                                return dateA.localeCompare(dateB);
-                              });
+                  <div className="p-3">
+                    <h4 className="font-semibold text-sm mb-3 text-gray-700">Kunder:</h4>
+                    <div className="overflow-x-auto">
+                      <table className="min-w-full text-sm">
+                        <thead className="bg-gray-50 border-b">
+                          <tr>
+                            <th className="px-3 py-2 text-left">Kunde</th>
+                            <th className="px-3 py-2 text-left">Total leveret</th>
+                            <th className="px-3 py-2 text-left">Telefon stk</th>
+                            <th className="px-3 py-2 text-right">Telefon beløb</th>
+                            <th className="px-3 py-2 text-left">B2B stk</th>
+                            <th className="px-3 py-2 text-right">B2B beløb</th>
+                            <th className="px-3 py-2 text-left">Krediteret stk</th>
+                            <th className="px-3 py-2 text-right">Krediteret beløb</th>
+                            <th className="px-3 py-2 text-left">Samlet stk</th>
+                            <th className="px-3 py-2 text-right">Samlet beløb</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {customerGroups.map((group, idx) => {
+                            // Aggregate customer rows with same logic as salesperson
+                            const telefon = { stk: 0, beløb: 0 };
+                            const b2bShop = { stk: 0, beløb: 0 };
+                            let credittedStk = 0;
+                            let credittedBeløb = 0;
+                            let samletStk = 0;
+                            let samletBeløb = 0;
+                            let totalLeveret = 0;
+                            const dates = group.rows.map(r => r.date).filter(Boolean) as string[];
+                            const dateRange = dates.length > 0 
+                              ? `${dates[0]} - ${dates[dates.length - 1]}`
+                              : null;
+
+                            for (const row of group.rows) {
+                              const isTelefon = row.channel === 'Telefon';
+                              const channelData = isTelefon ? telefon : b2bShop;
                               
-                              const dates = sortedRows.map(r => r.date).filter(Boolean) as string[];
-                              const dateRange = dates.length > 0 
-                                ? `${dates[0]} - ${dates[dates.length - 1]}`
-                                : '—';
+                              if (row.qtyDelivered > 0) {
+                                totalLeveret += row.qtyDelivered;
+                              }
                               
-                              return (
-                                <div className="border rounded bg-white">
-                                  <div className="bg-gray-50 px-2 py-0.5 text-[10px] font-medium border-b text-gray-700">
-                                    {dateRange}
+                              if (row.qtyOrdered > 0) {
+                                channelData.stk += row.qtyOrdered;
+                                samletStk += row.qtyOrdered;
+                              }
+                              if (row.price > 0) {
+                                channelData.beløb += row.price;
+                                samletBeløb += row.price;
+                              }
+                              
+                              if (row.qtyOrdered < 0) {
+                                const absQty = Math.abs(row.qtyOrdered);
+                                credittedStk += absQty;
+                                samletStk -= absQty;
+                              }
+                              if (row.price < 0) {
+                                const absPrice = Math.abs(row.price);
+                                credittedBeløb += absPrice;
+                                samletBeløb -= absPrice;
+                              }
+                            }
+
+                            return (
+                              <tr key={idx} className="border-b hover:bg-gray-50">
+                                <td className="px-3 py-2">
+                                  <div>
+                                    <div className="font-medium">{group.customerName}</div>
+                                    <div className="text-xs text-gray-500">({group.accountNo})</div>
+                                    {dateRange && <div className="text-xs text-gray-400">{dateRange}</div>}
                                   </div>
-                                  <table className="min-w-full text-[10px]">
-                                    <thead className="bg-gray-50 border-b">
-                                      <tr>
-                                        <th className="px-1.5 py-0.5 text-left border-r font-medium">Bestilt stk</th>
-                                        <th className="px-1.5 py-0.5 text-left border-r font-medium">Leveret stk</th>
-                                        <th className="px-1.5 py-0.5 text-right font-medium">Pris</th>
-                                      </tr>
-                                    </thead>
-                                    <tbody>
-                                      {sortedRows.map((row, rowIdx) => (
-                                        <tr key={rowIdx} className="border-b hover:bg-gray-50">
-                                          <td className="px-1.5 py-0.5 border-r">{row.qtyOrdered.toLocaleString('da-DK')}</td>
-                                          <td className="px-1.5 py-0.5 border-r">{row.qtyDelivered.toLocaleString('da-DK')}</td>
-                                          <td className="px-1.5 py-0.5 text-right font-mono">{formatPrice(row.price)}</td>
-                                        </tr>
-                                      ))}
-                                    </tbody>
-                                  </table>
-                                </div>
-                              );
-                            })()}
-                          </div>
-                        )}
-                      </div>
-                    ))}
+                                </td>
+                                <td className="px-3 py-2">{totalLeveret.toLocaleString('da-DK')}</td>
+                                <td className="px-3 py-2">{telefon.stk.toLocaleString('da-DK')}</td>
+                                <td className="px-3 py-2 text-right">{formatPrice(telefon.beløb)}</td>
+                                <td className="px-3 py-2">{b2bShop.stk.toLocaleString('da-DK')}</td>
+                                <td className="px-3 py-2 text-right">{formatPrice(b2bShop.beløb)}</td>
+                                <td className="px-3 py-2">{credittedStk.toLocaleString('da-DK')}</td>
+                                <td className="px-3 py-2 text-right">{formatPrice(credittedBeløb)}</td>
+                                <td className="px-3 py-2 font-medium">{samletStk.toLocaleString('da-DK')}</td>
+                                <td className="px-3 py-2 text-right font-medium">{formatPrice(samletBeløb)}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
                 </div>
               )}
