@@ -77,6 +77,23 @@ export default function HistoricalDataPage() {
         });
       }
 
+      // Always add "Øvrige" as a special salesperson option
+      const ovrigeId = '__OVRIGE__';
+      const ovrigeExisting = (data ?? []).find((d: any) => d.salesperson_name === 'Øvrige');
+      newInputs.set(ovrigeId, {
+        salesperson_id: ovrigeId,
+        salesperson_name: 'Øvrige',
+        total_leveret: ovrigeExisting?.total_leveret ?? 0,
+        telefon_stk: ovrigeExisting?.telefon_stk ?? 0,
+        telefon_beløb: ovrigeExisting?.telefon_beløb ?? 0,
+        b2b_stk: ovrigeExisting?.b2b_stk ?? 0,
+        b2b_beløb: ovrigeExisting?.b2b_beløb ?? 0,
+        krediteret_stk: ovrigeExisting?.krediteret_stk ?? 0,
+        krediteret_beløb: ovrigeExisting?.krediteret_beløb ?? 0,
+        samlet_stk: ovrigeExisting?.samlet_stk ?? 0,
+        samlet_beløb: ovrigeExisting?.samlet_beløb ?? 0,
+      });
+
       setInputs(newInputs);
     }
 
@@ -299,6 +316,92 @@ export default function HistoricalDataPage() {
                         type="number"
                         value={input.samlet_beløb || ''}
                         onChange={(e) => updateInput(sp.id, 'samlet_beløb', parseFloat(e.target.value) || 0)}
+                        className="w-full px-2 py-1 border rounded"
+                        placeholder="i cents"
+                      />
+                    </td>
+                  </tr>
+                );
+              })}
+              {/* Always show "Øvrige" row */}
+              {(() => {
+                const ovrigeInput = inputs.get('__OVRIGE__');
+                if (!ovrigeInput) return null;
+                return (
+                  <tr key="__OVRIGE__" className="border-b hover:bg-gray-50 bg-yellow-50">
+                    <td className="px-4 py-2 font-medium border-r">Øvrige</td>
+                    <td className="px-4 py-2 border-r">
+                      <input
+                        type="number"
+                        value={ovrigeInput.total_leveret || ''}
+                        onChange={(e) => updateInput('__OVRIGE__', 'total_leveret', parseFloat(e.target.value) || 0)}
+                        className="w-full px-2 py-1 border rounded"
+                      />
+                    </td>
+                    <td className="px-4 py-2 border-r">
+                      <input
+                        type="number"
+                        value={ovrigeInput.telefon_stk || ''}
+                        onChange={(e) => updateInput('__OVRIGE__', 'telefon_stk', parseFloat(e.target.value) || 0)}
+                        className="w-full px-2 py-1 border rounded"
+                      />
+                    </td>
+                    <td className="px-4 py-2 border-r">
+                      <input
+                        type="number"
+                        value={ovrigeInput.telefon_beløb || ''}
+                        onChange={(e) => updateInput('__OVRIGE__', 'telefon_beløb', parseFloat(e.target.value) || 0)}
+                        className="w-full px-2 py-1 border rounded"
+                        placeholder="i cents"
+                      />
+                    </td>
+                    <td className="px-4 py-2 border-r">
+                      <input
+                        type="number"
+                        value={ovrigeInput.b2b_stk || ''}
+                        onChange={(e) => updateInput('__OVRIGE__', 'b2b_stk', parseFloat(e.target.value) || 0)}
+                        className="w-full px-2 py-1 border rounded"
+                      />
+                    </td>
+                    <td className="px-4 py-2 border-r">
+                      <input
+                        type="number"
+                        value={ovrigeInput.b2b_beløb || ''}
+                        onChange={(e) => updateInput('__OVRIGE__', 'b2b_beløb', parseFloat(e.target.value) || 0)}
+                        className="w-full px-2 py-1 border rounded"
+                        placeholder="i cents"
+                      />
+                    </td>
+                    <td className="px-4 py-2 border-r">
+                      <input
+                        type="number"
+                        value={ovrigeInput.krediteret_stk || ''}
+                        onChange={(e) => updateInput('__OVRIGE__', 'krediteret_stk', parseFloat(e.target.value) || 0)}
+                        className="w-full px-2 py-1 border rounded"
+                      />
+                    </td>
+                    <td className="px-4 py-2 border-r">
+                      <input
+                        type="number"
+                        value={ovrigeInput.krediteret_beløb || ''}
+                        onChange={(e) => updateInput('__OVRIGE__', 'krediteret_beløb', parseFloat(e.target.value) || 0)}
+                        className="w-full px-2 py-1 border rounded"
+                        placeholder="i cents"
+                      />
+                    </td>
+                    <td className="px-4 py-2 border-r">
+                      <input
+                        type="number"
+                        value={ovrigeInput.samlet_stk || ''}
+                        onChange={(e) => updateInput('__OVRIGE__', 'samlet_stk', parseFloat(e.target.value) || 0)}
+                        className="w-full px-2 py-1 border rounded"
+                      />
+                    </td>
+                    <td className="px-4 py-2">
+                      <input
+                        type="number"
+                        value={ovrigeInput.samlet_beløb || ''}
+                        onChange={(e) => updateInput('__OVRIGE__', 'samlet_beløb', parseFloat(e.target.value) || 0)}
                         className="w-full px-2 py-1 border rounded"
                         placeholder="i cents"
                       />

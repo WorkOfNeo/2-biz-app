@@ -124,91 +124,103 @@ export async function exportSuppleringer(ctx: Ctx) {
       salespersonCount: currentData.length
     });
 
-    // Group rows by salesperson ID (much more reliable than name matching)
-    // Use salesperson_id as the key for grouping
-    const rowsBySalesperson = new Map<string | null, any[]>();
-    const rowsBySalespersonCustomer = new Map<string | null, Map<string, any[]>>();
-    
-    // Create mapping from salesperson_id to salesperson_name for display
-    const salespersonIdToName = new Map<string | null, string>();
+    // Get ALL unique salesperson IDs from rows (bulletproof - get from DB directly)
+    const uniqueSalespersonIdsFromRows = new Set<string>();
+    for (const row of currentRows || []) {
+      if (row.salesperson_id && typeof row.salesperson_id === 'string') {
+        uniqueSalespersonIdsFromRows.add(row.salesperson_id);
+      }
+    }
+
+    // Query salespersons table to get names for all IDs found in rows
+    let salespersonIdToName = new Map<string | null, string>();
+    if (uniqueSalespersonIdsFromRows.size > 0) {
+      const { data: salespersonsData } = await supabase
+        .from('salespersons')
+        .select('id, name')
+        .in('id', Array.from(uniqueSalespersonIdsFromRows));
+      
+      for (const sp of salespersonsData || []) {
+        if (sp.id) salespersonIdToName.set(sp.id, sp.name || 'Unknown');
+      }
+    }
+
+    // Also add names from aggregated data (in case some are missing from salespersons table)
     for (const stat of currentData) {
       const spId = stat.salesperson_id || null;
       const spName = stat.salesperson_name || '';
-      if (spId) salespersonIdToName.set(spId, spName);
-      // Also initialize maps for all salespersons in currentData
+      if (spId && !salespersonIdToName.has(spId)) {
+        salespersonIdToName.set(spId, spName);
+      }
+    }
+
+    // Group rows by salesperson ID (much more reliable than name matching)
+    const rowsBySalesperson = new Map<string | null, any[]>();
+    const rowsBySalespersonCustomer = new Map<string | null, Map<string, any[]>>();
+    
+    // Initialize maps for all salespersons in aggregated data
+    for (const stat of currentData) {
+      const spId = stat.salesperson_id || null;
       if (spId && !rowsBySalespersonCustomer.has(spId)) {
         rowsBySalespersonCustomer.set(spId, new Map());
         rowsBySalesperson.set(spId, []);
       }
     }
     
-    // Track unmatched salesperson IDs from rows
-    const unmatchedSalespersonIds = new Set<string | null>();
+    // Special key for "Øvrige" (entries without a salesperson)
+    const OVRIGE_KEY = '__OVRIGE__';
+    salespersonIdToName.set(OVRIGE_KEY, 'Øvrige');
     
-    // Group customer rows by salesperson ID
+    // Group customer rows by salesperson ID - BULLETPROOF VERSION
     for (const row of currentRows || []) {
       const rowSpId = row.salesperson_id || null;
-      const rowSpName = row.salesperson_name || '';
       const customerName = row.customer_name || '';
       
       if (!customerName) continue; // Skip invalid rows
       
-      // Use salesperson_id if available, otherwise use name as fallback
-      let matchedSpId: string | null = null;
+      // Determine which key to use: salesperson_id if available, otherwise "Øvrige"
+      let matchKey: string | null = null;
       
-      if (rowSpId) {
-        // Use ID if available
-        matchedSpId = rowSpId;
-        if (!salespersonIdToName.has(rowSpId) && rowSpName) {
-          salespersonIdToName.set(rowSpId, rowSpName);
+      if (rowSpId && typeof rowSpId === 'string') {
+        // Use actual salesperson_id
+        matchKey = rowSpId;
+        
+        // Ensure name mapping exists (use name from row if not in salespersons table)
+        if (!salespersonIdToName.has(rowSpId) && row.salesperson_name) {
+          salespersonIdToName.set(rowSpId, row.salesperson_name);
         }
-      } else if (rowSpName) {
-        // Fallback to name if ID not available - try to find ID from currentData
-        const stat = currentData.find((s: any) => s.salesperson_name === rowSpName);
-        if (stat?.salesperson_id) {
-          matchedSpId = stat.salesperson_id;
-          salespersonIdToName.set(matchedSpId, rowSpName);
-        } else {
-          // No ID found, use name as key (legacy support)
-          unmatchedSalespersonIds.add(rowSpName as any);
-          matchedSpId = rowSpName as any;
-          salespersonIdToName.set(matchedSpId, rowSpName);
-        }
+      } else {
+        // No salesperson_id - use "Øvrige" catch-all
+        matchKey = OVRIGE_KEY;
       }
       
-      if (matchedSpId) {
+      if (matchKey) {
         // Initialize if not already done
-        if (!rowsBySalespersonCustomer.has(matchedSpId)) {
-          rowsBySalespersonCustomer.set(matchedSpId, new Map());
-          rowsBySalesperson.set(matchedSpId, []);
+        if (!rowsBySalespersonCustomer.has(matchKey)) {
+          rowsBySalespersonCustomer.set(matchKey, new Map());
+          rowsBySalesperson.set(matchKey, []);
         }
         
-        rowsBySalesperson.get(matchedSpId)!.push(row);
+        rowsBySalesperson.get(matchKey)!.push(row);
         
-        const customerMap = rowsBySalespersonCustomer.get(matchedSpId)!;
+        const customerMap = rowsBySalespersonCustomer.get(matchKey)!;
         if (!customerMap.has(customerName)) {
           customerMap.set(customerName, []);
         }
         customerMap.get(customerName)!.push(row);
       }
     }
-    
-    // Log unmatched salesperson IDs for debugging
-    if (unmatchedSalespersonIds.size > 0) {
-      await log(job.id, 'info', 'STEP:export_suppleringer_unmatched_salespersons', {
-        unmatchedIds: Array.from(unmatchedSalespersonIds),
-        message: 'Salespersons found in rows but not in aggregated data - will still create PDFs'
-      });
-    }
 
     // Log salesperson mapping for debugging
     await log(job.id, 'info', 'STEP:export_suppleringer_salesperson_mapping', {
       salespersonsInData: currentData.map((s: any) => ({ id: s.salesperson_id, name: s.salesperson_name })),
+      uniqueIdsFromRows: Array.from(uniqueSalespersonIdsFromRows),
       salespersonsInRows: Array.from(rowsBySalespersonCustomer.keys()),
       rowCountsBySalesperson: Object.fromEntries(
         Array.from(rowsBySalespersonCustomer.entries()).map(([spId, map]) => [spId || 'null', map.size])
       ),
-      totalRowsLoaded: currentRows ? currentRows.length : 0
+      totalRowsLoaded: currentRows ? currentRows.length : 0,
+      totalCustomerMaps: rowsBySalespersonCustomer.size
     });
 
     const styles = StyleSheet.create({
@@ -248,13 +260,19 @@ export async function exportSuppleringer(ctx: Ctx) {
     
     // Add salespersons from aggregated data
     for (const stat of currentData) {
-      const spId = stat.salesperson_id || stat.salesperson_name; // Use ID or fallback to name
+      const spId = stat.salesperson_id || (stat.salesperson_name === 'Øvrige' ? OVRIGE_KEY : stat.salesperson_name);
       if (spId) allSalespersonIds.add(spId);
     }
     
     // Add salespersons from rows (in case they have rows but no aggregated data)
+    // This includes "Øvrige" for rows without salesperson_id
     for (const spId of rowsBySalespersonCustomer.keys()) {
       if (spId) allSalespersonIds.add(spId);
+    }
+    
+    // Always include "Øvrige" if there are any rows without salesperson_id
+    if (rowsBySalespersonCustomer.has(OVRIGE_KEY)) {
+      allSalespersonIds.add(OVRIGE_KEY);
     }
     
     await log(job.id, 'info', 'STEP:export_suppleringer_salesperson_list', {
