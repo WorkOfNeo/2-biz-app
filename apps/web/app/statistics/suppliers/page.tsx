@@ -10,6 +10,7 @@ type ParsedRow = {
   qtyOrdered: number;
   qtyDelivered: number;
   price: number; // in cents
+  date: string | null; // Date from BO column
 };
 
 type SalespersonSummary = {
@@ -76,6 +77,44 @@ export default function SuppliersPage() {
     return isNaN(num) ? 0 : Math.round(num);
   }
 
+  // Parse date from column BO - handles both ="2025-11-04" format and regular date
+  function parseDate(value: any): string | null {
+    if (value === null || value === undefined) return null;
+    let str = String(value).trim();
+    
+    // Handle ="2025-11-04" format
+    if (str.startsWith('="') && str.endsWith('"')) {
+      str = str.slice(2, -1);
+    }
+    
+    // Try to parse as date - Excel might store as number (serial date) or string
+    if (!str) return null;
+    
+    // If it's a number, it might be an Excel date serial number
+    const num = Number(str);
+    if (!isNaN(num) && num > 0) {
+      // Excel date serial: days since 1900-01-01
+      const excelEpoch = new Date(1899, 11, 30); // Dec 30, 1899
+      const date = new Date(excelEpoch.getTime() + num * 86400000);
+      if (!isNaN(date.getTime())) {
+        return date.toISOString().split('T')[0]; // Return YYYY-MM-DD format
+      }
+    }
+    
+    // Try to parse as ISO date string
+    const date = new Date(str);
+    if (!isNaN(date.getTime())) {
+      return date.toISOString().split('T')[0]; // Return YYYY-MM-DD format
+    }
+    
+    // Return as-is if it looks like YYYY-MM-DD
+    if (/^\d{4}-\d{2}-\d{2}$/.test(str)) {
+      return str;
+    }
+    
+    return null;
+  }
+
   async function parseFile(selectedFile: File) {
     try {
       const buf = await selectedFile.arrayBuffer();
@@ -99,6 +138,7 @@ export default function SuppliersPage() {
       const colAN = excelColToIndex('AN'); // Size Quantity Ordered
       const colAO = excelColToIndex('AO'); // Size Quantity Delivered
       const colAW = excelColToIndex('AW'); // Sales Price Base Exchange Total
+      const colBO = excelColToIndex('BO'); // Date
 
       // Skip header row (index 0), start from row 1
       for (let i = 1; i < data.length; i++) {
@@ -111,6 +151,7 @@ export default function SuppliersPage() {
         const qtyOrdered = parseQty(row[colAN]); // Column AN
         const qtyDelivered = parseQty(row[colAO]); // Column AO
         const price = parsePrice(row[colAW]); // Column AW
+        const date = parseDate(row[colBO]); // Column BO
 
         // Only include Stock orders
         if (orderType.toUpperCase() !== 'STOCK') continue;
@@ -126,6 +167,7 @@ export default function SuppliersPage() {
           qtyOrdered,
           qtyDelivered,
           price,
+          date,
         });
       }
 
@@ -309,48 +351,69 @@ export default function SuppliersPage() {
               {/* Customer Details */}
               {selectedSalesperson === summary.salesPerson && customerGroups.length > 0 && (
                 <div className="border-t bg-white">
-                  <div className="p-4 space-y-3">
-                    <h4 className="font-semibold text-sm mb-2">Kunder:</h4>
+                  <div className="p-2 space-y-1.5">
+                    <h4 className="font-semibold text-xs mb-1 text-gray-700">Kunder:</h4>
                     {customerGroups.map((group, idx) => (
                       <div
                         key={`${group.customerName}-${group.accountNo}-${idx}`}
-                        className="border rounded p-3 cursor-pointer hover:bg-gray-50"
+                        className="border rounded p-1.5 cursor-pointer hover:bg-gray-50"
                         onClick={() => setSelectedCustomer(
                           selectedCustomer === `${group.customerName}|${group.accountNo}` 
                             ? null 
                             : `${group.customerName}|${group.accountNo}`
                         )}
                       >
-                        <div className="flex items-center justify-between mb-1">
-                          <div>
+                        <div className="flex items-center justify-between">
+                          <div className="text-xs">
                             <span className="font-medium">{group.customerName}</span>
-                            <span className="text-gray-500 text-sm ml-2">({group.accountNo})</span>
+                            <span className="text-gray-500 ml-1.5">({group.accountNo})</span>
                           </div>
-                          <span className="text-xs text-gray-500">
-                            {selectedCustomer === `${group.customerName}|${group.accountNo}` ? '▼' : '▶'} {group.rows.length} rækker
+                          <span className="text-[10px] text-gray-500">
+                            {selectedCustomer === `${group.customerName}|${group.accountNo}` ? '▼' : '▶'} {group.rows.length}
                           </span>
                         </div>
                         
                         {selectedCustomer === `${group.customerName}|${group.accountNo}` && (
-                          <div className="mt-3 overflow-x-auto">
-                            <table className="min-w-full text-xs">
-                              <thead className="bg-gray-50">
-                                <tr>
-                                  <th className="px-2 py-1 text-left">Bestilt stk</th>
-                                  <th className="px-2 py-1 text-left">Leveret stk</th>
-                                  <th className="px-2 py-1 text-right">Pris</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {group.rows.map((row, rowIdx) => (
-                                  <tr key={rowIdx} className="border-t">
-                                    <td className="px-2 py-1">{row.qtyOrdered.toLocaleString('da-DK')}</td>
-                                    <td className="px-2 py-1">{row.qtyDelivered.toLocaleString('da-DK')}</td>
-                                    <td className="px-2 py-1 text-right">{formatPrice(row.price)}</td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
+                          <div className="mt-2 overflow-x-auto">
+                            {(() => {
+                              // Group rows by date range (from - to)
+                              const sortedRows = [...group.rows].sort((a, b) => {
+                                const dateA = a.date || '';
+                                const dateB = b.date || '';
+                                return dateA.localeCompare(dateB);
+                              });
+                              
+                              const dates = sortedRows.map(r => r.date).filter(Boolean) as string[];
+                              const dateRange = dates.length > 0 
+                                ? `${dates[0]} - ${dates[dates.length - 1]}`
+                                : '—';
+                              
+                              return (
+                                <div className="border rounded bg-white">
+                                  <div className="bg-gray-50 px-2 py-0.5 text-[10px] font-medium border-b text-gray-700">
+                                    {dateRange}
+                                  </div>
+                                  <table className="min-w-full text-[10px]">
+                                    <thead className="bg-gray-50 border-b">
+                                      <tr>
+                                        <th className="px-1.5 py-0.5 text-left border-r font-medium">Bestilt stk</th>
+                                        <th className="px-1.5 py-0.5 text-left border-r font-medium">Leveret stk</th>
+                                        <th className="px-1.5 py-0.5 text-right font-medium">Pris</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {sortedRows.map((row, rowIdx) => (
+                                        <tr key={rowIdx} className="border-b hover:bg-gray-50">
+                                          <td className="px-1.5 py-0.5 border-r">{row.qtyOrdered.toLocaleString('da-DK')}</td>
+                                          <td className="px-1.5 py-0.5 border-r">{row.qtyDelivered.toLocaleString('da-DK')}</td>
+                                          <td className="px-1.5 py-0.5 text-right font-mono">{formatPrice(row.price)}</td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              );
+                            })()}
                           </div>
                         )}
                       </div>
