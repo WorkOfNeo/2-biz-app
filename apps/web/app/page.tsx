@@ -174,9 +174,17 @@ export default function HomePage() {
 
   // Calculate data per country and salesperson (reuse overview logic)
   const countryData = React.useMemo(() => {
-    if (!people || !customers || !stats || !invoices || !s1 || !s2) return {} as Record<string, { rows: any[]; totals: any }>;
+    if (!people || !customers || !stats || !invoices || !s1 || !s2) return {} as Record<string, { rows: any[]; totals: any; collectedIndex: any }>;
 
-    const result: Record<string, { rows: any[]; totals: { s1Qty: number; s1PriceDkk: number; s2Qty: number; s2PriceDkk: number } }> = {};
+    const result: Record<string, { 
+      rows: any[]; 
+      totals: { s1Qty: number; s1PriceDkk: number; s2Qty: number; s2PriceDkk: number };
+      collectedIndex: { indexQty: number; indexPrice: number; prognosedQty: number; prognosedPrice: number };
+    }> = {};
+
+    // Build customer lookup map once (used in multiple places)
+    const customerById = new Map<string, Customer>();
+    for (const c of customers) { if (c.customer_id) customerById.set(c.customer_id, c); }
 
     for (const countryName of COUNTRIES) {
       const targetCountry = countryName.toUpperCase();
@@ -239,10 +247,7 @@ export default function HomePage() {
         }
       }
 
-      // Process invoices
-      const customerById = new Map<string, Customer>();
-      for (const c of customers) { if (c.customer_id) customerById.set(c.customer_id, c); }
-
+      // Process invoices (customerById is defined above the country loop)
       for (const inv of invoices) {
         const acc = inv.account_no ?? '';
         if (!acc) continue;
@@ -400,10 +405,103 @@ export default function HomePage() {
         countryTotals.s2PriceDkk += a.s2Price;
       }
 
+      // Calculate collected index and prognosis for this country (same logic as overview page)
+      const targetAccounts = new Set<string>();
+      const nulledAccounts = new Set<string>();
+      for (const c of customers) {
+        if (!c.customer_id) continue;
+        if (isHidden(c.customer_id)) continue;
+        const cCountry = String(c.country ?? '').toUpperCase();
+        if (cCountry !== targetCountry) continue;
+        targetAccounts.add(c.customer_id);
+        if (isNulled(c.customer_id)) {
+          nulledAccounts.add(c.customer_id);
+        }
+      }
+
+      const buckets = new Map<string, { accountId: string; s1Qty: number; s1Price: number; s2Qty: number; s2Price: number; isNulled: boolean }>();
+      const ensureBucket = (accountId: string) => {
+        const existing = buckets.get(accountId);
+        if (existing) return existing;
+        const created = { accountId, s1Qty: 0, s1Price: 0, s2Qty: 0, s2Price: 0, isNulled: nulledAccounts.has(accountId) };
+        buckets.set(accountId, created);
+        return created;
+      };
+      targetAccounts.forEach((acc) => ensureBucket(acc));
+
+      const safeCurrency = (value: string | null | undefined, fallback = 'DKK') => {
+        const base = value ?? fallback ?? 'DKK';
+        return String(base).toUpperCase();
+      };
+
+      // Aggregate stats for country
+      for (const r of stats) {
+        const acc = r.account_no ?? '';
+        if (!acc || !targetAccounts.has(acc)) continue;
+        const bucket = ensureBucket(acc);
+        const qty = Number(r.qty || 0);
+        const price = Number(r.price || 0);
+        const currency = safeCurrency(r.salesperson_id ? spCurrencyById[r.salesperson_id] : null);
+        if (r.season_id === s1) {
+          if (!bucket.isNulled) {
+            bucket.s1Qty += qty;
+            bucket.s1Price += price * (seasonRatesS1[currency] ?? 1);
+          }
+        } else if (r.season_id === s2) {
+          bucket.s2Qty += qty;
+          bucket.s2Price += price * (seasonRatesS2[currency] ?? 1);
+        }
+      }
+
+      // Aggregate invoices for country (reuse customerById from earlier)
+
+      for (const inv of invoices) {
+        const acc = inv.account_no ?? '';
+        if (!acc || !targetAccounts.has(acc)) continue;
+        const bucket = ensureBucket(acc);
+        const qty = Number(inv.qty || 0) || 0;
+        const amount = Number(inv.amount || 0) || 0;
+        const meta = customerById.get(acc);
+        const spId = meta?.salesperson_id ?? null;
+        const fallbackCurrency = safeCurrency(inv.currency);
+        const currency = spId ? safeCurrency(spCurrencyById[spId], fallbackCurrency) : fallbackCurrency;
+        if (inv.season_id === s1) {
+          if (!bucket.isNulled) {
+            bucket.s1Qty += qty;
+            bucket.s1Price += amount * (seasonRatesS1[currency] ?? 1);
+          }
+        } else if (inv.season_id === s2) {
+          bucket.s2Qty += qty;
+          bucket.s2Price += amount * (seasonRatesS2[currency] ?? 1);
+        }
+      }
+
+      const values = Array.from(buckets.values());
+      const visited = values.filter((v) => v.s1Qty > 0 || v.s1Price > 0);
+      const visitedS1Qty = visited.reduce((a, v) => a + v.s1Qty, 0);
+      const visitedS1Price = visited.reduce((a, v) => a + v.s1Price, 0);
+      const visitedS2Qty = visited.reduce((a, v) => a + v.s2Qty, 0);
+      const visitedS2Price = visited.reduce((a, v) => a + v.s2Price, 0);
+      const qtyIndexRatio = visitedS2Qty === 0 ? 1 : visitedS1Qty / visitedS2Qty;
+      const priceIndexRatio = visitedS2Price === 0 ? 1 : visitedS1Price / visitedS2Price;
+      const indexQty = visitedS2Qty === 0 ? 100 : qtyIndexRatio * 100;
+      const indexPrice = visitedS2Price === 0 ? 100 : priceIndexRatio * 100;
+      const unvisited = values.filter((v) => v.s1Qty === 0 && v.s1Price === 0 && !v.isNulled);
+      const unvisitedS2Qty = unvisited.reduce((a, v) => a + v.s2Qty, 0);
+      const unvisitedS2Price = unvisited.reduce((a, v) => a + v.s2Price, 0);
+      const prognosedQty = visitedS1Qty + unvisitedS2Qty;
+      const prognosedPrice = visitedS1Price + unvisitedS2Price;
+
       if (countryRows.length > 0) {
         result[countryName] = {
           rows: countryRows,
           totals: countryTotals,
+          collectedIndex: {
+            indexQty,
+            indexPrice,
+            prognosedQty,
+            prognosedPrice,
+          },
         };
       }
     }
@@ -556,33 +654,91 @@ export default function HomePage() {
                               </tr>
                             ))}
 
-                            {/* Totals Row for Country */}
-                            <tr className="bg-gray-100 border-t-2 border-gray-300 font-medium">
-                              <td colSpan={2} className="px-2 py-1 border-r">TOTAL</td>
-                              <td className="px-2 py-1 border-r text-right font-mono text-[11px]">
-                                {s1Qty.toLocaleString('da-DK')} stk<br />
-                                <span className="text-gray-500 text-[10px]">vs {s2Qty.toLocaleString('da-DK')}</span><br />
-                                <span className={qtyCls}>
-                                  {diffQtyPct > 0 ? '+' : ''}{diffQtyPct.toFixed(1)}%
-                                </span>
-                              </td>
-                              <td className="px-2 py-1 border-r text-right font-mono text-[11px]">
-                                {s1Price.toLocaleString('da-DK')} Oms.<br />
-                                <span className="text-gray-500 text-[10px]">vs {s2Price.toLocaleString('da-DK')}</span><br />
-                                <span className={priceCls}>
-                                  {diffPricePct > 0 ? '+' : ''}{diffPricePct.toFixed(1)}%
-                                </span>
-                              </td>
-                              <td className="px-2 py-1 border-r text-right font-mono text-[11px]">
-                                —
-                              </td>
-                              <td className="px-2 py-1 text-right font-mono text-[11px]">
-                                —
-                              </td>
-                            </tr>
                           </React.Fragment>
                         );
                       })}
+                    </tbody>
+                  </table>
+                </div>
+              );
+            }, [countryData, s1, s2])}
+
+            {/* Totals Section - One row per country */}
+            {React.useMemo(() => {
+              const countryTotalsData = COUNTRIES.map((countryName) => {
+                const countryInfo = countryData[countryName];
+                if (!countryInfo || !countryInfo.rows || countryInfo.rows.length === 0) return null;
+
+                const totals = countryInfo.totals;
+                const collectedIndex = countryInfo.collectedIndex || {
+                  indexQty: totals.s2Qty === 0 ? 100 : (totals.s1Qty / totals.s2Qty) * 100,
+                  indexPrice: totals.s2PriceDkk === 0 ? 100 : (totals.s1PriceDkk / totals.s2PriceDkk) * 100,
+                  prognosedQty: totals.s1Qty + totals.s2Qty,
+                  prognosedPrice: totals.s1PriceDkk + totals.s2PriceDkk,
+                };
+
+                return {
+                  country: countryName,
+                  s1Qty: Math.round(totals.s1Qty),
+                  s1Price: Math.round(totals.s1PriceDkk),
+                  s2Qty: Math.round(totals.s2Qty),
+                  s2Price: Math.round(totals.s2PriceDkk),
+                  indexQty: Math.round(collectedIndex.indexQty),
+                  indexPrice: Math.round(collectedIndex.indexPrice),
+                  prognosedQty: Math.round(collectedIndex.prognosedQty),
+                  prognosedPrice: Math.round(collectedIndex.prognosedPrice),
+                };
+              }).filter(Boolean);
+
+              if (countryTotalsData.length === 0) return null;
+
+              return (
+                <div className="rounded-md border overflow-hidden">
+                  <div className="bg-gray-100 px-2 py-1.5 text-sm font-semibold border-b">TOTALS</div>
+                  <table className="min-w-full text-xs">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-2 py-1.5 text-left font-semibold border-r">Land</th>
+                        <th className="px-2 py-1.5 text-right font-semibold border-r">{getSeasonLabel(s1)} stk</th>
+                        <th className="px-2 py-1.5 text-right font-semibold border-r">{getSeasonLabel(s1)} Oms.</th>
+                        <th className="px-2 py-1.5 text-right font-semibold border-r">{getSeasonLabel(s2)} stk</th>
+                        <th className="px-2 py-1.5 text-right font-semibold border-r">{getSeasonLabel(s2)} Oms.</th>
+                        <th className="px-2 py-1.5 text-right font-semibold border-r">Index stk</th>
+                        <th className="px-2 py-1.5 text-right font-semibold border-r">Index Oms.</th>
+                        <th className="px-2 py-1.5 text-right font-semibold border-r">Prognose stk</th>
+                        <th className="px-2 py-1.5 text-right font-semibold">Prognose Oms.</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {countryTotalsData.map((country: any) => (
+                        <tr key={country.country} className="border-t hover:bg-gray-50">
+                          <td className="px-2 py-1 border-r font-medium">{country.country}</td>
+                          <td className="px-2 py-1 border-r text-right font-mono text-[11px]">
+                            {country.s1Qty.toLocaleString('da-DK')}
+                          </td>
+                          <td className="px-2 py-1 border-r text-right font-mono text-[11px]">
+                            {country.s1Price.toLocaleString('da-DK')}
+                          </td>
+                          <td className="px-2 py-1 border-r text-right font-mono text-[11px]">
+                            {country.s2Qty.toLocaleString('da-DK')}
+                          </td>
+                          <td className="px-2 py-1 border-r text-right font-mono text-[11px]">
+                            {country.s2Price.toLocaleString('da-DK')}
+                          </td>
+                          <td className="px-2 py-1 border-r text-right font-mono text-[11px]">
+                            {country.indexQty.toLocaleString('da-DK')}
+                          </td>
+                          <td className="px-2 py-1 border-r text-right font-mono text-[11px]">
+                            {country.indexPrice.toLocaleString('da-DK')}
+                          </td>
+                          <td className="px-2 py-1 border-r text-right font-mono text-[11px]">
+                            {country.prognosedQty.toLocaleString('da-DK')}
+                          </td>
+                          <td className="px-2 py-1 text-right font-mono text-[11px]">
+                            {country.prognosedPrice.toLocaleString('da-DK')}
+                          </td>
+                        </tr>
+                      ))}
                     </tbody>
                   </table>
                 </div>
