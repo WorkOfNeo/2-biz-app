@@ -99,7 +99,9 @@ export default function SuppliersPage() {
       if (!isNaN(date.getTime())) {
         const isoStr = date.toISOString();
         const datePart = isoStr.split('T')[0];
-        return datePart ? datePart : null; // Return YYYY-MM-DD format
+        if (datePart !== undefined && datePart !== null) {
+          return datePart; // Return YYYY-MM-DD format
+        }
       }
     }
     
@@ -108,7 +110,9 @@ export default function SuppliersPage() {
     if (!isNaN(date.getTime())) {
       const isoStr = date.toISOString();
       const datePart = isoStr.split('T')[0];
-      return datePart ? datePart : null; // Return YYYY-MM-DD format
+      if (datePart !== undefined && datePart !== null) {
+        return datePart; // Return YYYY-MM-DD format
+      }
     }
     
     // Return as-is if it looks like YYYY-MM-DD
