@@ -68,6 +68,21 @@ export default function HomePage() {
     return `${s.name}${s.year ? ' ' + s.year : ''}`;
   }
 
+  function getSeasonAbbreviation(seasonId: string | undefined) {
+    if (!seasonId) return '';
+    const s = (seasons ?? []).find((x) => x.id === seasonId);
+    if (!s || !s.name) return '';
+    
+    // Get first letter of each word from season name
+    const nameParts = String(s.name).trim().split(/\s+/).filter(Boolean);
+    const abbrev = nameParts.map(word => word.charAt(0).toUpperCase()).join('');
+    
+    // Get last two digits of year
+    const yearSuffix = s.year ? String(s.year).slice(-2) : '';
+    
+    return abbrev + yearSuffix || abbrev; // Fallback to just abbreviation if no year
+  }
+
   React.useEffect(() => {
     if (saved?.value) {
       if (saved.value.s1) setS1(saved.value.s1);
@@ -630,7 +645,7 @@ export default function HomePage() {
                                     {row.name}
                                   </Link>
                                   {row.visitedNoS2 > 0 && (
-                                    <span className="text-orange-600 ml-1 text-[10px]">({row.visitedNoS2} besøgt uden {getSeasonLabel(s2)} tal)</span>
+                                    <span className="text-orange-600 ml-1 text-[10px]">({row.visitedNoS2} besøgt uden {getSeasonAbbreviation(s2)} tal)</span>
                                   )}
                                 </td>
                                 <td className="px-2 py-1 border-r text-center">
@@ -699,10 +714,10 @@ export default function HomePage() {
                     <thead className="bg-gray-50">
                       <tr>
                         <th className="px-2 py-1.5 text-left font-semibold border-r">Land</th>
-                        <th className="px-2 py-1.5 text-right font-semibold border-r">{getSeasonLabel(s1)} stk</th>
-                        <th className="px-2 py-1.5 text-right font-semibold border-r">{getSeasonLabel(s1)} Oms.</th>
-                        <th className="px-2 py-1.5 text-right font-semibold border-r">{getSeasonLabel(s2)} stk</th>
-                        <th className="px-2 py-1.5 text-right font-semibold border-r">{getSeasonLabel(s2)} Oms.</th>
+                        <th className="px-2 py-1.5 text-right font-semibold border-r">{getSeasonAbbreviation(s1)} stk</th>
+                        <th className="px-2 py-1.5 text-right font-semibold border-r">{getSeasonAbbreviation(s1)} Oms.</th>
+                        <th className="px-2 py-1.5 text-right font-semibold border-r">{getSeasonAbbreviation(s2)} stk</th>
+                        <th className="px-2 py-1.5 text-right font-semibold border-r">{getSeasonAbbreviation(s2)} Oms.</th>
                         <th className="px-2 py-1.5 text-right font-semibold border-r">Index stk</th>
                         <th className="px-2 py-1.5 text-right font-semibold border-r">Index Oms.</th>
                         <th className="px-2 py-1.5 text-right font-semibold border-r">Prognose stk</th>
