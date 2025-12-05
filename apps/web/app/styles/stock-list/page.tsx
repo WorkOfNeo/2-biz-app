@@ -70,12 +70,6 @@ export default function StockListPage() {
   const [runningStockFix, setRunningStockFix] = React.useState<boolean>(false);
   const [stockFixMessage, setStockFixMessage] = React.useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
   const [stockFixProgress, setStockFixProgress] = React.useState<{ step: string; details?: string } | null>(null);
-  const [stockFixResults, setStockFixResults] = React.useState<{ 
-    totalChecked: number; 
-    mismatches: Array<{ style_no: string; spy_stock: number | null; db_stock: number; diff: number }>;
-    jobId: string;
-  } | null>(null);
-  const [scrapingStockFixMismatches, setScrapingStockFixMismatches] = React.useState<boolean>(false);
   const [scrapeProgress, setScrapeProgress] = React.useState<{ current: number; total: number } | null>(null);
   const [scrapeMessage, setScrapeMessage] = React.useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
   const { data, mutate: mutateStockData } = useSWR('style_stock:list', async () => {
@@ -718,8 +712,8 @@ export default function StockListPage() {
     } else {
       // For styles mode, use styleNo directly
       mismatchStyleNos = checkerResults.differences
-        .filter((d: any) => d.status === 'mismatch')
-        .map((d: any) => d.styleNo);
+      .filter((d: any) => d.status === 'mismatch')
+      .map((d: any) => d.styleNo);
     }
     
     if (mismatchStyleNos.length === 0) {
@@ -825,8 +819,8 @@ export default function StockListPage() {
   const runStockFixCheck = React.useCallback(async () => {
     try {
       setRunningStockFix(true);
-      setStockFixMessage({ type: 'info', text: 'Starting stock verification check...' });
-      setStockFixProgress({ step: 'Initializing...' });
+      setStockFixMessage({ type: 'info', text: 'Starting SPY stock verification...' });
+      setStockFixProgress({ step: 'Connecting to SPY system...' });
       
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) {
@@ -836,200 +830,151 @@ export default function StockListPage() {
         return;
       }
       
-      // Enqueue the check_stock_fix job
-      const res = await fetch('/api/enqueue', {
+      // Call the new API endpoint
+      setStockFixProgress({ step: 'Scraping SPY stock data...' });
+      const res = await fetch('/api/verify-spy-stock', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
-        body: JSON.stringify({
-          type: 'check_stock_fix',
-          payload: { 
-            requestedBy: session.user.email,
-            manual: true // Mark as manually triggered
-          }
-        })
+        headers: { 
+          'Content-Type': 'application/json', 
+          Authorization: `Bearer ${session.access_token}` 
+        }
       });
       
       if (!res.ok) {
-        const txt = await res.text().catch(() => '');
-        throw new Error(txt || `Failed (${res.status})`);
+        const errorData = await res.json().catch(() => ({ error: `Failed (${res.status})` }));
+        throw new Error(errorData.error || `Failed (${res.status})`);
       }
       
-      const { jobId } = await res.json();
-      setStockFixMessage({ type: 'info', text: 'Stock check job queued. Monitoring progress...' });
-      setStockFixProgress({ step: 'Job queued', details: jobId });
+      const { data: spyData } = await res.json();
       
-      // Poll for progress
-      const pollInterval = setInterval(async () => {
-        try {
-          const { data: jobData } = await supabase
-            .from('jobs')
-            .select('status')
-            .eq('id', jobId)
-            .single();
-          
-          if (!jobData) return;
-          
-          // Check logs for completion steps
-          const { data: logsData } = await supabase
-            .from('job_logs')
-            .select('msg, data, ts')
-            .eq('job_id', jobId)
-            .order('ts', { ascending: true });
-          
-          // Update progress based on latest log
-          const latestLog = (logsData ?? []).slice(-1)[0];
-          if (latestLog) {
-            const msg = latestLog.msg || '';
-            if (msg === 'STEP:check_stock_fix_begin') {
-              setStockFixProgress({ step: 'Starting check...' });
-            } else if (msg === 'STEP:check_stock_fix_navigated') {
-              setStockFixProgress({ step: 'Navigated to Stock Status page' });
-            } else if (msg === 'STEP:check_stock_fix_verified_page') {
-              setStockFixProgress({ step: 'Page verified' });
-            } else if (msg === 'STEP:check_stock_fix_table_found') {
-              setStockFixProgress({ step: 'Table found' });
-            } else if (msg === 'STEP:check_stock_fix_show_all_clicked') {
-              setStockFixProgress({ step: 'Loading all entries...' });
-            } else if (msg === 'STEP:check_stock_fix_parsing_table') {
-              setStockFixProgress({ step: 'Parsing table data...' });
-            } else if (msg === 'STEP:check_stock_fix_parsed') {
-              const count = latestLog.data?.rowCount || 0;
-              setStockFixProgress({ step: 'Parsed table', details: `${count} rows` });
-            } else if (msg === 'STEP:check_stock_fix_fetching_db_stock') {
-              const count = latestLog.data?.styleCount || 0;
-              setStockFixProgress({ step: 'Fetching database stock', details: `${count} styles` });
-            } else if (msg === 'STEP:check_stock_fix_mismatches_found') {
-              const total = latestLog.data?.totalChecked || 0;
-              const count = latestLog.data?.mismatchCount || 0;
-              setStockFixProgress({ step: 'Comparison complete', details: `${total} checked, ${count} mismatches` });
-            } else if (msg === 'STEP:check_stock_fix_enqueuing_scrape') {
-              const count = latestLog.data?.styleCount || 0;
-              setStockFixProgress({ step: 'Enqueuing scrape job', details: `${count} styles` });
-            } else if (msg === 'STEP:check_stock_fix_scrape_enqueued') {
-              const scrapeJobId = latestLog.data?.scrapeJobId || '';
-              setStockFixProgress({ step: 'Scrape job enqueued', details: scrapeJobId });
-            }
-          }
-          
-          // Find if mismatches were found and scrape was triggered
-          const mismatchLog = (logsData ?? []).find((l: any) => l.msg === 'STEP:check_stock_fix_mismatches_found');
-          const scrapeEnqueuedLog = (logsData ?? []).find((l: any) => l.msg === 'STEP:check_stock_fix_scrape_enqueued');
-          
-          if (jobData.status === 'succeeded' || jobData.status === 'failed' || jobData.status === 'cancelled') {
-            clearInterval(pollInterval);
-            setRunningStockFix(false);
-            setStockFixProgress(null);
-            
-            if (jobData.status === 'succeeded') {
-              // Fetch the job results to get the mismatch data
-              const { data: resultsData } = await supabase
-                .from('job_results')
-                .select('data')
-                .eq('job_id', jobId)
-                .order('created_at', { ascending: false })
-                .limit(1)
-                .maybeSingle();
-              
-              if (resultsData?.data) {
-                const resultData = resultsData.data as any;
-                const mismatchCount = resultData.mismatches || 0;
-                const totalChecked = resultData.totalChecked || 0;
-                const details = resultData.details || [];
-                
-                if (mismatchCount === 0) {
-                  setStockFixMessage({ type: 'success', text: `Stock check complete! All ${totalChecked} styles match.` });
-                  setStockFixResults(null);
-                } else {
-                  setStockFixMessage({ 
-                    type: 'info', 
-                    text: `Stock check complete! Found ${mismatchCount} mismatch${mismatchCount !== 1 ? 'es' : ''} out of ${totalChecked} styles.` 
-                  });
-                  setStockFixResults({
-                    totalChecked,
-                    mismatches: details,
-                    jobId
-                  });
-                }
-              } else {
-                setStockFixMessage({ type: 'success', text: 'Stock check complete!' });
-              }
-            } else {
-              setStockFixMessage({ type: 'error', text: `Stock check ${jobData.status}. Check the Jobs page for details.` });
-            }
-          }
-        } catch (err: any) {
-          console.error('Stock fix poll error:', err);
-        }
-      }, 3000); // Poll every 3 seconds
+      if (!spyData || !Array.isArray(spyData)) {
+        throw new Error('Invalid response from SPY verification');
+      }
       
-      // Stop polling after 5 minutes
-      setTimeout(() => {
-        clearInterval(pollInterval);
-        if (runningStockFix) {
-          setRunningStockFix(false);
-          setStockFixProgress(null);
-          setStockFixMessage({ type: 'info', text: 'Stock check is taking longer than expected. Check the Jobs page for status.' });
+      setStockFixProgress({ step: 'Comparing with local stock...', details: `${spyData.length} styles from SPY` });
+      
+      // Build SPY data map
+      const spyDataMap = new Map<string, { styleName: string; stock: number }>();
+      for (const row of spyData) {
+        spyDataMap.set(row.styleNo, { styleName: row.styleName, stock: row.stock });
+      }
+      
+      // Calculate totals per style from local stock data (same logic as runChecker)
+      const currentData = new Map<string, { name: string | null; total: number }>();
+      for (const { styleNo, colors } of groupedByStyle) {
+        const meta = styleMetaByNo[styleNo] || { name: null };
+        let styleTotal = 0;
+        // Sum STOCK (not available) across ALL colors for this style
+        for (const color of colors) {
+          styleTotal += color.stock.reduce((sum, v) => sum + (Number(v) || 0), 0);
         }
-      }, 300000);
+        currentData.set(styleNo, { name: meta.name, total: styleTotal });
+      }
+      
+      // Compare and find differences (same logic as runChecker)
+      const differences: Array<{
+        styleNo: string;
+        name: string | null;
+        pastedTotal: number;
+        currentTotal: number;
+        diff: number;
+        status: 'missing_in_pasted' | 'missing_in_current' | 'mismatch' | 'match';
+      }> = [];
+      
+      // Check all SPY styles
+      for (const [styleNo, spyInfo] of spyDataMap.entries()) {
+        const current = currentData.get(styleNo);
+        if (!current) {
+          differences.push({
+            styleNo,
+            name: spyInfo.styleName,
+            pastedTotal: spyInfo.stock,
+            currentTotal: 0,
+            diff: -spyInfo.stock,
+            status: 'missing_in_current'
+          });
+        } else if (current.total !== spyInfo.stock) {
+          differences.push({
+            styleNo,
+            name: current.name || spyInfo.styleName,
+            pastedTotal: spyInfo.stock,
+            currentTotal: current.total,
+            diff: current.total - spyInfo.stock,
+            status: 'mismatch'
+          });
+        } else {
+          differences.push({
+            styleNo,
+            name: current.name || spyInfo.styleName,
+            pastedTotal: spyInfo.stock,
+            currentTotal: current.total,
+            diff: 0,
+            status: 'match'
+          });
+        }
+      }
+      
+      // Check for styles in current but not in SPY
+      for (const [styleNo, currentInfo] of currentData.entries()) {
+        if (!spyDataMap.has(styleNo)) {
+          differences.push({
+            styleNo,
+            name: currentInfo.name,
+            pastedTotal: 0,
+            currentTotal: currentInfo.total,
+            diff: currentInfo.total,
+            status: 'missing_in_pasted'
+          });
+        }
+      }
+      
+      // Sort: mismatches first, then by absolute diff descending
+      differences.sort((a, b) => {
+        if (a.status === 'mismatch' && b.status !== 'mismatch') return -1;
+        if (a.status !== 'mismatch' && b.status === 'mismatch') return 1;
+        if (a.status === 'missing_in_current' && b.status !== 'missing_in_current') return -1;
+        if (a.status !== 'missing_in_current' && b.status === 'missing_in_current') return 1;
+        if (a.status === 'missing_in_pasted' && b.status !== 'missing_in_pasted') return -1;
+        if (a.status !== 'missing_in_pasted' && b.status === 'missing_in_pasted') return 1;
+        return Math.abs(b.diff) - Math.abs(a.diff);
+      });
+      
+      const mismatchCount = differences.filter(d => d.status === 'mismatch').length;
+      const missingInCurrent = differences.filter(d => d.status === 'missing_in_current').length;
+      const missingInPasted = differences.filter(d => d.status === 'missing_in_pasted').length;
+      const matches = differences.filter(d => d.status === 'match').length;
+      
+      // Set results using the same structure as manual checker, with a flag to indicate it's from SPY
+      setCheckerResults({
+        mode: 'spy', // New mode to distinguish from manual checker
+        pastedCount: spyDataMap.size,
+        currentCount: currentData.size,
+        differences,
+        mismatches: mismatchCount,
+        missingInCurrent,
+        missingInPasted,
+        matches
+      });
+      
+      setRunningStockFix(false);
+      setStockFixProgress(null);
+      
+      if (mismatchCount === 0 && missingInCurrent === 0 && missingInPasted === 0) {
+        setStockFixMessage({ type: 'success', text: `SPY verification complete! All ${spyDataMap.size} styles match.` });
+      } else {
+        setStockFixMessage({ 
+          type: 'info', 
+          text: `SPY verification complete! Found ${mismatchCount} mismatch${mismatchCount !== 1 ? 'es' : ''}, ${missingInCurrent} missing in DB, ${missingInPasted} missing in SPY.` 
+        });
+      }
       
     } catch (err: any) {
       setRunningStockFix(false);
       setStockFixProgress(null);
-      setStockFixMessage({ type: 'error', text: `Failed to start stock check: ${err.message}` });
+      setStockFixMessage({ type: 'error', text: `Failed to verify SPY stock: ${err.message}` });
     }
-  }, [supabase, runningStockFix, mutateStockData]);
+  }, [supabase, groupedByStyle, styleMetaByNo]);
 
-  // Scrape stock fix mismatches function
-  const scrapeStockFixMismatches = React.useCallback(async () => {
-    if (!stockFixResults || stockFixResults.mismatches.length === 0) return;
-    
-    try {
-      setScrapingStockFixMismatches(true);
-      const mismatchStyleNos = stockFixResults.mismatches.map(m => m.style_no);
-      
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) {
-        alert('Not signed in');
-        setScrapingStockFixMismatches(false);
-        return;
-      }
-      
-      // Enqueue the scrape job
-      const res = await fetch('/api/enqueue', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
-        body: JSON.stringify({
-          type: 'update_style_stock',
-          payload: { 
-            styleNos: mismatchStyleNos, 
-            requestedBy: 'check-stock-fix-manual',
-            checkJobId: stockFixResults.jobId
-          }
-        })
-      });
-      
-      if (!res.ok) {
-        const txt = await res.text().catch(() => '');
-        throw new Error(txt || `Failed (${res.status})`);
-      }
-      
-      const { jobId } = await res.json();
-      setStockFixMessage({ 
-        type: 'success', 
-        text: `Scraping ${mismatchStyleNos.length} style${mismatchStyleNos.length !== 1 ? 's' : ''} enqueued! Check Jobs page for progress.` 
-      });
-      
-      // Clear results after enqueuing
-      setTimeout(() => {
-        setScrapingStockFixMismatches(false);
-        setStockFixResults(null);
-      }, 3000);
-      
-    } catch (err: any) {
-      setScrapingStockFixMismatches(false);
-      alert(`Failed to enqueue scraping: ${err.message}`);
-    }
-  }, [stockFixResults, supabase]);
 
   // Export Checker results to Excel
   const exportCheckerToExcel = React.useCallback(() => {
@@ -1078,17 +1023,17 @@ export default function StockListPage() {
             'Not in pasted'
           ]);
         } else {
-          summaryData.push([
-            diff.styleNo,
-            diff.name || '',
-            diff.pastedTotal,
-            diff.currentTotal,
-            diff.diff,
-            diff.status === 'match' ? 'Match' :
-            diff.status === 'mismatch' ? 'Mismatch' :
-            diff.status === 'missing_in_current' ? 'Not in current' :
-            'Not in pasted'
-          ]);
+        summaryData.push([
+          diff.styleNo,
+          diff.name || '',
+          diff.pastedTotal,
+          diff.currentTotal,
+          diff.diff,
+          diff.status === 'match' ? 'Match' :
+          diff.status === 'mismatch' ? 'Mismatch' :
+          diff.status === 'missing_in_current' ? 'Not in current' :
+          'Not in pasted'
+        ]);
         }
       }
       
@@ -1106,14 +1051,14 @@ export default function StockListPage() {
           { wch: 20 }  // Status
         ];
       } else {
-        worksheet['!cols'] = [
-          { wch: 15 }, // Style No
-          { wch: 25 }, // Name
-          { wch: 15 }, // Pasted Total
-          { wch: 15 }, // Current Total
-          { wch: 15 }, // Difference
-          { wch: 20 }  // Status
-        ];
+      worksheet['!cols'] = [
+        { wch: 15 }, // Style No
+        { wch: 25 }, // Name
+        { wch: 15 }, // Pasted Total
+        { wch: 15 }, // Current Total
+        { wch: 15 }, // Difference
+        { wch: 20 }  // Status
+      ];
       }
       
       XLSX.utils.book_append_sheet(workbook, worksheet, 'Checker Results');
@@ -1642,19 +1587,19 @@ export default function StockListPage() {
                       {/* Display seasons and scraped timestamp */}
                       <div className="mb-1 flex flex-wrap items-center gap-2">
                         <div className="text-[12px] text-gray-500">
-                          {(() => {
-                            const sid = styleMetaByNo[g.styleNo]?.id || null;
-                            const cmap = sid ? (styleColors?.idMap?.get(sid) || new Map<string, string>()) : new Map<string, string>();
-                            const scId = cmap.get((g.color || '').trim().toLowerCase()) || null;
-                            const set = (scId && colorSeasons) ? (colorSeasons.get(scId) || new Set<string>()) : new Set<string>();
-                            const labels = (seasons || []).filter(s => set.has(s.id));
-                            
-                            console.log('[stock-list] Season display for', g.styleNo, g.color, '- scId:', scId, 'seasonIds:', Array.from(set), 'labels:', labels);
-                            
-                            if (labels.length === 0) return null;
-                            
+                      {(() => {
+                        const sid = styleMetaByNo[g.styleNo]?.id || null;
+                        const cmap = sid ? (styleColors?.idMap?.get(sid) || new Map<string, string>()) : new Map<string, string>();
+                        const scId = cmap.get((g.color || '').trim().toLowerCase()) || null;
+                        const set = (scId && colorSeasons) ? (colorSeasons.get(scId) || new Set<string>()) : new Set<string>();
+                        const labels = (seasons || []).filter(s => set.has(s.id));
+                        
+                        console.log('[stock-list] Season display for', g.styleNo, g.color, '- scId:', scId, 'seasonIds:', Array.from(set), 'labels:', labels);
+                        
+                        if (labels.length === 0) return null;
+                        
                             return labels.map(s => `${s.name}${s.year ? ` ${s.year}` : ''}`).join(', ');
-                          })()}
+                      })()}
                         </div>
                         <div className="ml-auto text-[10px] text-gray-400 italic">
                           {g.scrapedAt ? formatRelativeTime(g.scrapedAt) : 'Ikke opdateret endnu'}
@@ -1916,20 +1861,20 @@ export default function StockListPage() {
           <div>
             {checkerMode === 'styles' ? (
               <>
-                <p className="text-sm text-gray-600 mb-2">
-                  Paste your data in the format: <code className="bg-gray-100 px-1 rounded">Style No. [TAB] Style Name [TAB] Total</code>
-                </p>
-                <p className="text-xs text-gray-500 mb-3">
-                  The checker will compare the pasted totals with the current <strong>Stock</strong> quantities (all colors combined).
-                </p>
-                <textarea
-                  className="w-full h-64 p-3 border rounded font-mono text-xs"
-                  placeholder="1010191	RANY	1545
+            <p className="text-sm text-gray-600 mb-2">
+              Paste your data in the format: <code className="bg-gray-100 px-1 rounded">Style No. [TAB] Style Name [TAB] Total</code>
+            </p>
+            <p className="text-xs text-gray-500 mb-3">
+              The checker will compare the pasted totals with the current <strong>Stock</strong> quantities (all colors combined).
+            </p>
+            <textarea
+              className="w-full h-64 p-3 border rounded font-mono text-xs"
+              placeholder="1010191	RANY	1545
 1011609	ILLIE	948
 1011396	KARCEMONA	899"
-                  value={checkerInput}
-                  onChange={(e) => setCheckerInput(e.target.value)}
-                />
+              value={checkerInput}
+              onChange={(e) => setCheckerInput(e.target.value)}
+            />
               </>
             ) : (
               <>
@@ -1981,14 +1926,14 @@ PO7332, 2100"
                 }
               }
               return (
-                <Button 
-                  onClick={scrapeMismatches} 
-                  variant="default"
-                  disabled={scrapingMismatches}
-                  className="bg-orange-600 hover:bg-orange-700"
-                >
+              <Button 
+                onClick={scrapeMismatches} 
+                variant="default"
+                disabled={scrapingMismatches}
+                className="bg-orange-600 hover:bg-orange-700"
+              >
                   {scrapeText}
-                </Button>
+              </Button>
               );
             })()}
             {checkerResults && (
@@ -2012,10 +1957,8 @@ PO7332, 2100"
                 setScrapeProgress(null);
                 setStockFixMessage(null);
                 setStockFixProgress(null);
-                setStockFixResults(null);
-                setScrapingStockFixMismatches(false);
               }}
-              disabled={scrapingMismatches || runningStockFix || scrapingStockFixMismatches}
+              disabled={scrapingMismatches || runningStockFix}
             >
               Clear
             </Button>
@@ -2100,72 +2043,27 @@ PO7332, 2100"
             </div>
           )}
           
-          {stockFixResults && stockFixResults.mismatches.length > 0 && (
-            <div className="mt-4 space-y-4">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-semibold text-gray-900">
-                  Stock Verification Results
-                </h3>
-                <Button 
-                  onClick={scrapeStockFixMismatches}
-                  variant="default"
-                  disabled={scrapingStockFixMismatches}
-                  className="bg-orange-600 hover:bg-orange-700"
-                >
-                  {scrapingStockFixMismatches ? 'Scraping...' : `Scrape ${stockFixResults.mismatches.length} Mismatches`}
-                </Button>
-              </div>
-              
-              <div className="border rounded overflow-hidden">
-                <div className="overflow-auto max-h-96">
-                  <table className="min-w-full text-sm">
-                    <thead className="bg-gray-100 sticky top-0">
-                      <tr>
-                        <th className="p-2 text-left font-semibold">Style No</th>
-                        <th className="p-2 text-right font-semibold">SPY Stock</th>
-                        <th className="p-2 text-right font-semibold">DB Stock</th>
-                        <th className="p-2 text-right font-semibold">Difference</th>
-                        <th className="p-2 text-left font-semibold">Status</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {stockFixResults.mismatches.map((mismatch, idx) => (
-                        <tr key={idx} className="bg-orange-50">
-                          <td className="p-2 border-t font-mono text-xs">{mismatch.style_no}</td>
-                          <td className="p-2 border-t text-right font-mono">{mismatch.spy_stock?.toLocaleString() ?? '-'}</td>
-                          <td className="p-2 border-t text-right font-mono">{mismatch.db_stock.toLocaleString()}</td>
-                          <td className={`p-2 border-t text-right font-mono font-semibold ${
-                            mismatch.diff > 0 ? 'text-red-600' : 'text-red-600'
-                          }`}>
-                            {mismatch.diff.toLocaleString()}
-                          </td>
-                          <td className="p-2 border-t">
-                            <span className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-orange-100 text-orange-800">
-                              Mismatch
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
-          )}
-          
           {checkerResults && (
             <div className="mt-4 space-y-4">
               {/* Summary */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 <Card className="shadow-sm">
                   <CardContent className="p-3">
-                    <div className="text-xs text-gray-600">Pasted {checkerResults.mode === 'po' ? 'POs' : 'Styles'}</div>
+                    <div className="text-xs text-gray-600">
+                      {checkerResults.mode === 'po' ? 'Pasted POs' : 
+                       checkerResults.mode === 'spy' ? 'SPY Styles' : 
+                       'Pasted Styles'}
+                    </div>
                     <div className="text-xl font-bold">{checkerResults.pastedCount}</div>
                   </CardContent>
                 </Card>
                 <Card className="shadow-sm">
                   <CardContent className="p-3">
-                    <div className="text-xs text-gray-600">Current {checkerResults.mode === 'po' ? 'POs' : 'Styles'}</div>
+                    <div className="text-xs text-gray-600">
+                      {checkerResults.mode === 'po' ? 'Current POs' : 
+                       checkerResults.mode === 'spy' ? 'DB Styles' : 
+                       'Current Styles'}
+                    </div>
                     <div className="text-xl font-bold">{checkerResults.currentCount}</div>
                   </CardContent>
                 </Card>
@@ -2186,7 +2084,7 @@ PO7332, 2100"
               {checkerResults.missingInCurrent > 0 && (
                 <div className="p-3 bg-red-50 border border-red-200 rounded">
                   <div className="text-sm font-semibold text-red-800">
-                    {checkerResults.missingInCurrent} {checkerResults.mode === 'po' ? 'PO(s)' : 'style(s)'} in pasted data but NOT in current database
+                    {checkerResults.missingInCurrent} {checkerResults.mode === 'po' ? 'PO(s)' : 'style(s)'} in {checkerResults.mode === 'spy' ? 'SPY' : 'pasted data'} but NOT in current database
                   </div>
                 </div>
               )}
@@ -2194,7 +2092,7 @@ PO7332, 2100"
               {checkerResults.missingInPasted > 0 && (
                 <div className="p-3 bg-blue-50 border border-blue-200 rounded">
                   <div className="text-sm font-semibold text-blue-800">
-                    {checkerResults.missingInPasted} {checkerResults.mode === 'po' ? 'PO(s)' : 'style(s)'} in current database but NOT in pasted data
+                    {checkerResults.missingInPasted} {checkerResults.mode === 'po' ? 'PO(s)' : 'style(s)'} in current database but NOT in {checkerResults.mode === 'spy' ? 'SPY' : 'pasted data'}
                   </div>
                 </div>
               )}
@@ -2256,56 +2154,56 @@ PO7332, 2100"
                       </tbody>
                     </table>
                   ) : (
-                    <table className="min-w-full text-sm">
-                      <thead className="bg-gray-100 sticky top-0">
-                        <tr>
-                          <th className="p-2 text-left font-semibold">Style No</th>
-                          <th className="p-2 text-left font-semibold">Name</th>
-                          <th className="p-2 text-right font-semibold">Pasted</th>
-                          <th className="p-2 text-right font-semibold">Current</th>
-                          <th className="p-2 text-right font-semibold">Diff</th>
-                          <th className="p-2 text-left font-semibold">Status</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {checkerResults.differences.map((diff: any, idx: number) => (
-                          <tr 
-                            key={idx} 
-                            className={
-                              diff.status === 'mismatch' ? 'bg-orange-50' :
-                              diff.status === 'missing_in_current' ? 'bg-red-50' :
-                              diff.status === 'missing_in_pasted' ? 'bg-blue-50' :
-                              'bg-white'
-                            }
-                          >
-                            <td className="p-2 border-t font-mono text-xs">{diff.styleNo}</td>
-                            <td className="p-2 border-t">{diff.name || '-'}</td>
-                            <td className="p-2 border-t text-right font-mono">{diff.pastedTotal.toLocaleString()}</td>
-                            <td className="p-2 border-t text-right font-mono">{diff.currentTotal.toLocaleString()}</td>
-                            <td className={`p-2 border-t text-right font-mono font-semibold ${
-                              diff.diff > 0 ? 'text-green-600' :
-                              diff.diff < 0 ? 'text-red-600' :
-                              'text-gray-600'
+                  <table className="min-w-full text-sm">
+                    <thead className="bg-gray-100 sticky top-0">
+                      <tr>
+                        <th className="p-2 text-left font-semibold">Style No</th>
+                        <th className="p-2 text-left font-semibold">Name</th>
+                        <th className="p-2 text-right font-semibold">{checkerResults.mode === 'spy' ? 'SPY' : 'Pasted'}</th>
+                        <th className="p-2 text-right font-semibold">{checkerResults.mode === 'spy' ? 'DB' : 'Current'}</th>
+                        <th className="p-2 text-right font-semibold">Diff</th>
+                        <th className="p-2 text-left font-semibold">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {checkerResults.differences.map((diff: any, idx: number) => (
+                        <tr 
+                          key={idx} 
+                          className={
+                            diff.status === 'mismatch' ? 'bg-orange-50' :
+                            diff.status === 'missing_in_current' ? 'bg-red-50' :
+                            diff.status === 'missing_in_pasted' ? 'bg-blue-50' :
+                            'bg-white'
+                          }
+                        >
+                          <td className="p-2 border-t font-mono text-xs">{diff.styleNo}</td>
+                          <td className="p-2 border-t">{diff.name || '-'}</td>
+                          <td className="p-2 border-t text-right font-mono">{diff.pastedTotal.toLocaleString()}</td>
+                          <td className="p-2 border-t text-right font-mono">{diff.currentTotal.toLocaleString()}</td>
+                          <td className={`p-2 border-t text-right font-mono font-semibold ${
+                            diff.diff > 0 ? 'text-green-600' :
+                            diff.diff < 0 ? 'text-red-600' :
+                            'text-gray-600'
+                          }`}>
+                            {diff.diff > 0 ? `+${diff.diff.toLocaleString()}` : diff.diff.toLocaleString()}
+                          </td>
+                          <td className="p-2 border-t">
+                            <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${
+                              diff.status === 'match' ? 'bg-green-100 text-green-800' :
+                              diff.status === 'mismatch' ? 'bg-orange-100 text-orange-800' :
+                              diff.status === 'missing_in_current' ? 'bg-red-100 text-red-800' :
+                              'bg-blue-100 text-blue-800'
                             }`}>
-                              {diff.diff > 0 ? `+${diff.diff.toLocaleString()}` : diff.diff.toLocaleString()}
-                            </td>
-                            <td className="p-2 border-t">
-                              <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${
-                                diff.status === 'match' ? 'bg-green-100 text-green-800' :
-                                diff.status === 'mismatch' ? 'bg-orange-100 text-orange-800' :
-                                diff.status === 'missing_in_current' ? 'bg-red-100 text-red-800' :
-                                'bg-blue-100 text-blue-800'
-                              }`}>
-                                {diff.status === 'match' ? '✓ Match' :
-                                 diff.status === 'mismatch' ? 'Mismatch' :
-                                 diff.status === 'missing_in_current' ? 'Not in current' :
-                                 'Not in pasted'}
-                              </span>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                              {diff.status === 'match' ? '✓ Match' :
+                               diff.status === 'mismatch' ? 'Mismatch' :
+                               diff.status === 'missing_in_current' ? 'Not in current' :
+                               'Not in pasted'}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                   )}
                 </div>
               </div>
@@ -2403,46 +2301,46 @@ function ScrapeActiveListButton({ listId, styleIdsInList, listName, onDataRefres
           )}
         </div>
         
-        <Button
-          size="sm"
+    <Button
+      size="sm"
           variant={busy || scraping || exporting ? 'secondary' : 'default'}
           disabled={busy || scraping || exporting}
-          onClick={async () => {
-            try {
-              setBusy(true);
+      onClick={async () => {
+        try {
+          setBusy(true);
               setScraping(false);
               setExporting(false);
               setScrapeProgress(null);
               setExportProgress(null);
               setMessage(null);
               
-              // Resolve style_nos for styles in this list
-              const ids = Array.from(new Set(styleIdsInList || []));
-              if (ids.length === 0) {
-                alert('This list has no styles yet.');
-                setBusy(false);
-                return;
-              }
-              const { data: styles } = await supabase.from('styles').select('style_no').in('id', ids);
-              const nos = Array.from(new Set((styles ?? []).map((r: any) => String(r.style_no || '')).filter(Boolean)));
-              if (nos.length === 0) {
-                alert('No style numbers found for this list.');
-                setBusy(false);
-                return;
-              }
-              const { data: { session } } = await supabase.auth.getSession();
-              if (!session) { alert('Not signed in'); setBusy(false); return; }
+          // Resolve style_nos for styles in this list
+          const ids = Array.from(new Set(styleIdsInList || []));
+          if (ids.length === 0) {
+            alert('This list has no styles yet.');
+            setBusy(false);
+            return;
+          }
+          const { data: styles } = await supabase.from('styles').select('style_no').in('id', ids);
+          const nos = Array.from(new Set((styles ?? []).map((r: any) => String(r.style_no || '')).filter(Boolean)));
+          if (nos.length === 0) {
+            alert('No style numbers found for this list.');
+            setBusy(false);
+            return;
+          }
+          const { data: { session } } = await supabase.auth.getSession();
+          if (!session) { alert('Not signed in'); setBusy(false); return; }
               
               // Enqueue scrape job
-              const res = await fetch('/api/enqueue', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
-                body: JSON.stringify({ type: 'update_style_stock', payload: { requestedBy: session.user.email, styleNos: nos } })
-              });
-              if (!res.ok) {
-                const t = await res.text().catch(()=>'');
-                throw new Error(t || `Failed (${res.status})`);
-              }
+          const res = await fetch('/api/enqueue', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+            body: JSON.stringify({ type: 'update_style_stock', payload: { requestedBy: session.user.email, styleNos: nos } })
+          });
+          if (!res.ok) {
+            const t = await res.text().catch(()=>'');
+            throw new Error(t || `Failed (${res.status})`);
+          }
               
               const { jobId } = await res.json();
               setBusy(false);
@@ -2556,16 +2454,16 @@ function ScrapeActiveListButton({ listId, styleIdsInList, listName, onDataRefres
                 }
               }, 600000);
               
-            } catch (e: any) {
-              setBusy(false);
+        } catch (e: any) {
+          setBusy(false);
               setScraping(false);
               setExporting(false);
               alert(e?.message || 'Failed to enqueue scrape');
-            }
-          }}
-        >
+        }
+      }}
+    >
           {busy ? 'Starting...' : scraping ? 'Scraping...' : exporting ? 'Exporting...' : 'Scrape List'}
-        </Button>
+    </Button>
       </div>
       
       {(scraping || exporting) && (
