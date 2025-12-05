@@ -432,6 +432,11 @@ export default function SuppliersPage() {
     return (cents / 100).toLocaleString('da-DK', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
 
+  // Format negative values for Krediteret display
+  function formatNegative(value: number): string {
+    return value.toLocaleString('da-DK');
+  }
+
   // Format year-month to Danish month name + year (e.g., "2025-01" -> "Januar 2025")
   function formatMonthName(yearMonth: string): string {
     const [year, month] = yearMonth.split('-');
@@ -1062,8 +1067,12 @@ export default function SuppliersPage() {
                           <td className="px-4 py-2 text-right">{formatPrice(summary.byChannel.telefon.beløb)}</td>
                           <td className="px-4 py-2">{summary.byChannel.b2bShop.stk.toLocaleString('da-DK')}</td>
                           <td className="px-4 py-2 text-right">{formatPrice(summary.byChannel.b2bShop.beløb)}</td>
-                          <td className="px-4 py-2 text-red-600">{summary.byChannel.credittedStk.toLocaleString('da-DK')}</td>
-                          <td className="px-4 py-2 text-right text-red-600">{formatPrice(summary.byChannel.credittedBeløb)}</td>
+                          <td className="px-4 py-2 text-red-600">
+                            {summary.byChannel.credittedStk.toLocaleString('da-DK')}
+                          </td>
+                          <td className="px-4 py-2 text-right text-red-600">
+                            {formatPrice(summary.byChannel.credittedBeløb)}
+                          </td>
                           <td className="px-4 py-2 font-medium">{summary.byChannel.samletStk.toLocaleString('da-DK')}</td>
                           <td className="px-4 py-2 text-right font-medium">{formatPrice(summary.byChannel.samletBeløb)}</td>
                         </tr>
