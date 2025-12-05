@@ -168,16 +168,19 @@ export async function exportSuppleringer(ctx: Ctx) {
       
       if (normalizedToOriginal.has(normalizedRowSpName)) {
         // Exact normalized match found
-        matchedSpName = normalizedToOriginal.get(normalizedRowSpName) || null;
+        const foundName = normalizedToOriginal.get(normalizedRowSpName);
+        matchedSpName = foundName || null;
       } else {
         // No match found - log and create entry anyway (will show in export)
         unmatchedSalespersonNames.add(rowSpName);
         matchedSpName = rowSpName; // Use original name from row
         
-        // Initialize if not already done (matchedSpName is guaranteed to be string here)
-        if (rowSpName && !rowsBySalespersonCustomer.has(rowSpName)) {
-          rowsBySalespersonCustomer.set(rowSpName, new Map());
-          rowsBySalesperson.set(rowSpName, []);
+        // Initialize if not already done (use rowSpName which is guaranteed to be string here)
+        if (rowSpName) {
+          if (!rowsBySalespersonCustomer.has(rowSpName)) {
+            rowsBySalespersonCustomer.set(rowSpName, new Map());
+            rowsBySalesperson.set(rowSpName, []);
+          }
         }
       }
       
