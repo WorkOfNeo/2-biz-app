@@ -1,7 +1,8 @@
 'use client';
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Save, Download } from 'lucide-react';
+import { supabase } from '@/lib/supabaseClient';
 
 type ParsedRow = {
   orderType: string;
@@ -40,6 +41,21 @@ type CustomerGroup = {
   rows: ParsedRow[];
 };
 
+type SavedStatistic = {
+  id: string;
+  year_month: string;
+  salesperson_name: string;
+  total_leveret: number;
+  telefon_stk: number;
+  telefon_beløb: number;
+  b2b_stk: number;
+  b2b_beløb: number;
+  krediteret_stk: number;
+  krediteret_beløb: number;
+  samlet_stk: number;
+  samlet_beløb: number;
+};
+
 export default function SuppliersPage() {
   const [file, setFile] = useState<File | null>(null);
   const [parsedRows, setParsedRows] = useState<ParsedRow[]>([]);
@@ -47,6 +63,12 @@ export default function SuppliersPage() {
   const [dragOver, setDragOver] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [progress, setProgress] = useState<{ step: string; current: number; total: number } | null>(null);
+  const [savedMonths, setSavedMonths] = useState<string[]>([]);
+  const [selectedMonth, setSelectedMonth] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [savedData, setSavedData] = useState<SavedStatistic[] | null>(null);
+  const [viewMode, setViewMode] = useState<'upload' | 'saved'>('upload');
 
   // Convert Excel column letter to 0-based array index
   // E.g., 'A' -> 0, 'B' -> 1, 'Z' -> 25, 'AA' -> 26, 'AN' -> 39
@@ -380,10 +402,280 @@ export default function SuppliersPage() {
     return (cents / 100).toLocaleString('da-DK', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
 
+  // Extract year-month from date string (YYYY-MM-DD -> YYYY-MM)
+  function extractYearMonth(dateStr: string | null): string | null {
+    if (!dateStr) return null;
+    const match = dateStr.match(/^(\d{4}-\d{2})/);
+    return match ? match[1] : null;
+  }
+
+  // Get the most common month from parsed rows, or use current month as fallback
+  function getMonthFromRows(): string {
+    const monthCounts = new Map<string, number>();
+    for (const row of parsedRows) {
+      const month = extractYearMonth(row.date);
+      if (month) {
+        monthCounts.set(month, (monthCounts.get(month) || 0) + 1);
+      }
+    }
+    if (monthCounts.size === 0) {
+      // Fallback to current month
+      const now = new Date();
+      return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    }
+    // Get the month with the most entries
+    let maxCount = 0;
+    let mostCommonMonth = '';
+    for (const [month, count] of monthCounts.entries()) {
+      if (count > maxCount) {
+        maxCount = count;
+        mostCommonMonth = month;
+      }
+    }
+    return mostCommonMonth;
+  }
+
+  // Fetch available saved months
+  useEffect(() => {
+    async function fetchSavedMonths() {
+      try {
+        const { data, error } = await supabase
+          .from('supp_statistic')
+          .select('year_month')
+          .order('year_month', { ascending: false });
+        
+        if (error) throw error;
+        
+        const uniqueMonths = Array.from(new Set((data || []).map((r: any) => r.year_month))).sort().reverse();
+        setSavedMonths(uniqueMonths as string[]);
+      } catch (err) {
+        console.error('Error fetching saved months:', err);
+      }
+    }
+    fetchSavedMonths();
+  }, []);
+
+  // Aggregate data per month and save to Supabase
+  async function saveToSupabase() {
+    if (parsedRows.length === 0) {
+      alert('Ingen data at gemme. Upload en fil først.');
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const yearMonth = getMonthFromRows();
+      
+      // Aggregate data per salesperson for this month
+      const monthRows = parsedRows.filter(row => extractYearMonth(row.date) === yearMonth);
+      
+      if (monthRows.length === 0) {
+        alert(`Ingen data fundet for måned ${yearMonth}. Tjek datoerne i filen.`);
+        setSaving(false);
+        return;
+      }
+
+      const bySalesperson = new Map<string, ParsedRow[]>();
+      for (const row of monthRows) {
+        const key = row.salesPerson;
+        if (!bySalesperson.has(key)) {
+          bySalesperson.set(key, []);
+        }
+        bySalesperson.get(key)!.push(row);
+      }
+
+      const recordsToSave: any[] = [];
+
+      for (const [salesPerson, rows] of bySalesperson.entries()) {
+        // Calculate aggregated values (same logic as salespersonSummaries)
+        const telefon = { stk: 0, beløb: 0 };
+        const b2bShop = { stk: 0, beløb: 0 };
+        let credittedStk = 0;
+        let credittedBeløb = 0;
+        let samletStk = 0;
+        let samletBeløb = 0;
+        let totalLeveret = 0;
+
+        for (const row of rows) {
+          const isTelefon = row.channel === 'Telefon';
+          const channelData = isTelefon ? telefon : b2bShop;
+          
+          if (row.qtyDelivered > 0) {
+            totalLeveret += row.qtyDelivered;
+          }
+          
+          if (row.qtyOrdered > 0) {
+            channelData.stk += row.qtyOrdered;
+            samletStk += row.qtyOrdered;
+          }
+          if (row.price > 0) {
+            channelData.beløb += row.price;
+            samletBeløb += row.price;
+          }
+          
+          if (row.qtyOrdered < 0) {
+            const absQty = Math.abs(row.qtyOrdered);
+            credittedStk += absQty;
+            samletStk -= absQty;
+          }
+          if (row.price < 0) {
+            const absPrice = Math.abs(row.price);
+            credittedBeløb += absPrice;
+            samletBeløb -= absPrice;
+          }
+        }
+
+        recordsToSave.push({
+          year_month: yearMonth,
+          salesperson_name: salesPerson,
+          total_leveret: totalLeveret,
+          telefon_stk: telefon.stk,
+          telefon_beløb: telefon.beløb,
+          b2b_stk: b2bShop.stk,
+          b2b_beløb: b2bShop.beløb,
+          krediteret_stk: credittedStk,
+          krediteret_beløb: credittedBeløb,
+          samlet_stk: samletStk,
+          samlet_beløb: samletBeløb,
+        });
+      }
+
+      // Upsert records (update if exists, insert if not)
+      const { error } = await supabase
+        .from('supp_statistic')
+        .upsert(recordsToSave, {
+          onConflict: 'year_month,salesperson_name',
+        });
+
+      if (error) throw error;
+
+      alert(`Data gemt for ${yearMonth} (${recordsToSave.length} sælgere)`);
+      
+      // Refresh saved months list
+      const { data: monthsData } = await supabase
+        .from('supp_statistic')
+        .select('year_month')
+        .order('year_month', { ascending: false });
+      
+      const uniqueMonths = Array.from(new Set((monthsData || []).map((r: any) => r.year_month))).sort().reverse();
+      setSavedMonths(uniqueMonths as string[]);
+      
+    } catch (err: any) {
+      alert(`Fejl ved gemning: ${err.message}`);
+      console.error('Save error:', err);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // Load saved data for a specific month
+  async function loadFromSupabase(month: string) {
+    setLoading(true);
+    setSelectedMonth(month);
+    try {
+      const { data, error } = await supabase
+        .from('supp_statistic')
+        .select('*')
+        .eq('year_month', month)
+        .order('salesperson_name');
+
+      if (error) throw error;
+
+      if (!data || data.length === 0) {
+        alert(`Ingen data fundet for ${month}`);
+        setLoading(false);
+        return;
+      }
+
+      setSavedData(data as SavedStatistic[]);
+      setViewMode('saved');
+      
+    } catch (err: any) {
+      alert(`Fejl ved indlæsning: ${err.message}`);
+      console.error('Load error:', err);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // Convert saved statistics to display format (similar to SalespersonSummary)
+  const savedSummaries = useMemo(() => {
+    if (!savedData) return [];
+    
+    return savedData.map((stat) => ({
+      salesPerson: stat.salesperson_name,
+      totalDeliveredQty: stat.total_leveret,
+      byChannel: {
+        telefon: { stk: stat.telefon_stk, beløb: stat.telefon_beløb },
+        b2bShop: { stk: stat.b2b_stk, beløb: stat.b2b_beløb },
+        credittedStk: stat.krediteret_stk,
+        credittedBeløb: stat.krediteret_beløb,
+        samletStk: stat.samlet_stk,
+        samletBeløb: stat.samlet_beløb,
+      },
+    }));
+  }, [savedData]);
+
   return (
     <div className="space-y-4">
       <div className="text-xs text-gray-500">Statistics</div>
-      <h1 className="text-xl font-semibold">Suppleringer</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-xl font-semibold">Suppleringer</h1>
+        <div className="flex items-center gap-3">
+          {/* Load Saved Month */}
+          {savedMonths.length > 0 && (
+            <div className="flex items-center gap-2">
+              <label htmlFor="month-select" className="text-sm text-gray-600">Indlæs måned:</label>
+              <select
+                id="month-select"
+                value={selectedMonth || ''}
+                onChange={(e) => {
+                  if (e.target.value) {
+                    loadFromSupabase(e.target.value);
+                  } else {
+                    setSelectedMonth(null);
+                  }
+                }}
+                disabled={loading}
+                className="text-sm border rounded px-2 py-1"
+              >
+                <option value="">-- Vælg måned --</option>
+                {savedMonths.map((month) => (
+                  <option key={month} value={month}>
+                    {month}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+          {/* Save Button */}
+          {parsedRows.length > 0 && viewMode === 'upload' && (
+            <button
+              onClick={saveToSupabase}
+              disabled={saving || processing}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+            >
+              <Save className="h-4 w-4" />
+              {saving ? 'Gemmer...' : `Gem (${getMonthFromRows()})`}
+            </button>
+          )}
+          {/* View Toggle */}
+          {savedData && (
+            <button
+              onClick={() => {
+                setViewMode(viewMode === 'upload' ? 'saved' : 'upload');
+                if (viewMode === 'saved') {
+                  setSavedData(null);
+                  setSelectedMonth(null);
+                }
+              }}
+              className="flex items-center gap-2 px-4 py-2 bg-gray-200 text-gray-700 rounded hover:bg-gray-300 text-sm"
+            >
+              {viewMode === 'upload' ? 'Vis Gemt Data' : 'Tilbage til Upload'}
+            </button>
+          )}
+        </div>
+      </div>
 
       {/* File Upload with Drag and Drop */}
       <div
@@ -447,21 +739,32 @@ export default function SuppliersPage() {
       )}
 
       {/* Salesperson Summaries */}
-      {salespersonSummaries.length > 0 && (
+      {((viewMode === 'upload' && salespersonSummaries.length > 0) || (viewMode === 'saved' && savedSummaries.length > 0)) && (
         <div className="space-y-4">
-          {salespersonSummaries.map((summary) => (
+          {viewMode === 'saved' && selectedMonth && (
+            <div className="text-sm text-gray-600 mb-2">
+              Viser gemt data for <strong>{selectedMonth}</strong>
+            </div>
+          )}
+          {(viewMode === 'upload' ? salespersonSummaries : savedSummaries).map((summary) => (
             <div key={summary.salesPerson} className="rounded-md border overflow-hidden">
               <div
                 className="bg-gray-50 p-3 cursor-pointer hover:bg-gray-100"
-                onClick={() => setSelectedSalesperson(
-                  selectedSalesperson === summary.salesPerson ? null : summary.salesPerson
-                )}
+                onClick={() => {
+                  if (viewMode === 'upload') {
+                    setSelectedSalesperson(
+                      selectedSalesperson === summary.salesPerson ? null : summary.salesPerson
+                    );
+                  }
+                }}
               >
                 <div className="flex items-center justify-between">
                   <h3 className="font-semibold text-lg">{summary.salesPerson}</h3>
-                  <span className="text-sm text-gray-500">
-                    {selectedSalesperson === summary.salesPerson ? '▼' : '▶'}
-                  </span>
+                  {viewMode === 'upload' && (
+                    <span className="text-sm text-gray-500">
+                      {selectedSalesperson === summary.salesPerson ? '▼' : '▶'}
+                    </span>
+                  )}
                 </div>
               </div>
               
@@ -496,8 +799,8 @@ export default function SuppliersPage() {
                 </table>
               </div>
 
-              {/* Customer Details - Aggregated per customer */}
-              {selectedSalesperson === summary.salesPerson && customerGroups.length > 0 && (
+              {/* Customer Details - Aggregated per customer (only for upload view) */}
+              {viewMode === 'upload' && selectedSalesperson === summary.salesPerson && customerGroups.length > 0 && (
                 <div className="border-t bg-white">
                   <div className="p-3">
                     <h4 className="font-semibold text-sm mb-3 text-gray-700">Kunder:</h4>
