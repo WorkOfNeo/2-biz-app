@@ -1,7 +1,7 @@
 'use client';
 import { useMemo, useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
-import { Loader2, Save, Download, History } from 'lucide-react';
+import { Loader2, Save, Download, History, FileText } from 'lucide-react';
 import { supabase } from '../../../lib/supabaseClient';
 import Link from 'next/link';
 
@@ -96,6 +96,7 @@ export default function SuppliersPage() {
   const [previousYearData, setPreviousYearData] = useState<SavedStatistic[] | null>(null);
   const [previousYearRows, setPreviousYearRows] = useState<ParsedRow[] | null>(null);
   const [viewMode, setViewMode] = useState<'upload' | 'saved'>('upload');
+  const [exporting, setExporting] = useState(false);
 
   // Convert Excel column letter to 0-based array index
   // E.g., 'A' -> 0, 'B' -> 1, 'Z' -> 25, 'AA' -> 26, 'AN' -> 39
@@ -912,12 +913,79 @@ export default function SuppliersPage() {
     };
   }, [viewMode, salespersonSummaries, savedSummaries]);
 
+  // Enqueue export job
+  async function enqueueExport() {
+    if (exporting) return;
+    
+    setExporting(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        alert('Ikke logget ind');
+        return;
+      }
+      
+      const token = session.access_token;
+      // Use selectedMonth if in saved view, otherwise get from parsed rows
+      const yearMonth = viewMode === 'saved' && selectedMonth 
+        ? selectedMonth 
+        : (parsedRows.length > 0 ? getMonthFromRows() : null);
+      
+      if (!yearMonth) {
+        alert('Ingen data at eksportere. Upload en fil eller vælg en gemt måned.');
+        setExporting(false);
+        return;
+      }
+
+      const body = { 
+        type: 'export_suppleringer', 
+        payload: { 
+          year_month: yearMonth,
+          requestedBy: session.user.email 
+        } 
+      };
+      
+      const res = await fetch('/api/enqueue', { 
+        method: 'POST', 
+        headers: { 
+          'Content-Type': 'application/json', 
+          Authorization: `Bearer ${token}` 
+        }, 
+        body: JSON.stringify(body) 
+      });
+      
+      if (!res.ok) {
+        const errorText = await res.text();
+        throw new Error(errorText);
+      }
+      
+      const js = await res.json();
+      alert(`Eksport startet! Job ID: ${js.jobId}. Du kan se status på PDF'er siden.`);
+    } catch (err: any) {
+      alert(`Fejl ved eksport: ${err.message}`);
+      console.error('Export error:', err);
+    } finally {
+      setExporting(false);
+    }
+  }
+
   return (
     <div className="space-y-4">
       <div className="text-xs text-gray-500">Statistics</div>
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">Suppleringer</h1>
         <div className="flex items-center gap-3">
+          {/* Export Button */}
+          {((viewMode === 'saved' && selectedMonth) || (viewMode === 'upload' && parsedRows.length > 0)) && (
+            <button
+              onClick={enqueueExport}
+              disabled={exporting}
+              className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+            >
+              <FileText className="h-4 w-4" />
+              {exporting ? 'Eksporterer...' : 'Eksporter til PDF'}
+            </button>
+          )}
           {/* Historical Data Button */}
           <Link
             href="/statistics/suppleringer/historical"

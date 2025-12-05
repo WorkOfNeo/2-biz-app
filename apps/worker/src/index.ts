@@ -8,6 +8,7 @@ import { deepScrapeStyles as deepScrapeStylesJob } from './jobs/deepScrapeStyles
 import { exportOverview as exportOverviewJob } from './jobs/exportOverview.js';
 import { exportTopStyles as exportTopStylesJob } from './jobs/exportTopStyles.js';
 import { exportStockList as exportStockListJob } from './jobs/exportStockList.js';
+import { exportSuppleringer as exportSuppleringerJob } from './jobs/exportSuppleringer.js';
 import { scrapeTopStyles as scrapeTopStylesJob } from './jobs/scrapeTopStyles.js';
 import { scrapeStatisticsPerSize } from './jobs/scrapeStatisticsPerSize.js';
 import { fixInvoices as fixInvoicesJob } from './jobs/fixInvoices.js';
@@ -696,7 +697,7 @@ async function runJob(job: JobRow) {
                 const isDedicatedLabel = /(Stock\s+Dedicated|Pre\s+Dedicated)/i.test(label);
                 if (isDedicatedLabel) { continue; }
                 let po_link: string | null = null;
-                const poA = rowEl.querySelector('a[href*="purchase_orders.php"]') as HTMLAnchorElement | null;
+              const poA = rowEl.querySelector('a[href*="purchase_orders.php"]') as HTMLAnchorElement | null;
                 po_link = poA ? (poA.getAttribute('href') || null) : null;
                 if (!po_link && lastPurchaseHeading) po_link = lastPurchaseHeading.link;
                 const key = normalizeLabel(label || 'Row') + '|' + String(po_link || '');
@@ -950,6 +951,10 @@ async function runJob(job: JobRow) {
   }
   if ((job.type as any) === 'export_top_styles') {
     await exportTopStylesJob({ job, page: page!, log, saveResult, setJobFailedOrRequeue, setJobSucceeded, supabase });
+    return;
+  }
+  if ((job.type as any) === 'export_suppleringer') {
+    await exportSuppleringerJob({ job, page: page!, log, saveResult, setJobFailedOrRequeue, setJobSucceeded, supabase });
     return;
   }
   if ((job.type as any) === 'scrape_top_styles') {

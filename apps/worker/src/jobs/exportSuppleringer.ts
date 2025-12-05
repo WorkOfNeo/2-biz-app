@@ -1,0 +1,514 @@
+import type { Page } from 'playwright-core';
+import type { JobRow } from '@shared/types';
+import React from 'react';
+import { pdf, Document, Page as PdfPage, Text, StyleSheet, View } from '@react-pdf/renderer';
+
+type Ctx = {
+  job: JobRow;
+  page: Page;
+  log: (jobId: string, level: 'info' | 'error', msg: string, data?: Record<string, any>) => Promise<void>;
+  saveResult: (jobId: string, summary: string, data: Record<string, any>) => Promise<any>;
+  setJobFailedOrRequeue: (job: JobRow, errorMsg: string) => Promise<void>;
+  setJobSucceeded: (jobId: string) => Promise<void>;
+  supabase: any;
+};
+
+async function ensureBuffer(data: any): Promise<Buffer> {
+  if (Buffer.isBuffer(data)) return data as Buffer;
+  if (data instanceof Uint8Array) return Buffer.from(data as Uint8Array);
+  if (data instanceof ArrayBuffer) return Buffer.from(new Uint8Array(data as ArrayBuffer));
+  if (data && typeof (data as any).getReader === 'function') {
+    const reader = (data as any).getReader();
+    const chunks: Uint8Array[] = [];
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) chunks.push(value);
+    }
+    return Buffer.concat(chunks.map((u) => Buffer.from(u)));
+  }
+  if (data && typeof (data as any).on === 'function') {
+    const chunks: Buffer[] = [];
+    await new Promise<void>((resolve, reject) => {
+      (data as any).on('data', (c: any) => chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c)));
+      (data as any).on('end', () => resolve());
+      (data as any).on('error', (err: any) => reject(err));
+    });
+    return Buffer.concat(chunks);
+  }
+  if (typeof data === 'string') return Buffer.from(data as string);
+  return Buffer.from([]);
+}
+
+function formatPrice(cents: number): string {
+  return (cents / 100).toLocaleString('da-DK', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function formatMonthName(yearMonth: string): string {
+  const [year, month] = yearMonth.split('-');
+  if (!year || !month) return yearMonth;
+  const monthNum = parseInt(month, 10);
+  const monthNames = [
+    'Januar', 'Februar', 'Marts', 'April', 'Maj', 'Juni',
+    'Juli', 'August', 'September', 'Oktober', 'November', 'December'
+  ];
+  const monthName = monthNames[monthNum - 1] || month;
+  return `${monthName} ${year}`;
+}
+
+export async function exportSuppleringer(ctx: Ctx) {
+  const { job, log, saveResult, setJobFailedOrRequeue, setJobSucceeded, supabase } = ctx;
+  try {
+    await log(job.id, 'info', 'STEP:export_suppleringer_begin', job.payload || {});
+    
+    // Get year_month from payload or use most recent
+    let yearMonth = (job.payload as any)?.year_month as string | undefined;
+    if (!yearMonth) {
+      // Get most recent month
+      const { data: recentData } = await supabase
+        .from('supp_statistic')
+        .select('year_month')
+        .order('year_month', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (!recentData) {
+        await setJobFailedOrRequeue(job, 'No suppleringer data found');
+        return;
+      }
+      yearMonth = recentData.year_month as string;
+    }
+
+    await log(job.id, 'info', 'STEP:export_suppleringer_month', { yearMonth });
+
+    // Load current month data
+    const { data: currentData } = await supabase
+      .from('supp_statistic')
+      .select('*')
+      .eq('year_month', yearMonth)
+      .order('salesperson_name');
+
+    if (!currentData || currentData.length === 0) {
+      await setJobFailedOrRequeue(job, `No data found for ${yearMonth}`);
+      return;
+    }
+
+    // Load previous year data
+    const [year, month] = yearMonth.split('-');
+    const prevYear = String(parseInt(year || '2024', 10) - 1);
+    const prevYearMonth = `${prevYear}-${month}`;
+    
+    const { data: prevData } = await supabase
+      .from('supp_statistic')
+      .select('*')
+      .eq('year_month', prevYearMonth)
+      .order('salesperson_name');
+
+    const prevYearMap = new Map<string, any>();
+    for (const prev of prevData || []) {
+      prevYearMap.set(prev.salesperson_name, prev);
+    }
+
+    // Load individual rows for customer details
+    const { data: currentRows } = await supabase
+      .from('supp_statistic_rows')
+      .select('*')
+      .eq('year_month', yearMonth)
+      .order('salesperson_name, customer_name');
+
+    // Group rows by salesperson and customer
+    const rowsBySalesperson = new Map<string, any[]>();
+    const rowsBySalespersonCustomer = new Map<string, Map<string, any[]>>();
+    
+    for (const row of currentRows || []) {
+      const spName = row.salesperson_name;
+      const customerName = row.customer_name;
+      
+      if (!rowsBySalesperson.has(spName)) {
+        rowsBySalesperson.set(spName, []);
+        rowsBySalespersonCustomer.set(spName, new Map());
+      }
+      rowsBySalesperson.get(spName)!.push(row);
+      
+      const customerMap = rowsBySalespersonCustomer.get(spName)!;
+      if (!customerMap.has(customerName)) {
+        customerMap.set(customerName, []);
+      }
+      customerMap.get(customerName)!.push(row);
+    }
+
+    const styles = StyleSheet.create({
+      page: { padding: 16, fontSize: 9, color: '#0f172a' },
+      h1: { fontSize: 16, marginBottom: 4, fontWeight: 700 },
+      h2: { fontSize: 12, marginBottom: 3, fontWeight: 600 },
+      small: { fontSize: 8, color: '#64748b', marginBottom: 4 },
+      tableHeader: { flexDirection: 'row', backgroundColor: '#1d4ed8', color: '#ffffff', borderBottom: 0.5, borderColor: '#bfdbfe' },
+      headerCell: { padding: 6, fontSize: 9, fontWeight: 700 },
+      row: { flexDirection: 'row', borderBottom: 0.5, borderColor: '#e2e8f0' },
+      rowAlt: { backgroundColor: '#f1f5f9' },
+      cell: { padding: 6, fontSize: 8 },
+      left: { textAlign: 'left' },
+      right: { textAlign: 'right' },
+      red: { color: '#dc2626' },
+      green: { color: '#16a34a' },
+      bold: { fontWeight: 700 },
+    });
+
+    const Cell = (txt: string, w: string | number, align: 'left' | 'right' = 'left', extra?: any) => 
+      React.createElement(Text, { style: [{ width: w }, styles.cell, align === 'left' ? styles.left : styles.right, extra || {}] }, txt);
+
+    const fmt = (n: number) => new Intl.NumberFormat('da-DK').format(Math.round(n));
+
+    // Files to track
+    const summaryFiles: Array<{ name: string; path: string; publicUrl: string | null; salesperson_name: string }> = [];
+    const customerFiles: Array<{ name: string; path: string; publicUrl: string | null; salesperson_name: string }> = [];
+    const allSummaryPages: any[] = [];
+    const allCustomerPages: any[] = [];
+
+    // Generate PDFs per salesperson
+    for (const stat of currentData) {
+      const salespersonName = stat.salesperson_name;
+      const prev = prevYearMap.get(salespersonName);
+      const safeName = salespersonName.replace(/[^a-z0-9_-]+/gi, '_');
+
+      // Calculate values (convert krediteret to negative)
+      const current = {
+        telefon: { stk: stat.telefon_stk, beløb: stat.telefon_beløb },
+        b2bShop: { stk: stat.b2b_stk, beløb: stat.b2b_beløb },
+        credittedStk: -stat.krediteret_stk,
+        credittedBeløb: -stat.krediteret_beløb,
+        samletStk: stat.telefon_stk + stat.b2b_stk - stat.krediteret_stk,
+        samletBeløb: stat.telefon_beløb + stat.b2b_beløb - stat.krediteret_beløb,
+      };
+
+      const previousYear = prev ? {
+        telefon: { stk: prev.telefon_stk, beløb: prev.telefon_beløb },
+        b2bShop: { stk: prev.b2b_stk, beløb: prev.b2b_beløb },
+        credittedStk: -prev.krediteret_stk,
+        credittedBeløb: -prev.krediteret_beløb,
+        samletStk: prev.telefon_stk + prev.b2b_stk - prev.krediteret_stk,
+        samletBeløb: prev.telefon_beløb + prev.b2b_beløb - prev.krediteret_beløb,
+      } : null;
+
+      const development = prev ? {
+        telefon: { stk: stat.telefon_stk - prev.telefon_stk, beløb: stat.telefon_beløb - prev.telefon_beløb },
+        b2bShop: { stk: stat.b2b_stk - prev.b2b_stk, beløb: stat.b2b_beløb - prev.b2b_beløb },
+        credittedStk: -(stat.krediteret_stk - prev.krediteret_stk),
+        credittedBeløb: -(stat.krediteret_beløb - prev.krediteret_beløb),
+        samletStk: (stat.telefon_stk + stat.b2b_stk - stat.krediteret_stk) - (prev.telefon_stk + prev.b2b_stk - prev.krediteret_stk),
+        samletBeløb: (stat.telefon_beløb + stat.b2b_beløb - stat.krediteret_beløb) - (prev.telefon_beløb + prev.b2b_beløb - prev.krediteret_beløb),
+      } : null;
+
+      // 1. SUMMARY PDF per salesperson
+      const summaryHeader = React.createElement(View, { style: styles.tableHeader },
+        Cell('Telefon stk', '12.5%', 'left', styles.headerCell),
+        Cell('Telefon beløb', '12.5%', 'right', styles.headerCell),
+        Cell('B2B stk', '12.5%', 'left', styles.headerCell),
+        Cell('B2B beløb', '12.5%', 'right', styles.headerCell),
+        Cell('Krediteret stk', '12.5%', 'left', styles.headerCell),
+        Cell('Krediteret beløb', '12.5%', 'right', styles.headerCell),
+        Cell('Samlet stk', '12.5%', 'left', styles.headerCell),
+        Cell('Samlet beløb', '12.5%', 'right', styles.headerCell)
+      );
+
+      const summaryRow = React.createElement(View, { style: styles.row },
+        Cell(String(current.telefon.stk), '12.5%', 'left'),
+        Cell(formatPrice(current.telefon.beløb), '12.5%', 'right'),
+        Cell(String(current.b2bShop.stk), '12.5%', 'left'),
+        Cell(formatPrice(current.b2bShop.beløb), '12.5%', 'right'),
+        Cell(String(current.credittedStk), '12.5%', 'left', styles.red),
+        Cell(formatPrice(current.credittedBeløb), '12.5%', 'right', styles.red),
+        Cell(String(current.samletStk), '12.5%', 'left', styles.bold),
+        Cell(formatPrice(current.samletBeløb), '12.5%', 'right', styles.bold)
+      );
+
+      const summaryPage = React.createElement(PdfPage, { size: 'A4', orientation: 'landscape', style: styles.page },
+        React.createElement(Text, { style: styles.h1 }, `Suppleringer · ${salespersonName}`),
+        React.createElement(Text, { style: styles.small }, formatMonthName(yearMonth)),
+        summaryHeader,
+        summaryRow
+      );
+
+      const summaryDoc = React.createElement(Document, null, summaryPage);
+      const summaryPdf = await pdf(summaryDoc).toBuffer();
+      const summaryBuf = await ensureBuffer(summaryPdf);
+      const summaryPath = `Suppleringer/${job.id}/summary/${safeName}.pdf`;
+      
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          const ab = summaryBuf.buffer.slice(summaryBuf.byteOffset, summaryBuf.byteOffset + summaryBuf.byteLength);
+          await supabase.storage.from('exports').upload(summaryPath, ab as ArrayBuffer, { contentType: 'application/pdf', upsert: true });
+          let publicUrl: string | null = null;
+          try {
+            const { data: pub } = supabase.storage.from('exports').getPublicUrl(summaryPath);
+            publicUrl = pub?.publicUrl ?? null;
+          } catch {}
+          summaryFiles.push({ name: salespersonName, path: summaryPath, publicUrl, salesperson_name: salespersonName });
+          allSummaryPages.push(summaryPage);
+          break;
+        } catch (e: any) {
+          if (attempt === 3) {
+            await log(job.id, 'error', 'STEP:export_suppleringer_summary_failed', { name: salespersonName, error: e?.message || String(e) });
+          }
+        }
+      }
+
+      let currentIndex = 0;
+      for (let i = 0; i < currentData.length; i++) {
+        if (currentData[i].salesperson_name === salespersonName) {
+          currentIndex = i + 1;
+          break;
+        }
+      }
+      await log(job.id, 'info', 'STEP:export_suppleringer_progress', { 
+        salesperson: salespersonName, 
+        index: currentIndex, 
+        total: currentData.length 
+      });
+
+      // 2. CUSTOMER STATS PDF per salesperson
+      const customerRows = rowsBySalespersonCustomer.get(salespersonName);
+      if (customerRows && customerRows.size > 0) {
+        const customerHeader = React.createElement(View, { style: styles.tableHeader },
+          Cell('Kunde', '20%', 'left', styles.headerCell),
+          Cell('Telefon stk', '10%', 'left', styles.headerCell),
+          Cell('Telefon beløb', '12%', 'right', styles.headerCell),
+          Cell('B2B stk', '10%', 'left', styles.headerCell),
+          Cell('B2B beløb', '12%', 'right', styles.headerCell),
+          Cell('Krediteret stk', '10%', 'left', styles.headerCell),
+          Cell('Krediteret beløb', '12%', 'right', styles.headerCell),
+          Cell('Samlet stk', '7%', 'left', styles.headerCell),
+          Cell('Samlet beløb', '7%', 'right', styles.headerCell)
+        );
+
+        const customerBodyRows: any[] = [];
+        for (const [customerName, rows] of customerRows.entries()) {
+          // Aggregate customer rows
+          const telefon = { stk: 0, beløb: 0 };
+          const b2bShop = { stk: 0, beløb: 0 };
+          let credittedStk = 0;
+          let credittedBeløb = 0;
+
+          for (const row of rows) {
+            if (row.channel === 'Telefon') {
+              if (row.qty_ordered > 0) telefon.stk += row.qty_ordered;
+              if (row.price > 0) telefon.beløb += row.price;
+            } else {
+              if (row.qty_ordered > 0) b2bShop.stk += row.qty_ordered;
+              if (row.price > 0) b2bShop.beløb += row.price;
+            }
+            if (row.qty_ordered < 0) credittedStk += row.qty_ordered;
+            if (row.price < 0) credittedBeløb += row.price;
+          }
+
+          const samletStk = telefon.stk + b2bShop.stk + credittedStk;
+          const samletBeløb = telefon.beløb + b2bShop.beløb + credittedBeløb;
+
+          customerBodyRows.push(
+            React.createElement(View, { style: [styles.row, customerBodyRows.length % 2 === 1 ? styles.rowAlt : {}] },
+              Cell(customerName, '20%', 'left'),
+              Cell(String(telefon.stk), '10%', 'left'),
+              Cell(formatPrice(telefon.beløb), '12%', 'right'),
+              Cell(String(b2bShop.stk), '10%', 'left'),
+              Cell(formatPrice(b2bShop.beløb), '12%', 'right'),
+              Cell(String(credittedStk), '10%', 'left', styles.red),
+              Cell(formatPrice(credittedBeløb), '12%', 'right', styles.red),
+              Cell(String(samletStk), '7%', 'left'),
+              Cell(formatPrice(samletBeløb), '7%', 'right')
+            )
+          );
+        }
+
+        const customerPage = React.createElement(PdfPage, { size: 'A4', orientation: 'landscape', style: styles.page },
+          React.createElement(Text, { style: styles.h1 }, `Suppleringer · ${salespersonName}`),
+          React.createElement(Text, { style: styles.h2 }, 'Kunder'),
+          React.createElement(Text, { style: styles.small }, formatMonthName(yearMonth)),
+          customerHeader,
+          ...customerBodyRows
+        );
+
+        const customerDoc = React.createElement(Document, null, customerPage);
+        const customerPdf = await pdf(customerDoc).toBuffer();
+        const customerBuf = await ensureBuffer(customerPdf);
+        const customerPath = `Suppleringer/${job.id}/customers/${safeName}.pdf`;
+        
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          try {
+            const ab = customerBuf.buffer.slice(customerBuf.byteOffset, customerBuf.byteOffset + customerBuf.byteLength);
+            await supabase.storage.from('exports').upload(customerPath, ab as ArrayBuffer, { contentType: 'application/pdf', upsert: true });
+            let publicUrl: string | null = null;
+            try {
+              const { data: pub } = supabase.storage.from('exports').getPublicUrl(customerPath);
+              publicUrl = pub?.publicUrl ?? null;
+            } catch {}
+            customerFiles.push({ name: `${salespersonName} · Kunder`, path: customerPath, publicUrl, salesperson_name: salespersonName });
+            allCustomerPages.push(customerPage);
+            break;
+          } catch (e: any) {
+            if (attempt === 3) {
+              await log(job.id, 'error', 'STEP:export_suppleringer_customers_failed', { name: salespersonName, error: e?.message || String(e) });
+            }
+          }
+        }
+      }
+    }
+
+    // 3. FULL PAGE PDF (all data combined)
+    const fullPageHeader = React.createElement(View, { style: styles.tableHeader },
+      Cell('Sælger', '20%', 'left', styles.headerCell),
+      Cell('Telefon stk', '10%', 'left', styles.headerCell),
+      Cell('Telefon beløb', '12%', 'right', styles.headerCell),
+      Cell('B2B stk', '10%', 'left', styles.headerCell),
+      Cell('B2B beløb', '12%', 'right', styles.headerCell),
+      Cell('Krediteret stk', '10%', 'left', styles.headerCell),
+      Cell('Krediteret beløb', '12%', 'right', styles.headerCell),
+      Cell('Samlet stk', '7%', 'left', styles.headerCell),
+      Cell('Samlet beløb', '7%', 'right', styles.headerCell)
+    );
+
+    const fullPageBodyRows: any[] = [];
+    for (const stat of currentData) {
+      const current = {
+        telefon: { stk: stat.telefon_stk, beløb: stat.telefon_beløb },
+        b2bShop: { stk: stat.b2b_stk, beløb: stat.b2b_beløb },
+        credittedStk: -stat.krediteret_stk,
+        credittedBeløb: -stat.krediteret_beløb,
+        samletStk: stat.telefon_stk + stat.b2b_stk - stat.krediteret_stk,
+        samletBeløb: stat.telefon_beløb + stat.b2b_beløb - stat.krediteret_beløb,
+      };
+
+      fullPageBodyRows.push(
+        React.createElement(View, { style: [styles.row, fullPageBodyRows.length % 2 === 1 ? styles.rowAlt : {}] },
+          Cell(stat.salesperson_name, '20%', 'left'),
+          Cell(String(current.telefon.stk), '10%', 'left'),
+          Cell(formatPrice(current.telefon.beløb), '12%', 'right'),
+          Cell(String(current.b2bShop.stk), '10%', 'left'),
+          Cell(formatPrice(current.b2bShop.beløb), '12%', 'right'),
+          Cell(String(current.credittedStk), '10%', 'left', styles.red),
+          Cell(formatPrice(current.credittedBeløb), '12%', 'right', styles.red),
+          Cell(String(current.samletStk), '7%', 'left', styles.bold),
+          Cell(formatPrice(current.samletBeløb), '7%', 'right', styles.bold)
+        )
+      );
+    }
+
+    const fullPage = React.createElement(PdfPage, { size: 'A4', orientation: 'landscape', style: styles.page },
+      React.createElement(Text, { style: styles.h1 }, 'Suppleringer · Samlet Oversigt'),
+      React.createElement(Text, { style: styles.small }, formatMonthName(yearMonth)),
+      fullPageHeader,
+      ...fullPageBodyRows
+    );
+
+    const fullPageDoc = React.createElement(Document, null, fullPage);
+    const fullPagePdf = await pdf(fullPageDoc).toBuffer();
+    const fullPageBuf = await ensureBuffer(fullPagePdf);
+    const fullPagePath = `Suppleringer/${job.id}/full/all.pdf`;
+    
+    let fullPagePublicUrl: string | null = null;
+    try {
+      const ab = fullPageBuf.buffer.slice(fullPageBuf.byteOffset, fullPageBuf.byteOffset + fullPageBuf.byteLength);
+      await supabase.storage.from('exports').upload(fullPagePath, ab as ArrayBuffer, { contentType: 'application/pdf', upsert: true });
+      try {
+        const { data: pub } = supabase.storage.from('exports').getPublicUrl(fullPagePath);
+        fullPagePublicUrl = pub?.publicUrl ?? null;
+      } catch {}
+    } catch (e: any) {
+      await log(job.id, 'error', 'STEP:export_suppleringer_full_failed', { error: e?.message || String(e) });
+    }
+
+    // Save export records
+    const allFiles = [...summaryFiles, ...customerFiles];
+    
+    // Save summary PDFs export record
+    if (summaryFiles.length > 0) {
+      const allSummaryDoc = React.createElement(Document, null, ...allSummaryPages);
+      const allSummaryPdf = await pdf(allSummaryDoc).toBuffer();
+      const allSummaryBuf = await ensureBuffer(allSummaryPdf);
+      const allSummaryPath = `Suppleringer/${job.id}/summary/all.pdf`;
+      let allSummaryPublicUrl: string | null = null;
+      
+      try {
+        const ab = allSummaryBuf.buffer.slice(allSummaryBuf.byteOffset, allSummaryBuf.byteOffset + allSummaryBuf.byteLength);
+        await supabase.storage.from('exports').upload(allSummaryPath, ab as ArrayBuffer, { contentType: 'application/pdf', upsert: true });
+        try {
+          const { data: pub } = supabase.storage.from('exports').getPublicUrl(allSummaryPath);
+          allSummaryPublicUrl = pub?.publicUrl ?? null;
+        } catch {}
+      } catch {}
+
+      try {
+        await supabase.from('exports').insert({
+          kind: 'suppleringer_summary_pdfs',
+          title: `Suppleringer · Summary · ${formatMonthName(yearMonth)}`,
+          path: `Suppleringer/${job.id}/summary/`,
+          public_url: null,
+          job_id: job.id,
+          meta: { 
+            files: summaryFiles.map(f => ({ name: f.name, path: f.path, publicUrl: f.publicUrl })),
+            all: { path: allSummaryPath, publicUrl: allSummaryPublicUrl },
+            year_month: yearMonth
+          }
+        });
+      } catch {}
+    }
+
+    // Save customer PDFs export record
+    if (customerFiles.length > 0) {
+      const allCustomerDoc = React.createElement(Document, null, ...allCustomerPages);
+      const allCustomerPdf = await pdf(allCustomerDoc).toBuffer();
+      const allCustomerBuf = await ensureBuffer(allCustomerPdf);
+      const allCustomerPath = `Suppleringer/${job.id}/customers/all.pdf`;
+      let allCustomerPublicUrl: string | null = null;
+      
+      try {
+        const ab = allCustomerBuf.buffer.slice(allCustomerBuf.byteOffset, allCustomerBuf.byteOffset + allCustomerBuf.byteLength);
+        await supabase.storage.from('exports').upload(allCustomerPath, ab as ArrayBuffer, { contentType: 'application/pdf', upsert: true });
+        try {
+          const { data: pub } = supabase.storage.from('exports').getPublicUrl(allCustomerPath);
+          allCustomerPublicUrl = pub?.publicUrl ?? null;
+        } catch {}
+      } catch {}
+
+      try {
+        await supabase.from('exports').insert({
+          kind: 'suppleringer_customer_pdfs',
+          title: `Suppleringer · Customer Stats · ${formatMonthName(yearMonth)}`,
+          path: `Suppleringer/${job.id}/customers/`,
+          public_url: null,
+          job_id: job.id,
+          meta: { 
+            files: customerFiles.map(f => ({ name: f.name, path: f.path, publicUrl: f.publicUrl })),
+            all: { path: allCustomerPath, publicUrl: allCustomerPublicUrl },
+            year_month: yearMonth
+          }
+        });
+      } catch {}
+    }
+
+    // Save full page export record
+    try {
+      await supabase.from('exports').insert({
+        kind: 'suppleringer_full_pdf',
+        title: `Suppleringer · Full Page · ${formatMonthName(yearMonth)}`,
+        path: fullPagePath,
+        public_url: fullPagePublicUrl,
+        job_id: job.id,
+        meta: { year_month: yearMonth }
+      });
+    } catch {}
+
+    await log(job.id, 'info', 'STEP:complete', { 
+      summaryFiles: summaryFiles.length, 
+      customerFiles: customerFiles.length,
+      yearMonth 
+    });
+    await saveResult(job.id, 'export_suppleringer_done', { 
+      summaryFiles: summaryFiles.length, 
+      customerFiles: customerFiles.length,
+      yearMonth 
+    });
+    await setJobSucceeded(job.id);
+  } catch (e: any) {
+    await setJobFailedOrRequeue(job, e?.message || String(e));
+  }
+}
+
