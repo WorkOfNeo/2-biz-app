@@ -406,7 +406,8 @@ export default function SuppliersPage() {
   function extractYearMonth(dateStr: string | null): string | null {
     if (!dateStr) return null;
     const match = dateStr.match(/^(\d{4}-\d{2})/);
-    return match ? match[1] : null;
+    if (!match || !match[1]) return null;
+    return match[1];
   }
 
   // Get the most common month from parsed rows, or use current month as fallback
