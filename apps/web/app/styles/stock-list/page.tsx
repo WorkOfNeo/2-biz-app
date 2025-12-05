@@ -974,6 +974,17 @@ export default function StockListPage() {
                 const missingInPasted = differences.filter(d => d.status === 'missing_in_pasted').length;
                 const matches = differences.filter(d => d.status === 'match').length;
                 
+                console.log('SPY Verification Results:', {
+                  spyDataMapSize: spyDataMap.size,
+                  currentDataSize: currentData.size,
+                  differencesLength: differences.length,
+                  mismatchCount,
+                  missingInCurrent,
+                  missingInPasted,
+                  matches,
+                  sampleDifferences: differences.slice(0, 5)
+                });
+                
                 setCheckerResults({
                   mode: 'spy',
                   pastedCount: spyDataMap.size,
