@@ -2,7 +2,7 @@
 import { useMemo, useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import { Loader2, Save, Download } from 'lucide-react';
-import { supabase } from '@/lib/supabaseClient';
+import { supabase } from '../../../lib/supabaseClient';
 
 type ParsedRow = {
   orderType: string;
