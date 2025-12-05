@@ -80,10 +80,10 @@ export async function exportSuppleringer(ctx: Ctx) {
 
     await log(job.id, 'info', 'STEP:export_suppleringer_month', { yearMonth });
 
-    // Load current month data
+    // Load current month data (include salesperson_id)
     const { data: currentData } = await supabase
       .from('supp_statistic')
-      .select('*')
+      .select('*, salesperson_id')
       .eq('year_month', yearMonth)
       .order('salesperson_name');
 
@@ -101,93 +101,91 @@ export async function exportSuppleringer(ctx: Ctx) {
     
     const { data: prevData } = await supabase
       .from('supp_statistic')
-      .select('*')
+      .select('*, salesperson_id')
       .eq('year_month', prevYearMonth)
       .order('salesperson_name');
 
-    const prevYearMap = new Map<string, any>();
+    const prevYearMap = new Map<string | null, any>();
     for (const prev of prevData || []) {
-      prevYearMap.set(prev.salesperson_name, prev);
+      // Map by salesperson_id if available, fallback to name
+      const key = prev.salesperson_id || prev.salesperson_name;
+      if (key) prevYearMap.set(key, prev);
     }
 
-    // Load individual rows for customer details
+    // Load individual rows for customer details (include salesperson_id)
     const { data: currentRows } = await supabase
       .from('supp_statistic_rows')
-      .select('*')
+      .select('*, salesperson_id')
       .eq('year_month', yearMonth)
-      .order('salesperson_name, customer_name');
+      .order('salesperson_id, customer_name');
 
     await log(job.id, 'info', 'STEP:export_suppleringer_rows_loaded', { 
       rowCount: currentRows ? currentRows.length : 0,
       salespersonCount: currentData.length
     });
 
-    // Group rows by salesperson and customer
-    // Use normalized names (trimmed, case-insensitive) for matching to handle data inconsistencies
-    const rowsBySalesperson = new Map<string, any[]>();
-    const rowsBySalespersonCustomer = new Map<string, Map<string, any[]>>();
+    // Group rows by salesperson ID (much more reliable than name matching)
+    // Use salesperson_id as the key for grouping
+    const rowsBySalesperson = new Map<string | null, any[]>();
+    const rowsBySalespersonCustomer = new Map<string | null, Map<string, any[]>>();
     
-    // Create a mapping from normalized names to original names from currentData
-    const normalizedToOriginal = new Map<string, string>();
-    const originalToNormalized = new Map<string, string>();
-    
-    // Helper function to normalize salesperson names (trim and lowercase for matching)
-    const normalizeName = (name: string | null | undefined): string => {
-      if (!name) return '';
-      return String(name).trim().toLowerCase();
-    };
-    
-    // Initialize customer maps for all salespersons in currentData (even if no rows exist)
-    // This ensures all salespersons get customer PDFs created
+    // Create mapping from salesperson_id to salesperson_name for display
+    const salespersonIdToName = new Map<string | null, string>();
     for (const stat of currentData) {
+      const spId = stat.salesperson_id || null;
       const spName = stat.salesperson_name || '';
-      const normalized = normalizeName(spName);
-      if (normalized) {
-        normalizedToOriginal.set(normalized, spName);
-        originalToNormalized.set(spName, normalized);
-        if (!rowsBySalespersonCustomer.has(spName)) {
-          rowsBySalespersonCustomer.set(spName, new Map());
-          rowsBySalesperson.set(spName, []);
-        }
+      if (spId) salespersonIdToName.set(spId, spName);
+      // Also initialize maps for all salespersons in currentData
+      if (spId && !rowsBySalespersonCustomer.has(spId)) {
+        rowsBySalespersonCustomer.set(spId, new Map());
+        rowsBySalesperson.set(spId, []);
       }
     }
     
-    // Track unmatched salesperson names from rows
-    const unmatchedSalespersonNames = new Set<string>();
+    // Track unmatched salesperson IDs from rows
+    const unmatchedSalespersonIds = new Set<string | null>();
     
-    // Group customer rows by salesperson
+    // Group customer rows by salesperson ID
     for (const row of currentRows || []) {
+      const rowSpId = row.salesperson_id || null;
       const rowSpName = row.salesperson_name || '';
-      const normalizedRowSpName = normalizeName(rowSpName);
       const customerName = row.customer_name || '';
       
-      if (!rowSpName || !customerName) continue; // Skip invalid rows
+      if (!customerName) continue; // Skip invalid rows
       
-      // Try to find matching salesperson name (case-insensitive, trimmed)
-      let matchedSpName: string | null = null;
+      // Use salesperson_id if available, otherwise use name as fallback
+      let matchedSpId: string | null = null;
       
-      if (normalizedToOriginal.has(normalizedRowSpName)) {
-        // Exact normalized match found
-        const foundName = normalizedToOriginal.get(normalizedRowSpName);
-        matchedSpName = foundName || null;
-      } else {
-        // No match found - log and create entry anyway (will show in export)
-        unmatchedSalespersonNames.add(rowSpName);
-        matchedSpName = rowSpName; // Use original name from row
-        
-        // Initialize if not already done (use rowSpName which is guaranteed to be string here)
-        if (rowSpName) {
-          if (!rowsBySalespersonCustomer.has(rowSpName)) {
-            rowsBySalespersonCustomer.set(rowSpName, new Map());
-            rowsBySalesperson.set(rowSpName, []);
-          }
+      if (rowSpId) {
+        // Use ID if available
+        matchedSpId = rowSpId;
+        if (!salespersonIdToName.has(rowSpId) && rowSpName) {
+          salespersonIdToName.set(rowSpId, rowSpName);
+        }
+      } else if (rowSpName) {
+        // Fallback to name if ID not available - try to find ID from currentData
+        const stat = currentData.find((s: any) => s.salesperson_name === rowSpName);
+        if (stat?.salesperson_id) {
+          matchedSpId = stat.salesperson_id;
+          salespersonIdToName.set(matchedSpId, rowSpName);
+        } else {
+          // No ID found, use name as key (legacy support)
+          unmatchedSalespersonIds.add(rowSpName as any);
+          matchedSpId = rowSpName as any;
+          salespersonIdToName.set(matchedSpId, rowSpName);
         }
       }
       
-      if (matchedSpName) {
-        rowsBySalesperson.get(matchedSpName)!.push(row);
+      if (matchedSpId) {
+        // Initialize if not already done
+        if (!rowsBySalespersonCustomer.has(matchedSpId)) {
+          rowsBySalespersonCustomer.set(matchedSpId, new Map());
+          rowsBySalesperson.set(matchedSpId, []);
+        }
         
-        const customerMap = rowsBySalespersonCustomer.get(matchedSpName)!;
+        rowsBySalesperson.get(matchedSpId)!.push(row);
+        
+        const customerMap = rowsBySalespersonCustomer.get(matchedSpId)!;
         if (!customerMap.has(customerName)) {
           customerMap.set(customerName, []);
         }
@@ -195,20 +193,20 @@ export async function exportSuppleringer(ctx: Ctx) {
       }
     }
     
-    // Log unmatched salesperson names for debugging
-    if (unmatchedSalespersonNames.size > 0) {
+    // Log unmatched salesperson IDs for debugging
+    if (unmatchedSalespersonIds.size > 0) {
       await log(job.id, 'info', 'STEP:export_suppleringer_unmatched_salespersons', {
-        unmatchedNames: Array.from(unmatchedSalespersonNames),
+        unmatchedIds: Array.from(unmatchedSalespersonIds),
         message: 'Salespersons found in rows but not in aggregated data - will still create PDFs'
       });
     }
 
     // Log salesperson mapping for debugging
     await log(job.id, 'info', 'STEP:export_suppleringer_salesperson_mapping', {
-      salespersonsInData: currentData.map((s: any) => s.salesperson_name),
+      salespersonsInData: currentData.map((s: any) => ({ id: s.salesperson_id, name: s.salesperson_name })),
       salespersonsInRows: Array.from(rowsBySalespersonCustomer.keys()),
       rowCountsBySalesperson: Object.fromEntries(
-        Array.from(rowsBySalespersonCustomer.entries()).map(([sp, map]) => [sp, map.size])
+        Array.from(rowsBySalespersonCustomer.entries()).map(([spId, map]) => [spId || 'null', map.size])
       ),
       totalRowsLoaded: currentRows ? currentRows.length : 0
     });
@@ -245,38 +243,40 @@ export async function exportSuppleringer(ctx: Ctx) {
     const monthNum = month;
     
     // Generate PDFs per salesperson
-    // Include ALL salespersons that have either aggregated data OR rows
-    const allSalespersonNames = new Set<string>();
+    // Include ALL salespersons that have either aggregated data OR rows (by ID)
+    const allSalespersonIds = new Set<string | null>();
     
     // Add salespersons from aggregated data
     for (const stat of currentData) {
-      if (stat.salesperson_name) {
-        allSalespersonNames.add(stat.salesperson_name);
-      }
+      const spId = stat.salesperson_id || stat.salesperson_name; // Use ID or fallback to name
+      if (spId) allSalespersonIds.add(spId);
     }
     
     // Add salespersons from rows (in case they have rows but no aggregated data)
-    for (const spName of rowsBySalespersonCustomer.keys()) {
-      allSalespersonNames.add(spName);
+    for (const spId of rowsBySalespersonCustomer.keys()) {
+      if (spId) allSalespersonIds.add(spId);
     }
     
     await log(job.id, 'info', 'STEP:export_suppleringer_salesperson_list', {
-      totalSalespersons: allSalespersonNames.size,
+      totalSalespersons: allSalespersonIds.size,
       fromAggregatedData: currentData.length,
       fromRows: rowsBySalespersonCustomer.size,
-      allSalespersonNames: Array.from(allSalespersonNames)
+      allSalespersonIds: Array.from(allSalespersonIds)
     });
     
-    // Process each salesperson
-    for (const salespersonName of allSalespersonNames) {
-      // Find aggregated data for this salesperson
-      const stat = currentData.find((s: any) => {
-        const normalized = normalizeName(s.salesperson_name);
-        return normalized === normalizeName(salespersonName);
-      });
+    // Process each salesperson by ID
+    for (const salespersonId of allSalespersonIds) {
+      // Find aggregated data for this salesperson by ID
+      const stat = currentData.find((s: any) => 
+        s.salesperson_id === salespersonId || (!s.salesperson_id && s.salesperson_name === salespersonId)
+      );
+      
+      // Get salesperson name for display
+      const salespersonName = stat?.salesperson_name || salespersonIdToName.get(salespersonId) || String(salespersonId || 'Unknown');
       
       // If no aggregated data, create empty structure (will show zero values)
       const aggregatedData = stat || {
+        salesperson_id: salespersonId,
         salesperson_name: salespersonName,
         telefon_stk: 0,
         telefon_beløb: 0,
@@ -286,7 +286,8 @@ export async function exportSuppleringer(ctx: Ctx) {
         krediteret_beløb: 0,
       };
       
-      const prev = prevYearMap.get(stat?.salesperson_name || salespersonName);
+      // Get previous year data by ID (or fallback to name)
+      const prev = prevYearMap.get(salespersonId) || (!salespersonId ? null : prevYearMap.get(salespersonName));
       const safeName = salespersonName.replace(/[^a-z0-9_-]+/gi, '_');
 
       // Calculate values (convert krediteret to negative)
@@ -422,12 +423,14 @@ export async function exportSuppleringer(ctx: Ctx) {
 
       let currentIndex = 0;
       for (let i = 0; i < currentData.length; i++) {
-        if (currentData[i].salesperson_name === salespersonName) {
+        if (currentData[i].salesperson_id === salespersonId || 
+            (!currentData[i].salesperson_id && currentData[i].salesperson_name === salespersonId)) {
           currentIndex = i + 1;
           break;
         }
       }
       await log(job.id, 'info', 'STEP:export_suppleringer_progress', { 
+        salespersonId: salespersonId,
         salesperson: salespersonName, 
         index: currentIndex, 
         total: currentData.length 
@@ -435,10 +438,12 @@ export async function exportSuppleringer(ctx: Ctx) {
 
       // 2. CUSTOMER STATS PDF per salesperson
       // Always create customer PDF for ALL salespersons that have data
-      const customerRows = rowsBySalespersonCustomer.get(salespersonName);
+      // Find matching customer rows by salesperson ID (much more reliable)
+      const customerRows = rowsBySalespersonCustomer.get(salespersonId);
       
       await log(job.id, 'info', 'STEP:export_suppleringer_customer_check', { 
-        salesperson: salespersonName,
+        salespersonId: salespersonId,
+        salespersonName: salespersonName,
         hasCustomerRows: !!customerRows,
         customerRowCount: customerRows ? customerRows.size : 0,
         totalRowsInDb: currentRows ? currentRows.length : 0
@@ -556,15 +561,18 @@ export async function exportSuppleringer(ctx: Ctx) {
     ];
 
     // Loop through all salespersons and create a section for each with Prev/Current/Difference
-    for (const salespersonName of allSalespersonNames) {
-      // Find aggregated data for this salesperson
-      const stat = currentData.find((s: any) => {
-        const normalized = normalizeName(s.salesperson_name);
-        return normalized === normalizeName(salespersonName);
-      });
+    for (const salespersonId of allSalespersonIds) {
+      // Find aggregated data for this salesperson by ID
+      const stat = currentData.find((s: any) => 
+        s.salesperson_id === salespersonId || (!s.salesperson_id && s.salesperson_name === salespersonId)
+      );
+      
+      // Get salesperson name for display
+      const salespersonName = stat?.salesperson_name || salespersonIdToName.get(salespersonId) || String(salespersonId || 'Unknown');
       
       // If no aggregated data, create empty structure
       const aggregatedData = stat || {
+        salesperson_id: salespersonId,
         salesperson_name: salespersonName,
         telefon_stk: 0,
         telefon_beløb: 0,
@@ -574,8 +582,8 @@ export async function exportSuppleringer(ctx: Ctx) {
         krediteret_beløb: 0,
       };
       
-      const prevYearSalespersonName = stat?.salesperson_name || salespersonName;
-      const prev = prevYearMap.get(prevYearSalespersonName);
+      // Get previous year data by ID (or fallback to name)
+      const prev = prevYearMap.get(salespersonId) || (!salespersonId ? null : prevYearMap.get(salespersonName));
       
       // Salesperson name as section header
       fullPageElements.push(
