@@ -421,38 +421,79 @@ export default function HomePage() {
               </Link>
             </div>
 
-            {/* Country Sections */}
-            {COUNTRIES.map((countryName) => {
-              const rows = countryData[countryName] || [];
-              if (rows.length === 0) return null;
+            {/* Combined Table for All Countries */}
+            {React.useMemo(() => {
+              const allRows: Array<{ country: string; row: any; isFirst: boolean; rowSpan: number }> = [];
+              COUNTRIES.forEach((countryName) => {
+                const rows = countryData[countryName] || [];
+                rows.forEach((row, idx) => {
+                  allRows.push({
+                    country: countryName,
+                    row,
+                    isFirst: idx === 0,
+                    rowSpan: rows.length,
+                  });
+                });
+              });
 
               return (
-                <div key={countryName} className="rounded-md border p-2">
-                  <h2 className="text-sm font-semibold mb-1.5">{countryName}</h2>
-                  <div className="space-y-1">
-                    {rows.map((row) => (
-                      <div key={row.id} className="flex items-center gap-3 px-2 py-1.5 bg-gray-50 rounded text-xs">
-                        <div className="font-medium text-xs min-w-[120px]">{row.name}</div>
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-gray-600">Fremskridt:</span>
-                          <Donut pct={row.visitedPct} />
-                          <span className="text-gray-700">{row.visitedCount}/{row.validTotal}</span>
-                        </div>
-                        <div className="flex items-center gap-2 text-gray-700">
-                          <span>Index: {Math.round(row.indexQty).toLocaleString('da-DK')} stk | {Math.round(row.indexPrice).toLocaleString('da-DK')} Oms.</span>
-                          {row.visitedNoS2 > 0 && (
-                            <span className="text-orange-600">({row.visitedNoS2} visited, no S2)</span>
+                <div className="rounded-md border overflow-hidden">
+                  <table className="min-w-full text-xs">
+                    <thead className="bg-gray-100">
+                      <tr>
+                        <th className="px-2 py-1.5 text-left font-semibold border-r">Land</th>
+                        <th className="px-2 py-1.5 text-left font-semibold border-r">Sælger</th>
+                        <th className="px-2 py-1.5 text-center font-semibold border-r">Fremskridt</th>
+                        <th className="px-2 py-1.5 text-right font-semibold border-r">Index stk</th>
+                        <th className="px-2 py-1.5 text-right font-semibold border-r">Index Oms.</th>
+                        <th className="px-2 py-1.5 text-right font-semibold border-r">Prognose stk</th>
+                        <th className="px-2 py-1.5 text-right font-semibold">Prognose Oms.</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {allRows.map((item) => (
+                        <tr key={`${item.country}-${item.row.id}`} className="border-t hover:bg-gray-50">
+                          {item.isFirst && (
+                            <td rowSpan={item.rowSpan} className="px-2 py-1 border-r align-top font-medium bg-gray-50">
+                              {item.country}
+                            </td>
                           )}
-                        </div>
-                        <div className="text-gray-700">
-                          <span>Prognose: {Math.round(row.prognosedQty).toLocaleString('da-DK')} stk | {Math.round(row.prognosedPrice).toLocaleString('da-DK')} Oms.</span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+                          <td className="px-2 py-1 border-r">
+                            <Link 
+                              href={`/statistics/general#sp=${encodeURIComponent(item.row.name)}`}
+                              className="font-medium text-blue-600 hover:underline"
+                            >
+                              {item.row.name}
+                            </Link>
+                            {item.row.visitedNoS2 > 0 && (
+                              <span className="text-orange-600 ml-1 text-[10px]">({item.row.visitedNoS2} visited, no S2)</span>
+                            )}
+                          </td>
+                          <td className="px-2 py-1 border-r text-center">
+                            <div className="flex items-center justify-center gap-1">
+                              <Donut pct={item.row.visitedPct} />
+                              <span className="text-gray-700">{item.row.visitedCount}/{item.row.validTotal}</span>
+                            </div>
+                          </td>
+                          <td className="px-2 py-1 border-r text-right font-mono text-[11px]">
+                            {Math.round(item.row.indexQty).toLocaleString('da-DK')}
+                          </td>
+                          <td className="px-2 py-1 border-r text-right font-mono text-[11px]">
+                            {Math.round(item.row.indexPrice).toLocaleString('da-DK')}
+                          </td>
+                          <td className="px-2 py-1 border-r text-right font-mono text-[11px]">
+                            {Math.round(item.row.prognosedQty).toLocaleString('da-DK')}
+                          </td>
+                          <td className="px-2 py-1 text-right font-mono text-[11px]">
+                            {Math.round(item.row.prognosedPrice).toLocaleString('da-DK')}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               );
-            })}
+            }, [countryData])}
           </div>
 
           {/* Right sidebar - 1 column */}
