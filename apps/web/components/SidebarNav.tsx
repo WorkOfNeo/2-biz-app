@@ -58,7 +58,7 @@ export function SidebarNav() {
     can('/statistics/general') ? <NavLink key="sg" href="/statistics/general" label="Sælgere" /> : null,
     can('/statistics/overview') ? <NavLink key="so" href="/statistics/overview" label="Overblik" /> : null,
     can('/statistics/countries') ? <NavLink key="sc" href="/statistics/countries" label="Lande" /> : null,
-    can('/statistics/suppliers') ? <NavLink key="ssu" href="/statistics/suppliers" label="Suppleringer" /> : null,
+    can('/statistics/suppleringer') ? <NavLink key="ssu" href="/statistics/suppleringer" label="Suppleringer" /> : null,
     can('/statistics/styles/top10') ? <NavLink key="st" href="/statistics/styles/top10" label="Top 15 Styles" /> : null,
     can('/statistics/vendors/top10') ? <NavLink key="sv" href="/statistics/vendors/top10" label="Top 10 leverandører" /> : null,
     can('/statistics/exports') ? <NavLink key="se" href="/statistics/exports" label="PDF'er" /> : null,

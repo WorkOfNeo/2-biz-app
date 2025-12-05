@@ -1,8 +1,9 @@
 'use client';
 import { useMemo, useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
-import { Loader2, Save, Download } from 'lucide-react';
+import { Loader2, Save, Download, History } from 'lucide-react';
 import { supabase } from '../../../lib/supabaseClient';
+import Link from 'next/link';
 
 type ParsedRow = {
   orderType: string;
@@ -33,6 +34,28 @@ type SalespersonSummary = {
     samletStk: number;
     samletBeløb: number;
   };
+  previousYear?: {
+    totalDeliveredQty: number;
+    byChannel: {
+      telefon: { stk: number; beløb: number };
+      b2bShop: { stk: number; beløb: number };
+      credittedStk: number;
+      credittedBeløb: number;
+      samletStk: number;
+      samletBeløb: number;
+    };
+  } | null;
+  development?: {
+    totalDeliveredQty: number;
+    byChannel: {
+      telefon: { stk: number; beløb: number };
+      b2bShop: { stk: number; beløb: number };
+      credittedStk: number;
+      credittedBeløb: number;
+      samletStk: number;
+      samletBeløb: number;
+    };
+  } | null;
 };
 
 type CustomerGroup = {
@@ -68,6 +91,7 @@ export default function SuppliersPage() {
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(false);
   const [savedData, setSavedData] = useState<SavedStatistic[] | null>(null);
+  const [previousYearData, setPreviousYearData] = useState<SavedStatistic[] | null>(null);
   const [viewMode, setViewMode] = useState<'upload' | 'saved'>('upload');
 
   // Convert Excel column letter to 0-based array index
@@ -402,6 +426,19 @@ export default function SuppliersPage() {
     return (cents / 100).toLocaleString('da-DK', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
 
+  // Format year-month to Danish month name + year (e.g., "2025-01" -> "Januar 2025")
+  function formatMonthName(yearMonth: string): string {
+    const [year, month] = yearMonth.split('-');
+    if (!year || !month) return yearMonth;
+    const monthNum = parseInt(month, 10);
+    const monthNames = [
+      'Januar', 'Februar', 'Marts', 'April', 'Maj', 'Juni',
+      'Juli', 'August', 'September', 'Oktober', 'November', 'December'
+    ];
+    const monthName = monthNames[monthNum - 1] || month;
+    return `${monthName} ${year}`;
+  }
+
   // Extract year-month from date string (YYYY-MM-DD -> YYYY-MM)
   function extractYearMonth(dateStr: string | null): string | null {
     if (!dateStr) return null;
@@ -569,11 +606,12 @@ export default function SuppliersPage() {
     }
   }
 
-  // Load saved data for a specific month
+  // Load saved data for a specific month and previous year
   async function loadFromSupabase(month: string) {
     setLoading(true);
     setSelectedMonth(month);
     try {
+      // Load current month data
       const { data, error } = await supabase
         .from('supp_statistic')
         .select('*')
@@ -590,6 +628,23 @@ export default function SuppliersPage() {
 
       setSavedData(data as SavedStatistic[]);
       setViewMode('saved');
+
+      // Load previous year's same month
+      const [year, monthNum] = month.split('-');
+      const prevYear = String(parseInt(year, 10) - 1);
+      const prevYearMonth = `${prevYear}-${monthNum}`;
+      
+      const { data: prevData, error: prevError } = await supabase
+        .from('supp_statistic')
+        .select('*')
+        .eq('year_month', prevYearMonth)
+        .order('salesperson_name');
+
+      if (!prevError && prevData) {
+        setPreviousYearData(prevData as SavedStatistic[]);
+      } else {
+        setPreviousYearData(null);
+      }
       
     } catch (err: any) {
       alert(`Fejl ved indlæsning: ${err.message}`);
@@ -599,23 +654,55 @@ export default function SuppliersPage() {
     }
   }
 
-  // Convert saved statistics to display format (similar to SalespersonSummary)
+  // Convert saved statistics to display format with previous year and development
   const savedSummaries = useMemo(() => {
     if (!savedData) return [];
     
-    return savedData.map((stat) => ({
-      salesPerson: stat.salesperson_name,
-      totalDeliveredQty: stat.total_leveret,
-      byChannel: {
-        telefon: { stk: stat.telefon_stk, beløb: stat.telefon_beløb },
-        b2bShop: { stk: stat.b2b_stk, beløb: stat.b2b_beløb },
-        credittedStk: stat.krediteret_stk,
-        credittedBeløb: stat.krediteret_beløb,
-        samletStk: stat.samlet_stk,
-        samletBeløb: stat.samlet_beløb,
-      },
-    }));
-  }, [savedData]);
+    const prevYearMap = new Map<string, SavedStatistic>();
+    if (previousYearData) {
+      for (const prev of previousYearData) {
+        prevYearMap.set(prev.salesperson_name, prev);
+      }
+    }
+    
+    return savedData.map((stat) => {
+      const prev = prevYearMap.get(stat.salesperson_name);
+      return {
+        salesPerson: stat.salesperson_name,
+        totalDeliveredQty: stat.total_leveret,
+        byChannel: {
+          telefon: { stk: stat.telefon_stk, beløb: stat.telefon_beløb },
+          b2bShop: { stk: stat.b2b_stk, beløb: stat.b2b_beløb },
+          credittedStk: stat.krediteret_stk,
+          credittedBeløb: stat.krediteret_beløb,
+          samletStk: stat.samlet_stk,
+          samletBeløb: stat.samlet_beløb,
+        },
+        previousYear: prev ? {
+          totalDeliveredQty: prev.total_leveret,
+          byChannel: {
+            telefon: { stk: prev.telefon_stk, beløb: prev.telefon_beløb },
+            b2bShop: { stk: prev.b2b_stk, beløb: prev.b2b_beløb },
+            credittedStk: prev.krediteret_stk,
+            credittedBeløb: prev.krediteret_beløb,
+            samletStk: prev.samlet_stk,
+            samletBeløb: prev.samlet_beløb,
+          },
+        } : null,
+        development: prev ? {
+          totalDeliveredQty: stat.total_leveret - prev.total_leveret,
+          byChannel: {
+            telefon: { stk: stat.telefon_stk - prev.telefon_stk, beløb: stat.telefon_beløb - prev.telefon_beløb },
+            b2bShop: { stk: stat.b2b_stk - prev.b2b_stk, beløb: stat.b2b_beløb - prev.b2b_beløb },
+            credittedStk: stat.krediteret_stk - prev.krediteret_stk,
+            credittedBeløb: stat.krediteret_beløb - prev.krediteret_beløb,
+            samletStk: stat.samlet_stk - prev.samlet_stk,
+            samletBeløb: stat.samlet_beløb - prev.samlet_beløb,
+          },
+        } : null,
+      };
+    });
+  }, [savedData, previousYearData]);
 
   return (
     <div className="space-y-4">
@@ -623,32 +710,14 @@ export default function SuppliersPage() {
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">Suppleringer</h1>
         <div className="flex items-center gap-3">
-          {/* Load Saved Month */}
-          {savedMonths.length > 0 && (
-            <div className="flex items-center gap-2">
-              <label htmlFor="month-select" className="text-sm text-gray-600">Indlæs måned:</label>
-              <select
-                id="month-select"
-                value={selectedMonth || ''}
-                onChange={(e) => {
-                  if (e.target.value) {
-                    loadFromSupabase(e.target.value);
-                  } else {
-                    setSelectedMonth(null);
-                  }
-                }}
-                disabled={loading}
-                className="text-sm border rounded px-2 py-1"
-              >
-                <option value="">-- Vælg måned --</option>
-                {savedMonths.map((month) => (
-                  <option key={month} value={month}>
-                    {month}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
+          {/* Historical Data Button */}
+          <Link
+            href="/statistics/suppleringer/historical"
+            className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 text-sm"
+          >
+            <History className="h-4 w-4" />
+            Historisk Data
+          </Link>
           {/* Save Button */}
           {parsedRows.length > 0 && viewMode === 'upload' && (
             <button
@@ -657,22 +726,7 @@ export default function SuppliersPage() {
               className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
             >
               <Save className="h-4 w-4" />
-              {saving ? 'Gemmer...' : `Gem (${getMonthFromRows()})`}
-            </button>
-          )}
-          {/* View Toggle */}
-          {savedData && (
-            <button
-              onClick={() => {
-                setViewMode(viewMode === 'upload' ? 'saved' : 'upload');
-                if (viewMode === 'saved') {
-                  setSavedData(null);
-                  setSelectedMonth(null);
-                }
-              }}
-              className="flex items-center gap-2 px-4 py-2 bg-gray-200 text-gray-700 rounded hover:bg-gray-300 text-sm"
-            >
-              {viewMode === 'upload' ? 'Vis Gemt Data' : 'Tilbage til Upload'}
+              {saving ? 'Gemmer...' : `Gem (${formatMonthName(getMonthFromRows())})`}
             </button>
           )}
         </div>
@@ -739,12 +793,34 @@ export default function SuppliersPage() {
         </div>
       )}
 
+      {/* Month Tabs */}
+      {savedMonths.length > 0 && (
+        <div className="border-b">
+          <div className="flex gap-1 overflow-x-auto">
+            {savedMonths.map((month) => (
+              <button
+                key={month}
+                onClick={() => loadFromSupabase(month)}
+                disabled={loading}
+                className={`px-4 py-2 text-sm font-medium whitespace-nowrap border-b-2 transition ${
+                  selectedMonth === month
+                    ? 'border-blue-600 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                } ${loading ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+              >
+                {formatMonthName(month)}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Salesperson Summaries */}
       {((viewMode === 'upload' && salespersonSummaries.length > 0) || (viewMode === 'saved' && savedSummaries.length > 0)) && (
         <div className="space-y-4">
           {viewMode === 'saved' && selectedMonth && (
             <div className="text-sm text-gray-600 mb-2">
-              Viser gemt data for <strong>{selectedMonth}</strong>
+              Viser gemt data for <strong>{formatMonthName(selectedMonth)}</strong>
             </div>
           )}
           {(viewMode === 'upload' ? salespersonSummaries : savedSummaries).map((summary) => (
@@ -769,35 +845,140 @@ export default function SuppliersPage() {
                 </div>
               </div>
               
-              <div className="overflow-x-auto">
-                <table className="min-w-full text-sm">
-                  <thead className="bg-gray-50 border-b">
-                    <tr>
-                      <th className="px-4 py-2 text-left">Total leveret</th>
-                      <th className="px-4 py-2 text-left">Telefon stk</th>
-                      <th className="px-4 py-2 text-right">Telefon beløb</th>
-                      <th className="px-4 py-2 text-left">B2B stk</th>
-                      <th className="px-4 py-2 text-right">B2B beløb</th>
-                      <th className="px-4 py-2 text-left">Krediteret stk</th>
-                      <th className="px-4 py-2 text-right">Krediteret beløb</th>
-                      <th className="px-4 py-2 text-left">Samlet stk</th>
-                      <th className="px-4 py-2 text-right">Samlet beløb</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr className="border-b">
-                      <td className="px-4 py-2 font-medium">{summary.totalDeliveredQty.toLocaleString('da-DK')}</td>
-                      <td className="px-4 py-2">{summary.byChannel.telefon.stk.toLocaleString('da-DK')}</td>
-                      <td className="px-4 py-2 text-right">{formatPrice(summary.byChannel.telefon.beløb)}</td>
-                      <td className="px-4 py-2">{summary.byChannel.b2bShop.stk.toLocaleString('da-DK')}</td>
-                      <td className="px-4 py-2 text-right">{formatPrice(summary.byChannel.b2bShop.beløb)}</td>
-                      <td className="px-4 py-2">{summary.byChannel.credittedStk.toLocaleString('da-DK')}</td>
-                      <td className="px-4 py-2 text-right">{formatPrice(summary.byChannel.credittedBeløb)}</td>
-                      <td className="px-4 py-2 font-medium">{summary.byChannel.samletStk.toLocaleString('da-DK')}</td>
-                      <td className="px-4 py-2 text-right font-medium">{formatPrice(summary.byChannel.samletBeløb)}</td>
-                    </tr>
-                  </tbody>
-                </table>
+              <div className="space-y-4 p-4">
+                {/* Previous Year Section */}
+                {viewMode === 'saved' && summary.previousYear && selectedMonth && (
+                  <div>
+                    <h4 className="text-sm font-semibold text-gray-700 mb-2">
+                      {(() => {
+                        const [year] = selectedMonth.split('-');
+                        return `${parseInt(year, 10) - 1} (Sidste år)`;
+                      })()}
+                    </h4>
+                    <div className="overflow-x-auto">
+                      <table className="min-w-full text-sm">
+                        <thead className="bg-gray-50 border-b">
+                          <tr>
+                            <th className="px-4 py-2 text-left">Total leveret</th>
+                            <th className="px-4 py-2 text-left">Telefon stk</th>
+                            <th className="px-4 py-2 text-right">Telefon beløb</th>
+                            <th className="px-4 py-2 text-left">B2B stk</th>
+                            <th className="px-4 py-2 text-right">B2B beløb</th>
+                            <th className="px-4 py-2 text-left">Krediteret stk</th>
+                            <th className="px-4 py-2 text-right">Krediteret beløb</th>
+                            <th className="px-4 py-2 text-left">Samlet stk</th>
+                            <th className="px-4 py-2 text-right">Samlet beløb</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr className="border-b">
+                            <td className="px-4 py-2">{summary.previousYear.totalDeliveredQty.toLocaleString('da-DK')}</td>
+                            <td className="px-4 py-2">{summary.previousYear.byChannel.telefon.stk.toLocaleString('da-DK')}</td>
+                            <td className="px-4 py-2 text-right">{formatPrice(summary.previousYear.byChannel.telefon.beløb)}</td>
+                            <td className="px-4 py-2">{summary.previousYear.byChannel.b2bShop.stk.toLocaleString('da-DK')}</td>
+                            <td className="px-4 py-2 text-right">{formatPrice(summary.previousYear.byChannel.b2bShop.beløb)}</td>
+                            <td className="px-4 py-2">{summary.previousYear.byChannel.credittedStk.toLocaleString('da-DK')}</td>
+                            <td className="px-4 py-2 text-right">{formatPrice(summary.previousYear.byChannel.credittedBeløb)}</td>
+                            <td className="px-4 py-2">{summary.previousYear.byChannel.samletStk.toLocaleString('da-DK')}</td>
+                            <td className="px-4 py-2 text-right">{formatPrice(summary.previousYear.byChannel.samletBeløb)}</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* Current Month Section */}
+                <div>
+                  <h4 className="text-sm font-semibold text-gray-700 mb-2">
+                    {viewMode === 'saved' && selectedMonth ? formatMonthName(selectedMonth) : 'Nuværende måned'}
+                  </h4>
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full text-sm">
+                      <thead className="bg-gray-50 border-b">
+                        <tr>
+                          <th className="px-4 py-2 text-left">Total leveret</th>
+                          <th className="px-4 py-2 text-left">Telefon stk</th>
+                          <th className="px-4 py-2 text-right">Telefon beløb</th>
+                          <th className="px-4 py-2 text-left">B2B stk</th>
+                          <th className="px-4 py-2 text-right">B2B beløb</th>
+                          <th className="px-4 py-2 text-left">Krediteret stk</th>
+                          <th className="px-4 py-2 text-right">Krediteret beløb</th>
+                          <th className="px-4 py-2 text-left">Samlet stk</th>
+                          <th className="px-4 py-2 text-right">Samlet beløb</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr className="border-b">
+                          <td className="px-4 py-2 font-medium">{summary.totalDeliveredQty.toLocaleString('da-DK')}</td>
+                          <td className="px-4 py-2">{summary.byChannel.telefon.stk.toLocaleString('da-DK')}</td>
+                          <td className="px-4 py-2 text-right">{formatPrice(summary.byChannel.telefon.beløb)}</td>
+                          <td className="px-4 py-2">{summary.byChannel.b2bShop.stk.toLocaleString('da-DK')}</td>
+                          <td className="px-4 py-2 text-right">{formatPrice(summary.byChannel.b2bShop.beløb)}</td>
+                          <td className="px-4 py-2">{summary.byChannel.credittedStk.toLocaleString('da-DK')}</td>
+                          <td className="px-4 py-2 text-right">{formatPrice(summary.byChannel.credittedBeløb)}</td>
+                          <td className="px-4 py-2 font-medium">{summary.byChannel.samletStk.toLocaleString('da-DK')}</td>
+                          <td className="px-4 py-2 text-right font-medium">{formatPrice(summary.byChannel.samletBeløb)}</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* Development Section */}
+                {viewMode === 'saved' && summary.development && (
+                  <div>
+                    <h4 className="text-sm font-semibold text-gray-700 mb-2">Udvikling</h4>
+                    <div className="overflow-x-auto">
+                      <table className="min-w-full text-sm">
+                        <thead className="bg-gray-50 border-b">
+                          <tr>
+                            <th className="px-4 py-2 text-left">Total leveret</th>
+                            <th className="px-4 py-2 text-left">Telefon stk</th>
+                            <th className="px-4 py-2 text-right">Telefon beløb</th>
+                            <th className="px-4 py-2 text-left">B2B stk</th>
+                            <th className="px-4 py-2 text-right">B2B beløb</th>
+                            <th className="px-4 py-2 text-left">Krediteret stk</th>
+                            <th className="px-4 py-2 text-right">Krediteret beløb</th>
+                            <th className="px-4 py-2 text-left">Samlet stk</th>
+                            <th className="px-4 py-2 text-right">Samlet beløb</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr className="border-b">
+                            <td className={`px-4 py-2 font-medium ${summary.development.totalDeliveredQty >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                              {summary.development.totalDeliveredQty >= 0 ? '+' : ''}{summary.development.totalDeliveredQty.toLocaleString('da-DK')}
+                            </td>
+                            <td className={`px-4 py-2 ${summary.development.byChannel.telefon.stk >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                              {summary.development.byChannel.telefon.stk >= 0 ? '+' : ''}{summary.development.byChannel.telefon.stk.toLocaleString('da-DK')}
+                            </td>
+                            <td className={`px-4 py-2 text-right ${summary.development.byChannel.telefon.beløb >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                              {summary.development.byChannel.telefon.beløb >= 0 ? '+' : ''}{formatPrice(summary.development.byChannel.telefon.beløb)}
+                            </td>
+                            <td className={`px-4 py-2 ${summary.development.byChannel.b2bShop.stk >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                              {summary.development.byChannel.b2bShop.stk >= 0 ? '+' : ''}{summary.development.byChannel.b2bShop.stk.toLocaleString('da-DK')}
+                            </td>
+                            <td className={`px-4 py-2 text-right ${summary.development.byChannel.b2bShop.beløb >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                              {summary.development.byChannel.b2bShop.beløb >= 0 ? '+' : ''}{formatPrice(summary.development.byChannel.b2bShop.beløb)}
+                            </td>
+                            <td className={`px-4 py-2 ${summary.development.byChannel.credittedStk >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                              {summary.development.byChannel.credittedStk >= 0 ? '+' : ''}{summary.development.byChannel.credittedStk.toLocaleString('da-DK')}
+                            </td>
+                            <td className={`px-4 py-2 text-right ${summary.development.byChannel.credittedBeløb >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                              {summary.development.byChannel.credittedBeløb >= 0 ? '+' : ''}{formatPrice(summary.development.byChannel.credittedBeløb)}
+                            </td>
+                            <td className={`px-4 py-2 font-medium ${summary.development.byChannel.samletStk >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                              {summary.development.byChannel.samletStk >= 0 ? '+' : ''}{summary.development.byChannel.samletStk.toLocaleString('da-DK')}
+                            </td>
+                            <td className={`px-4 py-2 text-right font-medium ${summary.development.byChannel.samletBeløb >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                              {summary.development.byChannel.samletBeløb >= 0 ? '+' : ''}{formatPrice(summary.development.byChannel.samletBeløb)}
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Customer Details - Aggregated per customer (only for upload view) */}
