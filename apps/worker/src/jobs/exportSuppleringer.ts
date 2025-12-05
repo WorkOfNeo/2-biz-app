@@ -123,38 +123,81 @@ export async function exportSuppleringer(ctx: Ctx) {
     });
 
     // Group rows by salesperson and customer
+    // Use normalized names (trimmed, case-insensitive) for matching to handle data inconsistencies
     const rowsBySalesperson = new Map<string, any[]>();
     const rowsBySalespersonCustomer = new Map<string, Map<string, any[]>>();
+    
+    // Create a mapping from normalized names to original names from currentData
+    const normalizedToOriginal = new Map<string, string>();
+    const originalToNormalized = new Map<string, string>();
+    
+    // Helper function to normalize salesperson names (trim and lowercase for matching)
+    const normalizeName = (name: string | null | undefined): string => {
+      if (!name) return '';
+      return String(name).trim().toLowerCase();
+    };
     
     // Initialize customer maps for all salespersons in currentData (even if no rows exist)
     // This ensures all salespersons get customer PDFs created
     for (const stat of currentData) {
-      const spName = stat.salesperson_name;
-      if (!rowsBySalespersonCustomer.has(spName)) {
-        rowsBySalespersonCustomer.set(spName, new Map());
-        rowsBySalesperson.set(spName, []);
+      const spName = stat.salesperson_name || '';
+      const normalized = normalizeName(spName);
+      if (normalized) {
+        normalizedToOriginal.set(normalized, spName);
+        originalToNormalized.set(spName, normalized);
+        if (!rowsBySalespersonCustomer.has(spName)) {
+          rowsBySalespersonCustomer.set(spName, new Map());
+          rowsBySalesperson.set(spName, []);
+        }
       }
     }
     
+    // Track unmatched salesperson names from rows
+    const unmatchedSalespersonNames = new Set<string>();
+    
     // Group customer rows by salesperson
     for (const row of currentRows || []) {
-      const spName = row.salesperson_name;
-      const customerName = row.customer_name;
+      const rowSpName = row.salesperson_name || '';
+      const normalizedRowSpName = normalizeName(rowSpName);
+      const customerName = row.customer_name || '';
       
-      if (!spName || !customerName) continue; // Skip invalid rows
+      if (!rowSpName || !customerName) continue; // Skip invalid rows
       
-      // Ensure map exists (should already exist from initialization above)
-      if (!rowsBySalesperson.has(spName)) {
-        rowsBySalesperson.set(spName, []);
-        rowsBySalespersonCustomer.set(spName, new Map());
+      // Try to find matching salesperson name (case-insensitive, trimmed)
+      let matchedSpName: string | null = null;
+      
+      if (normalizedToOriginal.has(normalizedRowSpName)) {
+        // Exact normalized match found
+        matchedSpName = normalizedToOriginal.get(normalizedRowSpName)!;
+      } else {
+        // No match found - log and create entry anyway (will show in export)
+        unmatchedSalespersonNames.add(rowSpName);
+        matchedSpName = rowSpName; // Use original name from row
+        
+        // Initialize if not already done
+        if (!rowsBySalespersonCustomer.has(matchedSpName)) {
+          rowsBySalespersonCustomer.set(matchedSpName, new Map());
+          rowsBySalesperson.set(matchedSpName, []);
+        }
       }
-      rowsBySalesperson.get(spName)!.push(row);
       
-      const customerMap = rowsBySalespersonCustomer.get(spName)!;
-      if (!customerMap.has(customerName)) {
-        customerMap.set(customerName, []);
+      if (matchedSpName) {
+        rowsBySalesperson.get(matchedSpName)!.push(row);
+        
+        const customerMap = rowsBySalespersonCustomer.get(matchedSpName)!;
+        if (!customerMap.has(customerName)) {
+          customerMap.set(customerName, []);
+        }
+        customerMap.get(customerName)!.push(row);
       }
-      customerMap.get(customerName)!.push(row);
+    }
+    
+    // Log unmatched salesperson names for debugging
+    if (unmatchedSalespersonNames.size > 0) {
+      await log(job.id, 'warn', 'STEP:export_suppleringer_unmatched_salespersons', {
+        unmatchedNames: Array.from(unmatchedSalespersonNames),
+        message: 'Salespersons found in rows but not in aggregated data - will still create PDFs'
+      });
     }
 
     // Log salesperson mapping for debugging
@@ -199,37 +242,76 @@ export async function exportSuppleringer(ctx: Ctx) {
     const monthNum = month;
     
     // Generate PDFs per salesperson
+    // Include ALL salespersons that have either aggregated data OR rows
+    const allSalespersonNames = new Set<string>();
+    
+    // Add salespersons from aggregated data
     for (const stat of currentData) {
-      const salespersonName = stat.salesperson_name;
-      const prev = prevYearMap.get(salespersonName);
+      if (stat.salesperson_name) {
+        allSalespersonNames.add(stat.salesperson_name);
+      }
+    }
+    
+    // Add salespersons from rows (in case they have rows but no aggregated data)
+    for (const spName of rowsBySalespersonCustomer.keys()) {
+      allSalespersonNames.add(spName);
+    }
+    
+    await log(job.id, 'info', 'STEP:export_suppleringer_salesperson_list', {
+      totalSalespersons: allSalespersonNames.size,
+      fromAggregatedData: currentData.length,
+      fromRows: rowsBySalespersonCustomer.size,
+      allSalespersonNames: Array.from(allSalespersonNames)
+    });
+    
+    // Process each salesperson
+    for (const salespersonName of allSalespersonNames) {
+      // Find aggregated data for this salesperson
+      const stat = currentData.find((s: any) => {
+        const normalized = normalizeName(s.salesperson_name);
+        return normalized === normalizeName(salespersonName);
+      });
+      
+      // If no aggregated data, create empty structure (will show zero values)
+      const aggregatedData = stat || {
+        salesperson_name: salespersonName,
+        telefon_stk: 0,
+        telefon_beløb: 0,
+        b2b_stk: 0,
+        b2b_beløb: 0,
+        krediteret_stk: 0,
+        krediteret_beløb: 0,
+      };
+      
+      const prev = prevYearMap.get(stat?.salesperson_name || salespersonName);
       const safeName = salespersonName.replace(/[^a-z0-9_-]+/gi, '_');
 
       // Calculate values (convert krediteret to negative)
       const current = {
-        telefon: { stk: stat.telefon_stk, beløb: stat.telefon_beløb },
-        b2bShop: { stk: stat.b2b_stk, beløb: stat.b2b_beløb },
-        credittedStk: -stat.krediteret_stk,
-        credittedBeløb: -stat.krediteret_beløb,
-        samletStk: stat.telefon_stk + stat.b2b_stk - stat.krediteret_stk,
-        samletBeløb: stat.telefon_beløb + stat.b2b_beløb - stat.krediteret_beløb,
+        telefon: { stk: aggregatedData.telefon_stk || 0, beløb: aggregatedData.telefon_beløb || 0 },
+        b2bShop: { stk: aggregatedData.b2b_stk || 0, beløb: aggregatedData.b2b_beløb || 0 },
+        credittedStk: -(aggregatedData.krediteret_stk || 0),
+        credittedBeløb: -(aggregatedData.krediteret_beløb || 0),
+        samletStk: (aggregatedData.telefon_stk || 0) + (aggregatedData.b2b_stk || 0) - (aggregatedData.krediteret_stk || 0),
+        samletBeløb: (aggregatedData.telefon_beløb || 0) + (aggregatedData.b2b_beløb || 0) - (aggregatedData.krediteret_beløb || 0),
       };
 
       const previousYear = prev ? {
-        telefon: { stk: prev.telefon_stk, beløb: prev.telefon_beløb },
-        b2bShop: { stk: prev.b2b_stk, beløb: prev.b2b_beløb },
-        credittedStk: -prev.krediteret_stk,
-        credittedBeløb: -prev.krediteret_beløb,
-        samletStk: prev.telefon_stk + prev.b2b_stk - prev.krediteret_stk,
-        samletBeløb: prev.telefon_beløb + prev.b2b_beløb - prev.krediteret_beløb,
+        telefon: { stk: prev.telefon_stk || 0, beløb: prev.telefon_beløb || 0 },
+        b2bShop: { stk: prev.b2b_stk || 0, beløb: prev.b2b_beløb || 0 },
+        credittedStk: -(prev.krediteret_stk || 0),
+        credittedBeløb: -(prev.krediteret_beløb || 0),
+        samletStk: (prev.telefon_stk || 0) + (prev.b2b_stk || 0) - (prev.krediteret_stk || 0),
+        samletBeløb: (prev.telefon_beløb || 0) + (prev.b2b_beløb || 0) - (prev.krediteret_beløb || 0),
       } : null;
 
       const development = prev ? {
-        telefon: { stk: stat.telefon_stk - prev.telefon_stk, beløb: stat.telefon_beløb - prev.telefon_beløb },
-        b2bShop: { stk: stat.b2b_stk - prev.b2b_stk, beløb: stat.b2b_beløb - prev.b2b_beløb },
-        credittedStk: -(stat.krediteret_stk - prev.krediteret_stk),
-        credittedBeløb: -(stat.krediteret_beløb - prev.krediteret_beløb),
-        samletStk: (stat.telefon_stk + stat.b2b_stk - stat.krediteret_stk) - (prev.telefon_stk + prev.b2b_stk - prev.krediteret_stk),
-        samletBeløb: (stat.telefon_beløb + stat.b2b_beløb - stat.krediteret_beløb) - (prev.telefon_beløb + prev.b2b_beløb - prev.krediteret_beløb),
+        telefon: { stk: (aggregatedData.telefon_stk || 0) - (prev.telefon_stk || 0), beløb: (aggregatedData.telefon_beløb || 0) - (prev.telefon_beløb || 0) },
+        b2bShop: { stk: (aggregatedData.b2b_stk || 0) - (prev.b2b_stk || 0), beløb: (aggregatedData.b2b_beløb || 0) - (prev.b2b_beløb || 0) },
+        credittedStk: -((aggregatedData.krediteret_stk || 0) - (prev.krediteret_stk || 0)),
+        credittedBeløb: -((aggregatedData.krediteret_beløb || 0) - (prev.krediteret_beløb || 0)),
+        samletStk: ((aggregatedData.telefon_stk || 0) + (aggregatedData.b2b_stk || 0) - (aggregatedData.krediteret_stk || 0)) - ((prev.telefon_stk || 0) + (prev.b2b_stk || 0) - (prev.krediteret_stk || 0)),
+        samletBeløb: ((aggregatedData.telefon_beløb || 0) + (aggregatedData.b2b_beløb || 0) - (aggregatedData.krediteret_beløb || 0)) - ((prev.telefon_beløb || 0) + (prev.b2b_beløb || 0) - (prev.krediteret_beløb || 0)),
       } : null;
 
       // 1. SUMMARY PDF per salesperson
