@@ -325,10 +325,8 @@ export default function SuppliersPage() {
       // Split by channel - calculate all values
       const telefon = { stk: 0, beløb: 0 }; // Only positive values
       const b2bShop = { stk: 0, beløb: 0 }; // Only positive values
-      let credittedStk = 0; // Negative quantities as positive
-      let credittedBeløb = 0; // Negative prices as positive
-      let samletStk = 0; // All quantities (positive - negative)
-      let samletBeløb = 0; // All prices (positive - negative)
+      let credittedStk = 0; // Negative quantities (will be negative)
+      let credittedBeløb = 0; // Negative prices (will be negative)
 
       for (const row of rows) {
         const isTelefon = row.channel === 'Telefon';
@@ -342,39 +340,37 @@ export default function SuppliersPage() {
         // Telefon/B2B: only positive values
         if (row.qtyOrdered > 0) {
           channelData.stk += row.qtyOrdered;
-          samletStk += row.qtyOrdered;
         }
         if (row.price > 0) {
           channelData.beløb += row.price;
-          samletBeløb += row.price;
         }
         
-        // Creditted: negative values as positive
+        // Creditted: negative values (keep as negative)
         if (row.qtyOrdered < 0) {
-          const absQty = Math.abs(row.qtyOrdered);
-          credittedStk += absQty;
-          samletStk -= absQty; // Subtract from samlet
+          credittedStk += row.qtyOrdered; // Already negative
         }
         if (row.price < 0) {
-          const absPrice = Math.abs(row.price);
-          credittedBeløb += absPrice;
-          samletBeløb -= absPrice; // Subtract from samlet
+          credittedBeløb += row.price; // Already negative
         }
       }
+
+      // Calculate Samlet explicitly from other columns: Telefon + B2B - Krediteret
+      const samletStk = telefon.stk + b2bShop.stk + credittedStk; // credittedStk is already negative
+      const samletBeløb = telefon.beløb + b2bShop.beløb + credittedBeløb; // credittedBeløb is already negative
 
       summaries.push({
         salesPerson,
         totalOrderedQty,
         totalDeliveredQty,
         totalPrice,
-        credittedQty: credittedStk,
-        credittedPrice: credittedBeløb,
+        credittedQty: Math.abs(credittedStk), // For compatibility, store absolute value
+        credittedPrice: Math.abs(credittedBeløb), // For compatibility, store absolute value
         rows,
         byChannel: {
           telefon,
           b2bShop,
-          credittedStk,
-          credittedBeløb,
+          credittedStk, // Negative value
+          credittedBeløb, // Negative value
           samletStk,
           samletBeløb,
         },
@@ -543,10 +539,8 @@ export default function SuppliersPage() {
         // Calculate aggregated values (same logic as salespersonSummaries)
         const telefon = { stk: 0, beløb: 0 };
         const b2bShop = { stk: 0, beløb: 0 };
-        let credittedStk = 0;
-        let credittedBeløb = 0;
-        let samletStk = 0;
-        let samletBeløb = 0;
+        let credittedStk = 0; // Will be negative
+        let credittedBeløb = 0; // Will be negative
         let totalLeveret = 0;
 
         for (const row of rows) {
@@ -559,24 +553,22 @@ export default function SuppliersPage() {
           
           if (row.qtyOrdered > 0) {
             channelData.stk += row.qtyOrdered;
-            samletStk += row.qtyOrdered;
           }
           if (row.price > 0) {
             channelData.beløb += row.price;
-            samletBeløb += row.price;
           }
           
           if (row.qtyOrdered < 0) {
-            const absQty = Math.abs(row.qtyOrdered);
-            credittedStk += absQty;
-            samletStk -= absQty;
+            credittedStk += row.qtyOrdered; // Already negative
           }
           if (row.price < 0) {
-            const absPrice = Math.abs(row.price);
-            credittedBeløb += absPrice;
-            samletBeløb -= absPrice;
+            credittedBeløb += row.price; // Already negative
           }
         }
+
+        // Calculate Samlet explicitly: Telefon + B2B - Krediteret (Krediteret is already negative)
+        const samletStk = telefon.stk + b2bShop.stk + credittedStk;
+        const samletBeløb = telefon.beløb + b2bShop.beløb + credittedBeløb;
 
         recordsToSave.push({
           year_month: yearMonth,
@@ -586,8 +578,8 @@ export default function SuppliersPage() {
           telefon_beløb: telefon.beløb,
           b2b_stk: b2bShop.stk,
           b2b_beløb: b2bShop.beløb,
-          krediteret_stk: credittedStk,
-          krediteret_beløb: credittedBeløb,
+          krediteret_stk: Math.abs(credittedStk), // Store as absolute value in DB
+          krediteret_beløb: Math.abs(credittedBeløb), // Store as absolute value in DB
           samlet_stk: samletStk,
           samlet_beløb: samletBeløb,
         });
@@ -808,20 +800,20 @@ export default function SuppliersPage() {
         byChannel: {
           telefon: { stk: stat.telefon_stk, beløb: stat.telefon_beløb },
           b2bShop: { stk: stat.b2b_stk, beløb: stat.b2b_beløb },
-          credittedStk: stat.krediteret_stk,
-          credittedBeløb: stat.krediteret_beløb,
-          samletStk: stat.samlet_stk,
-          samletBeløb: stat.samlet_beløb,
+          credittedStk: -stat.krediteret_stk, // Convert to negative (stored as absolute in DB)
+          credittedBeløb: -stat.krediteret_beløb, // Convert to negative (stored as absolute in DB)
+          samletStk: stat.telefon_stk + stat.b2b_stk - stat.krediteret_stk, // Recalculate
+          samletBeløb: stat.telefon_beløb + stat.b2b_beløb - stat.krediteret_beløb, // Recalculate
         },
         previousYear: prev ? {
           totalDeliveredQty: prev.total_leveret,
           byChannel: {
             telefon: { stk: prev.telefon_stk, beløb: prev.telefon_beløb },
             b2bShop: { stk: prev.b2b_stk, beløb: prev.b2b_beløb },
-            credittedStk: prev.krediteret_stk,
-            credittedBeløb: prev.krediteret_beløb,
-            samletStk: prev.samlet_stk,
-            samletBeløb: prev.samlet_beløb,
+            credittedStk: -prev.krediteret_stk, // Convert to negative
+            credittedBeløb: -prev.krediteret_beløb, // Convert to negative
+            samletStk: prev.telefon_stk + prev.b2b_stk - prev.krediteret_stk, // Recalculate
+            samletBeløb: prev.telefon_beløb + prev.b2b_beløb - prev.krediteret_beløb, // Recalculate
           },
         } : null,
         development: prev ? {
@@ -829,10 +821,10 @@ export default function SuppliersPage() {
           byChannel: {
             telefon: { stk: stat.telefon_stk - prev.telefon_stk, beløb: stat.telefon_beløb - prev.telefon_beløb },
             b2bShop: { stk: stat.b2b_stk - prev.b2b_stk, beløb: stat.b2b_beløb - prev.b2b_beløb },
-            credittedStk: stat.krediteret_stk - prev.krediteret_stk,
-            credittedBeløb: stat.krediteret_beløb - prev.krediteret_beløb,
-            samletStk: stat.samlet_stk - prev.samlet_stk,
-            samletBeløb: stat.samlet_beløb - prev.samlet_beløb,
+            credittedStk: -(stat.krediteret_stk - prev.krediteret_stk), // Negative difference
+            credittedBeløb: -(stat.krediteret_beløb - prev.krediteret_beløb), // Negative difference
+            samletStk: (stat.telefon_stk + stat.b2b_stk - stat.krediteret_stk) - (prev.telefon_stk + prev.b2b_stk - prev.krediteret_stk), // Recalculate
+            samletBeløb: (stat.telefon_beløb + stat.b2b_beløb - stat.krediteret_beløb) - (prev.telefon_beløb + prev.b2b_beløb - prev.krediteret_beløb), // Recalculate
           },
         } : null,
       };
@@ -1034,8 +1026,8 @@ export default function SuppliersPage() {
                             <td className="px-4 py-2 text-right">{formatPrice(summary.previousYear.byChannel.telefon.beløb)}</td>
                             <td className="px-4 py-2">{summary.previousYear.byChannel.b2bShop.stk.toLocaleString('da-DK')}</td>
                             <td className="px-4 py-2 text-right">{formatPrice(summary.previousYear.byChannel.b2bShop.beløb)}</td>
-                            <td className="px-4 py-2">{summary.previousYear.byChannel.credittedStk.toLocaleString('da-DK')}</td>
-                            <td className="px-4 py-2 text-right">{formatPrice(summary.previousYear.byChannel.credittedBeløb)}</td>
+                            <td className="px-4 py-2 text-red-600">{summary.previousYear.byChannel.credittedStk.toLocaleString('da-DK')}</td>
+                            <td className="px-4 py-2 text-right text-red-600">{formatPrice(summary.previousYear.byChannel.credittedBeløb)}</td>
                             <td className="px-4 py-2">{summary.previousYear.byChannel.samletStk.toLocaleString('da-DK')}</td>
                             <td className="px-4 py-2 text-right">{formatPrice(summary.previousYear.byChannel.samletBeløb)}</td>
                           </tr>
@@ -1070,8 +1062,8 @@ export default function SuppliersPage() {
                           <td className="px-4 py-2 text-right">{formatPrice(summary.byChannel.telefon.beløb)}</td>
                           <td className="px-4 py-2">{summary.byChannel.b2bShop.stk.toLocaleString('da-DK')}</td>
                           <td className="px-4 py-2 text-right">{formatPrice(summary.byChannel.b2bShop.beløb)}</td>
-                          <td className="px-4 py-2">{summary.byChannel.credittedStk.toLocaleString('da-DK')}</td>
-                          <td className="px-4 py-2 text-right">{formatPrice(summary.byChannel.credittedBeløb)}</td>
+                          <td className="px-4 py-2 text-red-600">{summary.byChannel.credittedStk.toLocaleString('da-DK')}</td>
+                          <td className="px-4 py-2 text-right text-red-600">{formatPrice(summary.byChannel.credittedBeløb)}</td>
                           <td className="px-4 py-2 font-medium">{summary.byChannel.samletStk.toLocaleString('da-DK')}</td>
                           <td className="px-4 py-2 text-right font-medium">{formatPrice(summary.byChannel.samletBeløb)}</td>
                         </tr>
@@ -1112,11 +1104,11 @@ export default function SuppliersPage() {
                             <td className={`px-4 py-2 text-right ${summary.development.byChannel.b2bShop.beløb >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                               {summary.development.byChannel.b2bShop.beløb >= 0 ? '+' : ''}{formatPrice(summary.development.byChannel.b2bShop.beløb)}
                             </td>
-                            <td className={`px-4 py-2 ${summary.development.byChannel.credittedStk >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                              {summary.development.byChannel.credittedStk >= 0 ? '+' : ''}{summary.development.byChannel.credittedStk.toLocaleString('da-DK')}
+                            <td className="px-4 py-2 text-red-600">
+                              {summary.development.byChannel.credittedStk.toLocaleString('da-DK')}
                             </td>
-                            <td className={`px-4 py-2 text-right ${summary.development.byChannel.credittedBeløb >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                              {summary.development.byChannel.credittedBeløb >= 0 ? '+' : ''}{formatPrice(summary.development.byChannel.credittedBeløb)}
+                            <td className="px-4 py-2 text-right text-red-600">
+                              {formatPrice(summary.development.byChannel.credittedBeløb)}
                             </td>
                             <td className={`px-4 py-2 font-medium ${summary.development.byChannel.samletStk >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                               {summary.development.byChannel.samletStk >= 0 ? '+' : ''}{summary.development.byChannel.samletStk.toLocaleString('da-DK')}
@@ -1157,10 +1149,8 @@ export default function SuppliersPage() {
                             // Aggregate customer rows with same logic as salesperson
                             const telefon = { stk: 0, beløb: 0 };
                             const b2bShop = { stk: 0, beløb: 0 };
-                            let credittedStk = 0;
-                            let credittedBeløb = 0;
-                            let samletStk = 0;
-                            let samletBeløb = 0;
+                            let credittedStk = 0; // Will be negative
+                            let credittedBeløb = 0; // Will be negative
                             let totalLeveret = 0;
                             const dates = group.rows.map(r => r.date).filter(Boolean) as string[];
                             const dateRange = dates.length > 0 
@@ -1177,24 +1167,22 @@ export default function SuppliersPage() {
                               
                               if (row.qtyOrdered > 0) {
                                 channelData.stk += row.qtyOrdered;
-                                samletStk += row.qtyOrdered;
                               }
                               if (row.price > 0) {
                                 channelData.beløb += row.price;
-                                samletBeløb += row.price;
                               }
                               
                               if (row.qtyOrdered < 0) {
-                                const absQty = Math.abs(row.qtyOrdered);
-                                credittedStk += absQty;
-                                samletStk -= absQty;
+                                credittedStk += row.qtyOrdered; // Already negative
                               }
                               if (row.price < 0) {
-                                const absPrice = Math.abs(row.price);
-                                credittedBeløb += absPrice;
-                                samletBeløb -= absPrice;
+                                credittedBeløb += row.price; // Already negative
                               }
                             }
+
+                            // Calculate Samlet explicitly: Telefon + B2B - Krediteret (Krediteret is already negative)
+                            const samletStk = telefon.stk + b2bShop.stk + credittedStk;
+                            const samletBeløb = telefon.beløb + b2bShop.beløb + credittedBeløb;
 
                             return (
                               <tr key={idx} className="border-b hover:bg-gray-50">
@@ -1209,8 +1197,8 @@ export default function SuppliersPage() {
                                 <td className="px-3 py-2 text-right">{formatPrice(telefon.beløb)}</td>
                                 <td className="px-3 py-2">{b2bShop.stk.toLocaleString('da-DK')}</td>
                                 <td className="px-3 py-2 text-right">{formatPrice(b2bShop.beløb)}</td>
-                                <td className="px-3 py-2">{credittedStk.toLocaleString('da-DK')}</td>
-                                <td className="px-3 py-2 text-right">{formatPrice(credittedBeløb)}</td>
+                                <td className="px-3 py-2 text-red-600">{credittedStk.toLocaleString('da-DK')}</td>
+                                <td className="px-3 py-2 text-right text-red-600">{formatPrice(credittedBeløb)}</td>
                                 <td className="px-3 py-2 font-medium">{samletStk.toLocaleString('da-DK')}</td>
                                 <td className="px-3 py-2 text-right font-medium">{formatPrice(samletBeløb)}</td>
                               </tr>
