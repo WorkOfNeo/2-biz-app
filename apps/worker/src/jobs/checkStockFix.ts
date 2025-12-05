@@ -15,6 +15,7 @@ type Ctx = {
   findFirst: (page: Page, selectors: string[]) => Promise<any>;
 };
 
+// Check stock fix: Scrape SPY stock data and compare with database
 export async function checkStockFix(ctx: Ctx) {
   const { job, page, log, saveResult, setJobFailedOrRequeue, setJobSucceeded, ensureNotCancelled, supabase, SPY_BASE_URL } = ctx;
   
