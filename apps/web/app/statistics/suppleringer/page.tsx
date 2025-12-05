@@ -358,6 +358,11 @@ export default function SuppliersPage() {
       const samletStk = telefon.stk + b2bShop.stk + credittedStk; // credittedStk is already negative
       const samletBeløb = telefon.beløb + b2bShop.beløb + credittedBeløb; // credittedBeløb is already negative
 
+      // Debug: Log if we have negative credits (can be removed later)
+      if (credittedStk !== 0 || credittedBeløb !== 0) {
+        console.log(`[${salesPerson}] Krediteret stk: ${credittedStk}, beløb: ${credittedBeløb}`);
+      }
+
       summaries.push({
         salesPerson,
         totalOrderedQty,
@@ -836,6 +841,77 @@ export default function SuppliersPage() {
     });
   }, [savedData, previousYearData]);
 
+  // Aggregated summary across all salespersons
+  const aggregatedSummary = useMemo(() => {
+    const summaries = viewMode === 'upload' ? salespersonSummaries : savedSummaries;
+    if (summaries.length === 0) return null;
+
+    const current = {
+      telefon: { stk: 0, beløb: 0 },
+      b2bShop: { stk: 0, beløb: 0 },
+      credittedStk: 0,
+      credittedBeløb: 0,
+      samletStk: 0,
+      samletBeløb: 0,
+    };
+
+    const previousYear = {
+      telefon: { stk: 0, beløb: 0 },
+      b2bShop: { stk: 0, beløb: 0 },
+      credittedStk: 0,
+      credittedBeløb: 0,
+      samletStk: 0,
+      samletBeløb: 0,
+    };
+
+    // Aggregate current month data
+    for (const summary of summaries) {
+      current.telefon.stk += summary.byChannel.telefon.stk;
+      current.telefon.beløb += summary.byChannel.telefon.beløb;
+      current.b2bShop.stk += summary.byChannel.b2bShop.stk;
+      current.b2bShop.beløb += summary.byChannel.b2bShop.beløb;
+      current.credittedStk += summary.byChannel.credittedStk;
+      current.credittedBeløb += summary.byChannel.credittedBeløb;
+      current.samletStk += summary.byChannel.samletStk;
+      current.samletBeløb += summary.byChannel.samletBeløb;
+
+      // Aggregate previous year if available
+      if (summary.previousYear) {
+        previousYear.telefon.stk += summary.previousYear.byChannel.telefon.stk;
+        previousYear.telefon.beløb += summary.previousYear.byChannel.telefon.beløb;
+        previousYear.b2bShop.stk += summary.previousYear.byChannel.b2bShop.stk;
+        previousYear.b2bShop.beløb += summary.previousYear.byChannel.b2bShop.beløb;
+        previousYear.credittedStk += summary.previousYear.byChannel.credittedStk;
+        previousYear.credittedBeløb += summary.previousYear.byChannel.credittedBeløb;
+        previousYear.samletStk += summary.previousYear.byChannel.samletStk;
+        previousYear.samletBeløb += summary.previousYear.byChannel.samletBeløb;
+      }
+    }
+
+    // Calculate development
+    const hasPreviousYear = summaries.some(s => s.previousYear !== null);
+    const development = hasPreviousYear ? {
+      telefon: {
+        stk: current.telefon.stk - previousYear.telefon.stk,
+        beløb: current.telefon.beløb - previousYear.telefon.beløb,
+      },
+      b2bShop: {
+        stk: current.b2bShop.stk - previousYear.b2bShop.stk,
+        beløb: current.b2bShop.beløb - previousYear.b2bShop.beløb,
+      },
+      credittedStk: current.credittedStk - previousYear.credittedStk,
+      credittedBeløb: current.credittedBeløb - previousYear.credittedBeløb,
+      samletStk: current.samletStk - previousYear.samletStk,
+      samletBeløb: current.samletBeløb - previousYear.samletBeløb,
+    } : null;
+
+    return {
+      current,
+      previousYear: hasPreviousYear ? previousYear : null,
+      development,
+    };
+  }, [viewMode, salespersonSummaries, savedSummaries]);
+
   return (
     <div className="space-y-4">
       <div className="text-xs text-gray-500">Statistics</div>
@@ -1221,6 +1297,145 @@ export default function SuppliersPage() {
               )}
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Aggregated Summary Table */}
+      {aggregatedSummary && ((viewMode === 'upload' && salespersonSummaries.length > 0) || (viewMode === 'saved' && savedSummaries.length > 0)) && (
+        <div className="mt-6 rounded-md border overflow-hidden">
+          <div className="bg-gray-100 p-3">
+            <h2 className="text-xl font-bold">Samlet Oversigt</h2>
+          </div>
+          <div className="p-4 space-y-4">
+            {/* Current Month */}
+            <div>
+              <h3 className="text-sm font-semibold text-gray-700 mb-2">
+                {viewMode === 'saved' && selectedMonth ? formatMonthName(selectedMonth) : 'Nuværende måned'}
+              </h3>
+              <div className="overflow-x-auto">
+                <table className="min-w-full text-sm">
+                  <thead className="bg-gray-50 border-b">
+                    <tr>
+                      <th className="px-4 py-2 text-left">Telefon stk</th>
+                      <th className="px-4 py-2 text-right">Telefon beløb</th>
+                      <th className="px-4 py-2 text-left">B2B stk</th>
+                      <th className="px-4 py-2 text-right">B2B beløb</th>
+                      <th className="px-4 py-2 text-left">Krediteret stk</th>
+                      <th className="px-4 py-2 text-right">Krediteret beløb</th>
+                      <th className="px-4 py-2 text-left">Samlet stk</th>
+                      <th className="px-4 py-2 text-right">Samlet beløb</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr className="border-b">
+                      <td className="px-4 py-2 font-medium">{aggregatedSummary.current.telefon.stk.toLocaleString('da-DK')}</td>
+                      <td className="px-4 py-2 text-right font-medium">{formatPrice(aggregatedSummary.current.telefon.beløb)}</td>
+                      <td className="px-4 py-2 font-medium">{aggregatedSummary.current.b2bShop.stk.toLocaleString('da-DK')}</td>
+                      <td className="px-4 py-2 text-right font-medium">{formatPrice(aggregatedSummary.current.b2bShop.beløb)}</td>
+                      <td className="px-4 py-2 font-medium text-red-600">{aggregatedSummary.current.credittedStk.toLocaleString('da-DK')}</td>
+                      <td className="px-4 py-2 text-right font-medium text-red-600">{formatPrice(aggregatedSummary.current.credittedBeløb)}</td>
+                      <td className="px-4 py-2 font-bold">{aggregatedSummary.current.samletStk.toLocaleString('da-DK')}</td>
+                      <td className="px-4 py-2 text-right font-bold">{formatPrice(aggregatedSummary.current.samletBeløb)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Previous Year */}
+            {aggregatedSummary.previousYear && (
+              <div>
+                <h3 className="text-sm font-semibold text-gray-700 mb-2">
+                  {(() => {
+                    if (!selectedMonth) return 'Sidste år';
+                    const parts = selectedMonth.split('-');
+                    const year = parts[0];
+                    if (!year) return 'Sidste år';
+                    return `${parseInt(year, 10) - 1} (Sidste år)`;
+                  })()}
+                </h3>
+                <div className="overflow-x-auto">
+                  <table className="min-w-full text-sm">
+                    <thead className="bg-gray-50 border-b">
+                      <tr>
+                        <th className="px-4 py-2 text-left">Telefon stk</th>
+                        <th className="px-4 py-2 text-right">Telefon beløb</th>
+                        <th className="px-4 py-2 text-left">B2B stk</th>
+                        <th className="px-4 py-2 text-right">B2B beløb</th>
+                        <th className="px-4 py-2 text-left">Krediteret stk</th>
+                        <th className="px-4 py-2 text-right">Krediteret beløb</th>
+                        <th className="px-4 py-2 text-left">Samlet stk</th>
+                        <th className="px-4 py-2 text-right">Samlet beløb</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr className="border-b">
+                        <td className="px-4 py-2">{aggregatedSummary.previousYear.telefon.stk.toLocaleString('da-DK')}</td>
+                        <td className="px-4 py-2 text-right">{formatPrice(aggregatedSummary.previousYear.telefon.beløb)}</td>
+                        <td className="px-4 py-2">{aggregatedSummary.previousYear.b2bShop.stk.toLocaleString('da-DK')}</td>
+                        <td className="px-4 py-2 text-right">{formatPrice(aggregatedSummary.previousYear.b2bShop.beløb)}</td>
+                        <td className="px-4 py-2 text-red-600">{aggregatedSummary.previousYear.credittedStk.toLocaleString('da-DK')}</td>
+                        <td className="px-4 py-2 text-right text-red-600">{formatPrice(aggregatedSummary.previousYear.credittedBeløb)}</td>
+                        <td className="px-4 py-2">{aggregatedSummary.previousYear.samletStk.toLocaleString('da-DK')}</td>
+                        <td className="px-4 py-2 text-right">{formatPrice(aggregatedSummary.previousYear.samletBeløb)}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* Development */}
+            {aggregatedSummary.development && (
+              <div>
+                <h3 className="text-sm font-semibold text-gray-700 mb-2">Samlet Udvikling</h3>
+                <div className="overflow-x-auto">
+                  <table className="min-w-full text-sm">
+                    <thead className="bg-gray-50 border-b">
+                      <tr>
+                        <th className="px-4 py-2 text-left">Telefon stk</th>
+                        <th className="px-4 py-2 text-right">Telefon beløb</th>
+                        <th className="px-4 py-2 text-left">B2B stk</th>
+                        <th className="px-4 py-2 text-right">B2B beløb</th>
+                        <th className="px-4 py-2 text-left">Krediteret stk</th>
+                        <th className="px-4 py-2 text-right">Krediteret beløb</th>
+                        <th className="px-4 py-2 text-left">Samlet stk</th>
+                        <th className="px-4 py-2 text-right">Samlet beløb</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr className="border-b">
+                        <td className={`px-4 py-2 font-medium ${aggregatedSummary.development.telefon.stk >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                          {aggregatedSummary.development.telefon.stk >= 0 ? '+' : ''}{aggregatedSummary.development.telefon.stk.toLocaleString('da-DK')}
+                        </td>
+                        <td className={`px-4 py-2 text-right font-medium ${aggregatedSummary.development.telefon.beløb >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                          {aggregatedSummary.development.telefon.beløb >= 0 ? '+' : ''}{formatPrice(aggregatedSummary.development.telefon.beløb)}
+                        </td>
+                        <td className={`px-4 py-2 font-medium ${aggregatedSummary.development.b2bShop.stk >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                          {aggregatedSummary.development.b2bShop.stk >= 0 ? '+' : ''}{aggregatedSummary.development.b2bShop.stk.toLocaleString('da-DK')}
+                        </td>
+                        <td className={`px-4 py-2 text-right font-medium ${aggregatedSummary.development.b2bShop.beløb >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                          {aggregatedSummary.development.b2bShop.beløb >= 0 ? '+' : ''}{formatPrice(aggregatedSummary.development.b2bShop.beløb)}
+                        </td>
+                        <td className="px-4 py-2 font-medium text-red-600">
+                          {aggregatedSummary.development.credittedStk.toLocaleString('da-DK')}
+                        </td>
+                        <td className="px-4 py-2 text-right font-medium text-red-600">
+                          {formatPrice(aggregatedSummary.development.credittedBeløb)}
+                        </td>
+                        <td className={`px-4 py-2 font-bold ${aggregatedSummary.development.samletStk >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                          {aggregatedSummary.development.samletStk >= 0 ? '+' : ''}{aggregatedSummary.development.samletStk.toLocaleString('da-DK')}
+                        </td>
+                        <td className={`px-4 py-2 text-right font-bold ${aggregatedSummary.development.samletBeløb >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                          {aggregatedSummary.development.samletBeløb >= 0 ? '+' : ''}{formatPrice(aggregatedSummary.development.samletBeløb)}
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       )}
 
