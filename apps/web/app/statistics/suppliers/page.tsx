@@ -439,7 +439,7 @@ export default function SuppliersPage() {
             <div className="w-full bg-blue-200 rounded-full h-2.5 overflow-hidden">
               <div 
                 className="bg-blue-600 h-full transition-all duration-500 ease-out rounded-full shadow-sm"
-                style={{ width: `${Math.min(100, (progress.current / progress.total) * 100)}%` }}
+                style={{ width: `${Math.min(100, Math.max(0, (progress.current / progress.total) * 100))}%` }}
               />
             </div>
           )}
