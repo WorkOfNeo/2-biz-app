@@ -167,48 +167,36 @@ export async function exportSuppleringer(ctx: Ctx) {
       }
     }
     
-    // Special key for "Øvrige" (entries without a salesperson)
-    const OVRIGE_KEY = '__OVRIGE__';
-    salespersonIdToName.set(OVRIGE_KEY, 'Øvrige');
-    
     // Group customer rows by salesperson ID - BULLETPROOF VERSION
+    // Only include rows with valid salesperson_id
     for (const row of currentRows || []) {
       const rowSpId = row.salesperson_id || null;
       const customerName = row.customer_name || '';
       
       if (!customerName) continue; // Skip invalid rows
       
-      // Determine which key to use: salesperson_id if available, otherwise "Øvrige"
-      let matchKey: string | null = null;
-      
+      // Only process rows with a valid salesperson_id
       if (rowSpId && typeof rowSpId === 'string') {
-        // Use actual salesperson_id
-        matchKey = rowSpId;
+        // Initialize if not already done
+        if (!rowsBySalespersonCustomer.has(rowSpId)) {
+          rowsBySalespersonCustomer.set(rowSpId, new Map());
+          rowsBySalesperson.set(rowSpId, []);
+        }
+        
+        rowsBySalesperson.get(rowSpId)!.push(row);
+        
+        const customerMap = rowsBySalespersonCustomer.get(rowSpId)!;
+        if (!customerMap.has(customerName)) {
+          customerMap.set(customerName, []);
+        }
+        customerMap.get(customerName)!.push(row);
         
         // Ensure name mapping exists (use name from row if not in salespersons table)
         if (!salespersonIdToName.has(rowSpId) && row.salesperson_name) {
           salespersonIdToName.set(rowSpId, row.salesperson_name);
         }
-      } else {
-        // No salesperson_id - use "Øvrige" catch-all
-        matchKey = OVRIGE_KEY;
       }
-      
-      if (matchKey) {
-        // Initialize if not already done
-        if (!rowsBySalespersonCustomer.has(matchKey)) {
-          rowsBySalespersonCustomer.set(matchKey, new Map());
-          rowsBySalesperson.set(matchKey, []);
-        }
-        
-        rowsBySalesperson.get(matchKey)!.push(row);
-        
-        const customerMap = rowsBySalespersonCustomer.get(matchKey)!;
-        if (!customerMap.has(customerName)) {
-          customerMap.set(customerName, []);
-        }
-        customerMap.get(customerName)!.push(row);
-      }
+      // Skip rows without salesperson_id (user will handle via historical data page)
     }
 
     // Log salesperson mapping for debugging
@@ -260,19 +248,13 @@ export async function exportSuppleringer(ctx: Ctx) {
     
     // Add salespersons from aggregated data
     for (const stat of currentData) {
-      const spId = stat.salesperson_id || (stat.salesperson_name === 'Øvrige' ? OVRIGE_KEY : stat.salesperson_name);
+      const spId = stat.salesperson_id || stat.salesperson_name; // Use ID or fallback to name
       if (spId) allSalespersonIds.add(spId);
     }
     
     // Add salespersons from rows (in case they have rows but no aggregated data)
-    // This includes "Øvrige" for rows without salesperson_id
     for (const spId of rowsBySalespersonCustomer.keys()) {
       if (spId) allSalespersonIds.add(spId);
-    }
-    
-    // Always include "Øvrige" if there are any rows without salesperson_id
-    if (rowsBySalespersonCustomer.has(OVRIGE_KEY)) {
-      allSalespersonIds.add(OVRIGE_KEY);
     }
     
     await log(job.id, 'info', 'STEP:export_suppleringer_salesperson_list', {

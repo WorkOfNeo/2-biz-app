@@ -77,23 +77,6 @@ export default function HistoricalDataPage() {
         });
       }
 
-      // Always add "Øvrige" as a special salesperson option
-      const ovrigeId = '__OVRIGE__';
-      const ovrigeExisting = (data ?? []).find((d: any) => d.salesperson_name === 'Øvrige');
-      newInputs.set(ovrigeId, {
-        salesperson_id: ovrigeId,
-        salesperson_name: 'Øvrige',
-        total_leveret: ovrigeExisting?.total_leveret ?? 0,
-        telefon_stk: ovrigeExisting?.telefon_stk ?? 0,
-        telefon_beløb: ovrigeExisting?.telefon_beløb ?? 0,
-        b2b_stk: ovrigeExisting?.b2b_stk ?? 0,
-        b2b_beløb: ovrigeExisting?.b2b_beløb ?? 0,
-        krediteret_stk: ovrigeExisting?.krediteret_stk ?? 0,
-        krediteret_beløb: ovrigeExisting?.krediteret_beløb ?? 0,
-        samlet_stk: ovrigeExisting?.samlet_stk ?? 0,
-        samlet_beløb: ovrigeExisting?.samlet_beløb ?? 0,
-      });
-
       setInputs(newInputs);
     }
 
