@@ -4,6 +4,7 @@ import * as XLSX from 'xlsx';
 
 type ParsedRow = {
   orderType: string;
+  channel: string; // Channel from column C: "Telefon" or "B2B Shop"
   customerName: string;
   accountNo: string;
   salesPerson: string;
@@ -21,6 +22,11 @@ type SalespersonSummary = {
   credittedQty: number;
   credittedPrice: number;
   rows: ParsedRow[];
+  // Split by channel
+  byChannel: {
+    telefon: { orderedQty: number; deliveredQty: number; price: number; credittedQty: number; credittedPrice: number };
+    b2bShop: { orderedQty: number; deliveredQty: number; price: number; credittedQty: number; credittedPrice: number };
+  };
 };
 
 type CustomerGroup = {
@@ -34,6 +40,7 @@ export default function SuppliersPage() {
   const [parsedRows, setParsedRows] = useState<ParsedRow[]>([]);
   const [selectedSalesperson, setSelectedSalesperson] = useState<string | null>(null);
   const [selectedCustomer, setSelectedCustomer] = useState<string | null>(null);
+  const [dragOver, setDragOver] = useState(false);
 
   // Convert Excel column letter to 0-based array index
   // E.g., 'A' -> 0, 'B' -> 1, 'Z' -> 25, 'AA' -> 26, 'AN' -> 39
@@ -140,6 +147,7 @@ export default function SuppliersPage() {
       
       // Calculate column indices using Excel column letters
       const colB = excelColToIndex('B'); // Order type
+      const colC = excelColToIndex('C'); // Channel
       const colE = excelColToIndex('E'); // Customer Name
       const colG = excelColToIndex('G'); // account_no
       const colU = excelColToIndex('U'); // Sales Person
@@ -153,6 +161,11 @@ export default function SuppliersPage() {
         const row = data[i] || [];
         
         const orderType = String(row[colB] || '').trim(); // Column B
+        let channel = String(row[colC] || '').trim(); // Column C
+        // Translate "Sales Staff" to "Telefon"
+        if (channel.toUpperCase() === 'SALES STAFF') {
+          channel = 'Telefon';
+        }
         const customerName = String(row[colE] || '').trim(); // Column E
         const accountNo = parseAccountNo(row[colG]); // Column G
         const salesPerson = String(row[colU] || '').trim(); // Column U
@@ -169,6 +182,7 @@ export default function SuppliersPage() {
 
         rows.push({
           orderType,
+          channel: channel || 'B2B Shop', // Default to B2B Shop if empty
           customerName,
           accountNo,
           salesPerson,
@@ -210,24 +224,36 @@ export default function SuppliersPage() {
       let credittedQty = 0;
       let credittedPrice = 0;
 
+      // Split by channel
+      const telefon = { orderedQty: 0, deliveredQty: 0, price: 0, credittedQty: 0, credittedPrice: 0 };
+      const b2bShop = { orderedQty: 0, deliveredQty: 0, price: 0, credittedQty: 0, credittedPrice: 0 };
+
       for (const row of rows) {
+        const isTelefon = row.channel === 'Telefon';
+        const channelData = isTelefon ? telefon : b2bShop;
+        
         // Main totals: sum only positive values
         if (row.qtyOrdered > 0) {
           totalOrderedQty += row.qtyOrdered;
+          channelData.orderedQty += row.qtyOrdered;
         }
         if (row.qtyDelivered > 0) {
           totalDeliveredQty += row.qtyDelivered;
+          channelData.deliveredQty += row.qtyDelivered;
         }
         if (row.price > 0) {
           totalPrice += row.price;
+          channelData.price += row.price;
         }
         
         // Creditted: sum absolute values of negative numbers
         if (row.qtyOrdered < 0) {
           credittedQty += Math.abs(row.qtyOrdered);
+          channelData.credittedQty += Math.abs(row.qtyOrdered);
         }
         if (row.price < 0) {
           credittedPrice += Math.abs(row.price);
+          channelData.credittedPrice += Math.abs(row.price);
         }
       }
 
@@ -239,6 +265,10 @@ export default function SuppliersPage() {
         credittedQty,
         credittedPrice,
         rows,
+        byChannel: {
+          telefon,
+          b2bShop,
+        },
       });
     }
 
@@ -295,9 +325,26 @@ export default function SuppliersPage() {
       <div className="text-xs text-gray-500">Statistics</div>
       <h1 className="text-xl font-semibold">Suppleringer</h1>
 
-      {/* File Upload */}
-      <div className="rounded-md border p-4">
-        <label className="block text-sm font-medium mb-2">Upload CSV/XLSX File</label>
+      {/* File Upload with Drag and Drop */}
+      <div
+        className={`rounded-md border-2 border-dashed p-6 text-center transition ${
+          dragOver ? 'bg-slate-50 border-slate-400' : 'border-slate-300'
+        }`}
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDragOver(true);
+        }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragOver(false);
+          const droppedFile = e.dataTransfer.files?.[0];
+          if (droppedFile) parseFile(droppedFile);
+        }}
+      >
+        <div className="text-sm text-gray-600 mb-3">
+          Drag & drop CSV/XLSX file here, or click to browse
+        </div>
         <input
           type="file"
           accept=".csv,.xlsx,.xls"
@@ -337,11 +384,23 @@ export default function SuppliersPage() {
                 <table className="min-w-full text-sm">
                   <thead className="bg-gray-50 border-b">
                     <tr>
-                      <th className="px-4 py-2 text-left">Total Bestilt stk</th>
-                      <th className="px-4 py-2 text-left">Total Leveret stk</th>
-                      <th className="px-4 py-2 text-right">Total Pris</th>
-                      <th className="px-4 py-2 text-left">Krediteret stk</th>
-                      <th className="px-4 py-2 text-right">Krediteret Pris</th>
+                      <th className="px-4 py-2 text-left" colSpan={3}>Total</th>
+                      <th className="px-4 py-2 text-left" colSpan={3}>Telefon</th>
+                      <th className="px-4 py-2 text-left" colSpan={3}>B2B Shop</th>
+                      <th className="px-4 py-2 text-left" colSpan={2}>Krediteret</th>
+                    </tr>
+                    <tr className="bg-gray-50 border-b">
+                      <th className="px-4 py-2 text-left">Bestilt stk</th>
+                      <th className="px-4 py-2 text-left">Leveret stk</th>
+                      <th className="px-4 py-2 text-right">Pris</th>
+                      <th className="px-4 py-2 text-left">Bestilt stk</th>
+                      <th className="px-4 py-2 text-left">Leveret stk</th>
+                      <th className="px-4 py-2 text-right">Pris</th>
+                      <th className="px-4 py-2 text-left">Bestilt stk</th>
+                      <th className="px-4 py-2 text-left">Leveret stk</th>
+                      <th className="px-4 py-2 text-right">Pris</th>
+                      <th className="px-4 py-2 text-left">stk</th>
+                      <th className="px-4 py-2 text-right">Pris</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -349,6 +408,12 @@ export default function SuppliersPage() {
                       <td className="px-4 py-2 font-medium">{summary.totalOrderedQty.toLocaleString('da-DK')}</td>
                       <td className="px-4 py-2">{summary.totalDeliveredQty.toLocaleString('da-DK')}</td>
                       <td className="px-4 py-2 text-right font-medium">{formatPrice(summary.totalPrice)}</td>
+                      <td className="px-4 py-2">{summary.byChannel.telefon.orderedQty.toLocaleString('da-DK')}</td>
+                      <td className="px-4 py-2">{summary.byChannel.telefon.deliveredQty.toLocaleString('da-DK')}</td>
+                      <td className="px-4 py-2 text-right">{formatPrice(summary.byChannel.telefon.price)}</td>
+                      <td className="px-4 py-2">{summary.byChannel.b2bShop.orderedQty.toLocaleString('da-DK')}</td>
+                      <td className="px-4 py-2">{summary.byChannel.b2bShop.deliveredQty.toLocaleString('da-DK')}</td>
+                      <td className="px-4 py-2 text-right">{formatPrice(summary.byChannel.b2bShop.price)}</td>
                       <td className="px-4 py-2">{summary.credittedQty.toLocaleString('da-DK')}</td>
                       <td className="px-4 py-2 text-right">{formatPrice(summary.credittedPrice)}</td>
                     </tr>
