@@ -340,7 +340,7 @@ export default function StylesPage() {
                   </td>
                   <td className="p-2 border-b">
                     <div className="flex flex-col gap-1.5">
-                      <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2">
                         {r.inactive ? (
                           <button
                             onClick={async (e) => {
@@ -376,9 +376,9 @@ export default function StylesPage() {
                             {updatingStyleId === r.id ? '⏳ Updating...' : '✓ Set Active'}
                           </button>
                         ) : (
-                          <button
-                            onClick={async (e) => {
-                              e.stopPropagation();
+                      <button
+                        onClick={async (e) => {
+                          e.stopPropagation();
                               if (!confirm(`Set style ${r.style_no} to INACTIVE?\n\nThis will prevent it from being scraped in future runs.`)) return;
                               setUpdatingStyleId(r.id);
                               try {
@@ -396,7 +396,7 @@ export default function StylesPage() {
                                 }
                                 
                                 console.log('[styles] Update successful:', data);
-                                await mutate();
+                            await mutate();
                                 alert(`✓ Style ${r.style_no} is now INACTIVE and will be skipped in scraping`);
                               } catch (err: any) {
                                 console.error('[styles] Failed to toggle inactive', err);
@@ -407,9 +407,9 @@ export default function StylesPage() {
                             }}
                             disabled={updatingStyleId === r.id}
                             className="text-xs px-3 py-1.5 rounded border bg-gray-50 text-gray-700 border-gray-300 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
-                          >
+                      >
                             {updatingStyleId === r.id ? '⏳ Setting...' : 'Set Inactive'}
-                          </button>
+                      </button>
                         )}
                       </div>
                       <div className="flex items-center gap-1.5 flex-wrap">

@@ -820,7 +820,7 @@ export default function StockListPage() {
     try {
       setRunningStockFix(true);
       setStockFixMessage({ type: 'info', text: 'Starting SPY stock verification...' });
-      setStockFixProgress({ step: 'Connecting to SPY system...' });
+      setStockFixProgress({ step: 'Enqueuing verification job...' });
       
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) {
@@ -830,150 +830,204 @@ export default function StockListPage() {
         return;
       }
       
-      // Call the new API endpoint
-      setStockFixProgress({ step: 'Scraping SPY stock data...' });
-      const res = await fetch('/api/verify-spy-stock', {
+      // Enqueue the check_stock_fix job (runs on worker with Playwright)
+      const res = await fetch('/api/enqueue', {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json', 
           Authorization: `Bearer ${session.access_token}` 
-        }
+        },
+        body: JSON.stringify({
+          type: 'check_stock_fix',
+          payload: { 
+            requestedBy: session.user.email,
+            manual: true
+          }
+        })
       });
       
       if (!res.ok) {
-        const errorData = await res.json().catch(() => ({ error: `Failed (${res.status})` }));
-        throw new Error(errorData.error || `Failed (${res.status})`);
+        const txt = await res.text().catch(() => '');
+        throw new Error(txt || `Failed (${res.status})`);
       }
       
-      const { data: spyData } = await res.json();
+      const { jobId } = await res.json();
+      setStockFixProgress({ step: 'Job enqueued, monitoring progress...' });
       
-      if (!spyData || !Array.isArray(spyData)) {
-        throw new Error('Invalid response from SPY verification');
-      }
-      
-      setStockFixProgress({ step: 'Comparing with local stock...', details: `${spyData.length} styles from SPY` });
-      
-      // Build SPY data map
-      const spyDataMap = new Map<string, { styleName: string; stock: number }>();
-      for (const row of spyData) {
-        spyDataMap.set(row.styleNo, { styleName: row.styleName, stock: row.stock });
-      }
-      
-      // Calculate totals per style from local stock data (same logic as runChecker)
-      const currentData = new Map<string, { name: string | null; total: number }>();
-      for (const { styleNo, colors } of groupedByStyle) {
-        const meta = styleMetaByNo[styleNo] || { name: null };
-        let styleTotal = 0;
-        // Sum STOCK (not available) across ALL colors for this style
-        for (const color of colors) {
-          styleTotal += color.stock.reduce((sum, v) => sum + (Number(v) || 0), 0);
+      // Poll for job completion
+      const pollInterval = setInterval(async () => {
+        try {
+          const { data: jobData } = await supabase
+            .from('jobs')
+            .select('status')
+            .eq('id', jobId)
+            .single();
+          
+          if (!jobData) return;
+          
+          // Update progress based on job status
+          setStockFixProgress({ step: 'Scraping SPY stock data...' });
+          
+          if (jobData.status === 'succeeded' || jobData.status === 'failed' || jobData.status === 'cancelled') {
+            clearInterval(pollInterval);
+            
+            if (jobData.status === 'succeeded') {
+              // Fetch the job results
+              const { data: resultsData } = await supabase
+                .from('job_results')
+                .select('data')
+                .eq('job_id', jobId)
+                .order('created_at', { ascending: false })
+                .limit(1)
+                .maybeSingle();
+              
+              if (resultsData?.data) {
+                const resultData = resultsData.data as any;
+                const spyStyles = resultData.details || [];
+                
+                setStockFixProgress({ step: 'Comparing with local stock...', details: `${spyStyles.length} styles from SPY` });
+                
+                // Build SPY data map
+                const spyDataMap = new Map<string, { stock: number }>();
+                for (const item of spyStyles) {
+                  spyDataMap.set(item.style_no, { stock: item.spy_stock ?? 0 });
+                }
+                
+                // Calculate totals per style from local stock data (same logic as runChecker)
+                const currentData = new Map<string, { name: string | null; total: number }>();
+                for (const { styleNo, colors } of groupedByStyle) {
+                  const meta = styleMetaByNo[styleNo] || { name: null };
+                  let styleTotal = 0;
+                  for (const color of colors) {
+                    styleTotal += color.stock.reduce((sum, v) => sum + (Number(v) || 0), 0);
+                  }
+                  currentData.set(styleNo, { name: meta.name, total: styleTotal });
+                }
+                
+                // Compare and find differences
+                const differences: Array<{
+                  styleNo: string;
+                  name: string | null;
+                  pastedTotal: number;
+                  currentTotal: number;
+                  diff: number;
+                  status: 'missing_in_pasted' | 'missing_in_current' | 'mismatch' | 'match';
+                }> = [];
+                
+                for (const [styleNo, spyInfo] of spyDataMap.entries()) {
+                  const current = currentData.get(styleNo);
+                  if (!current) {
+                    differences.push({
+                      styleNo,
+                      name: null,
+                      pastedTotal: spyInfo.stock,
+                      currentTotal: 0,
+                      diff: -spyInfo.stock,
+                      status: 'missing_in_current'
+                    });
+                  } else if (current.total !== spyInfo.stock) {
+                    differences.push({
+                      styleNo,
+                      name: current.name,
+                      pastedTotal: spyInfo.stock,
+                      currentTotal: current.total,
+                      diff: current.total - spyInfo.stock,
+                      status: 'mismatch'
+                    });
+                  } else {
+                    differences.push({
+                      styleNo,
+                      name: current.name,
+                      pastedTotal: spyInfo.stock,
+                      currentTotal: current.total,
+                      diff: 0,
+                      status: 'match'
+                    });
+                  }
+                }
+                
+                for (const [styleNo, currentInfo] of currentData.entries()) {
+                  if (!spyDataMap.has(styleNo)) {
+                    differences.push({
+                      styleNo,
+                      name: currentInfo.name,
+                      pastedTotal: 0,
+                      currentTotal: currentInfo.total,
+                      diff: currentInfo.total,
+                      status: 'missing_in_pasted'
+                    });
+                  }
+                }
+                
+                differences.sort((a, b) => {
+                  if (a.status === 'mismatch' && b.status !== 'mismatch') return -1;
+                  if (a.status !== 'mismatch' && b.status === 'mismatch') return 1;
+                  if (a.status === 'missing_in_current' && b.status !== 'missing_in_current') return -1;
+                  if (a.status !== 'missing_in_current' && b.status === 'missing_in_current') return 1;
+                  if (a.status === 'missing_in_pasted' && b.status !== 'missing_in_pasted') return -1;
+                  if (a.status !== 'missing_in_pasted' && b.status === 'missing_in_pasted') return 1;
+                  return Math.abs(b.diff) - Math.abs(a.diff);
+                });
+                
+                const mismatchCount = differences.filter(d => d.status === 'mismatch').length;
+                const missingInCurrent = differences.filter(d => d.status === 'missing_in_current').length;
+                const missingInPasted = differences.filter(d => d.status === 'missing_in_pasted').length;
+                const matches = differences.filter(d => d.status === 'match').length;
+                
+                setCheckerResults({
+                  mode: 'spy',
+                  pastedCount: spyDataMap.size,
+                  currentCount: currentData.size,
+                  differences,
+                  mismatches: mismatchCount,
+                  missingInCurrent,
+                  missingInPasted,
+                  matches
+                });
+                
+                setRunningStockFix(false);
+                setStockFixProgress(null);
+                
+                if (mismatchCount === 0 && missingInCurrent === 0 && missingInPasted === 0) {
+                  setStockFixMessage({ type: 'success', text: `SPY verification complete! All ${spyDataMap.size} styles match.` });
+                } else {
+                  setStockFixMessage({ 
+                    type: 'info', 
+                    text: `SPY verification complete! Found ${mismatchCount} mismatch${mismatchCount !== 1 ? 'es' : ''}, ${missingInCurrent} missing in DB, ${missingInPasted} missing in SPY.` 
+                  });
+                }
+              } else {
+                setRunningStockFix(false);
+                setStockFixProgress(null);
+                setStockFixMessage({ type: 'success', text: 'SPY verification complete!' });
+              }
+            } else {
+              setRunningStockFix(false);
+              setStockFixProgress(null);
+              setStockFixMessage({ type: 'error', text: `Stock check ${jobData.status}. Check the Jobs page for details.` });
+            }
+          }
+        } catch (err: any) {
+          console.error('Stock fix poll error:', err);
         }
-        currentData.set(styleNo, { name: meta.name, total: styleTotal });
-      }
+      }, 3000);
       
-      // Compare and find differences (same logic as runChecker)
-      const differences: Array<{
-        styleNo: string;
-        name: string | null;
-        pastedTotal: number;
-        currentTotal: number;
-        diff: number;
-        status: 'missing_in_pasted' | 'missing_in_current' | 'mismatch' | 'match';
-      }> = [];
-      
-      // Check all SPY styles
-      for (const [styleNo, spyInfo] of spyDataMap.entries()) {
-        const current = currentData.get(styleNo);
-        if (!current) {
-          differences.push({
-            styleNo,
-            name: spyInfo.styleName,
-            pastedTotal: spyInfo.stock,
-            currentTotal: 0,
-            diff: -spyInfo.stock,
-            status: 'missing_in_current'
-          });
-        } else if (current.total !== spyInfo.stock) {
-          differences.push({
-            styleNo,
-            name: current.name || spyInfo.styleName,
-            pastedTotal: spyInfo.stock,
-            currentTotal: current.total,
-            diff: current.total - spyInfo.stock,
-            status: 'mismatch'
-          });
-        } else {
-          differences.push({
-            styleNo,
-            name: current.name || spyInfo.styleName,
-            pastedTotal: spyInfo.stock,
-            currentTotal: current.total,
-            diff: 0,
-            status: 'match'
-          });
+      // Stop polling after 5 minutes
+      setTimeout(() => {
+        clearInterval(pollInterval);
+        if (runningStockFix) {
+          setRunningStockFix(false);
+          setStockFixProgress(null);
+          setStockFixMessage({ type: 'info', text: 'Stock check is taking longer than expected. Check the Jobs page for status.' });
         }
-      }
-      
-      // Check for styles in current but not in SPY
-      for (const [styleNo, currentInfo] of currentData.entries()) {
-        if (!spyDataMap.has(styleNo)) {
-          differences.push({
-            styleNo,
-            name: currentInfo.name,
-            pastedTotal: 0,
-            currentTotal: currentInfo.total,
-            diff: currentInfo.total,
-            status: 'missing_in_pasted'
-          });
-        }
-      }
-      
-      // Sort: mismatches first, then by absolute diff descending
-      differences.sort((a, b) => {
-        if (a.status === 'mismatch' && b.status !== 'mismatch') return -1;
-        if (a.status !== 'mismatch' && b.status === 'mismatch') return 1;
-        if (a.status === 'missing_in_current' && b.status !== 'missing_in_current') return -1;
-        if (a.status !== 'missing_in_current' && b.status === 'missing_in_current') return 1;
-        if (a.status === 'missing_in_pasted' && b.status !== 'missing_in_pasted') return -1;
-        if (a.status !== 'missing_in_pasted' && b.status === 'missing_in_pasted') return 1;
-        return Math.abs(b.diff) - Math.abs(a.diff);
-      });
-      
-      const mismatchCount = differences.filter(d => d.status === 'mismatch').length;
-      const missingInCurrent = differences.filter(d => d.status === 'missing_in_current').length;
-      const missingInPasted = differences.filter(d => d.status === 'missing_in_pasted').length;
-      const matches = differences.filter(d => d.status === 'match').length;
-      
-      // Set results using the same structure as manual checker, with a flag to indicate it's from SPY
-      setCheckerResults({
-        mode: 'spy', // New mode to distinguish from manual checker
-        pastedCount: spyDataMap.size,
-        currentCount: currentData.size,
-        differences,
-        mismatches: mismatchCount,
-        missingInCurrent,
-        missingInPasted,
-        matches
-      });
-      
-      setRunningStockFix(false);
-      setStockFixProgress(null);
-      
-      if (mismatchCount === 0 && missingInCurrent === 0 && missingInPasted === 0) {
-        setStockFixMessage({ type: 'success', text: `SPY verification complete! All ${spyDataMap.size} styles match.` });
-      } else {
-        setStockFixMessage({ 
-          type: 'info', 
-          text: `SPY verification complete! Found ${mismatchCount} mismatch${mismatchCount !== 1 ? 'es' : ''}, ${missingInCurrent} missing in DB, ${missingInPasted} missing in SPY.` 
-        });
-      }
+      }, 300000);
       
     } catch (err: any) {
       setRunningStockFix(false);
       setStockFixProgress(null);
       setStockFixMessage({ type: 'error', text: `Failed to verify SPY stock: ${err.message}` });
     }
-  }, [supabase, groupedByStyle, styleMetaByNo]);
+  }, [supabase, groupedByStyle, styleMetaByNo, runningStockFix]);
 
 
   // Export Checker results to Excel

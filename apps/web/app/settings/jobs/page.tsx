@@ -60,13 +60,13 @@ function UnifiedBatchProgress({ jobs }: { jobs: Array<{ id: string; type: string
     if (!rootId) return null;
     
     // Get all jobs for this root (including the root itself)
-    const jobIds = jobs.map(j => j.id);
+  const jobIds = jobs.map(j => j.id);
     
     // Get all progress logs from all jobs
     const { data: allLogs } = await supabase
-      .from('job_logs')
-      .select('job_id, msg, data, ts')
-      .in('job_id', jobIds)
+        .from('job_logs')
+        .select('job_id, msg, data, ts')
+        .in('job_id', jobIds)
       .in('msg', ['STEP:update_style_stock_progress', 'STEP:style_stock_filtered', 'STEP:complete', 'STEP:style_stock_total_requested', 'STEP:style_stock_style_done'])
       .order('ts', { ascending: true })
       .limit(5000);
@@ -99,9 +99,9 @@ function UnifiedBatchProgress({ jobs }: { jobs: Array<{ id: string; type: string
     for (const log of allLogs) {
       if (log.msg === 'STEP:style_stock_style_done' && log.data?.style_no) {
         completedStyles.add(log.data.style_no);
-      }
     }
-    
+  }
+
     // Get the most recent style being processed
     let currentStyleNo: string | null = null;
     let currentStyleName: string | null = null;
@@ -174,9 +174,9 @@ function UnifiedBatchProgress({ jobs }: { jobs: Array<{ id: string; type: string
             {progress.index}/{progress.total} styles ({progress.percent}%)
             {progress.skippedInactive > 0 && <span className="text-xs text-blue-500 ml-1">({progress.skippedInactive} inactive skipped)</span>}
             {progress.estimatedSecondsRemaining !== null && progress.estimatedSecondsRemaining > 0 && (
-              <span className="ml-2 text-blue-600">
+          <span className="ml-2 text-blue-600">
                 • ETA: {progress.estimatedSecondsRemaining < 60 ? `${progress.estimatedSecondsRemaining}s` : progress.estimatedSecondsRemaining < 3600 ? `${Math.floor(progress.estimatedSecondsRemaining / 60)}m` : `${Math.floor(progress.estimatedSecondsRemaining / 3600)}h ${Math.floor((progress.estimatedSecondsRemaining % 3600) / 60)}m`}
-              </span>
+          </span>
             )}
           </>
         ) : (
@@ -210,9 +210,9 @@ function RunningJobProgress({ job }: { job: { id: string; type: string; started_
   // Use the same aggregation logic for standalone jobs
   const { data: progress } = useSWR(['job:aggregate-progress', job.id], async () => {
     const { data: allLogs } = await supabase
-      .from('job_logs')
+        .from('job_logs')
       .select('job_id, msg, data, ts')
-      .eq('job_id', job.id)
+        .eq('job_id', job.id)
       .in('msg', ['STEP:update_style_stock_progress', 'STEP:style_stock_filtered', 'STEP:complete', 'STEP:style_stock_total_requested', 'STEP:style_stock_style_done'])
       .order('ts', { ascending: true })
       .limit(1000);
@@ -226,8 +226,8 @@ function RunningJobProgress({ job }: { job: { id: string; type: string; started_
       if (log.msg === 'STEP:style_stock_filtered') {
         totalActive += log.data?.activeCount || 0;
         totalSkippedInactive += log.data?.skippedInactive || 0;
+        }
       }
-    }
     
     // Count completed styles
     const completedStyles = new Set<string>();
@@ -240,8 +240,8 @@ function RunningJobProgress({ job }: { job: { id: string; type: string; started_
     const completed = completedStyles.size;
     const total = totalActive || 1;
     const percent = Math.min(100, Math.floor((completed / total) * 100));
-    
-    // Calculate ETA
+  
+  // Calculate ETA
     let estimatedSecondsRemaining: number | null = null;
     const firstDoneLog = allLogs.find(l => l.msg === 'STEP:style_stock_style_done');
     if (firstDoneLog && completed > 0) {
@@ -291,10 +291,10 @@ function RunningJobProgress({ job }: { job: { id: string; type: string; started_
         ) : (
           <>Waiting for progress...</>
         )}
-        {elapsedMin > 0 && (
-          <span className="ml-2 text-xs text-blue-500">
-            (Elapsed: {elapsedMin}m)
-          </span>
+            {elapsedMin > 0 && (
+              <span className="ml-2 text-xs text-blue-500">
+                (Elapsed: {elapsedMin}m)
+              </span>
         )}
       </div>
       <div className="relative h-2 bg-blue-200 rounded-full overflow-hidden">

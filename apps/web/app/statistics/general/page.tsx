@@ -133,7 +133,7 @@ export default function StatisticsGeneralPage() {
       // Match #sp=value
       const m = hash.match(/^#sp=([^&]+)/);
       if (m && m[1]) {
-        try {
+      try {
           const decoded = decodeURIComponent(m[1]);
           const exists = salespersons.some(sp => sp.name === decoded);
           if (exists) {
@@ -158,11 +158,11 @@ export default function StatisticsGeneralPage() {
         if (!hasSpHash && !activePerson) {
           // Only default if no hash parameter exists and activePerson is not set
           const first = (salespersons[0] as any)?.name as string | undefined;
-          if (first) {
-            setActivePerson(first);
+      if (first) {
+        setActivePerson(first);
             console.log('[stats] default salesperson (no hash)', first);
-          }
-        }
+      }
+    }
       }
     };
 
@@ -1117,13 +1117,13 @@ export default function StatisticsGeneralPage() {
                                         Fix
                                       </button>
                                     )}
-                                    <button
-                                      onClick={() => openCommentModal(row.account_no)}
-                                      className={commentsMap?.[row.account_no] ? "text-blue-600 hover:text-blue-800" : "text-gray-400 hover:text-gray-600 opacity-0 group-hover:opacity-100"}
-                                      title={commentsMap?.[row.account_no]?.comment || 'Add comment'}
-                                    >
-                                      <MessageCircle className="h-4 w-4" />
-                                    </button>
+                                <button
+                                  onClick={() => openCommentModal(row.account_no)}
+                                  className={commentsMap?.[row.account_no] ? "text-blue-600 hover:text-blue-800" : "text-gray-400 hover:text-gray-600 opacity-0 group-hover:opacity-100"}
+                                  title={commentsMap?.[row.account_no]?.comment || 'Add comment'}
+                                >
+                                  <MessageCircle className="h-4 w-4" />
+                                </button>
                                   </>
                                 );
                               })()}
