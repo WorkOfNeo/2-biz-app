@@ -168,16 +168,16 @@ export async function exportSuppleringer(ctx: Ctx) {
       
       if (normalizedToOriginal.has(normalizedRowSpName)) {
         // Exact normalized match found
-        matchedSpName = normalizedToOriginal.get(normalizedRowSpName)!;
+        matchedSpName = normalizedToOriginal.get(normalizedRowSpName) || null;
       } else {
         // No match found - log and create entry anyway (will show in export)
         unmatchedSalespersonNames.add(rowSpName);
         matchedSpName = rowSpName; // Use original name from row
         
-        // Initialize if not already done
-        if (!rowsBySalespersonCustomer.has(matchedSpName)) {
-          rowsBySalespersonCustomer.set(matchedSpName, new Map());
-          rowsBySalesperson.set(matchedSpName, []);
+        // Initialize if not already done (matchedSpName is guaranteed to be string here)
+        if (rowSpName && !rowsBySalespersonCustomer.has(rowSpName)) {
+          rowsBySalespersonCustomer.set(rowSpName, new Map());
+          rowsBySalesperson.set(rowSpName, []);
         }
       }
       
@@ -194,7 +194,7 @@ export async function exportSuppleringer(ctx: Ctx) {
     
     // Log unmatched salesperson names for debugging
     if (unmatchedSalespersonNames.size > 0) {
-      await log(job.id, 'warn', 'STEP:export_suppleringer_unmatched_salespersons', {
+      await log(job.id, 'info', 'STEP:export_suppleringer_unmatched_salespersons', {
         unmatchedNames: Array.from(unmatchedSalespersonNames),
         message: 'Salespersons found in rows but not in aggregated data - will still create PDFs'
       });
