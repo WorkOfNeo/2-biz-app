@@ -535,17 +535,16 @@ export async function exportSuppleringer(ctx: Ctx) {
       }
     }
 
-    // 3. FULL PAGE PDF (all data combined)
+    // 3. FULL PAGE PDF (all data combined) - structured by salesperson like frontend
     const fullPageHeader = React.createElement(View, { style: styles.tableHeader },
-      Cell('Sælger', '20%', 'left', styles.headerCell),
-      Cell('Telefon stk', '10%', 'left', styles.headerCell),
-      Cell('Telefon beløb', '12%', 'right', styles.headerCell),
-      Cell('B2B stk', '10%', 'left', styles.headerCell),
-      Cell('B2B beløb', '12%', 'right', styles.headerCell),
-      Cell('Krediteret stk', '10%', 'left', styles.headerCell),
-      Cell('Krediteret beløb', '12%', 'right', styles.headerCell),
-      Cell('Samlet stk', '7%', 'left', styles.headerCell),
-      Cell('Samlet beløb', '7%', 'right', styles.headerCell)
+      Cell('Telefon stk', '12.5%', 'left', styles.headerCell),
+      Cell('Telefon beløb', '12.5%', 'right', styles.headerCell),
+      Cell('B2B stk', '12.5%', 'left', styles.headerCell),
+      Cell('B2B beløb', '12.5%', 'right', styles.headerCell),
+      Cell('Krediteret stk', '12.5%', 'left', styles.headerCell),
+      Cell('Krediteret beløb', '12.5%', 'right', styles.headerCell),
+      Cell('Samlet stk', '12.5%', 'left', styles.headerCell),
+      Cell('Samlet beløb', '12.5%', 'right', styles.headerCell)
     );
 
     const fullPageElements: any[] = [
@@ -553,128 +552,118 @@ export async function exportSuppleringer(ctx: Ctx) {
       React.createElement(Text, { style: styles.small, key: 'month' }, formatMonthName(yearMonth)),
     ];
 
-    // Current month section
-    fullPageElements.push(
-      React.createElement(Text, { style: [styles.h2, { marginTop: 8 }], key: 'current-header' }, formatMonthName(yearMonth))
-    );
-    fullPageElements.push(React.createElement(View, { style: styles.tableHeader, key: 'current-header-row' }, fullPageHeader));
-    
-    const fullPageBodyRows: any[] = [];
-    for (const stat of currentData) {
+    // Loop through all salespersons and create a section for each with Prev/Current/Difference
+    for (const salespersonName of allSalespersonNames) {
+      // Find aggregated data for this salesperson
+      const stat = currentData.find((s: any) => {
+        const normalized = normalizeName(s.salesperson_name);
+        return normalized === normalizeName(salespersonName);
+      });
+      
+      // If no aggregated data, create empty structure
+      const aggregatedData = stat || {
+        salesperson_name: salespersonName,
+        telefon_stk: 0,
+        telefon_beløb: 0,
+        b2b_stk: 0,
+        b2b_beløb: 0,
+        krediteret_stk: 0,
+        krediteret_beløb: 0,
+      };
+      
+      const prevYearSalespersonName = stat?.salesperson_name || salespersonName;
+      const prev = prevYearMap.get(prevYearSalespersonName);
+      
+      // Salesperson name as section header
+      fullPageElements.push(
+        React.createElement(Text, { style: [styles.h2, { marginTop: 16 }], key: `sp-title-${salespersonName}` }, salespersonName)
+      );
+
+      // Calculate values
       const current = {
-        telefon: { stk: stat.telefon_stk, beløb: stat.telefon_beløb },
-        b2bShop: { stk: stat.b2b_stk, beløb: stat.b2b_beløb },
-        credittedStk: -stat.krediteret_stk,
-        credittedBeløb: -stat.krediteret_beløb,
-        samletStk: stat.telefon_stk + stat.b2b_stk - stat.krediteret_stk,
-        samletBeløb: stat.telefon_beløb + stat.b2b_beløb - stat.krediteret_beløb,
+        telefon: { stk: aggregatedData.telefon_stk || 0, beløb: aggregatedData.telefon_beløb || 0 },
+        b2bShop: { stk: aggregatedData.b2b_stk || 0, beløb: aggregatedData.b2b_beløb || 0 },
+        credittedStk: -(aggregatedData.krediteret_stk || 0),
+        credittedBeløb: -(aggregatedData.krediteret_beløb || 0),
+        samletStk: (aggregatedData.telefon_stk || 0) + (aggregatedData.b2b_stk || 0) - (aggregatedData.krediteret_stk || 0),
+        samletBeløb: (aggregatedData.telefon_beløb || 0) + (aggregatedData.b2b_beløb || 0) - (aggregatedData.krediteret_beløb || 0),
       };
 
-      fullPageBodyRows.push(
-        React.createElement(View, { style: [styles.row, fullPageBodyRows.length % 2 === 1 ? styles.rowAlt : {}], key: `current-${stat.salesperson_name}` },
-          Cell(stat.salesperson_name, '20%', 'left'),
-          Cell(String(current.telefon.stk), '10%', 'left'),
-          Cell(formatPrice(current.telefon.beløb), '12%', 'right'),
-          Cell(String(current.b2bShop.stk), '10%', 'left'),
-          Cell(formatPrice(current.b2bShop.beløb), '12%', 'right'),
-          Cell(String(current.credittedStk), '10%', 'left', styles.red),
-          Cell(formatPrice(current.credittedBeløb), '12%', 'right', styles.red),
-          Cell(String(current.samletStk), '7%', 'left', styles.bold),
-          Cell(formatPrice(current.samletBeløb), '7%', 'right', styles.bold)
+      const previousYear = prev ? {
+        telefon: { stk: prev.telefon_stk || 0, beløb: prev.telefon_beløb || 0 },
+        b2bShop: { stk: prev.b2b_stk || 0, beløb: prev.b2b_beløb || 0 },
+        credittedStk: -(prev.krediteret_stk || 0),
+        credittedBeløb: -(prev.krediteret_beløb || 0),
+        samletStk: (prev.telefon_stk || 0) + (prev.b2b_stk || 0) - (prev.krediteret_stk || 0),
+        samletBeløb: (prev.telefon_beløb || 0) + (prev.b2b_beløb || 0) - (prev.krediteret_beløb || 0),
+      } : null;
+
+      const development = prev ? {
+        telefon: { stk: (aggregatedData.telefon_stk || 0) - (prev.telefon_stk || 0), beløb: (aggregatedData.telefon_beløb || 0) - (prev.telefon_beløb || 0) },
+        b2bShop: { stk: (aggregatedData.b2b_stk || 0) - (prev.b2b_stk || 0), beløb: (aggregatedData.b2b_beløb || 0) - (prev.b2b_beløb || 0) },
+        credittedStk: -((aggregatedData.krediteret_stk || 0) - (prev.krediteret_stk || 0)),
+        credittedBeløb: -((aggregatedData.krediteret_beløb || 0) - (prev.krediteret_beløb || 0)),
+        samletStk: ((aggregatedData.telefon_stk || 0) + (aggregatedData.b2b_stk || 0) - (aggregatedData.krediteret_stk || 0)) - ((prev.telefon_stk || 0) + (prev.b2b_stk || 0) - (prev.krediteret_stk || 0)),
+        samletBeløb: ((aggregatedData.telefon_beløb || 0) + (aggregatedData.b2b_beløb || 0) - (aggregatedData.krediteret_beløb || 0)) - ((prev.telefon_beløb || 0) + (prev.b2b_beløb || 0) - (prev.krediteret_beløb || 0)),
+      } : null;
+
+      // Previous Year subsection
+      if (previousYear) {
+        fullPageElements.push(
+          React.createElement(Text, { style: [styles.h2, { marginTop: 8, fontSize: 11 }], key: `prev-header-${salespersonName}` }, `${parseInt(year, 10) - 1} (Sidste år)`)
+        );
+        fullPageElements.push(React.createElement(View, { style: styles.tableHeader, key: `prev-header-row-${salespersonName}` }, fullPageHeader));
+        fullPageElements.push(
+          React.createElement(View, { style: styles.row, key: `prev-row-${salespersonName}` },
+            Cell(String(previousYear.telefon.stk), '12.5%', 'left'),
+            Cell(formatPrice(previousYear.telefon.beløb), '12.5%', 'right'),
+            Cell(String(previousYear.b2bShop.stk), '12.5%', 'left'),
+            Cell(formatPrice(previousYear.b2bShop.beløb), '12.5%', 'right'),
+            Cell(String(previousYear.credittedStk), '12.5%', 'left', styles.red),
+            Cell(formatPrice(previousYear.credittedBeløb), '12.5%', 'right', styles.red),
+            Cell(String(previousYear.samletStk), '12.5%', 'left'),
+            Cell(formatPrice(previousYear.samletBeløb), '12.5%', 'right')
+          )
+        );
+      }
+
+      // Current Month subsection
+      fullPageElements.push(
+        React.createElement(Text, { style: [styles.h2, { marginTop: 8, fontSize: 11 }], key: `current-header-${salespersonName}` }, formatMonthName(yearMonth))
+      );
+      fullPageElements.push(React.createElement(View, { style: styles.tableHeader, key: `current-header-row-${salespersonName}` }, fullPageHeader));
+      fullPageElements.push(
+        React.createElement(View, { style: styles.row, key: `current-row-${salespersonName}` },
+          Cell(String(current.telefon.stk), '12.5%', 'left'),
+          Cell(formatPrice(current.telefon.beløb), '12.5%', 'right'),
+          Cell(String(current.b2bShop.stk), '12.5%', 'left'),
+          Cell(formatPrice(current.b2bShop.beløb), '12.5%', 'right'),
+          Cell(String(current.credittedStk), '12.5%', 'left', styles.red),
+          Cell(formatPrice(current.credittedBeløb), '12.5%', 'right', styles.red),
+          Cell(String(current.samletStk), '12.5%', 'left', styles.bold),
+          Cell(formatPrice(current.samletBeløb), '12.5%', 'right', styles.bold)
         )
       );
-    }
-    fullPageElements.push(...fullPageBodyRows);
 
-    // Previous year section (if available)
-    if (prevData && prevData.length > 0) {
-      fullPageElements.push(
-        React.createElement(Text, { style: [styles.h2, { marginTop: 12 }], key: 'prev-header' }, `${parseInt(year, 10) - 1} (Sidste år)`)
-      );
-      fullPageElements.push(React.createElement(View, { style: styles.tableHeader, key: 'prev-header-row' }, fullPageHeader));
-      
-      const prevYearBodyRows: any[] = [];
-      for (const stat of prevData) {
-        const prevYear = {
-          telefon: { stk: stat.telefon_stk, beløb: stat.telefon_beløb },
-          b2bShop: { stk: stat.b2b_stk, beløb: stat.b2b_beløb },
-          credittedStk: -stat.krediteret_stk,
-          credittedBeløb: -stat.krediteret_beløb,
-          samletStk: stat.telefon_stk + stat.b2b_stk - stat.krediteret_stk,
-          samletBeløb: stat.telefon_beløb + stat.b2b_beløb - stat.krediteret_beløb,
-        };
-
-        prevYearBodyRows.push(
-          React.createElement(View, { style: [styles.row, prevYearBodyRows.length % 2 === 1 ? styles.rowAlt : {}], key: `prev-${stat.salesperson_name}` },
-            Cell(stat.salesperson_name, '20%', 'left'),
-            Cell(String(prevYear.telefon.stk), '10%', 'left'),
-            Cell(formatPrice(prevYear.telefon.beløb), '12%', 'right'),
-            Cell(String(prevYear.b2bShop.stk), '10%', 'left'),
-            Cell(formatPrice(prevYear.b2bShop.beløb), '12%', 'right'),
-            Cell(String(prevYear.credittedStk), '10%', 'left', styles.red),
-            Cell(formatPrice(prevYear.credittedBeløb), '12%', 'right', styles.red),
-            Cell(String(prevYear.samletStk), '7%', 'left'),
-            Cell(formatPrice(prevYear.samletBeløb), '7%', 'right')
+      // Development/Difference subsection
+      if (development) {
+        fullPageElements.push(
+          React.createElement(Text, { style: [styles.h2, { marginTop: 8, fontSize: 11 }], key: `dev-header-${salespersonName}` }, 'Udvikling')
+        );
+        fullPageElements.push(React.createElement(View, { style: styles.tableHeader, key: `dev-header-row-${salespersonName}` }, fullPageHeader));
+        fullPageElements.push(
+          React.createElement(View, { style: styles.row, key: `dev-row-${salespersonName}` },
+            Cell((development.telefon.stk >= 0 ? '+' : '') + String(development.telefon.stk), '12.5%', 'left', development.telefon.stk >= 0 ? styles.green : styles.red),
+            Cell((development.telefon.beløb >= 0 ? '+' : '') + formatPrice(development.telefon.beløb), '12.5%', 'right', development.telefon.beløb >= 0 ? styles.green : styles.red),
+            Cell((development.b2bShop.stk >= 0 ? '+' : '') + String(development.b2bShop.stk), '12.5%', 'left', development.b2bShop.stk >= 0 ? styles.green : styles.red),
+            Cell((development.b2bShop.beløb >= 0 ? '+' : '') + formatPrice(development.b2bShop.beløb), '12.5%', 'right', development.b2bShop.beløb >= 0 ? styles.green : styles.red),
+            Cell(String(development.credittedStk), '12.5%', 'left', styles.red),
+            Cell(formatPrice(development.credittedBeløb), '12.5%', 'right', styles.red),
+            Cell((development.samletStk >= 0 ? '+' : '') + String(development.samletStk), '12.5%', 'left', [styles.bold, development.samletStk >= 0 ? styles.green : styles.red]),
+            Cell((development.samletBeløb >= 0 ? '+' : '') + formatPrice(development.samletBeløb), '12.5%', 'right', [styles.bold, development.samletBeløb >= 0 ? styles.green : styles.red])
           )
         );
       }
-      fullPageElements.push(...prevYearBodyRows);
-    }
-
-    // Development section (if previous year data exists)
-    if (prevData && prevData.length > 0) {
-      fullPageElements.push(
-        React.createElement(Text, { style: [styles.h2, { marginTop: 12 }], key: 'dev-header' }, 'Samlet Udvikling')
-      );
-      fullPageElements.push(React.createElement(View, { style: styles.tableHeader, key: 'dev-header-row' }, fullPageHeader));
-      
-      const devBodyRows: any[] = [];
-      for (const stat of currentData) {
-        const prev = prevYearMap.get(stat.salesperson_name);
-        if (!prev) continue;
-        
-        const current = {
-          telefon: { stk: stat.telefon_stk, beløb: stat.telefon_beløb },
-          b2bShop: { stk: stat.b2b_stk, beløb: stat.b2b_beløb },
-          credittedStk: -stat.krediteret_stk,
-          credittedBeløb: -stat.krediteret_beløb,
-          samletStk: stat.telefon_stk + stat.b2b_stk - stat.krediteret_stk,
-          samletBeløb: stat.telefon_beløb + stat.b2b_beløb - stat.krediteret_beløb,
-        };
-        
-        const prevYear = {
-          telefon: { stk: prev.telefon_stk, beløb: prev.telefon_beløb },
-          b2bShop: { stk: prev.b2b_stk, beløb: prev.b2b_beløb },
-          credittedStk: -prev.krediteret_stk,
-          credittedBeløb: -prev.krediteret_beløb,
-          samletStk: prev.telefon_stk + prev.b2b_stk - prev.krediteret_stk,
-          samletBeløb: prev.telefon_beløb + prev.b2b_beløb - prev.krediteret_beløb,
-        };
-
-        const development = {
-          telefon: { stk: current.telefon.stk - prevYear.telefon.stk, beløb: current.telefon.beløb - prevYear.telefon.beløb },
-          b2bShop: { stk: current.b2bShop.stk - prevYear.b2bShop.stk, beløb: current.b2bShop.beløb - prevYear.b2bShop.beløb },
-          credittedStk: -(stat.krediteret_stk - prev.krediteret_stk),
-          credittedBeløb: -(stat.krediteret_beløb - prev.krediteret_beløb),
-          samletStk: current.samletStk - prevYear.samletStk,
-          samletBeløb: current.samletBeløb - prevYear.samletBeløb,
-        };
-
-        devBodyRows.push(
-          React.createElement(View, { style: [styles.row, devBodyRows.length % 2 === 1 ? styles.rowAlt : {}], key: `dev-${stat.salesperson_name}` },
-            Cell(stat.salesperson_name, '20%', 'left'),
-            Cell((development.telefon.stk >= 0 ? '+' : '') + String(development.telefon.stk), '10%', 'left', development.telefon.stk >= 0 ? styles.green : styles.red),
-            Cell((development.telefon.beløb >= 0 ? '+' : '') + formatPrice(development.telefon.beløb), '12%', 'right', development.telefon.beløb >= 0 ? styles.green : styles.red),
-            Cell((development.b2bShop.stk >= 0 ? '+' : '') + String(development.b2bShop.stk), '10%', 'left', development.b2bShop.stk >= 0 ? styles.green : styles.red),
-            Cell((development.b2bShop.beløb >= 0 ? '+' : '') + formatPrice(development.b2bShop.beløb), '12%', 'right', development.b2bShop.beløb >= 0 ? styles.green : styles.red),
-            Cell(String(development.credittedStk), '10%', 'left', styles.red),
-            Cell(formatPrice(development.credittedBeløb), '12%', 'right', styles.red),
-            Cell((development.samletStk >= 0 ? '+' : '') + String(development.samletStk), '7%', 'left', [styles.bold, development.samletStk >= 0 ? styles.green : styles.red]),
-            Cell((development.samletBeløb >= 0 ? '+' : '') + formatPrice(development.samletBeløb), '7%', 'right', [styles.bold, development.samletBeløb >= 0 ? styles.green : styles.red])
-          )
-        );
-      }
-      fullPageElements.push(...devBodyRows);
     }
 
     const fullPage = React.createElement(PdfPage, { size: 'A4', orientation: 'landscape', style: styles.page },
