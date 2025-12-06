@@ -32,14 +32,18 @@ export async function scrapeEans(ctx: Ctx) {
       await setJobSucceeded(job.id);
       return;
     }
+    // Filter to only styles with links
+    const stylesWithLinks = list.filter(s => s.link_href);
+    const total = stylesWithLinks.length;
+    await log(job.id, 'info', 'STEP:ean_total_requested', { totalRequested: total });
+    await log(job.id, 'info', 'STEP:ean_filtered', { activeCount: total, skippedNoLink: list.length - total });
+    
     let totalInserted = 0;
-    const total = list.length;
     let index = 0;
-    for (const s of list) {
+    for (const s of stylesWithLinks) {
       index++;
       await ensureNotCancelled(job.id);
       const href = (s.link_href || '').toString();
-      if (!href) continue;
       await log(job.id, 'info', 'STEP:ean_progress', { index, total, style_no: s.style_no });
       const base = new URL(href, SPY_BASE_URL).toString().replace(/#.*$/, '');
       const url = base + '#tab=ean';
@@ -120,6 +124,8 @@ export async function scrapeEans(ctx: Ctx) {
           }
         }
       }
+      // Log style completion for progress tracking
+      await log(job.id, 'info', 'STEP:ean_style_done', { style_no: s.style_no, index, total, inserted: inserts.length });
     }
     await saveResult(job.id, 'EAN scrape completed', { inserted: totalInserted });
     await setJobSucceeded(job.id);

@@ -64,6 +64,17 @@ export default function StyleDetailPage({ params }: { params: { styleNo: string 
     return { map, seasons: sMap } as { map: Map<string, string[]>; seasons: Map<string, { name: string; year: number | null }> };
   }, { refreshInterval: 0 });
 
+  // Fetch EAN codes for this style
+  const { data: eans } = useSWR(['style:eans', styleNo], async () => {
+    const { data, error } = await supabase
+      .from('style_color_eans')
+      .select('color, size, ean, scraped_at')
+      .eq('style_no', styleNo)
+      .order('color, size');
+    if (error) throw new Error(error.message);
+    return (data ?? []) as Array<{ color: string; size: string; ean: string; scraped_at: string }>;
+  }, { refreshInterval: 30000 });
+
   // Fetch stock data
   const { data: stockData } = useSWR(['style:stock', styleNo], async () => {
     const { data, error } = await supabase
@@ -293,7 +304,35 @@ export default function StyleDetailPage({ params }: { params: { styleNo: string 
 
                       <div>
                         <h3 className="text-sm font-semibold mb-2">EAN Codes</h3>
-                        <div className="text-xs text-gray-500">Coming soon...</div>
+                        {eans && eans.length > 0 ? (
+                          <div className="overflow-x-auto border rounded">
+                            <table className="w-full text-xs">
+                              <thead className="bg-gray-50">
+                                <tr>
+                                  <th className="p-2 text-left border-b">Color</th>
+                                  <th className="p-2 text-left border-b">Size</th>
+                                  <th className="p-2 text-left border-b font-mono">EAN</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {eans.map((ean, i) => (
+                                  <tr key={i}>
+                                    <td className="p-2 border-b">{ean.color}</td>
+                                    <td className="p-2 border-b">{ean.size}</td>
+                                    <td className="p-2 border-b font-mono">{ean.ean}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                            {eans.length > 0 && (
+                              <div className="p-2 text-xs text-gray-500 border-t bg-gray-50">
+                                {eans.length} EAN code{eans.length !== 1 ? 's' : ''} • Last scraped: {eans[0]?.scraped_at ? new Date(eans[0].scraped_at).toLocaleString() : '—'}
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="text-xs text-gray-500">No EAN codes found. Run "Scrape EANs" job to populate.</div>
+                        )}
                       </div>
 
                       {!has('sales') && (
