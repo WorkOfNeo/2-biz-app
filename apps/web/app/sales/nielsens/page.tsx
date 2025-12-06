@@ -78,7 +78,35 @@ export default function NielsensSalesPage() {
     })) as StockRow[];
   }, { refreshInterval: 0 });
 
-  // Build availability map styleNo|color -> { sizes, available[] }
+  // Load style names for all styles in stock
+  const styleNosInStock = React.useMemo(() => {
+    if (!stock) return [];
+    return Array.from(new Set(stock.map(r => r.style_no).filter(Boolean)));
+  }, [stock]);
+  
+  const { data: allStyleNames } = useSWR(
+    styleNosInStock.length > 0 ? ['nielsens:allStyleNames', styleNosInStock.length] : null,
+    async () => {
+      if (styleNosInStock.length === 0) return [];
+      const { data, error } = await supabase
+        .from('styles')
+        .select('style_no, style_name')
+        .in('style_no', styleNosInStock);
+      if (error) throw new Error(error.message);
+      return (data ?? []) as Array<{ style_no: string; style_name: string | null }>;
+    },
+    { refreshInterval: 0 }
+  );
+  
+  const styleNameByNo = React.useMemo(() => {
+    const m = new Map<string, string | null>();
+    for (const r of (allStyleNames ?? [])) {
+      m.set(r.style_no, r.style_name);
+    }
+    return m;
+  }, [allStyleNames]);
+
+  // Build availability map with both styleNo|color and styleName|color keys
   const availability = React.useMemo(() => {
     const map = new Map<string, GroupedStock>();
     if (!stock) return map;
@@ -113,9 +141,25 @@ export default function NielsensSalesPage() {
       }, zero.slice());
       const available = stockVals.map((v, i) => v - (soldVals[i] ?? 0) + (purchaseVals[i] ?? 0));
       map.set(key, { sizes, available });
+      
+      // Also add entry keyed by style_name|color if style_name exists
+      // Get the original style_no from the first row (all rows in this group have the same style_no)
+      const originalStyleNo = rows[0]?.style_no;
+      if (originalStyleNo) {
+        const styleName = styleNameByNo.get(originalStyleNo);
+        if (styleName) {
+          const parts = key.split('|');
+          const color = parts[1] || '';
+          const nameKey = `${normalize(styleName)}|${color}`;
+          // Only add if it doesn't already exist (to avoid overwriting)
+          if (!map.has(nameKey)) {
+            map.set(nameKey, { sizes, available });
+          }
+        }
+      }
     }
     return map;
-  }, [stock]);
+  }, [stock, styleNameByNo]);
 
   function ensureNums(arr: any[], len: number): number[] {
     return Array.from({ length: len }, (_, i) => Number(arr?.[i] ?? 0) || 0);
@@ -124,22 +168,6 @@ export default function NielsensSalesPage() {
   const [rows, setRows] = React.useState<ExcelRow[]>([]);
   const [grouped, setGrouped] = React.useState<Array<{ shop: string; items: (ExcelRow & { approved: boolean })[] }>>([]);
   const [ran, setRan] = React.useState(false);
-
-  // Load style names for the uploaded rows
-  const styleNos = React.useMemo(() => Array.from(new Set(rows.map(r => r.Article))).filter(Boolean), [rows]);
-  const { data: styleNameRows } = useSWR(styleNos.length ? ['nielsens:stylesByNo', styleNos.join(',')] : null, async () => {
-    const { data, error } = await supabase
-      .from('styles')
-      .select('style_no, style_name')
-      .in('style_no', styleNos);
-    if (error) throw new Error(error.message);
-    return (data ?? []) as Array<{ style_no: string; style_name: string | null }>;
-  }, { refreshInterval: 0 });
-  const styleNameByNo = React.useMemo(() => {
-    const m = new Map<string, string | null>();
-    for (const r of (styleNameRows ?? [])) m.set(r.style_no, r.style_name);
-    return m;
-  }, [styleNameRows]);
 
   function parseWorkbook(fileName: string, wb: XLSX.WorkBook): ExcelRow[] {
     const out: ExcelRow[] = [];
@@ -197,23 +225,60 @@ export default function NielsensSalesPage() {
     for (const [k, v] of availability.entries()) {
       inv.set(k, { sizes: v.sizes.slice(), avail: v.available.slice() });
     }
-    // Build variant index per style for fuzzy color match
+    // Build variant index per style (by style name and style number) for fuzzy color match
     const styleToVariants = new Map<string, Array<{ key: string; colorNorm: string; sizes: string[]; avail: number[] }>>();
     for (const [key, v] of inv.entries()) {
       const parts = key.split('|');
       const sty = parts[0] || '';
       const col = parts[1] || '';
-      const list = styleToVariants.get(sty) || [];
-      list.push({ key, colorNorm: normalizeColor(col), sizes: v.sizes, avail: v.avail });
-      styleToVariants.set(sty, list);
+      // Index by both style name and style number
+      const listByName = styleToVariants.get(sty) || [];
+      listByName.push({ key, colorNorm: normalizeColor(col), sizes: v.sizes, avail: v.avail });
+      styleToVariants.set(sty, listByName);
     }
     // Evaluate rows sequentially with deductions
     const decided: Array<ExcelRow & { approved: boolean }> = rows.map((r) => {
-      const key = `${normalize(r.Article)}|${normalize(r.Color)}`;
-      const g = inv.get(key);
       const want = r.Qty || 0;
       const sizeNorm = normalize(r.Size);
-      // First try exact color match
+      const reqColorNorm = normalizeColor(r.Color);
+      
+      // Try style name + color first (if Style field is provided)
+      if (r.Style) {
+        const nameKey = `${normalize(r.Style)}|${normalize(r.Color)}`;
+        const g = inv.get(nameKey);
+        if (g) {
+          const idx = g.sizes.findIndex((s) => normalize(s) === sizeNorm);
+          if (idx !== -1) {
+            const have = g.avail[idx] ?? 0;
+            if (have >= want) {
+              g.avail[idx] = have - want;
+              return { ...r, approved: true };
+            }
+          }
+        }
+        // Fuzzy color match by style name
+        const styleNameKey = normalize(r.Style);
+        const variants = styleToVariants.get(styleNameKey) || [];
+        let best: { v: { key: string; colorNorm: string; sizes: string[]; avail: number[] }; idx: number; have: number; score: number } | null = null;
+        for (const v of variants) {
+          const score = v.colorNorm.includes(reqColorNorm) ? 2 : (reqColorNorm.includes(v.colorNorm) && v.colorNorm.length > 0 ? 1 : 0);
+          if (score === 0) continue;
+          const idx = v.sizes.findIndex((s) => normalize(s) === sizeNorm);
+          if (idx === -1) continue;
+          const have = v.avail[idx] ?? 0;
+          if (!best || score > best.score || (score === best.score && have > best.have)) {
+            best = { v, idx, have, score };
+          }
+        }
+        if (best && best.have >= want) {
+          best.v.avail[best.idx] = best.have - want;
+          return { ...r, approved: true };
+        }
+      }
+      
+      // Fallback to style number + color
+      const articleKey = `${normalize(r.Article)}|${normalize(r.Color)}`;
+      const g = inv.get(articleKey);
       if (g) {
         const idx = g.sizes.findIndex((s) => normalize(s) === sizeNorm);
         if (idx !== -1) {
@@ -224,11 +289,9 @@ export default function NielsensSalesPage() {
           }
         }
       }
-      // Fuzzy color match: find any variant for this style where color contains request or vice versa
-      const styleKey = normalize(r.Article);
-      const variants = styleToVariants.get(styleKey) || [];
-      const reqColorNorm = normalizeColor(r.Color);
-      // score: 2 if variant includes request, 1 if request includes variant, 0 otherwise
+      // Fuzzy color match by style number
+      const styleNoKey = normalize(r.Article);
+      const variants = styleToVariants.get(styleNoKey) || [];
       let best: { v: { key: string; colorNorm: string; sizes: string[]; avail: number[] }; idx: number; have: number; score: number } | null = null;
       for (const v of variants) {
         const score = v.colorNorm.includes(reqColorNorm) ? 2 : (reqColorNorm.includes(v.colorNorm) && v.colorNorm.length > 0 ? 1 : 0);
