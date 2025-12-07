@@ -51,10 +51,10 @@ export function CollapsibleTrigger({
       aria-expanded={open}
       aria-controls="collapsible-content"
     >
-      <span>{children}</span>
+      <span className="flex items-center">{children}</span>
       <ChevronDown 
         className={cn(
-          'h-4 w-4 transition-transform duration-200',
+          'h-4 w-4 transition-transform duration-200 flex-shrink-0',
           open && 'rotate-180'
         )} 
       />
