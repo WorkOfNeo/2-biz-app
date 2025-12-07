@@ -28,11 +28,13 @@ export function Collapsible({ children, defaultOpen = false, className }: Collap
 export function CollapsibleTrigger({ 
   children, 
   className,
-  asChild = false 
+  asChild = false,
+  isActive = false
 }: { 
   children: React.ReactNode; 
   className?: string;
   asChild?: boolean;
+  isActive?: boolean;
 }) {
   const context = React.useContext(CollapsibleContext);
   if (!context) throw new Error('CollapsibleTrigger must be used within Collapsible');
@@ -43,21 +45,23 @@ export function CollapsibleTrigger({
       type="button"
       onClick={() => setOpen(!open)}
       className={cn(
-        'flex w-full items-center justify-between rounded-md px-3 py-2 text-sm font-medium transition-colors',
+        'flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors',
         'hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-offset-2 focus:ring-offset-slate-900',
-        'text-slate-200',
+        isActive 
+          ? 'bg-slate-800 text-white border-l-2 border-white' 
+          : 'text-slate-200',
         className
       )}
       aria-expanded={open}
       aria-controls="collapsible-content"
     >
-      <span className="flex items-center">{children}</span>
       <ChevronDown 
         className={cn(
-          'h-4 w-4 transition-transform duration-200 flex-shrink-0',
+          'h-2.5 w-2.5 transition-transform duration-200 flex-shrink-0',
           open && 'rotate-180'
         )} 
       />
+      <span className="flex items-center flex-1">{children}</span>
     </button>
   );
   

@@ -48,12 +48,12 @@ function NavLink({ href, label, icon: Icon }: { href: Route; label: string; icon
       className={cn(
         'flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors',
         active
-          ? 'bg-slate-800 text-white'
+          ? 'bg-slate-800 text-white border-l-2 border-white'
           : 'text-slate-200 hover:bg-slate-800 hover:text-white'
       )}
     >
-      {Icon && <Icon className="h-4 w-4 flex-shrink-0" />}
-      <span>{label}</span>
+      {Icon && <Icon className={cn('h-2.5 w-2.5 flex-shrink-0', active && 'text-white')} />}
+      <span className="flex items-center">{label}</span>
     </Link>
   );
 }
@@ -149,8 +149,11 @@ export function SidebarNav() {
       {dashboardLink}
       {statLinks.length > 0 && (
         <Collapsible defaultOpen={open.statistics} className="mt-4">
-          <CollapsibleTrigger className="w-full text-xs uppercase tracking-wider">
-            <BarChart3 className="h-4 w-4 mr-2" />
+          <CollapsibleTrigger 
+            className="w-full text-xs uppercase tracking-wider"
+            isActive={startsWith('/statistics') && !startsWith('/statistics/dashboard')}
+          >
+            <BarChart3 className="h-2.5 w-2.5" />
             Statistics
           </CollapsibleTrigger>
           <CollapsibleContent>
@@ -160,8 +163,11 @@ export function SidebarNav() {
       )}
       {financeLinks.length > 0 && (
         <Collapsible defaultOpen={open.finance} className="mt-4">
-          <CollapsibleTrigger className="w-full text-xs uppercase tracking-wider">
-            <DollarSign className="h-4 w-4 mr-2" />
+          <CollapsibleTrigger 
+            className="w-full text-xs uppercase tracking-wider"
+            isActive={startsWith('/finance')}
+          >
+            <DollarSign className="h-2.5 w-2.5" />
             Finance
           </CollapsibleTrigger>
           <CollapsibleContent>
@@ -171,8 +177,11 @@ export function SidebarNav() {
       )}
       {stylesLinks.length > 0 && (
         <Collapsible defaultOpen={open.styles} className="mt-4">
-          <CollapsibleTrigger className="w-full text-xs uppercase tracking-wider">
-            <Package className="h-4 w-4 mr-2" />
+          <CollapsibleTrigger 
+            className="w-full text-xs uppercase tracking-wider"
+            isActive={startsWith('/styles')}
+          >
+            <Package className="h-2.5 w-2.5" />
             Styles
           </CollapsibleTrigger>
           <CollapsibleContent>
@@ -182,8 +191,11 @@ export function SidebarNav() {
       )}
       {purchaseLinks.length > 0 && (
         <Collapsible defaultOpen={open.purchase} className="mt-4">
-          <CollapsibleTrigger className="w-full text-xs uppercase tracking-wider">
-            <ShoppingCart className="h-4 w-4 mr-2" />
+          <CollapsibleTrigger 
+            className="w-full text-xs uppercase tracking-wider"
+            isActive={startsWith('/purchase')}
+          >
+            <ShoppingCart className="h-2.5 w-2.5" />
             Purchase
           </CollapsibleTrigger>
           <CollapsibleContent>
@@ -193,8 +205,11 @@ export function SidebarNav() {
       )}
       {salesLinks.length > 0 && (
         <Collapsible defaultOpen={open.sales} className="mt-4">
-          <CollapsibleTrigger className="w-full text-xs uppercase tracking-wider">
-            <Store className="h-4 w-4 mr-2" />
+          <CollapsibleTrigger 
+            className="w-full text-xs uppercase tracking-wider"
+            isActive={startsWith('/sales')}
+          >
+            <Store className="h-2.5 w-2.5" />
             Sales
           </CollapsibleTrigger>
           <CollapsibleContent>
@@ -204,8 +219,11 @@ export function SidebarNav() {
       )}
       {settingsLinks.length > 0 && (
         <Collapsible defaultOpen={open.settings} className="mt-4">
-          <CollapsibleTrigger className="w-full text-xs uppercase tracking-wider">
-            <Settings className="h-4 w-4 mr-2" />
+          <CollapsibleTrigger 
+            className="w-full text-xs uppercase tracking-wider"
+            isActive={startsWith('/settings') || startsWith('/statistics/exports') || startsWith('/statistics/downloads')}
+          >
+            <Settings className="h-2.5 w-2.5" />
             Settings
           </CollapsibleTrigger>
           <CollapsibleContent>
@@ -215,8 +233,11 @@ export function SidebarNav() {
       )}
       {has('admin') && adminLinks.length > 0 && (
         <Collapsible defaultOpen={open.admin} className="mt-4">
-          <CollapsibleTrigger className="w-full text-xs uppercase tracking-wider">
-            <Shield className="h-4 w-4 mr-2" />
+          <CollapsibleTrigger 
+            className="w-full text-xs uppercase tracking-wider"
+            isActive={startsWith('/admin')}
+          >
+            <Shield className="h-2.5 w-2.5" />
             Admin
           </CollapsibleTrigger>
           <CollapsibleContent>
@@ -251,7 +272,7 @@ function SignOutButton() {
         }
       }}
     >
-      <LogOut className="h-4 w-4 mr-2" />
+      <LogOut className="h-2.5 w-2.5 mr-2" />
       Sign out
     </Button>
   );
