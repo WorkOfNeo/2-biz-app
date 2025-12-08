@@ -3,43 +3,10 @@ import Link from 'next/link';
 import type { Route } from 'next';
 import { usePathname } from 'next/navigation';
 import { useRoles, useRoleAccess } from '../lib/supabaseClient';
-import { useState } from 'react';
-import { Collapsible, CollapsibleTrigger, CollapsibleContent } from './ui/collapsible';
 import { Button } from './ui/button';
 import { cn } from '../lib/cn';
-import {
-  Home,
-  LayoutDashboard,
-  BarChart3,
-  Users,
-  Globe,
-  TrendingUp,
-  Package,
-  ShoppingCart,
-  FileText,
-  DollarSign,
-  Settings,
-  Calendar,
-  Building2,
-  History,
-  MoreHorizontal,
-  Briefcase,
-  Play,
-  FileDown,
-  Download,
-  Shield,
-  User,
-  KeyRound,
-  Store,
-  ShoppingBag,
-  List,
-  Move,
-  Calculator,
-  Receipt,
-  LogOut
-} from 'lucide-react';
 
-function NavLink({ href, label, icon: Icon }: { href: Route; label: string; icon?: React.ComponentType<{ className?: string }> }) {
+function NavLink({ href, label }: { href: Route; label: string }) {
   const pathname = usePathname();
   const active = pathname === href || pathname.startsWith(href + '/');
   return (
@@ -48,12 +15,11 @@ function NavLink({ href, label, icon: Icon }: { href: Route; label: string; icon
       className={cn(
         'flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors',
         active
-          ? 'bg-slate-800 text-white border-l-2 border-white'
+          ? 'bg-slate-800 text-white'
           : 'text-slate-200 hover:bg-slate-800 hover:text-white'
       )}
     >
-      {Icon && <Icon className={cn('h-2.5 w-2.5 flex-shrink-0', active && 'text-white')} />}
-      <span className="flex items-center">{label}</span>
+      <span>{label}</span>
     </Link>
   );
 }
@@ -73,69 +39,55 @@ export function SidebarNav() {
       } catch {}
     })();
   }, []);
-  const pathname = usePathname();
-  const startsWith = (p: string) => pathname === p || pathname.startsWith(p + '/');
-  const [open, setOpen] = useState(() => ({
-    statistics: startsWith('/statistics') && !startsWith('/statistics/dashboard'),
-    styles: startsWith('/styles'),
-    purchase: startsWith('/purchase'),
-    sales: startsWith('/sales'),
-    finance: startsWith('/finance'),
-    settings: startsWith('/settings'),
-    admin: startsWith('/admin')
-  }));
-  function toggle(key: keyof typeof open) {
-    setOpen((o) => ({ ...o, [key]: !o[key] }));
-  }
   // Build per-section link lists based on access
   // Dashboard moved out of Statistics
-  const dashboardLink = can('/statistics/dashboard') ? <NavLink key="dashboard" href="/statistics/dashboard" label="Dashboard" icon={LayoutDashboard} /> : null;
+  const dashboardLink = can('/statistics/dashboard') ? <NavLink key="dashboard" href="/statistics/dashboard" label="Dashboard" /> : null;
   const statLinks = [
-    can('/statistics/general') ? <NavLink key="sg" href="/statistics/general" label="Sælgere" icon={Users} /> : null,
-    can('/statistics/overview') ? <NavLink key="so" href="/statistics/overview" label="Overblik" icon={BarChart3} /> : null,
-    can('/statistics/countries') ? <NavLink key="sc" href="/statistics/countries" label="Lande" icon={Globe} /> : null,
-    can('/statistics/suppleringer') ? <NavLink key="ssu" href="/statistics/suppleringer" label="Suppleringer" icon={TrendingUp} /> : null,
-    can('/statistics/styles/top10') ? <NavLink key="st" href="/statistics/styles/top10" label="Top 15 Styles" icon={Package} /> : null,
-    can('/statistics/vendors/top10') ? <NavLink key="sv" href="/statistics/vendors/top10" label="Top 10 leverandører" icon={Building2} /> : null,
-    can('/statistics/downloads') ? <NavLink key="sdw" href="/statistics/downloads" label="Downloads" icon={Download} /> : null,
+    can('/statistics/general') ? <NavLink key="sg" href="/statistics/general" label="Sælgere" /> : null,
+    can('/statistics/overview') ? <NavLink key="so" href="/statistics/overview" label="Overblik" /> : null,
+    can('/statistics/countries') ? <NavLink key="sc" href="/statistics/countries" label="Lande" /> : null,
+    can('/statistics/suppleringer') ? <NavLink key="ssu" href="/statistics/suppleringer" label="Suppleringer" /> : null,
+    can('/statistics/styles/top10') ? <NavLink key="st" href="/statistics/styles/top10" label="Top 15 Styles" /> : null,
+    can('/statistics/vendors/top10') ? <NavLink key="sv" href="/statistics/vendors/top10" label="Top 10 leverandører" /> : null,
+    can('/statistics/downloads') ? <NavLink key="sdw" href="/statistics/downloads" label="Downloads" /> : null,
   ].filter(Boolean) as any[];
   const financeLinks = [
-    can('/finance/csv-skat') ? <NavLink key="fin-skat" href="/finance/csv-skat" label="CSV - Skat" icon={Receipt} /> : null,
+    can('/finance/csv-skat') ? <NavLink key="fin-skat" href="/finance/csv-skat" label="CSV - Skat" /> : null,
   ].filter(Boolean) as any[];
   const stylesLinks = [
-    can('/styles') ? <NavLink key="s" href="/styles" label="Styles" icon={Package} /> : null,
-    can('/styles/settings') ? <NavLink key="ss" href="/styles/settings" label="Settings" icon={Settings} /> : null,
-    can('/styles/stock-list') ? <NavLink key="ssl" href="/styles/stock-list" label="Stock List" icon={List} /> : null,
-    can('/styles/statistics') ? <NavLink key="sst" href="/styles/statistics" label="Statistics" icon={BarChart3} /> : null,
-    can('/styles/scraper') ? <NavLink key="sscr" href="/styles/scraper" label="Stock Scraper" icon={FileText} /> : null,
-    can('/styles/movements') ? <NavLink key="sm" href="/styles/movements" label="Movements" icon={Move} /> : null,
+    can('/styles') ? <NavLink key="s" href="/styles" label="Styles" /> : null,
+    can('/styles/settings') ? <NavLink key="ss" href="/styles/settings" label="Settings" /> : null,
+    can('/styles/stock-list') ? <NavLink key="ssl" href="/styles/stock-list" label="Stock List" /> : null,
+    can('/styles/statistics') ? <NavLink key="sst" href="/styles/statistics" label="Statistics" /> : null,
+    can('/styles/scraper') ? <NavLink key="sscr" href="/styles/scraper" label="Stock Scraper" /> : null,
+    can('/styles/movements') ? <NavLink key="sm" href="/styles/movements" label="Movements" /> : null,
   ].filter(Boolean) as any[];
   const purchaseLinks = [
-    can('/purchase/orders') ? <NavLink key="po" href="/purchase/orders" label="Purchase Orders" icon={ShoppingCart} /> : null,
-    can('/purchase/make-order') ? <NavLink key="pmo" href="/purchase/make-order" label="Make order" icon={ShoppingBag} /> : null,
-    can('/purchase/app-pos') ? <NavLink key="pap" href="/purchase/app-pos" label="App PO's" icon={FileText} /> : null,
-    can('/purchase/po-calculator') ? <NavLink key="poc" href="/purchase/po-calculator" label="PO Calculator" icon={Calculator} /> : null,
+    can('/purchase/orders') ? <NavLink key="po" href="/purchase/orders" label="Purchase Orders" /> : null,
+    can('/purchase/make-order') ? <NavLink key="pmo" href="/purchase/make-order" label="Make order" /> : null,
+    can('/purchase/app-pos') ? <NavLink key="pap" href="/purchase/app-pos" label="App PO's" /> : null,
+    can('/purchase/po-calculator') ? <NavLink key="poc" href="/purchase/po-calculator" label="PO Calculator" /> : null,
   ].filter(Boolean) as any[];
   const salesLinks = [
-    can('/sales/nielsens') ? <NavLink key="sn" href="/sales/nielsens" label="Nielsens" icon={Store} /> : null,
-    can('/sales/make-purchase-order') ? <NavLink key="smpo" href="/sales/make-purchase-order" label="Make Purchase Order" icon={ShoppingBag} /> : null,
+    can('/sales/nielsens') ? <NavLink key="sn" href="/sales/nielsens" label="Nielsens" /> : null,
+    can('/sales/make-purchase-order') ? <NavLink key="smpo" href="/sales/make-purchase-order" label="Make Purchase Order" /> : null,
   ].filter(Boolean) as any[];
   // PDF'er and Exports moved to Settings
   const settingsLinks = [
-    can('/settings/seasons') ? <NavLink key="set-seasons" href="/settings/seasons" label="SEASONS" icon={Calendar} /> : null,
-    can('/settings/salespersons') ? <NavLink key="set-sp" href="/settings/salespersons" label="SALESPERSONS" icon={Users} /> : null,
-    can('/settings/customers') ? <NavLink key="set-cust" href="/settings/customers" label="CUSTOMERS" icon={Building2} /> : null,
-    can('/settings/historical-sales') ? <NavLink key="set-hist" href="/settings/historical-sales" label="HISTORICAL SALES" icon={History} /> : null,
-    can('/settings/misc') ? <NavLink key="set-misc" href="/settings/misc" label="MISC" icon={MoreHorizontal} /> : null,
-    can('/settings/jobs') ? <NavLink key="set-jobs" href="/settings/jobs" label="JOBS" icon={Briefcase} /> : null,
-    can('/settings/runs') ? <NavLink key="set-runs" href="/settings/runs" label="RUNS" icon={Play} /> : null,
-    can('/statistics/exports') ? <NavLink key="set-exports" href="/statistics/exports" label="PDF'er" icon={FileText} /> : null,
-    can('/statistics/downloads') ? <NavLink key="set-downloads" href="/statistics/downloads" label="Exports" icon={FileDown} /> : null,
+    can('/settings/seasons') ? <NavLink key="set-seasons" href="/settings/seasons" label="SEASONS" /> : null,
+    can('/settings/salespersons') ? <NavLink key="set-sp" href="/settings/salespersons" label="SALESPERSONS" /> : null,
+    can('/settings/customers') ? <NavLink key="set-cust" href="/settings/customers" label="CUSTOMERS" /> : null,
+    can('/settings/historical-sales') ? <NavLink key="set-hist" href="/settings/historical-sales" label="HISTORICAL SALES" /> : null,
+    can('/settings/misc') ? <NavLink key="set-misc" href="/settings/misc" label="MISC" /> : null,
+    can('/settings/jobs') ? <NavLink key="set-jobs" href="/settings/jobs" label="JOBS" /> : null,
+    can('/settings/runs') ? <NavLink key="set-runs" href="/settings/runs" label="RUNS" /> : null,
+    can('/statistics/exports') ? <NavLink key="set-exports" href="/statistics/exports" label="PDF'er" /> : null,
+    can('/statistics/downloads') ? <NavLink key="set-downloads" href="/statistics/downloads" label="Exports" /> : null,
   ].filter(Boolean) as any[];
   const adminLinks = [
-    can('/admin') ? <NavLink key="ad" href="/admin" label="Dashboard" icon={LayoutDashboard} /> : null,
-    can('/admin/users') ? <NavLink key="ad-users" href="/admin/users" label="Users" icon={User} /> : null,
-    can('/admin/roles') ? <NavLink key="ad-roles" href="/admin/roles" label="Roles" icon={KeyRound} /> : null,
+    can('/admin') ? <NavLink key="ad" href="/admin" label="Dashboard" /> : null,
+    can('/admin/users') ? <NavLink key="ad-users" href="/admin/users" label="Users" /> : null,
+    can('/admin/roles') ? <NavLink key="ad-roles" href="/admin/roles" label="Roles" /> : null,
   ].filter(Boolean) as any[];
   return (
     <nav className="space-y-2">
@@ -145,105 +97,63 @@ export function SidebarNav() {
           <span className="text-white font-medium">{userName}</span>
         </div>
       )}
-      <NavLink href="/" label="Home" icon={Home} />
+      <NavLink href="/" label="Home" />
       {dashboardLink}
       {statLinks.length > 0 && (
-        <Collapsible defaultOpen={open.statistics} className="mt-4">
-          <CollapsibleTrigger 
-            className="w-full text-xs uppercase tracking-wider"
-            isActive={startsWith('/statistics') && !startsWith('/statistics/dashboard')}
-          >
-            <BarChart3 className="h-2.5 w-2.5" />
+        <div className="mt-4">
+          <div className="w-full text-xs uppercase tracking-wider px-3 py-2">
             Statistics
-          </CollapsibleTrigger>
-          <CollapsibleContent>
-            <div className="ml-2 space-y-1 mt-1">{statLinks}</div>
-          </CollapsibleContent>
-        </Collapsible>
+          </div>
+          <div className="ml-2 space-y-1 mt-1">{statLinks}</div>
+        </div>
       )}
       {financeLinks.length > 0 && (
-        <Collapsible defaultOpen={open.finance} className="mt-4">
-          <CollapsibleTrigger 
-            className="w-full text-xs uppercase tracking-wider"
-            isActive={startsWith('/finance')}
-          >
-            <DollarSign className="h-2.5 w-2.5" />
+        <div className="mt-4">
+          <div className="w-full text-xs uppercase tracking-wider px-3 py-2">
             Finance
-          </CollapsibleTrigger>
-          <CollapsibleContent>
-            <div className="ml-2 space-y-1 mt-1">{financeLinks}</div>
-          </CollapsibleContent>
-        </Collapsible>
+          </div>
+          <div className="ml-2 space-y-1 mt-1">{financeLinks}</div>
+        </div>
       )}
       {stylesLinks.length > 0 && (
-        <Collapsible defaultOpen={open.styles} className="mt-4">
-          <CollapsibleTrigger 
-            className="w-full text-xs uppercase tracking-wider"
-            isActive={startsWith('/styles')}
-          >
-            <Package className="h-2.5 w-2.5" />
+        <div className="mt-4">
+          <div className="w-full text-xs uppercase tracking-wider px-3 py-2">
             Styles
-          </CollapsibleTrigger>
-          <CollapsibleContent>
-            <div className="ml-2 space-y-1 mt-1">{stylesLinks}</div>
-          </CollapsibleContent>
-        </Collapsible>
+          </div>
+          <div className="ml-2 space-y-1 mt-1">{stylesLinks}</div>
+        </div>
       )}
       {purchaseLinks.length > 0 && (
-        <Collapsible defaultOpen={open.purchase} className="mt-4">
-          <CollapsibleTrigger 
-            className="w-full text-xs uppercase tracking-wider"
-            isActive={startsWith('/purchase')}
-          >
-            <ShoppingCart className="h-2.5 w-2.5" />
+        <div className="mt-4">
+          <div className="w-full text-xs uppercase tracking-wider px-3 py-2">
             Purchase
-          </CollapsibleTrigger>
-          <CollapsibleContent>
-            <div className="ml-2 space-y-1 mt-1">{purchaseLinks}</div>
-          </CollapsibleContent>
-        </Collapsible>
+          </div>
+          <div className="ml-2 space-y-1 mt-1">{purchaseLinks}</div>
+        </div>
       )}
       {salesLinks.length > 0 && (
-        <Collapsible defaultOpen={open.sales} className="mt-4">
-          <CollapsibleTrigger 
-            className="w-full text-xs uppercase tracking-wider"
-            isActive={startsWith('/sales')}
-          >
-            <Store className="h-2.5 w-2.5" />
+        <div className="mt-4">
+          <div className="w-full text-xs uppercase tracking-wider px-3 py-2">
             Sales
-          </CollapsibleTrigger>
-          <CollapsibleContent>
-            <div className="ml-2 space-y-1 mt-1">{salesLinks}</div>
-          </CollapsibleContent>
-        </Collapsible>
+          </div>
+          <div className="ml-2 space-y-1 mt-1">{salesLinks}</div>
+        </div>
       )}
       {settingsLinks.length > 0 && (
-        <Collapsible defaultOpen={open.settings} className="mt-4">
-          <CollapsibleTrigger 
-            className="w-full text-xs uppercase tracking-wider"
-            isActive={startsWith('/settings') || startsWith('/statistics/exports') || startsWith('/statistics/downloads')}
-          >
-            <Settings className="h-2.5 w-2.5" />
+        <div className="mt-4">
+          <div className="w-full text-xs uppercase tracking-wider px-3 py-2">
             Settings
-          </CollapsibleTrigger>
-          <CollapsibleContent>
-            <div className="ml-2 space-y-1 mt-1">{settingsLinks}</div>
-          </CollapsibleContent>
-        </Collapsible>
+          </div>
+          <div className="ml-2 space-y-1 mt-1">{settingsLinks}</div>
+        </div>
       )}
       {has('admin') && adminLinks.length > 0 && (
-        <Collapsible defaultOpen={open.admin} className="mt-4">
-          <CollapsibleTrigger 
-            className="w-full text-xs uppercase tracking-wider"
-            isActive={startsWith('/admin')}
-          >
-            <Shield className="h-2.5 w-2.5" />
+        <div className="mt-4">
+          <div className="w-full text-xs uppercase tracking-wider px-3 py-2">
             Admin
-          </CollapsibleTrigger>
-          <CollapsibleContent>
-            <div className="ml-2 space-y-1 mt-1">{adminLinks}</div>
-          </CollapsibleContent>
-        </Collapsible>
+          </div>
+          <div className="ml-2 space-y-1 mt-1">{adminLinks}</div>
+        </div>
       )}
       <div className="mt-6 px-3">
         <SignOutButton />
@@ -272,7 +182,6 @@ function SignOutButton() {
         }
       }}
     >
-      <LogOut className="h-2.5 w-2.5 mr-2" />
       Sign out
     </Button>
   );
