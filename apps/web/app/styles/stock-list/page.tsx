@@ -999,16 +999,131 @@ export default function StockListPage() {
                   matches
                 });
                 
-                setRunningStockFix(false);
-                setStockFixProgress(null);
-                
-                if (mismatchCount === 0 && missingInCurrent === 0 && missingInPasted === 0) {
-                  setStockFixMessage({ type: 'success', text: `SPY verification complete! All ${spyDataMap.size} styles match.` });
+                // If mismatches found, automatically enqueue scrape mismatches
+                if (mismatchCount > 0) {
+                  setStockFixProgress({ step: 'Mismatches found, enqueuing scrape...', details: `${mismatchCount} mismatches` });
+                  
+                  // Get style numbers for mismatches
+                  const mismatchStyleNos = differences
+                    .filter(d => d.status === 'mismatch')
+                    .map(d => d.styleNo)
+                    .filter(Boolean);
+                  
+                  try {
+                    // Get fresh session token for nested async operations
+                    const { data: { session: freshSession } } = await supabase.auth.getSession();
+                    if (!freshSession) {
+                      throw new Error('Session expired');
+                    }
+                    
+                    // Enqueue scrape mismatches
+                    const scrapeRes = await fetch('/api/enqueue', {
+                      method: 'POST',
+                      headers: { 
+                        'Content-Type': 'application/json', 
+                        Authorization: `Bearer ${freshSession.access_token}` 
+                      },
+                      body: JSON.stringify({
+                        type: 'update_style_stock',
+                        payload: { 
+                          styleNos: mismatchStyleNos, 
+                          requestedBy: 'check_stock_fix_auto'
+                        }
+                      })
+                    });
+                    
+                    if (!scrapeRes.ok) {
+                      throw new Error('Failed to enqueue scrape mismatches');
+                    }
+                    
+                    const { jobId: scrapeJobId } = await scrapeRes.json();
+                    setStockFixProgress({ step: 'Scraping mismatches...', details: `Job ${scrapeJobId}` });
+                    
+                    // Wait for scrape job to complete
+                    const scrapePollInterval = setInterval(async () => {
+                      try {
+                        const { data: scrapeJobData } = await supabase
+                          .from('jobs')
+                          .select('status')
+                          .eq('id', scrapeJobId)
+                          .single();
+                        
+                        if (scrapeJobData?.status === 'succeeded' || scrapeJobData?.status === 'failed' || scrapeJobData?.status === 'cancelled') {
+                          clearInterval(scrapePollInterval);
+                          
+                          if (scrapeJobData.status === 'succeeded') {
+                            // After scraping, export stock lists
+                            setStockFixProgress({ step: 'Exporting stock lists...' });
+                            
+                            // Get fresh session token again
+                            const { data: { session: exportSession } } = await supabase.auth.getSession();
+                            if (exportSession) {
+                              const exportRes = await fetch('/api/enqueue', {
+                                method: 'POST',
+                                headers: { 
+                                  'Content-Type': 'application/json', 
+                                  Authorization: `Bearer ${exportSession.access_token}` 
+                                },
+                                body: JSON.stringify({
+                                  type: 'export_stock_list',
+                                  payload: { requestedBy: 'check_stock_fix_auto' }
+                                })
+                              });
+                              
+                              if (exportRes.ok) {
+                                setStockFixProgress({ step: 'Stock list export enqueued' });
+                              }
+                            }
+                            
+                            // Refresh stock data
+                            await mutateStockData();
+                            
+                            setRunningStockFix(false);
+                            setStockFixProgress(null);
+                            setStockFixMessage({ 
+                              type: 'success', 
+                              text: `SPY verification complete! Scraped ${mismatchCount} mismatch${mismatchCount !== 1 ? 'es' : ''} and exported stock lists.` 
+                            });
+                          } else {
+                            setRunningStockFix(false);
+                            setStockFixProgress(null);
+                            setStockFixMessage({ 
+                              type: 'error', 
+                              text: `Scrape job ${scrapeJobData.status}. Check the Jobs page for details.` 
+                            });
+                          }
+                        }
+                      } catch (err: any) {
+                        console.error('Scrape poll error:', err);
+                      }
+                    }, 3000);
+                    
+                    // Stop polling after 10 minutes
+                    setTimeout(() => {
+                      clearInterval(scrapePollInterval);
+                    }, 600000);
+                    
+                  } catch (err: any) {
+                    setRunningStockFix(false);
+                    setStockFixProgress(null);
+                    setStockFixMessage({ 
+                      type: 'error', 
+                      text: `Failed to enqueue scrape: ${err.message}` 
+                    });
+                  }
                 } else {
-                  setStockFixMessage({ 
-                    type: 'info', 
-                    text: `SPY verification complete! Found ${mismatchCount} mismatch${mismatchCount !== 1 ? 'es' : ''}, ${missingInCurrent} missing in DB, ${missingInPasted} missing in SPY.` 
-                  });
+                  // No mismatches, just show results
+                  setRunningStockFix(false);
+                  setStockFixProgress(null);
+                  
+                  if (mismatchCount === 0 && missingInCurrent === 0 && missingInPasted === 0) {
+                    setStockFixMessage({ type: 'success', text: `SPY verification complete! All ${spyDataMap.size} styles match.` });
+                  } else {
+                    setStockFixMessage({ 
+                      type: 'info', 
+                      text: `SPY verification complete! Found ${mismatchCount} mismatch${mismatchCount !== 1 ? 'es' : ''}, ${missingInCurrent} missing in DB, ${missingInPasted} missing in SPY.` 
+                    });
+                  }
                 }
               } else {
                 setRunningStockFix(false);

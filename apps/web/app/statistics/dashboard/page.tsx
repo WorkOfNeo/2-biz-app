@@ -52,6 +52,7 @@ export default function StatisticsDashboardPage() {
   // Separate stock lists for each section
   const [selectedStockListsSalesmen, setSelectedStockListsSalesmen] = React.useState<Set<string>>(new Set());
   const [selectedStockListsOverall, setSelectedStockListsOverall] = React.useState<Set<string>>(new Set());
+  const [selectedStockListsForEmail, setSelectedStockListsForEmail] = React.useState<Set<string>>(new Set());
   
   function toggleStockListSalesmen(name: string) {
     setSelectedStockListsSalesmen((prev) => { const n = new Set(prev); if (n.has(name)) n.delete(name); else n.add(name); return n; });
@@ -59,6 +60,10 @@ export default function StatisticsDashboardPage() {
   
   function toggleStockListOverall(name: string) {
     setSelectedStockListsOverall((prev) => { const n = new Set(prev); if (n.has(name)) n.delete(name); else n.add(name); return n; });
+  }
+  
+  function toggleStockListForEmail(name: string) {
+    setSelectedStockListsForEmail((prev) => { const n = new Set(prev); if (n.has(name)) n.delete(name); else n.add(name); return n; });
   }
 
   // Box #1 - Salesperson Statistics
@@ -400,6 +405,74 @@ export default function StatisticsDashboardPage() {
     });
   }
 
+  // Box #3 - Send Stock Lists
+  const [stockListReceivers, setStockListReceivers] = React.useState('');
+  const [stockListBodyText, setStockListBodyText] = React.useState('Hermed stock list :)');
+  const [sendingStockList, setSendingStockList] = React.useState(false);
+  const [savingStockListPrefs, setSavingStockListPrefs] = React.useState(false);
+
+  // Load/save Stock List email prefs
+  useSWR('dashboard:stock_list_email', async () => {
+    const { data } = await supabase.from('app_settings').select('id, value').eq('key', 'dashboard_stock_list_email').maybeSingle();
+    const val = ((data?.value as any) || {}) as { receivers?: string; body?: string };
+    if (val.receivers !== undefined) setStockListReceivers(val.receivers);
+    if (val.body !== undefined) setStockListBodyText(val.body);
+    return data;
+  });
+  async function saveStockListPrefs() {
+    setSavingStockListPrefs(true);
+    try {
+      const value = { receivers: stockListReceivers, body: stockListBodyText };
+      const { data: existing } = await supabase.from('app_settings').select('id').eq('key', 'dashboard_stock_list_email').maybeSingle();
+      if (existing?.id) await supabase.from('app_settings').update({ value }).eq('id', existing.id);
+      else await supabase.from('app_settings').insert({ key: 'dashboard_stock_list_email', value } as any);
+    } finally {
+      setSavingStockListPrefs(false);
+    }
+  }
+
+  async function sendStockLists() {
+    if (sendingStockList) return;
+    setSendingStockList(true);
+    try {
+      // Parse semicolon-separated emails
+      const to = stockListReceivers.split(';').map(s => s.trim()).filter(Boolean);
+      if (to.length === 0) { alert('Enter at least one recipient email.'); return; }
+      
+      if (selectedStockListsForEmail.size === 0) { alert('Select at least one stock list.'); return; }
+      
+      const dynamicParams: Record<string, string> = {};
+      // Add selected stock lists as URL parameters (for Dynamic Attachments)
+      let idx = 1;
+      for (const name of Array.from(selectedStockListsForEmail)) {
+        const exp = latestStockListByName.get(name);
+        if (exp?.public_url) {
+          dynamicParams[`stock_list_${idx}_url`] = exp.public_url;
+          dynamicParams[`stock_list_${idx}_name`] = name;
+          idx++;
+        }
+      }
+      
+      if (Object.keys(dynamicParams).length === 0) { alert('No available stock list exports found. Please export stock lists first.'); return; }
+      
+      try {
+        const summarize = (p: Record<string, string>) => Object.fromEntries(Object.entries(p).map(([k, v]) => [k, { len: (v || '').length, head: (v || '').slice(0, 32) }]));
+        console.log('[email:stock_list] prepared', {
+          to,
+          stockLists: Array.from(selectedStockListsForEmail),
+          params: summarize(dynamicParams)
+        });
+      } catch {}
+      
+      const subject = 'Stock List';
+      const bodyHtml = stockListBodyText || 'Hermed stock list :)';
+      await sendEmailJs(to, subject, bodyHtml, undefined, dynamicParams, true); // Send as ONE email
+      alert('Email sent');
+    } finally {
+      setSendingStockList(false);
+    }
+  }
+
   // Errors: Missing DG for Top 10 (current season)
   const { data: currentSeason } = useSWR('season:current', async () => {
     const { data } = await supabase.from('seasons').select('id, name, year, is_current').eq('is_current', true).maybeSingle();
@@ -578,8 +651,46 @@ export default function StatisticsDashboardPage() {
             <button className="rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-50" disabled={sendingOverall} onClick={sendOverall}>Send</button>
           </div>
         </div>
+      </div>
+
+      {/* Box #3 - Send Stock Lists */}
+      <div className="rounded-md border p-3 space-y-3">
+        <div className="text-sm font-medium">Send Stock Lists</div>
+        <label className="block text-sm">
+          <div className="text-gray-600 mb-1">Recipients (semicolon separated)</div>
+          <input 
+            className="w-full rounded border px-2 py-1 text-sm" 
+            placeholder="email1@example.com; email2@example.com" 
+            value={stockListReceivers} 
+            onChange={(e) => setStockListReceivers(e.target.value)} 
+          />
+        </label>
+        <div className="text-sm space-y-2">
+          <div className="text-xs text-gray-600 mb-1">Select Stock Lists</div>
+          <div className="flex flex-wrap gap-2">
+            {(stockListsAll ?? []).map((l) => {
+              const on = selectedStockListsForEmail.has(l.name);
+              const available = Boolean(latestStockListByName.get(l.name)?.public_url);
+              return (
+                <label key={l.id} className={"inline-flex items-center gap-1 px-2 py-1 rounded border " + (on ? 'bg-slate-900 text-white border-slate-900' : '')}>
+                  <input type="checkbox" className="h-3 w-3" checked={on} disabled={!available} onChange={() => toggleStockListForEmail(l.name)} />
+                  <span className="text-xs">{l.name}</span>
+                  {!available && <span className="text-[10px] text-gray-500 ml-1">(no export)</span>}
+                </label>
+              );
+            })}
+          </div>
+        </div>
+        <label className="block text-sm">
+          <div className="text-gray-600 mb-1">Email body</div>
+          <textarea className="w-full rounded border px-2 py-1 text-sm h-28" placeholder="Write your message…" value={stockListBodyText} onChange={(e)=>setStockListBodyText(e.target.value)} />
+        </label>
+        <div className="flex items-center gap-2">
+          <button className="rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-50" disabled={savingStockListPrefs} onClick={saveStockListPrefs}>{savingStockListPrefs ? 'Saving…' : 'Save recipients + body'}</button>
+          <button className="rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-50" disabled={sendingStockList} onClick={sendStockLists}>Send</button>
         </div>
       </div>
+
       {/* Info / Errors */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <div className="rounded-md border p-3 space-y-2">
