@@ -137,12 +137,21 @@ export default function StockListPage() {
     return (data ?? []) as Array<{ id: string; name: string; year: number | null }>;
   }, { refreshInterval: 0 });
 
-  // Get total count of ALL styles in database
+  // Get total count of ALL styles in database (including inactive)
   const { data: allStylesData } = useSWR('styles:all', async () => {
-    const { data, error } = await supabase.from('styles').select('id, style_no, style_name, supplier').eq('inactive', false);
+    const { data, error } = await supabase.from('styles').select('id, style_no, style_name, supplier, inactive');
     if (error) throw new Error(error.message);
-    return (data ?? []) as Array<{ id: string; style_no: string; style_name: string | null; supplier: string | null }>;
+    return (data ?? []) as Array<{ id: string; style_no: string; style_name: string | null; supplier: string | null; inactive: boolean }>;
   }, { refreshInterval: 0 });
+  
+  // Create a map of style_no -> inactive status for quick lookup
+  const styleInactiveMap = React.useMemo(() => {
+    const map = new Map<string, boolean>();
+    for (const style of (allStylesData ?? [])) {
+      map.set(style.style_no, style.inactive ?? false);
+    }
+    return map;
+  }, [allStylesData]);
 
   // Colors → ids for seasons mapping (including inactive flags)
   const { data: styleColors, mutate: mutateStyleColors } = useSWR(styleIds.length ? ['style_colors:ids', styleIds.join(',')] : null, async () => {
@@ -894,18 +903,22 @@ export default function StockListPage() {
                   currentTotal: number;
                   diff: number;
                   status: 'missing_in_pasted' | 'missing_in_current' | 'mismatch' | 'match';
+                  inactive?: boolean;
                 }> = [];
                 
                 for (const [styleNo, spyInfo] of spyDataMap.entries()) {
                   const current = currentData.get(styleNo);
                   if (!current) {
+                    // Check if style is inactive in DB
+                    const isInactive = styleInactiveMap.get(styleNo) ?? false;
                     differences.push({
                       styleNo,
                       name: null,
                       pastedTotal: spyInfo.stock,
                       currentTotal: 0,
                       diff: -spyInfo.stock,
-                      status: 'missing_in_current'
+                      status: 'missing_in_current',
+                      inactive: isInactive
                     });
                   } else if (current.total !== spyInfo.stock) {
                     differences.push({
@@ -941,13 +954,21 @@ export default function StockListPage() {
                   }
                 }
                 
+                // Sort: mismatches first, then matches, then missing_in_current at the bottom
                 differences.sort((a, b) => {
+                  // Mismatches first
                   if (a.status === 'mismatch' && b.status !== 'mismatch') return -1;
                   if (a.status !== 'mismatch' && b.status === 'mismatch') return 1;
-                  if (a.status === 'missing_in_current' && b.status !== 'missing_in_current') return -1;
-                  if (a.status !== 'missing_in_current' && b.status === 'missing_in_current') return 1;
+                  // Matches second
+                  if (a.status === 'match' && b.status !== 'match') return -1;
+                  if (a.status !== 'match' && b.status === 'match') return 1;
+                  // Missing in pasted third
                   if (a.status === 'missing_in_pasted' && b.status !== 'missing_in_pasted') return -1;
                   if (a.status !== 'missing_in_pasted' && b.status === 'missing_in_pasted') return 1;
+                  // Missing in current last (at the bottom)
+                  if (a.status === 'missing_in_current' && b.status !== 'missing_in_current') return 1;
+                  if (a.status !== 'missing_in_current' && b.status === 'missing_in_current') return -1;
+                  // Within same status, sort by absolute diff descending
                   return Math.abs(b.diff) - Math.abs(a.diff);
                 });
                 
@@ -1020,7 +1041,7 @@ export default function StockListPage() {
       setStockFixProgress(null);
       setStockFixMessage({ type: 'error', text: `Failed to verify SPY stock: ${err.message}` });
     }
-  }, [supabase, groupedByStyle, styleMetaByNo, runningStockFix]);
+  }, [supabase, groupedByStyle, styleMetaByNo, runningStockFix, styleInactiveMap]);
 
 
   // Export Checker results to Excel
@@ -1051,7 +1072,7 @@ export default function StockListPage() {
       if (isPO) {
         summaryData.push(['PO Label', 'Pasted Count', 'Pasted Total', 'DB Count', 'DB Total', 'Difference', 'Status']);
       } else {
-        summaryData.push(['Style No', 'Name', 'Pasted Total', 'Current Total', 'Difference', 'Status']);
+        summaryData.push(['Style No', 'Name', 'Pasted Total', 'Current Total', 'Difference', 'Status', 'Inactive']);
       }
       
       // Add all differences
@@ -1079,7 +1100,8 @@ export default function StockListPage() {
           diff.status === 'match' ? 'Match' :
           diff.status === 'mismatch' ? 'Mismatch' :
           diff.status === 'missing_in_current' ? 'Not in current' :
-          'Not in pasted'
+          'Not in pasted',
+          diff.status === 'missing_in_current' && diff.inactive ? 'Yes' : ''
         ]);
         }
       }
@@ -1098,14 +1120,15 @@ export default function StockListPage() {
           { wch: 20 }  // Status
         ];
       } else {
-      worksheet['!cols'] = [
-        { wch: 15 }, // Style No
-        { wch: 25 }, // Name
-        { wch: 15 }, // Pasted Total
-        { wch: 15 }, // Current Total
-        { wch: 15 }, // Difference
-        { wch: 20 }  // Status
-      ];
+        worksheet['!cols'] = [
+          { wch: 15 }, // Style No
+          { wch: 25 }, // Name
+          { wch: 15 }, // Pasted Total
+          { wch: 15 }, // Current Total
+          { wch: 15 }, // Difference
+          { wch: 20 }, // Status
+          { wch: 12 }  // Inactive
+        ];
       }
       
       XLSX.utils.book_append_sheet(workbook, worksheet, 'Checker Results');
@@ -2222,7 +2245,12 @@ PO7332, 2100"
                           }
                         >
                           <td className="p-2 border-t font-mono text-xs">{diff.styleNo}</td>
-                          <td className="p-2 border-t">{diff.name || '-'}</td>
+                          <td className="p-2 border-t">
+                            {diff.name || '-'}
+                            {diff.status === 'missing_in_current' && diff.inactive && (
+                              <span className="ml-2 text-xs text-gray-500">(Inactive)</span>
+                            )}
+                          </td>
                           <td className="p-2 border-t text-right font-mono">{diff.pastedTotal.toLocaleString()}</td>
                           <td className="p-2 border-t text-right font-mono">{diff.currentTotal.toLocaleString()}</td>
                           <td className={`p-2 border-t text-right font-mono font-semibold ${
@@ -2244,6 +2272,9 @@ PO7332, 2100"
                                diff.status === 'missing_in_current' ? 'Not in current' :
                                'Not in pasted'}
                             </span>
+                            {diff.status === 'missing_in_current' && diff.inactive && (
+                              <span className="ml-2 text-xs text-gray-600 italic">(Inactive in DB)</span>
+                            )}
                           </td>
                         </tr>
                       ))}
