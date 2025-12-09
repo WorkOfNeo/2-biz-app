@@ -875,19 +875,26 @@ export default function StatisticsGeneralPage() {
   }
 
   async function downloadLatestPdf() {
-    if (!latestExport) return;
-    const allPath = latestExport.meta?.all?.path as string | undefined;
-    const allPublicUrl = latestExport.meta?.all?.publicUrl || latestExport.meta?.all?.public_url as string | undefined;
+    if (!latestExport || !selectedSalespersonId) return;
     
-    // Try to download the combined "all.pdf" file first
-    if (allPath) {
+    // Find the specific salesperson's PDF from meta.files
+    const files = (latestExport.meta?.files as Array<{ name: string; path: string; publicUrl?: string | null; salesperson_id: string }>) ?? [];
+    const salespersonFile = files.find(f => f.salesperson_id === selectedSalespersonId);
+    
+    if (!salespersonFile) {
+      alert('PDF for denne sælger er ikke tilgængelig.');
+      return;
+    }
+    
+    // Try to download the salesperson's individual PDF
+    if (salespersonFile.path) {
       try {
-        const { data: file, error } = await supabase.storage.from('exports').download(allPath);
+        const { data: file, error } = await supabase.storage.from('exports').download(salespersonFile.path);
         if (!error && file) {
           const blobUrl = URL.createObjectURL(file as unknown as Blob);
           const a = document.createElement('a');
           a.href = blobUrl;
-          a.download = 'general-salesmen-all.pdf';
+          a.download = `${salespersonFile.name || 'salesperson'}.pdf`;
           document.body.appendChild(a);
           a.click();
           a.remove();
@@ -898,12 +905,12 @@ export default function StatisticsGeneralPage() {
     }
     
     // Fallback to public URL
-    if (allPublicUrl) {
-      window.open(allPublicUrl, '_blank', 'noopener');
+    if (salespersonFile.publicUrl) {
+      window.open(salespersonFile.publicUrl, '_blank', 'noopener');
       return;
     }
     
-    alert('File is not ready yet. Please try again in a moment.');
+    alert('Filen er ikke klar endnu. Prøv igen om et øjeblik.');
   }
 
   return (
@@ -1095,10 +1102,10 @@ export default function StatisticsGeneralPage() {
         </div>
 
         {/* Latest PDF Export Info */}
-        {latestExport && (
+        {latestExport && activePerson && selectedSalespersonId && (
           <div className="flex items-center justify-end gap-3">
             <div className="text-sm text-gray-600">
-              <span className="font-medium">Latest PDF:</span>{' '}
+              <span className="font-medium">Seneste PDF:</span>{' '}
               <span>{timeAgo(latestExport.created_at)}</span>
             </div>
             <button
