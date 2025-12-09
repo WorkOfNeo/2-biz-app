@@ -220,6 +220,7 @@ export default function NielsensSalesPage() {
     
     // Read first file to detect columns
     const firstFile = fileArray[0];
+    if (!firstFile) return;
     const buf = await firstFile.arrayBuffer();
     const wb = XLSX.read(buf, { type: 'array' });
     const firstSheetName = wb.SheetNames?.[0];
