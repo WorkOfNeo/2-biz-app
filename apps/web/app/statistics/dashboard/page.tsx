@@ -714,6 +714,7 @@ export default function StatisticsDashboardPage() {
           </div>
         </div>
       </div>
+      </div>
     </div>
   );
 }
