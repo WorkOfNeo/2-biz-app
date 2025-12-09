@@ -49,6 +49,18 @@ export default function StatisticsGeneralPage() {
     if (error) throw new Error(error.message);
     return (data ?? []) as Array<{ customer_id: string; company: string | null; city: string | null; salesperson_id: string | null; group_name?: string | null }>;
   });
+  // Fetch latest general salesmen PDF export
+  const { data: latestExport } = useSWR('exports:latest-general-salesmen', async () => {
+    const { data, error } = await supabase
+      .from('exports')
+      .select('id, kind, title, path, public_url, meta, created_at')
+      .eq('kind', 'general_salesmen_pdfs')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    return data as { id: string; kind: string; title: string | null; path: string; public_url: string | null; meta: any; created_at: string } | null;
+  }, { refreshInterval: 10000 });
   // Global currency rates (fallback) and season-specific rates
   const { data: currencyRatesRow } = useSWR('app-settings:currency-rates', async () => {
     const { data, error } = await supabase.from('app_settings').select('*').eq('key', 'currency_rates').maybeSingle();
@@ -833,6 +845,67 @@ export default function StatisticsGeneralPage() {
     );
   }
 
+  function timeAgo(iso: string): string {
+    const d = new Date(iso).getTime();
+    const diff = Math.floor((Date.now() - d) / 1000);
+    const units: Array<[number, Intl.RelativeTimeFormatUnit]> = [
+      [60, 'second'],
+      [60, 'minute'],
+      [24, 'hour'],
+      [7, 'day'],
+      [4.34524, 'week'],
+      [12, 'month'],
+      [Number.POSITIVE_INFINITY, 'year']
+    ];
+    let unit: Intl.RelativeTimeFormatUnit = 'second';
+    let value = -diff; // past -> negative
+    let acc = diff;
+    for (let i = 0, n = diff; i < units.length; i++) {
+      const pair = units[i];
+      if (!pair) break;
+      const [step, u] = pair;
+      if (n < step) { unit = u; value = -Math.round(acc); break; }
+      n = Math.floor(n / step);
+      acc = n;
+      unit = u;
+      value = -Math.round(acc);
+    }
+    const rtf = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
+    return rtf.format(value as number, unit);
+  }
+
+  async function downloadLatestPdf() {
+    if (!latestExport) return;
+    const allPath = latestExport.meta?.all?.path as string | undefined;
+    const allPublicUrl = latestExport.meta?.all?.publicUrl || latestExport.meta?.all?.public_url as string | undefined;
+    
+    // Try to download the combined "all.pdf" file first
+    if (allPath) {
+      try {
+        const { data: file, error } = await supabase.storage.from('exports').download(allPath);
+        if (!error && file) {
+          const blobUrl = URL.createObjectURL(file as unknown as Blob);
+          const a = document.createElement('a');
+          a.href = blobUrl;
+          a.download = 'general-salesmen-all.pdf';
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          URL.revokeObjectURL(blobUrl);
+          return;
+        }
+      } catch {}
+    }
+    
+    // Fallback to public URL
+    if (allPublicUrl) {
+      window.open(allPublicUrl, '_blank', 'noopener');
+      return;
+    }
+    
+    alert('File is not ready yet. Please try again in a moment.');
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -1020,6 +1093,22 @@ export default function StatisticsGeneralPage() {
             );
           })}
         </div>
+
+        {/* Latest PDF Export Info */}
+        {latestExport && (
+          <div className="flex items-center justify-end gap-3">
+            <div className="text-sm text-gray-600">
+              <span className="font-medium">Latest PDF:</span>{' '}
+              <span>{timeAgo(latestExport.created_at)}</span>
+            </div>
+            <button
+              onClick={downloadLatestPdf}
+              className="rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50"
+            >
+              Download PDF
+            </button>
+          </div>
+        )}
 
         {/* Single section for selected salesperson */}
         {(() => {
