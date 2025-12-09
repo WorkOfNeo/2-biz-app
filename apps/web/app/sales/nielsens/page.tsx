@@ -227,6 +227,7 @@ export default function NielsensSalesPage() {
     if (!firstSheetName) return;
     
     const sheet = wb.Sheets[firstSheetName];
+    if (!sheet) return;
     const json = XLSX.utils.sheet_to_json(sheet, { defval: '' }) as any[];
     
     if (json.length > 0) {
