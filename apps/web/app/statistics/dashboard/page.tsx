@@ -75,6 +75,36 @@ export default function StatisticsDashboardPage() {
     return data;
   });
 
+  // Errors: Missing DG for Top 10 (current season)
+  const { data: currentSeason } = useSWR('season:current', async () => {
+    const { data } = await supabase.from('seasons').select('id, name, year, is_current').eq('is_current', true).maybeSingle();
+    return (data as any) || null;
+  });
+  const { data: top10Current } = useSWR(currentSeason ? ['top10:current', currentSeason.id] : null, async () => {
+    const { data, error } = await supabase.from('top_styles').select('style_no, dg, qty').eq('season_id', currentSeason.id).order('qty', { ascending: false }).limit(15);
+    if (error) throw new Error(error.message);
+    return (data ?? []) as Array<{ style_no: string; dg?: string | null; qty: number }>;
+  });
+  const { data: stylesForTop } = useSWR(top10Current && top10Current.length ? ['styles:forTop10', top10Current.map(r=>r.style_no).join(',')] : null, async () => {
+    const nos = (top10Current ?? []).map(r => r.style_no);
+    const { data, error } = await supabase.from('styles').select('style_no, dg, style_name').in('style_no', nos);
+    if (error) throw new Error(error.message);
+    const map = new Map<string, { dg: string | null; name: string | null }>();
+    for (const r of (data ?? []) as any[]) map.set(r.style_no, { dg: r.dg ?? null, name: r.style_name ?? null });
+    return map;
+  });
+  const missingDgList = React.useMemo(() => {
+    const out: Array<{ style_no: string; name: string | null }> = [];
+    for (const r of (top10Current ?? [])) {
+      const dgTop = (r as any).dg as string | null | undefined;
+      const fromStyle = stylesForTop?.get(r.style_no);
+      const dgStyle = fromStyle?.dg ?? null;
+      const val = (dgTop || dgStyle || '').toString().trim();
+      if (!val) out.push({ style_no: r.style_no, name: fromStyle?.name ?? null });
+    }
+    return out;
+  }, [top10Current?.length, stylesForTop]);
+
   // Box #1 - Salesperson Statistics
   const [selected, setSelected] = React.useState<Record<string, boolean>>({});
   const [includeCountries, setIncludeCountries] = React.useState(true);
@@ -473,36 +503,6 @@ export default function StatisticsDashboardPage() {
       setSendingStockList(false);
     }
   }
-
-  // Errors: Missing DG for Top 10 (current season)
-  const { data: currentSeason } = useSWR('season:current', async () => {
-    const { data } = await supabase.from('seasons').select('id, name, year, is_current').eq('is_current', true).maybeSingle();
-    return (data as any) || null;
-  });
-  const { data: top10Current } = useSWR(currentSeason ? ['top10:current', currentSeason.id] : null, async () => {
-    const { data, error } = await supabase.from('top_styles').select('style_no, dg, qty').eq('season_id', currentSeason.id).order('qty', { ascending: false }).limit(15);
-    if (error) throw new Error(error.message);
-    return (data ?? []) as Array<{ style_no: string; dg?: string | null; qty: number }>;
-  });
-  const { data: stylesForTop } = useSWR(top10Current && top10Current.length ? ['styles:forTop10', top10Current.map(r=>r.style_no).join(',')] : null, async () => {
-    const nos = (top10Current ?? []).map(r => r.style_no);
-    const { data, error } = await supabase.from('styles').select('style_no, dg, style_name').in('style_no', nos);
-    if (error) throw new Error(error.message);
-    const map = new Map<string, { dg: string | null; name: string | null }>();
-    for (const r of (data ?? []) as any[]) map.set(r.style_no, { dg: r.dg ?? null, name: r.style_name ?? null });
-    return map;
-  });
-  const missingDgList = React.useMemo(() => {
-    const out: Array<{ style_no: string; name: string | null }> = [];
-    for (const r of (top10Current ?? [])) {
-      const dgTop = (r as any).dg as string | null | undefined;
-      const fromStyle = stylesForTop?.get(r.style_no);
-      const dgStyle = fromStyle?.dg ?? null;
-      const val = (dgTop || dgStyle || '').toString().trim();
-      if (!val) out.push({ style_no: r.style_no, name: fromStyle?.name ?? null });
-    }
-    return out;
-  }, [top10Current?.length, stylesForTop]);
 
   return (
     <div className="space-y-6">
