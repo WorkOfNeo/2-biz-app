@@ -234,6 +234,8 @@ export async function checkStockFix(ctx: Ctx) {
     }
     
     // Compare and find mismatches
+    // Build complete comparison data for ALL styles (not just mismatches)
+    const allComparisons: Array<{ style_no: string; style_name: string | null; spy_stock: number | null; db_stock: number; diff: number }> = [];
     const mismatches: Array<{ style_no: string; spy_stock: number | null; db_stock: number; diff: number }> = [];
     
     // Log first 10 comparisons for debugging, including styles with no DB data
@@ -266,12 +268,22 @@ export async function checkStockFix(ctx: Ctx) {
       });
     }
     
+    // Process ALL styles from SPY and build complete comparison data
     for (const row of parsedRows) {
       if (!row.style_no) continue;
       const styleNo = row.style_no; // TypeScript narrows the type here
       const spyStock = row.stock ?? 0;
       const dbStock = dbStockByStyleNo.get(styleNo) ?? 0;
       const diff = Math.abs(spyStock - dbStock);
+      
+      // Add to all comparisons (for frontend to properly categorize)
+      allComparisons.push({
+        style_no: styleNo,
+        style_name: row.style_name,
+        spy_stock: spyStock,
+        db_stock: dbStock,
+        diff
+      });
       
       // Consider it a mismatch if difference is greater than 0
       if (diff > 0) {
@@ -312,11 +324,12 @@ export async function checkStockFix(ctx: Ctx) {
     }
     
     // Save the complete result
+    // Include ALL styles from SPY in details (not just mismatches) so frontend can properly categorize them
     await saveResult(job.id, 'check_stock_fix_complete', {
       totalChecked: parsedRows.length,
       mismatches: mismatches.length,
       mismatchedStyles: mismatches.map(m => m.style_no),
-      details: mismatches
+      details: allComparisons // Send ALL styles, not just mismatches
     });
     
     await setJobSucceeded(job.id);
