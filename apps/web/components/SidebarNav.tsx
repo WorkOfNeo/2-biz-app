@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation';
 import { useRoles, useRoleAccess } from '../lib/supabaseClient';
 import { Button } from './ui/button';
 import { cn } from '../lib/cn';
+import { ChevronDown, ChevronRight } from 'lucide-react';
 
 function NavLink({ href, label }: { href: Route; label: string }) {
   const pathname = usePathname();
@@ -24,9 +25,45 @@ function NavLink({ href, label }: { href: Route; label: string }) {
   );
 }
 
+function CollapsibleSection({ 
+  title, 
+  links, 
+  sectionKey, 
+  isOpen, 
+  onToggle 
+}: { 
+  title: string; 
+  links: any[]; 
+  sectionKey: string; 
+  isOpen: boolean; 
+  onToggle: () => void;
+}) {
+  if (links.length === 0) return null;
+  
+  return (
+    <div className="mt-4">
+      <button
+        onClick={onToggle}
+        className="w-full flex items-center justify-between text-xs uppercase tracking-wider px-3 py-2 hover:bg-slate-800 rounded-md transition-colors"
+      >
+        <span>{title}</span>
+        {isOpen ? (
+          <ChevronDown className="h-4 w-4" />
+        ) : (
+          <ChevronRight className="h-4 w-4" />
+        )}
+      </button>
+      {isOpen && (
+        <div className="ml-2 space-y-1 mt-1">{links}</div>
+      )}
+    </div>
+  );
+}
+
 export function SidebarNav() {
   const { has } = useRoles();
   const { can } = useRoleAccess();
+  const pathname = usePathname();
   const React = require('react') as typeof import('react');
   const { createClientComponentClient } = require('@supabase/auth-helpers-nextjs');
   const supabase = createClientComponentClient();
@@ -39,6 +76,39 @@ export function SidebarNav() {
       } catch {}
     })();
   }, []);
+  
+  // Determine which section contains the active page
+  const getActiveSection = React.useMemo(() => {
+    if (pathname.startsWith('/statistics/') && pathname !== '/statistics/dashboard') return 'statistics';
+    if (pathname.startsWith('/finance/')) return 'finance';
+    if (pathname.startsWith('/styles/')) return 'styles';
+    if (pathname.startsWith('/purchase/')) return 'purchase';
+    if (pathname.startsWith('/sales/')) return 'sales';
+    if (pathname.startsWith('/settings/') || pathname === '/statistics/exports' || pathname === '/statistics/downloads') return 'settings';
+    if (pathname.startsWith('/admin/')) return 'admin';
+    return null;
+  }, [pathname]);
+  
+  // Track which sections are open (only active section open by default)
+  const [openSections, setOpenSections] = React.useState<Set<string>>(() => {
+    const initial = new Set<string>();
+    if (getActiveSection) {
+      initial.add(getActiveSection);
+    }
+    return initial;
+  });
+  
+  const toggleSection = (sectionKey: string) => {
+    setOpenSections(prev => {
+      const next = new Set(prev);
+      if (next.has(sectionKey)) {
+        next.delete(sectionKey);
+      } else {
+        next.add(sectionKey);
+      }
+      return next;
+    });
+  };
   // Build per-section link lists based on access
   // Dashboard moved out of Statistics
   const dashboardLink = can('/statistics/dashboard') ? <NavLink key="dashboard" href="/statistics/dashboard" label="Dashboard" /> : null;
@@ -99,61 +169,56 @@ export function SidebarNav() {
       )}
       <NavLink href="/" label="Home" />
       {dashboardLink}
-      {statLinks.length > 0 && (
-        <div className="mt-4">
-          <div className="w-full text-xs uppercase tracking-wider px-3 py-2">
-            Statistics
-          </div>
-          <div className="ml-2 space-y-1 mt-1">{statLinks}</div>
-        </div>
-      )}
-      {financeLinks.length > 0 && (
-        <div className="mt-4">
-          <div className="w-full text-xs uppercase tracking-wider px-3 py-2">
-            Finance
-          </div>
-          <div className="ml-2 space-y-1 mt-1">{financeLinks}</div>
-        </div>
-      )}
-      {stylesLinks.length > 0 && (
-        <div className="mt-4">
-          <div className="w-full text-xs uppercase tracking-wider px-3 py-2">
-            Styles
-          </div>
-          <div className="ml-2 space-y-1 mt-1">{stylesLinks}</div>
-        </div>
-      )}
-      {purchaseLinks.length > 0 && (
-        <div className="mt-4">
-          <div className="w-full text-xs uppercase tracking-wider px-3 py-2">
-            Purchase
-          </div>
-          <div className="ml-2 space-y-1 mt-1">{purchaseLinks}</div>
-        </div>
-      )}
-      {salesLinks.length > 0 && (
-        <div className="mt-4">
-          <div className="w-full text-xs uppercase tracking-wider px-3 py-2">
-            Sales
-          </div>
-          <div className="ml-2 space-y-1 mt-1">{salesLinks}</div>
-        </div>
-      )}
-      {settingsLinks.length > 0 && (
-        <div className="mt-4">
-          <div className="w-full text-xs uppercase tracking-wider px-3 py-2">
-            Settings
-          </div>
-          <div className="ml-2 space-y-1 mt-1">{settingsLinks}</div>
-        </div>
-      )}
-      {has('admin') && adminLinks.length > 0 && (
-        <div className="mt-4">
-          <div className="w-full text-xs uppercase tracking-wider px-3 py-2">
-            Admin
-          </div>
-          <div className="ml-2 space-y-1 mt-1">{adminLinks}</div>
-        </div>
+      <CollapsibleSection
+        title="Statistics"
+        links={statLinks}
+        sectionKey="statistics"
+        isOpen={openSections.has('statistics')}
+        onToggle={() => toggleSection('statistics')}
+      />
+      <CollapsibleSection
+        title="Finance"
+        links={financeLinks}
+        sectionKey="finance"
+        isOpen={openSections.has('finance')}
+        onToggle={() => toggleSection('finance')}
+      />
+      <CollapsibleSection
+        title="Styles"
+        links={stylesLinks}
+        sectionKey="styles"
+        isOpen={openSections.has('styles')}
+        onToggle={() => toggleSection('styles')}
+      />
+      <CollapsibleSection
+        title="Purchase"
+        links={purchaseLinks}
+        sectionKey="purchase"
+        isOpen={openSections.has('purchase')}
+        onToggle={() => toggleSection('purchase')}
+      />
+      <CollapsibleSection
+        title="Sales"
+        links={salesLinks}
+        sectionKey="sales"
+        isOpen={openSections.has('sales')}
+        onToggle={() => toggleSection('sales')}
+      />
+      <CollapsibleSection
+        title="Settings"
+        links={settingsLinks}
+        sectionKey="settings"
+        isOpen={openSections.has('settings')}
+        onToggle={() => toggleSection('settings')}
+      />
+      {has('admin') && (
+        <CollapsibleSection
+          title="Admin"
+          links={adminLinks}
+          sectionKey="admin"
+          isOpen={openSections.has('admin')}
+          onToggle={() => toggleSection('admin')}
+        />
       )}
       <div className="mt-6 px-3">
         <SignOutButton />
