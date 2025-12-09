@@ -119,23 +119,62 @@ export async function checkStockFix(ctx: Ctx) {
     const styleNos = Array.from(new Set(parsedRows.map(r => r.style_no).filter(Boolean)));
     await log(job.id, 'info', 'STEP:check_stock_fix_fetching_db_stock', { styleCount: styleNos.length });
     
-    const { data: stockData, error: stockError } = await supabase
-      .from('style_stock')
-      .select('style_no, color, sizes, section, row_label, values, scraped_at')
-      .in('style_no', styleNos)
-      .order('scraped_at', { ascending: false })
-      .limit(100000);
+    // Fetch all stock data with pagination to avoid Supabase default limits
+    // Batch the style_no queries if there are too many (PostgreSQL IN clause limit ~1000)
+    const BATCH_SIZE = 500; // Safe batch size for IN clause
+    const PAGE_SIZE = 1000; // Supabase page size
+    const stockData: any[] = [];
     
-    if (stockError) {
-      await log(job.id, 'error', 'STEP:check_stock_fix_db_error', { error: stockError.message });
-      throw new Error(`Failed to fetch stock data: ${stockError.message}`);
+    for (let i = 0; i < styleNos.length; i += BATCH_SIZE) {
+      const batch = styleNos.slice(i, i + BATCH_SIZE);
+      await log(job.id, 'info', 'STEP:check_stock_fix_fetching_batch', { 
+        batchIndex: Math.floor(i / BATCH_SIZE) + 1,
+        totalBatches: Math.ceil(styleNos.length / BATCH_SIZE),
+        batchSize: batch.length
+      });
+      
+      // Fetch all pages for this batch
+      let from = 0;
+      let hasMore = true;
+      
+      while (hasMore) {
+        const to = from + PAGE_SIZE - 1;
+        const { data: batchData, error: batchError } = await supabase
+          .from('style_stock')
+          .select('style_no, color, sizes, section, row_label, values, scraped_at')
+          .in('style_no', batch)
+          .order('scraped_at', { ascending: false })
+          .range(from, to);
+        
+        if (batchError) {
+          await log(job.id, 'error', 'STEP:check_stock_fix_db_batch_error', { 
+            error: batchError.message,
+            batchIndex: Math.floor(i / BATCH_SIZE) + 1
+          });
+          throw new Error(`Failed to fetch stock data batch: ${batchError.message}`);
+        }
+        
+        if (batchData && batchData.length > 0) {
+          stockData.push(...batchData);
+        }
+        
+        hasMore = batchData && batchData.length === PAGE_SIZE;
+        from += PAGE_SIZE;
+      }
     }
     
+    // Check which styles we found data for
+    const foundStyleNos = new Set(stockData.map((r: any) => r.style_no));
+    const missingStyleNos = styleNos.filter(sn => !foundStyleNos.has(sn));
+    
     await log(job.id, 'info', 'STEP:check_stock_fix_db_rows_fetched', { 
-      total_rows: stockData?.length || 0,
-      unique_styles: styleNos.length,
+      total_rows: stockData.length,
+      unique_styles_requested: styleNos.length,
+      unique_styles_found: foundStyleNos.size,
+      missing_styles_count: missingStyleNos.length,
       sample_style: styleNos[0],
-      sample_rows: stockData?.filter((r: any) => r.style_no === styleNos[0]).length || 0
+      sample_rows: stockData.filter((r: any) => r.style_no === styleNos[0]).length,
+      sample_missing_styles: missingStyleNos.slice(0, 10)
     });
     
     // Aggregate stock data per style using same logic as stock-list page
@@ -197,19 +236,35 @@ export async function checkStockFix(ctx: Ctx) {
     // Compare and find mismatches
     const mismatches: Array<{ style_no: string; spy_stock: number | null; db_stock: number; diff: number }> = [];
     
-    // Log first 10 comparisons for debugging
+    // Log first 10 comparisons for debugging, including styles with no DB data
     const debugSample = parsedRows.slice(0, 10).map(row => {
       const spyStock = row.stock ?? 0;
       const dbStock = row.style_no ? dbStockByStyleNo.get(row.style_no) ?? 0 : 0;
+      const hasDbData = row.style_no ? byStyle.has(row.style_no) : false;
       return {
         style_no: row.style_no,
         spy_stock: spyStock,
         db_stock: dbStock,
+        has_db_data: hasDbData,
+        colors_in_db: row.style_no ? (byStyle.get(row.style_no)?.size || 0) : 0,
         match: spyStock === dbStock
       };
     });
     
     await log(job.id, 'info', 'STEP:check_stock_fix_comparison_sample', { sample: debugSample });
+    
+    // Log summary of styles with no DB data
+    const stylesWithNoDbData = parsedRows
+      .filter(row => row.style_no && !byStyle.has(row.style_no))
+      .map(row => row.style_no)
+      .filter(Boolean) as string[];
+    
+    if (stylesWithNoDbData.length > 0) {
+      await log(job.id, 'info', 'STEP:check_stock_fix_styles_no_db_data', {
+        count: stylesWithNoDbData.length,
+        sample: stylesWithNoDbData.slice(0, 20)
+      });
+    }
     
     for (const row of parsedRows) {
       if (!row.style_no) continue;
