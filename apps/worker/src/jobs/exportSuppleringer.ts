@@ -58,6 +58,7 @@ function formatMonthName(yearMonth: string): string {
 
 export async function exportSuppleringer(ctx: Ctx) {
   const { job, log, saveResult, setJobFailedOrRequeue, setJobSucceeded, supabase } = ctx;
+  const comment = (job.payload as any)?.comment as string | undefined;
   try {
     await log(job.id, 'info', 'STEP:export_suppleringer_begin', job.payload || {});
     
@@ -731,6 +732,7 @@ export async function exportSuppleringer(ctx: Ctx) {
           path: `Suppleringer/${job.id}/summary/`,
           public_url: null,
           job_id: job.id,
+          comment: comment || null,
           meta: { 
             files: summaryFiles.map(f => ({ name: f.name, path: f.path, publicUrl: f.publicUrl })),
             all: { path: allSummaryPath, publicUrl: allSummaryPublicUrl },
@@ -764,6 +766,7 @@ export async function exportSuppleringer(ctx: Ctx) {
           path: `Suppleringer/${job.id}/customers/`,
           public_url: null,
           job_id: job.id,
+          comment: comment || null,
           meta: { 
             files: customerFiles.map(f => ({ name: f.name, path: f.path, publicUrl: f.publicUrl })),
             all: { path: allCustomerPath, publicUrl: allCustomerPublicUrl },
@@ -781,6 +784,7 @@ export async function exportSuppleringer(ctx: Ctx) {
         path: fullPagePath,
         public_url: fullPagePublicUrl,
         job_id: job.id,
+        comment: comment || null,
         meta: { year_month: yearMonth }
       });
     } catch {}

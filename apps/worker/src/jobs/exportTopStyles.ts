@@ -15,6 +15,7 @@ type Ctx = {
 
 export async function exportTopStyles(ctx: Ctx) {
   const { job, log, saveResult, setJobFailedOrRequeue, setJobSucceeded, supabase } = ctx;
+  const comment = (job.payload as any)?.comment as string | undefined;
   try {
     await log(job.id, 'info', 'STEP:top_styles_export_begin', job.payload || {});
     // Determine season
@@ -115,7 +116,7 @@ export async function exportTopStyles(ctx: Ctx) {
       publicUrlSalesmen = pub?.publicUrl ?? null;
     } catch {}
     try {
-      const { error: insErr } = await supabase.from('exports').insert({ kind: 'top_styles_pdf_salesmen', title: 'Top 15 Styles — Salesmen', path: pathSalesmen, public_url: publicUrlSalesmen, job_id: job.id, meta: { season_id: seasonId } });
+      const { error: insErr } = await supabase.from('exports').insert({ kind: 'top_styles_pdf_salesmen', title: 'Top 15 Styles — Salesmen', path: pathSalesmen, public_url: publicUrlSalesmen, job_id: job.id, meta: { season_id: seasonId }, comment: comment || null });
       if (insErr) throw insErr;
     } catch (e: any) {
       await log(job.id, 'error', 'STEP:top_styles_export_row_failed_salesmen', { error: e?.message || String(e) });
@@ -164,7 +165,7 @@ export async function exportTopStyles(ctx: Ctx) {
       publicUrlOverall = pub?.publicUrl ?? null;
     } catch {}
     try {
-      const { error: insErr } = await supabase.from('exports').insert({ kind: 'top_styles_pdf_overall', title: 'Top 15 Styles — Overall', path: pathOverall, public_url: publicUrlOverall, job_id: job.id, meta: { season_id: seasonId } });
+      const { error: insErr } = await supabase.from('exports').insert({ kind: 'top_styles_pdf_overall', title: 'Top 15 Styles — Overall', path: pathOverall, public_url: publicUrlOverall, job_id: job.id, meta: { season_id: seasonId }, comment: comment || null });
       if (insErr) throw insErr;
     } catch (e: any) {
       await log(job.id, 'error', 'STEP:top_styles_export_row_failed_overall', { error: e?.message || String(e) });

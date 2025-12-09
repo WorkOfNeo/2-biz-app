@@ -17,6 +17,7 @@ type Ctx = {
 
 export async function exportOverview(ctx: Ctx) {
   const { job, log, saveResult, setJobFailedOrRequeue, setJobSucceeded, supabase } = ctx;
+  const comment = (job.payload as any)?.comment as string | undefined;
   try {
     await log(job.id, 'info', 'STEP:export_overview_begin', job.payload || {});
     // Overview table (single PDF mimicking Overview page totals across all salespersons)
@@ -93,7 +94,8 @@ export async function exportOverview(ctx: Ctx) {
       } catch {}
       let publicUrl: string | null = null;
       try { const { data: pub } = supabase.storage.from('exports').getPublicUrl(path); publicUrl = pub?.publicUrl ?? null; } catch {}
-      try { await supabase.from('exports').insert({ kind: 'overview_pdf', title: 'Overview', path, public_url: publicUrl, job_id: job.id, meta: {} }); } catch {}
+      const comment = (job.payload as any)?.comment as string | undefined;
+      try { await supabase.from('exports').insert({ kind: 'overview_pdf', title: 'Overview', path, public_url: publicUrl, job_id: job.id, meta: {}, comment: comment || null }); } catch {}
       await saveResult(job.id, 'export_overview_pdf', { file: { path, publicUrl } });
       await setJobSucceeded(job.id);
       return;
@@ -145,7 +147,7 @@ export async function exportOverview(ctx: Ctx) {
       } catch {}
       let publicUrl: string | null = null;
       try { const { data: pub } = supabase.storage.from('exports').getPublicUrl(path); publicUrl = pub?.publicUrl ?? null; } catch {}
-      try { await supabase.from('exports').insert({ kind: 'general_pdf_zip', title: 'General', path, public_url: publicUrl, meta: {}, job_id: job.id }); } catch {}
+      try { await supabase.from('exports').insert({ kind: 'general_pdf_zip', title: 'General', path, public_url: publicUrl, meta: {}, job_id: job.id, comment: comment || null }); } catch {}
       await saveResult(job.id, 'export_general_pdf_zip', { file: { path, publicUrl } });
       await setJobSucceeded(job.id);
       return;
@@ -440,7 +442,8 @@ export async function exportOverview(ctx: Ctx) {
           path: folderPath,
           public_url: null,
           job_id: job.id,
-          meta: { files: filesList, all: { path: combinedPath, publicUrl: combinedPublicUrl } }
+          meta: { files: filesList, all: { path: combinedPath, publicUrl: combinedPublicUrl } },
+          comment: comment || null
         });
       } catch {}
       await log(job.id, 'info', 'STEP:export_general_singles_uploaded', { uploaded: uploadedSingles, total: list.length });
@@ -703,7 +706,7 @@ export async function exportOverview(ctx: Ctx) {
       } catch {}
       let publicUrl: string | null = null;
       try { const { data: pub } = supabase.storage.from('exports').getPublicUrl(path); publicUrl = pub?.publicUrl ?? null; } catch {}
-      try { await supabase.from('exports').insert({ kind: 'countries_pdf', title: 'Countries', path, public_url: publicUrl, job_id: job.id, meta: {} }); } catch {}
+      try { await supabase.from('exports').insert({ kind: 'countries_pdf', title: 'Countries', path, public_url: publicUrl, job_id: job.id, meta: {}, comment: comment || null }); } catch {}
       await saveResult(job.id, 'export_countries_pdf', { file: { path, publicUrl } });
       await setJobSucceeded(job.id);
       return;

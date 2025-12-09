@@ -9,14 +9,11 @@ type ExcelRow = {
   ShopID: string | number | null;
   ShopName: string;
   EAN: string | number | null;
-  Article: string; // StyleNo
-  Style?: string | null;
-  Color: string;
-  Size: string;
   Qty: number;
   Costprice?: number | null;
   RRP?: number | null;
   _sourceFile?: string;
+  _originalRow?: any; // Store original row data for column mapping
 };
 
 type StockRow = {
@@ -34,13 +31,28 @@ type GroupedStock = {
   available: number[]; // computed: stock - sold + purchase
 };
 
+type EanRow = {
+  ean: string;
+  style_no: string;
+  color: string;
+  size: string;
+};
+
+type ColumnMapping = {
+  shopId?: string;
+  shopName?: string;
+  ean?: string;
+  qty?: string;
+  costprice?: string;
+  rrp?: string;
+};
+
 function normalize(s: string | null | undefined): string {
   return String(s || '').trim().toLowerCase();
 }
 
-function normalizeColor(s: string | null | undefined): string {
-  // Remove non-alphanumeric to match e.g., "999 Black" vs "Black-999"
-  return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+function normalizeEan(ean: string | number | null | undefined): string {
+  return String(ean || '').trim().replace(/\s+/g, '');
 }
 
 function toNumber(val: any): number {
@@ -50,6 +62,41 @@ function toNumber(val: any): number {
 
 export default function NielsensSalesPage() {
   const supabase = createClientComponentClient();
+  
+  // Load EAN codes from database
+  const { data: eanData } = useSWR<EanRow[]>('style_color_eans:all', async () => {
+    const pageSize = 5000;
+    const cap = 100000; // hard cap
+    let from = 0;
+    const rows: any[] = [];
+    while (from < cap) {
+      const to = from + pageSize - 1;
+      const { data, error } = await supabase
+        .from('style_color_eans')
+        .select('ean, style_no, color, size')
+        .range(from, to);
+      if (error) throw new Error(error.message);
+      const batch = data ?? [];
+      rows.push(...batch);
+      if (batch.length < pageSize) break;
+      from += pageSize;
+    }
+    return rows as EanRow[];
+  }, { refreshInterval: 0 });
+
+  // Build EAN -> style_no/color/size map
+  const eanMap = React.useMemo(() => {
+    const map = new Map<string, EanRow>();
+    if (!eanData) return map;
+    for (const row of eanData) {
+      const normalizedEan = normalizeEan(row.ean);
+      if (normalizedEan) {
+        map.set(normalizedEan, row);
+      }
+    }
+    return map;
+  }, [eanData]);
+
   // Load stock snapshots
   const { data: stock } = useSWR<StockRow[]>('style_stock:latest', async () => {
     const pageSize = 2000;
@@ -78,35 +125,7 @@ export default function NielsensSalesPage() {
     })) as StockRow[];
   }, { refreshInterval: 0 });
 
-  // Load style names for all styles in stock
-  const styleNosInStock = React.useMemo(() => {
-    if (!stock) return [];
-    return Array.from(new Set(stock.map(r => r.style_no).filter(Boolean)));
-  }, [stock]);
-  
-  const { data: allStyleNames } = useSWR(
-    styleNosInStock.length > 0 ? ['nielsens:allStyleNames', styleNosInStock.length] : null,
-    async () => {
-      if (styleNosInStock.length === 0) return [];
-      const { data, error } = await supabase
-        .from('styles')
-        .select('style_no, style_name')
-        .in('style_no', styleNosInStock);
-      if (error) throw new Error(error.message);
-      return (data ?? []) as Array<{ style_no: string; style_name: string | null }>;
-    },
-    { refreshInterval: 0 }
-  );
-  
-  const styleNameByNo = React.useMemo(() => {
-    const m = new Map<string, string | null>();
-    for (const r of (allStyleNames ?? [])) {
-      m.set(r.style_no, r.style_name);
-    }
-    return m;
-  }, [allStyleNames]);
-
-  // Build availability map with both styleNo|color and styleName|color keys
+  // Build availability map styleNo|color -> { sizes, available[] }
   const availability = React.useMemo(() => {
     const map = new Map<string, GroupedStock>();
     if (!stock) return map;
@@ -141,25 +160,9 @@ export default function NielsensSalesPage() {
       }, zero.slice());
       const available = stockVals.map((v, i) => v - (soldVals[i] ?? 0) + (purchaseVals[i] ?? 0));
       map.set(key, { sizes, available });
-      
-      // Also add entry keyed by style_name|color if style_name exists
-      // Get the original style_no from the first row (all rows in this group have the same style_no)
-      const originalStyleNo = rows[0]?.style_no;
-      if (originalStyleNo) {
-        const styleName = styleNameByNo.get(originalStyleNo);
-        if (styleName) {
-          const parts = key.split('|');
-          const color = parts[1] || '';
-          const nameKey = `${normalize(styleName)}|${color}`;
-          // Only add if it doesn't already exist (to avoid overwriting)
-          if (!map.has(nameKey)) {
-            map.set(nameKey, { sizes, available });
-          }
-        }
-      }
     }
     return map;
-  }, [stock, styleNameByNo]);
+  }, [stock]);
 
   function ensureNums(arr: any[], len: number): number[] {
     return Array.from({ length: len }, (_, i) => Number(arr?.[i] ?? 0) || 0);
@@ -168,147 +171,200 @@ export default function NielsensSalesPage() {
   const [rows, setRows] = React.useState<ExcelRow[]>([]);
   const [grouped, setGrouped] = React.useState<Array<{ shop: string; items: (ExcelRow & { approved: boolean })[] }>>([]);
   const [ran, setRan] = React.useState(false);
+  const [columnMapping, setColumnMapping] = React.useState<ColumnMapping>({});
+  const [showMapping, setShowMapping] = React.useState(false);
+  const [availableColumns, setAvailableColumns] = React.useState<string[]>([]);
+  const [uploadedFiles, setUploadedFiles] = React.useState<File[]>([]);
 
-  function parseWorkbook(fileName: string, wb: XLSX.WorkBook): ExcelRow[] {
+  // Load style names for display
+  const styleNosInRows = React.useMemo(() => {
+    if (!rows.length || !eanMap.size) return [];
+    const styleNos = new Set<string>();
+    for (const row of rows) {
+      const ean = normalizeEan(row.EAN);
+      const eanInfo = eanMap.get(ean);
+      if (eanInfo) {
+        styleNos.add(eanInfo.style_no);
+      }
+    }
+    return Array.from(styleNos);
+  }, [rows, eanMap]);
+
+  const { data: styleNames } = useSWR(
+    styleNosInRows.length > 0 ? ['nielsens:styleNames', styleNosInRows.join(',')] : null,
+    async () => {
+      if (styleNosInRows.length === 0) return [];
+      const { data, error } = await supabase
+        .from('styles')
+        .select('style_no, style_name')
+        .in('style_no', styleNosInRows);
+      if (error) throw new Error(error.message);
+      return (data ?? []) as Array<{ style_no: string; style_name: string | null }>;
+    },
+    { refreshInterval: 0 }
+  );
+
+  const styleNameByNo = React.useMemo(() => {
+    const m = new Map<string, string | null>();
+    for (const r of (styleNames ?? [])) {
+      m.set(r.style_no, r.style_name);
+    }
+    return m;
+  }, [styleNames]);
+
+  async function onFilesSelected(files: FileList | null) {
+    if (!files || files.length === 0) return;
+    
+    const fileArray = Array.from(files);
+    setUploadedFiles(fileArray);
+    
+    // Read first file to detect columns
+    const firstFile = fileArray[0];
+    const buf = await firstFile.arrayBuffer();
+    const wb = XLSX.read(buf, { type: 'array' });
+    const firstSheetName = wb.SheetNames?.[0];
+    if (!firstSheetName) return;
+    
+    const sheet = wb.Sheets[firstSheetName];
+    const json = XLSX.utils.sheet_to_json(sheet, { defval: '' }) as any[];
+    
+    if (json.length > 0) {
+      // Get all column names from first row
+      const columns = Object.keys(json[0]);
+      setAvailableColumns(columns);
+      
+      // Auto-detect common column names
+      const autoMapping: ColumnMapping = {};
+      for (const col of columns) {
+        const colLower = col.toLowerCase();
+        if (!autoMapping.shopId && (colLower.includes('shopid') || colLower.includes('shop id'))) {
+          autoMapping.shopId = col;
+        }
+        if (!autoMapping.shopName && (colLower.includes('shopname') || colLower.includes('shop name') || (colLower.includes('shop') && !colLower.includes('id')))) {
+          autoMapping.shopName = col;
+        }
+        if (!autoMapping.ean && (colLower.includes('ean') || colLower.includes('barcode') || colLower.includes('gtin'))) {
+          autoMapping.ean = col;
+        }
+        if (!autoMapping.qty && (colLower.includes('qty') || colLower.includes('quantity') || colLower.includes('amount'))) {
+          autoMapping.qty = col;
+        }
+        if (!autoMapping.costprice && (colLower.includes('cost') || colLower.includes('costprice'))) {
+          autoMapping.costprice = col;
+        }
+        if (!autoMapping.rrp && (colLower.includes('rrp') || colLower.includes('retail') || colLower.includes('price'))) {
+          autoMapping.rrp = col;
+        }
+      }
+      setColumnMapping(autoMapping);
+      setShowMapping(true);
+    }
+  }
+
+  function parseWorkbook(fileName: string, wb: XLSX.WorkBook, mapping: ColumnMapping): ExcelRow[] {
     const out: ExcelRow[] = [];
     const firstSheetName = wb.SheetNames?.[0];
     if (!firstSheetName) return out;
     const sheet = wb.Sheets[firstSheetName];
     if (!sheet) return out;
     const json = XLSX.utils.sheet_to_json(sheet, { defval: '' }) as any[];
+    
     for (const r of json) {
-      // Flexible column picking by header name variants
-      const shopId = r['ShopID'] ?? r['Shop Id'] ?? r['Shop ID'] ?? r['Shop'] ?? null;
-      const shopName = r['ShopName'] ?? r['Shop Name'] ?? r['Shop'] ?? '';
-      const ean = r['EAN'] ?? r['Ean'] ?? r['Barcode'] ?? null;
-      const article = r['Article'] ?? r['StyleNo'] ?? r['Article(StyleNo)'] ?? r['Style No'] ?? r['Style'] ?? '';
-      const styleTxt = r['Style'] ?? r['Style Name'] ?? null;
-      const color = r['Color'] ?? r['Colour'] ?? '';
-      const size = r['Size'] ?? '';
-      const qty = toNumber(r['Qty'] ?? r['Quantity']);
-      const cost = toNumber(r['Costprice'] ?? r['Cost'] ?? r['Cost Price']);
-      const rrp = toNumber(r['RRP'] ?? r['Retail'] ?? r['Price']);
+      const shopId = mapping.shopId ? r[mapping.shopId] : null;
+      const shopName = mapping.shopName ? String(r[mapping.shopName] || '').trim() : '';
+      const ean = mapping.ean ? r[mapping.ean] : null;
+      const qty = mapping.qty ? toNumber(r[mapping.qty]) : 0;
+      const cost = mapping.costprice ? toNumber(r[mapping.costprice]) : null;
+      const rrp = mapping.rrp ? toNumber(r[mapping.rrp]) : null;
+      
       const row: ExcelRow = {
-        ShopID: shopId, ShopName: String(shopName || '').trim(),
-        EAN: ean, Article: String(article || '').trim(),
-        Style: styleTxt ? String(styleTxt) : null,
-        Color: String(color || '').trim(),
-        Size: String(size || '').trim(),
+        ShopID: shopId,
+        ShopName: shopName,
+        EAN: ean,
         Qty: qty || 0,
         Costprice: Number.isFinite(cost) ? cost : null,
         RRP: Number.isFinite(rrp) ? rrp : null,
-        _sourceFile: fileName
+        _sourceFile: fileName,
+        _originalRow: r
       };
-      if (row.Article && row.ShopName && row.Color && row.Size) out.push(row);
+      
+      // Require EAN and ShopName
+      if (row.EAN && row.ShopName) {
+        out.push(row);
+      }
     }
     return out;
   }
 
-  async function onFilesSelected(files: FileList | null) {
-    if (!files || files.length === 0) return;
+  async function applyMapping() {
+    if (!columnMapping.ean || !columnMapping.shopName) {
+      alert('Please map at least EAN and ShopName columns');
+      return;
+    }
+    
     const all: ExcelRow[] = [];
-    for (const file of Array.from(files)) {
+    // Parse all uploaded files with the mapping
+    for (const file of uploadedFiles) {
       const buf = await file.arrayBuffer();
       const wb = XLSX.read(buf, { type: 'array' });
-      const rows = parseWorkbook(file.name, wb);
-      all.push(...rows);
+      const parsed = parseWorkbook(file.name, wb, columnMapping);
+      all.push(...parsed);
     }
+    
     setRows(all);
+    setShowMapping(false);
   }
 
   // Clear results when new files are uploaded
   React.useEffect(() => { setRan(false); setGrouped([]); }, [rows.length]);
 
   function runAgainstStock() {
+    if (!eanMap.size || !availability.size) return;
+    
+    // Build EAN -> stock availability map
+    const eanToStock = new Map<string, { size: string; available: number; style_no: string; color: string }>();
+    
+    for (const [ean, eanInfo] of eanMap.entries()) {
+      const stockKey = `${normalize(eanInfo.style_no)}|${normalize(eanInfo.color)}`;
+      const stockInfo = availability.get(stockKey);
+      if (stockInfo) {
+        const sizeIdx = stockInfo.sizes.findIndex(s => normalize(s) === normalize(eanInfo.size));
+        if (sizeIdx !== -1) {
+          const available = stockInfo.available[sizeIdx] ?? 0;
+          eanToStock.set(ean, {
+            size: eanInfo.size,
+            available,
+            style_no: eanInfo.style_no,
+            color: eanInfo.color
+          });
+        }
+      }
+    }
+    
     // Build working inventory snapshot so deductions persist across lines
-    const inv = new Map<string, { sizes: string[]; avail: number[] }>();
-    for (const [k, v] of availability.entries()) {
-      inv.set(k, { sizes: v.sizes.slice(), avail: v.available.slice() });
+    const inv = new Map<string, number>();
+    for (const [ean, stock] of eanToStock.entries()) {
+      inv.set(ean, stock.available);
     }
-    // Build variant index per style (by style name and style number) for fuzzy color match
-    const styleToVariants = new Map<string, Array<{ key: string; colorNorm: string; sizes: string[]; avail: number[] }>>();
-    for (const [key, v] of inv.entries()) {
-      const parts = key.split('|');
-      const sty = parts[0] || '';
-      const col = parts[1] || '';
-      // Index by both style name and style number
-      const listByName = styleToVariants.get(sty) || [];
-      listByName.push({ key, colorNorm: normalizeColor(col), sizes: v.sizes, avail: v.avail });
-      styleToVariants.set(sty, listByName);
-    }
+    
     // Evaluate rows sequentially with deductions
     const decided: Array<ExcelRow & { approved: boolean }> = rows.map((r) => {
+      const ean = normalizeEan(r.EAN);
       const want = r.Qty || 0;
-      const sizeNorm = normalize(r.Size);
-      const reqColorNorm = normalizeColor(r.Color);
       
-      // Try style name + color first (if Style field is provided)
-      if (r.Style) {
-        const nameKey = `${normalize(r.Style)}|${normalize(r.Color)}`;
-        const g = inv.get(nameKey);
-        if (g) {
-          const idx = g.sizes.findIndex((s) => normalize(s) === sizeNorm);
-          if (idx !== -1) {
-            const have = g.avail[idx] ?? 0;
-            if (have >= want) {
-              g.avail[idx] = have - want;
-              return { ...r, approved: true };
-            }
-          }
-        }
-        // Fuzzy color match by style name
-        const styleNameKey = normalize(r.Style);
-        const variants = styleToVariants.get(styleNameKey) || [];
-        let best: { v: { key: string; colorNorm: string; sizes: string[]; avail: number[] }; idx: number; have: number; score: number } | null = null;
-        for (const v of variants) {
-          const score = v.colorNorm.includes(reqColorNorm) ? 2 : (reqColorNorm.includes(v.colorNorm) && v.colorNorm.length > 0 ? 1 : 0);
-          if (score === 0) continue;
-          const idx = v.sizes.findIndex((s) => normalize(s) === sizeNorm);
-          if (idx === -1) continue;
-          const have = v.avail[idx] ?? 0;
-          if (!best || score > best.score || (score === best.score && have > best.have)) {
-            best = { v, idx, have, score };
-          }
-        }
-        if (best && best.have >= want) {
-          best.v.avail[best.idx] = best.have - want;
-          return { ...r, approved: true };
-        }
+      if (!ean) {
+        return { ...r, approved: false };
       }
       
-      // Fallback to style number + color
-      const articleKey = `${normalize(r.Article)}|${normalize(r.Color)}`;
-      const g = inv.get(articleKey);
-      if (g) {
-        const idx = g.sizes.findIndex((s) => normalize(s) === sizeNorm);
-        if (idx !== -1) {
-          const have = g.avail[idx] ?? 0;
-          if (have >= want) {
-            g.avail[idx] = have - want;
-            return { ...r, approved: true };
-          }
-        }
-      }
-      // Fuzzy color match by style number
-      const styleNoKey = normalize(r.Article);
-      const variants = styleToVariants.get(styleNoKey) || [];
-      let best: { v: { key: string; colorNorm: string; sizes: string[]; avail: number[] }; idx: number; have: number; score: number } | null = null;
-      for (const v of variants) {
-        const score = v.colorNorm.includes(reqColorNorm) ? 2 : (reqColorNorm.includes(v.colorNorm) && v.colorNorm.length > 0 ? 1 : 0);
-        if (score === 0) continue;
-        const idx = v.sizes.findIndex((s) => normalize(s) === sizeNorm);
-        if (idx === -1) continue;
-        const have = v.avail[idx] ?? 0;
-        if (!best || score > best.score || (score === best.score && have > best.have)) {
-          best = { v, idx, have, score };
-        }
-      }
-      if (best && best.have >= want) {
-        best.v.avail[best.idx] = best.have - want;
+      const have = inv.get(ean) ?? 0;
+      if (have >= want) {
+        inv.set(ean, have - want);
         return { ...r, approved: true };
       }
+      
       return { ...r, approved: false };
     });
+    
     // Group by ShopName
     const map = new Map<string, (typeof decided)[number][]>();
     for (const it of decided) {
@@ -324,46 +380,44 @@ export default function NielsensSalesPage() {
   const summaryByShop = React.useMemo(() => {
     if (!ran || grouped.length === 0) return [] as Array<{
       shop: string;
-      can: Array<{ article: string; color: string; size: string; qty: number }>;
-      cannot: Array<{ article: string; color: string; size: string; qty: number }>;
+      can: Array<{ ean: string; style_no: string; color: string; size: string; qty: number }>;
+      cannot: Array<{ ean: string; style_no: string; color: string; size: string; qty: number }>;
     }>;
-    const out: Array<{ shop: string; can: Array<{ article: string; color: string; size: string; qty: number }>; cannot: Array<{ article: string; color: string; size: string; qty: number }> }> = [];
+    const out: Array<{ shop: string; can: Array<{ ean: string; style_no: string; color: string; size: string; qty: number }>; cannot: Array<{ ean: string; style_no: string; color: string; size: string; qty: number }> }> = [];
     for (const g of grouped) {
-      const canMap = new Map<string, number>();     // key: article|||color|||size
-      const cannotMap = new Map<string, number>();  // key: article|||color|||size
+      const canMap = new Map<string, number>();     // key: ean
+      const cannotMap = new Map<string, number>();  // key: ean
       for (const it of g.items) {
-        const key = `${it.Article}|||${it.Color}|||${it.Size}`;
+        const ean = normalizeEan(it.EAN);
         const addTo = it.approved ? canMap : cannotMap;
-        addTo.set(key, (addTo.get(key) || 0) + (it.Qty || 0));
+        addTo.set(ean, (addTo.get(ean) || 0) + (it.Qty || 0));
       }
-      const can = Array.from(canMap.entries()).map(([k, qty]) => {
-        const parts = k.split('|||');
-        const article = parts[0] || '';
-        const color = parts[1] || '';
-        const size = parts[2] || '';
-        return { article, color, size, qty };
-      }).sort((a,b) =>
-        (a.article || '').localeCompare(b.article || '') ||
-        (a.color || '').localeCompare(b.color || '') ||
-        (a.size || '').localeCompare(b.size || '')
-      );
-      const cannot = Array.from(cannotMap.entries()).map(([k, qty]) => {
-        const parts = k.split('|||');
-        const article = parts[0] || '';
-        const color = parts[1] || '';
-        const size = parts[2] || '';
-        return { article, color, size, qty };
-      }).sort((a,b) =>
-        (a.article || '').localeCompare(b.article || '') ||
-        (a.color || '').localeCompare(b.color || '') ||
-        (a.size || '').localeCompare(b.size || '')
-      );
+      const can = Array.from(canMap.entries()).map(([ean, qty]) => {
+        const eanInfo = eanMap.get(ean);
+        return {
+          ean,
+          style_no: eanInfo?.style_no || '',
+          color: eanInfo?.color || '',
+          size: eanInfo?.size || '',
+          qty
+        };
+      }).sort((a, b) => a.style_no.localeCompare(b.style_no) || a.color.localeCompare(b.color) || a.size.localeCompare(b.size));
+      const cannot = Array.from(cannotMap.entries()).map(([ean, qty]) => {
+        const eanInfo = eanMap.get(ean);
+        return {
+          ean,
+          style_no: eanInfo?.style_no || '',
+          color: eanInfo?.color || '',
+          size: eanInfo?.size || '',
+          qty
+        };
+      }).sort((a, b) => a.style_no.localeCompare(b.style_no) || a.color.localeCompare(b.color) || a.size.localeCompare(b.size));
       out.push({ shop: g.shop, can, cannot });
     }
     // sort shops alphabetically
     out.sort((a, b) => a.shop.localeCompare(b.shop));
     return out;
-  }, [grouped, ran]);
+  }, [grouped, ran, eanMap]);
 
   // Build copyable message for NOT deliverable only
   const cannotMessage = React.useMemo(() => {
@@ -374,9 +428,9 @@ export default function NielsensSalesPage() {
       if (s.cannot.length === 0) continue;
       lines.push(s.shop);
       for (const r of s.cannot) {
-        const nm = styleNameByNo.get(r.article) || '';
-        const label = nm ? `${r.article} ${nm}` : r.article;
-        lines.push(`${label} - ${r.color} - ${r.size}, ${r.qty} stk`);
+        const nm = styleNameByNo.get(r.style_no) || '';
+        const label = nm ? `${r.style_no} ${nm}` : r.style_no;
+        lines.push(`${label} - ${r.color} - ${r.size} (EAN: ${r.ean}), ${r.qty} stk`);
       }
       lines.push(''); // blank line between shops
     }
@@ -391,7 +445,7 @@ export default function NielsensSalesPage() {
     <div className="space-y-4">
       <div>
         <div className="text-xs text-gray-500">Sales</div>
-        <h1 className="text-xl font-semibold">Nielsens — Availability Check</h1>
+        <h1 className="text-xl font-semibold">Nielsens — Availability Check (EAN-based)</h1>
       </div>
 
       <div className="rounded-md border bg-white p-4 space-y-3">
@@ -402,17 +456,121 @@ export default function NielsensSalesPage() {
             multiple
             onChange={(e) => onFilesSelected(e.currentTarget.files)}
           />
-          <div className="text-xs text-gray-600">Upload up to 17 Excel files. Columns: ShopID, ShopName, EAN, Article(StyleNo), Style, Color, Size, Qty, Costprice, RRP</div>
+          <div className="text-xs text-gray-600">Upload Excel files. Map columns to: ShopID, ShopName, EAN, Qty, Costprice, RRP</div>
         </div>
+        
+        {showMapping && availableColumns.length > 0 && (
+          <div className="border rounded p-3 bg-gray-50 space-y-2">
+            <div className="text-sm font-semibold mb-2">Map Columns</div>
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <div>
+                <label className="block mb-1 font-medium">Shop ID</label>
+                <select
+                  value={columnMapping.shopId || ''}
+                  onChange={(e) => setColumnMapping({ ...columnMapping, shopId: e.target.value || undefined })}
+                  className="w-full border rounded px-2 py-1"
+                >
+                  <option value="">—</option>
+                  {availableColumns.map(col => (
+                    <option key={col} value={col}>{col}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block mb-1 font-medium">Shop Name *</label>
+                <select
+                  value={columnMapping.shopName || ''}
+                  onChange={(e) => setColumnMapping({ ...columnMapping, shopName: e.target.value || undefined })}
+                  className="w-full border rounded px-2 py-1"
+                  required
+                >
+                  <option value="">—</option>
+                  {availableColumns.map(col => (
+                    <option key={col} value={col}>{col}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block mb-1 font-medium">EAN *</label>
+                <select
+                  value={columnMapping.ean || ''}
+                  onChange={(e) => setColumnMapping({ ...columnMapping, ean: e.target.value || undefined })}
+                  className="w-full border rounded px-2 py-1"
+                  required
+                >
+                  <option value="">—</option>
+                  {availableColumns.map(col => (
+                    <option key={col} value={col}>{col}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block mb-1 font-medium">Quantity</label>
+                <select
+                  value={columnMapping.qty || ''}
+                  onChange={(e) => setColumnMapping({ ...columnMapping, qty: e.target.value || undefined })}
+                  className="w-full border rounded px-2 py-1"
+                >
+                  <option value="">—</option>
+                  {availableColumns.map(col => (
+                    <option key={col} value={col}>{col}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block mb-1 font-medium">Cost Price</label>
+                <select
+                  value={columnMapping.costprice || ''}
+                  onChange={(e) => setColumnMapping({ ...columnMapping, costprice: e.target.value || undefined })}
+                  className="w-full border rounded px-2 py-1"
+                >
+                  <option value="">—</option>
+                  {availableColumns.map(col => (
+                    <option key={col} value={col}>{col}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block mb-1 font-medium">RRP</label>
+                <select
+                  value={columnMapping.rrp || ''}
+                  onChange={(e) => setColumnMapping({ ...columnMapping, rrp: e.target.value || undefined })}
+                  className="w-full border rounded px-2 py-1"
+                >
+                  <option value="">—</option>
+                  {availableColumns.map(col => (
+                    <option key={col} value={col}>{col}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div className="flex gap-2 mt-3">
+              <button
+                onClick={applyMapping}
+                className="text-xs px-3 py-1.5 border rounded bg-slate-900 text-white hover:bg-slate-800"
+                disabled={!columnMapping.ean || !columnMapping.shopName}
+              >
+                Apply Mapping
+              </button>
+              <button
+                onClick={() => setShowMapping(false)}
+                className="text-xs px-3 py-1.5 border rounded bg-white hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+        
         <div className="flex items-center gap-2">
           <button
-            className={"text-xs px-3 py-1.5 border rounded bg-slate-900 text-white hover:bg-slate-800 " + ((rows.length === 0 || availability.size === 0) ? 'opacity-60 cursor-not-allowed' : '')}
-            disabled={rows.length === 0 || availability.size === 0}
+            className={"text-xs px-3 py-1.5 border rounded bg-slate-900 text-white hover:bg-slate-800 " + ((rows.length === 0 || eanMap.size === 0 || availability.size === 0) ? 'opacity-60 cursor-not-allowed' : '')}
+            disabled={rows.length === 0 || eanMap.size === 0 || availability.size === 0}
             onClick={runAgainstStock}
           >
             Run against stock
           </button>
-          {ran && <div className="text-xs text-gray-600">Calculated approvals based on current stock snapshot.</div>}
+          {ran && <div className="text-xs text-gray-600">Calculated approvals based on EAN codes and current stock snapshot.</div>}
         </div>
       </div>
 
@@ -438,7 +596,7 @@ export default function NielsensSalesPage() {
                 ...s.can.map((r) => ({ ...r, approved: true })),
                 ...s.cannot.map((r) => ({ ...r, approved: false })),
               ].sort((a, b) =>
-                a.article.localeCompare(b.article) ||
+                a.style_no.localeCompare(b.style_no) ||
                 a.color.localeCompare(b.color) ||
                 a.size.localeCompare(b.size)
               );
@@ -461,20 +619,22 @@ export default function NielsensSalesPage() {
                       <table className="min-w-full text-xs">
                         <thead className="bg-gray-50">
                           <tr>
-                            <th className="p-2 text-left border-b">Article</th>
+                            <th className="p-2 text-left border-b">Style</th>
                             <th className="p-2 text-left border-b">Color</th>
                             <th className="p-2 text-left border-b">Size</th>
+                            <th className="p-2 text-left border-b">EAN</th>
                             <th className="p-2 text-right border-b">Qty</th>
                             <th className="p-2 text-left border-b">Approved</th>
                           </tr>
                         </thead>
                         <tbody>
-                          {rows.length === 0 && <tr><td colSpan={5} className="p-2 text-gray-500">—</td></tr>}
+                          {rows.length === 0 && <tr><td colSpan={6} className="p-2 text-gray-500">—</td></tr>}
                           {rows.map((r, i) => (
                             <tr key={i} className={r.approved ? '' : 'bg-red-50'}>
-                              <td className="p-2 border-b">{r.article}{(() => { const nm = styleNameByNo.get(r.article) || ''; return nm ? ` · ${nm}` : ''; })()}</td>
+                              <td className="p-2 border-b">{r.style_no}{(() => { const nm = styleNameByNo.get(r.style_no) || ''; return nm ? ` · ${nm}` : ''; })()}</td>
                               <td className="p-2 border-b">{r.color}</td>
                               <td className="p-2 border-b">{r.size}</td>
+                              <td className="p-2 border-b font-mono text-[10px]">{r.ean}</td>
                               <td className="p-2 border-b text-right">{r.qty}</td>
                               <td className="p-2 border-b">{r.approved ? 'Yes' : 'No'}</td>
                             </tr>
@@ -482,7 +642,7 @@ export default function NielsensSalesPage() {
                         </tbody>
                         <tfoot>
                           <tr className="bg-gray-50">
-                            <td className="p-2 text-sm font-medium" colSpan={5}>Kan levere: {sumYes} — Kan ikke: {sumNo}</td>
+                            <td className="p-2 text-sm font-medium" colSpan={6}>Kan levere: {sumYes} — Kan ikke: {sumNo}</td>
                           </tr>
                         </tfoot>
                       </table>
@@ -501,7 +661,8 @@ export default function NielsensSalesPage() {
             <thead className="bg-gray-50">
               <tr>
                 <th className="p-2 text-left border-b">Shop</th>
-                <th className="p-2 text-left border-b">Article</th>
+                <th className="p-2 text-left border-b">EAN</th>
+                <th className="p-2 text-left border-b">Style</th>
                 <th className="p-2 text-left border-b">Color</th>
                 <th className="p-2 text-left border-b">Size</th>
                 <th className="p-2 text-right border-b">Qty</th>
@@ -511,19 +672,24 @@ export default function NielsensSalesPage() {
             </thead>
             <tbody>
               {grouped.flatMap((g) => (
-                g.items.map((it, i) => (
-                  <tr key={`${g.shop}-${i}`} className={it.approved ? 'bg-green-50' : ''}>
-                    <td className="p-2 border-b">{g.shop}</td>
-                    <td className="p-2 border-b">
-                      {it.Article}{(() => { const nm = styleNameByNo.get(it.Article) || ''; return nm ? ` · ${nm}` : ''; })()}
-                    </td>
-                    <td className="p-2 border-b">{it.Color}</td>
-                    <td className="p-2 border-b">{it.Size}</td>
-                    <td className="p-2 border-b text-right">{it.Qty}</td>
-                    <td className="p-2 border-b">{it.approved ? 'Yes' : 'No'}</td>
-                    <td className="p-2 border-b text-gray-500">{it._sourceFile || '—'}</td>
-                  </tr>
-                ))
+                g.items.map((it, i) => {
+                  const ean = normalizeEan(it.EAN);
+                  const eanInfo = eanMap.get(ean);
+                  return (
+                    <tr key={`${g.shop}-${i}`} className={it.approved ? 'bg-green-50' : ''}>
+                      <td className="p-2 border-b">{g.shop}</td>
+                      <td className="p-2 border-b font-mono text-[10px]">{ean}</td>
+                      <td className="p-2 border-b">
+                        {eanInfo?.style_no || '—'}{(() => { const nm = styleNameByNo.get(eanInfo?.style_no || '') || ''; return nm ? ` · ${nm}` : ''; })()}
+                      </td>
+                      <td className="p-2 border-b">{eanInfo?.color || '—'}</td>
+                      <td className="p-2 border-b">{eanInfo?.size || '—'}</td>
+                      <td className="p-2 border-b text-right">{it.Qty}</td>
+                      <td className="p-2 border-b">{it.approved ? 'Yes' : 'No'}</td>
+                      <td className="p-2 border-b text-gray-500">{it._sourceFile || '—'}</td>
+                    </tr>
+                  );
+                })
               ))}
             </tbody>
           </table>
@@ -532,6 +698,3 @@ export default function NielsensSalesPage() {
     </div>
   );
 }
-
-
-

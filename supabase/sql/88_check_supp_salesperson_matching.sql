@@ -68,3 +68,6 @@ from (
 ) s
 left join public.salespersons sp on s.salesperson_name = sp.name;
 
+
+
+

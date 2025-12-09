@@ -98,6 +98,17 @@ export function SidebarNav() {
     return initial;
   });
   
+  // Update open sections when pathname changes (expand active section)
+  React.useEffect(() => {
+    if (getActiveSection) {
+      setOpenSections(prev => {
+        const next = new Set(prev);
+        next.add(getActiveSection!);
+        return next;
+      });
+    }
+  }, [getActiveSection]);
+  
   const toggleSection = (sectionKey: string) => {
     setOpenSections(prev => {
       const next = new Set(prev);

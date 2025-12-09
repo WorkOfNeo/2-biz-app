@@ -4,14 +4,22 @@ import useSWR from 'swr';
 import { supabase } from '../../../lib/supabaseClient';
 import { ChevronRight, ChevronDown, MoreHorizontal } from 'lucide-react';
 
-type ExportRow = { id: string; kind: string; title: string | null; path: string; public_url: string | null; created_at: string };
+type ExportRow = { id: string; kind: string; title: string | null; path: string; public_url: string | null; created_at: string; comment: string | null };
+
+// Prompt for comment
+function promptComment(): Promise<string | null> {
+  return new Promise((resolve) => {
+    const comment = window.prompt('Enter a comment for this export (optional):');
+    resolve(comment || null);
+  });
+}
 
 export default function StatisticsExportsPage() {
   const [menuOpen, setMenuOpen] = React.useState(false);
   const { data } = useSWR('exports:all', async () => {
     const { data, error } = await supabase
       .from('exports')
-      .select('id, kind, title, path, public_url, meta, created_at')
+      .select('id, kind, title, path, public_url, meta, created_at, comment')
       .order('created_at', { ascending: false })
       .limit(200);
     if (error) throw new Error(error.message);
@@ -112,10 +120,11 @@ export default function StatisticsExportsPage() {
   }, [jobId]);
 
   async function enqueueGeneralReactPdf() {
+    const comment = await promptComment();
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) throw new Error('Not signed in');
     const token = session.access_token;
-    const body = { type: 'export_overview', payload: { mode: 'general_salesmen_react_pdf', requestedBy: session.user.email, s1: saved?.s1, s2: saved?.s2 } };
+    const body = { type: 'export_overview', payload: { mode: 'general_salesmen_react_pdf', requestedBy: session.user.email, s1: saved?.s1, s2: saved?.s2, comment } };
     const res = await fetch('/api/enqueue', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(body) });
     if (!res.ok) throw new Error(await res.text());
     const js = await res.json();
@@ -123,10 +132,11 @@ export default function StatisticsExportsPage() {
   }
 
   async function enqueueOverviewPdf() {
+    const comment = await promptComment();
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) throw new Error('Not signed in');
     const token = session.access_token;
-    const body = { type: 'export_overview', payload: { mode: 'overview_react_pdf', requestedBy: session.user.email, s1: saved?.s1, s2: saved?.s2 } };
+    const body = { type: 'export_overview', payload: { mode: 'overview_react_pdf', requestedBy: session.user.email, s1: saved?.s1, s2: saved?.s2, comment } };
     const res = await fetch('/api/enqueue', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(body) });
     if (!res.ok) throw new Error(await res.text());
     const js = await res.json();
@@ -134,10 +144,11 @@ export default function StatisticsExportsPage() {
   }
 
   async function enqueueCountriesPdf() {
+    const comment = await promptComment();
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) throw new Error('Not signed in');
     const token = session.access_token;
-    const body = { type: 'export_overview', payload: { mode: 'countries_react_pdf', requestedBy: session.user.email, s1: saved?.s1, s2: saved?.s2 } };
+    const body = { type: 'export_overview', payload: { mode: 'countries_react_pdf', requestedBy: session.user.email, s1: saved?.s1, s2: saved?.s2, comment } };
     const res = await fetch('/api/enqueue', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(body) });
     if (!res.ok) throw new Error(await res.text());
     const js = await res.json();
@@ -145,20 +156,25 @@ export default function StatisticsExportsPage() {
   }
 
   async function enqueueTopStylesPdf() {
+    const comment = await promptComment();
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) throw new Error('Not signed in');
     const token = session.access_token;
-    const body = { type: 'export_top_styles', payload: { requestedBy: session.user.email } };
+    const body = { type: 'export_top_styles', payload: { requestedBy: session.user.email, comment } };
     const res = await fetch('/api/enqueue', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(body) });
     if (!res.ok) throw new Error(await res.text());
     const js = await res.json();
     setJobId(js.jobId);
   }
 
-  async function createJob(body: any) {
+  async function createJob(body: any, comment?: string | null) {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) throw new Error('Not signed in');
     const token = session.access_token;
+    // Add comment to payload if provided
+    if (comment !== undefined && body.payload) {
+      body.payload.comment = comment;
+    }
     const res = await fetch('/api/enqueue', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(body) });
     if (!res.ok) throw new Error(await res.text());
     const js = await res.json();
@@ -180,27 +196,29 @@ export default function StatisticsExportsPage() {
 
   async function enqueueAllExportsSequential() {
     if (running || jobId) return;
+    // Prompt for comment once for all exports
+    const comment = await promptComment();
     try {
       setRunning(true);
       setProgress(null);
       // 1) General per salesperson (React PDF)
-      let id = await createJob({ type: 'export_overview', payload: { mode: 'general_salesmen_react_pdf' } });
+      let id = await createJob({ type: 'export_overview', payload: { mode: 'general_salesmen_react_pdf' } }, comment);
       setJobId(id);
       await waitForJob(id);
       // 2) Overview PDF
-      id = await createJob({ type: 'export_overview', payload: { mode: 'overview_react_pdf' } });
+      id = await createJob({ type: 'export_overview', payload: { mode: 'overview_react_pdf' } }, comment);
       setJobId(id);
       await waitForJob(id);
       // 3) Countries PDF
-      id = await createJob({ type: 'export_overview', payload: { mode: 'countries_react_pdf' } });
+      id = await createJob({ type: 'export_overview', payload: { mode: 'countries_react_pdf' } }, comment);
       setJobId(id);
       await waitForJob(id);
       // 4) Top 10 Styles PDF
-      id = await createJob({ type: 'export_top_styles', payload: {} });
+      id = await createJob({ type: 'export_top_styles', payload: {} }, comment);
       setJobId(id);
       await waitForJob(id);
       // 5) Stock Lists PDF(s)
-      id = await createJob({ type: 'export_stock_list', payload: {} });
+      id = await createJob({ type: 'export_stock_list', payload: {} }, comment);
       setJobId(id);
       await waitForJob(id);
       setJobId(null);
@@ -386,10 +404,11 @@ export default function StatisticsExportsPage() {
                 className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 disabled:opacity-60"
                 onClick={async () => {
                   try {
+                    const comment = await promptComment();
                     const { data: { session } } = await supabase.auth.getSession();
                     if (!session) throw new Error('Not signed in');
                     const token = session.access_token;
-                    await fetch('/api/enqueue', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ type: 'export_stock_list', payload: {} }) });
+                    await fetch('/api/enqueue', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ type: 'export_stock_list', payload: { comment } }) });
                   } finally { setMenuOpen(false); }
                 }}
                 disabled={running}
@@ -428,6 +447,7 @@ export default function StatisticsExportsPage() {
               <th className="p-2 text-left border-b">When</th>
               <th className="p-2 text-left border-b">Kind</th>
               <th className="p-2 text-left border-b">Title</th>
+              <th className="p-2 text-left border-b">Comment</th>
               <th className="p-2 text-left border-b">Link</th>
               <th className="p-2 text-right border-b"> </th>
             </tr>
@@ -443,6 +463,9 @@ export default function StatisticsExportsPage() {
                     <td className="p-2 border-b whitespace-nowrap">{timeAgo(r.created_at)}</td>
                     <td className="p-2 border-b">{r.kind}</td>
                     <td className="p-2 border-b">{r.title ?? '—'}</td>
+                    <td className="p-2 border-b text-sm text-gray-600 max-w-xs truncate" title={r.comment || undefined}>
+                      {r.comment || '—'}
+                    </td>
                     <td className="p-2 border-b">{r.public_url ? (
                       <button
                         className="rounded-md border px-2 py-1 text-xs hover:bg-slate-50"
@@ -461,7 +484,7 @@ export default function StatisticsExportsPage() {
                   </tr>
                   {hasChildren && openId === r.id && (
                     <tr>
-                      <td className="p-2 border-b bg-gray-50" colSpan={5}>
+                      <td className="p-2 border-b bg-gray-50" colSpan={6}>
                         <div className="mt-1 space-y-1">
                           {all?.publicUrl && (
                             <div className="flex items-center justify-between">

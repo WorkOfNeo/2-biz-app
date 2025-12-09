@@ -15,6 +15,7 @@ type Ctx = {
 
 export async function exportStockList(ctx: Ctx) {
   const { job, log, saveResult, setJobFailedOrRequeue, setJobSucceeded, supabase } = ctx;
+  const comment = (job.payload as any)?.comment as string | undefined;
   try {
     await log(job.id, 'info', 'STEP:export_stock_list_begin', {});
     // Load lists from DB
@@ -399,7 +400,7 @@ export async function exportStockList(ctx: Ctx) {
       } catch {}
       let publicUrl: string | null = null;
       try { const { data: pub } = supabase.storage.from('exports').getPublicUrl(path); publicUrl = pub?.publicUrl ?? null; } catch {}
-      try { await supabase.from('exports').insert({ kind: 'stock_list_pdf', title: `Stock List · ${listName}`, path, public_url: publicUrl, job_id: job.id, meta: { list: listName } }); } catch {}
+      try { await supabase.from('exports').insert({ kind: 'stock_list_pdf', title: `Stock List · ${listName}`, path, public_url: publicUrl, job_id: job.id, meta: { list: listName }, comment: comment || null }); } catch {}
       generated++;
     }
     await saveResult(job.id, 'export_stock_list_done', { generated });
