@@ -66,6 +66,15 @@ export default function StatisticsDashboardPage() {
     setSelectedStockListsForEmail((prev) => { const n = new Set(prev); if (n.has(name)) n.delete(name); else n.add(name); return n; });
   }
 
+  // Load/save Stock List email prefs
+  useSWR('dashboard:stock_list_email', async () => {
+    const { data } = await supabase.from('app_settings').select('id, value').eq('key', 'dashboard_stock_list_email').maybeSingle();
+    const val = ((data?.value as any) || {}) as { receivers?: string; body?: string };
+    if (val.receivers !== undefined) setStockListReceivers(val.receivers);
+    if (val.body !== undefined) setStockListBodyText(val.body);
+    return data;
+  });
+
   // Box #1 - Salesperson Statistics
   const [selected, setSelected] = React.useState<Record<string, boolean>>({});
   const [includeCountries, setIncludeCountries] = React.useState(true);
@@ -205,6 +214,12 @@ export default function StatisticsDashboardPage() {
   const [overallOpts, setOverallOpts] = React.useState<{ all: boolean; countries: boolean; top10overall: boolean }>({ all: false, countries: true, top10overall: false });
   const [sendingOverall, setSendingOverall] = React.useState(false);
   const [savingOverallPrefs, setSavingOverallPrefs] = React.useState(false);
+
+  // Box #3 - Send Stock Lists
+  const [stockListReceivers, setStockListReceivers] = React.useState('');
+  const [stockListBodyText, setStockListBodyText] = React.useState('Hermed stock list :)');
+  const [sendingStockList, setSendingStockList] = React.useState(false);
+  const [savingStockListPrefs, setSavingStockListPrefs] = React.useState(false);
 
   // Load/save Overall email prefs
   useSWR('dashboard:overall_email', async () => {
@@ -405,20 +420,6 @@ export default function StatisticsDashboardPage() {
     });
   }
 
-  // Box #3 - Send Stock Lists
-  const [stockListReceivers, setStockListReceivers] = React.useState('');
-  const [stockListBodyText, setStockListBodyText] = React.useState('Hermed stock list :)');
-  const [sendingStockList, setSendingStockList] = React.useState(false);
-  const [savingStockListPrefs, setSavingStockListPrefs] = React.useState(false);
-
-  // Load/save Stock List email prefs
-  useSWR('dashboard:stock_list_email', async () => {
-    const { data } = await supabase.from('app_settings').select('id, value').eq('key', 'dashboard_stock_list_email').maybeSingle();
-    const val = ((data?.value as any) || {}) as { receivers?: string; body?: string };
-    if (val.receivers !== undefined) setStockListReceivers(val.receivers);
-    if (val.body !== undefined) setStockListBodyText(val.body);
-    return data;
-  });
   async function saveStockListPrefs() {
     setSavingStockListPrefs(true);
     try {
