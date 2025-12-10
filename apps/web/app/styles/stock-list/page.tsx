@@ -755,6 +755,7 @@ export default function StockListPage() {
       }
       
       const { jobId } = await res.json();
+      console.log(`[Scrape Started] Job ${jobId} enqueued for ${mismatchStyleNos.length} styles:`, mismatchStyleNos);
       
       // Poll for progress
       const pollInterval = setInterval(async () => {
@@ -767,19 +768,25 @@ export default function StockListPage() {
             .single();
           
           if (jobError) {
+            console.error('Error fetching job status:', jobError);
             clearInterval(pollInterval);
             return;
           }
           
           // Check logs for progress - count delete_all_success which happens for each style
-          const { data: logsData } = await supabase
+          const { data: logsData, error: logsError } = await supabase
             .from('job_logs')
             .select('msg, data')
             .eq('job_id', jobId)
             .eq('msg', 'STEP:style_stock_delete_all_success')
             .order('ts', { ascending: true });
           
+          if (logsError) {
+            console.error('Error fetching job logs:', logsError);
+          }
+          
           const completedCount = logsData?.length || 0;
+          console.log(`[Scrape Progress] Job ${jobId}: ${completedCount}/${mismatchStyleNos.length} styles completed (status: ${jobData.status})`);
           setScrapeProgress({ current: completedCount, total: mismatchStyleNos.length });
           
           // Check if job is finished
@@ -804,7 +811,7 @@ export default function StockListPage() {
         } catch (err: any) {
           console.error('Poll error:', err);
         }
-      }, 2000); // Poll every 2 seconds
+      }, 3000); // Poll every 3 seconds
       
       // Stop polling after 10 minutes
       setTimeout(() => {
