@@ -1103,20 +1103,28 @@ export default function StatisticsGeneralPage() {
         </div>
 
         {/* Latest PDF Export Info */}
-        {latestExport && activePerson && selectedSalespersonId && (
-          <div className="flex items-center justify-end gap-3">
-            <div className="text-sm text-gray-600">
-              <span className="font-medium">Seneste PDF:</span>{' '}
-              <span>{timeAgo(latestExport.created_at)}</span>
+        {latestExport && activePerson && selectedSalespersonId && (() => {
+          // Check if the active salesperson has a PDF in the latest export
+          const files = (latestExport.meta?.files as Array<{ name: string; path: string; publicUrl?: string | null; salesperson_id: string }>) ?? [];
+          const salespersonFile = files.find(f => f.salesperson_id === selectedSalespersonId);
+          
+          if (!salespersonFile) return null;
+          
+          return (
+            <div className="flex items-center justify-end gap-3">
+              <div className="text-sm text-gray-600">
+                <span className="font-medium">Seneste PDF:</span>{' '}
+                <span>{timeAgo(latestExport.created_at)}</span>
+              </div>
+              <button
+                onClick={downloadLatestPdf}
+                className="rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50"
+              >
+                Download PDF
+              </button>
             </div>
-            <button
-              onClick={downloadLatestPdf}
-              className="rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50"
-            >
-              Download PDF
-            </button>
-          </div>
-        )}
+          );
+        })()}
 
         {/* Single section for selected salesperson */}
         {(() => {
