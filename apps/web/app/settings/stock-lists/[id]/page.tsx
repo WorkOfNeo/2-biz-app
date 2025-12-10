@@ -74,20 +74,30 @@ export default function StockListDetailPage({ params }: { params: { id: string }
   const { data: listStyles, mutate: mutateListStyles } = useSWR(`stock-list:${params.id}:styles`, async () => {
     const { data, error } = await supabase
       .from('stock_list_styles')
-      .select('style_id, style:styles(id, style_no, style_name, supplier, image_url)')
+      .select('style_id, styles!inner(id, style_no, style_name, supplier, image_url)')
       .eq('list_id', params.id);
     if (error) throw error;
-    return (data ?? []) as ListStyle[];
+    // Transform the data to match ListStyle type
+    return ((data ?? []) as any[]).map((item: any) => ({
+      style_id: item.style_id,
+      style: item.styles
+    })) as ListStyle[];
   });
 
   // Load colors for this list
   const { data: listColors, mutate: mutateListColors } = useSWR(`stock-list:${params.id}:colors`, async () => {
     const { data, error } = await supabase
       .from('stock_list_colors')
-      .select('style_color_id, style_id, include, color:style_colors(id, color_name, color_code, style_id)')
+      .select('style_color_id, style_id, include, style_colors!inner(id, color_name, color_code, style_id)')
       .eq('list_id', params.id);
     if (error) throw error;
-    return (data ?? []) as ListColor[];
+    // Transform the data to match ListColor type
+    return ((data ?? []) as any[]).map((item: any) => ({
+      style_color_id: item.style_color_id,
+      style_id: item.style_id,
+      include: item.include,
+      color: item.style_colors
+    })) as ListColor[];
   });
 
   // Load all styles for adding
