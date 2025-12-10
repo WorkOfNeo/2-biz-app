@@ -171,9 +171,31 @@ export default function StockListPage() {
 
   // DB-backed stock lists (lists, styles, and per-list color exclusions)
   const { data: stockLists } = useSWR('stock-lists:all', async () => {
-    const { data, error } = await supabase.from('stock_lists').select('id, name').order('name', { ascending: true });
+    const { data, error } = await supabase.from('stock_lists').select('id, name');
     if (error) throw new Error(error.message);
-    return (data ?? []) as Array<{ id: string; name: string }>;
+    
+    // Custom sort order: Aktiv, Passiv, NOOS, Nye styles, Intet, then alphabetically
+    const sortOrder: Record<string, number> = {
+      'Aktiv': 1,
+      'Passiv': 2,
+      'NOOS': 3,
+      'Nye styles': 4,
+      'Intet': 5,
+    };
+    
+    const sorted = (data ?? []).sort((a, b) => {
+      const aOrder = sortOrder[a.name] ?? 999;
+      const bOrder = sortOrder[b.name] ?? 999;
+      
+      if (aOrder !== bOrder) {
+        return aOrder - bOrder;
+      }
+      
+      // For items not in sortOrder, sort alphabetically
+      return a.name.localeCompare(b.name);
+    });
+    
+    return sorted as Array<{ id: string; name: string }>;
   });
   const { data: listStyles } = useSWR(activeListId ? ['stock-list-styles:byList', activeListId] : null, async () => {
     const { data, error } = await supabase.from('stock_list_styles').select('style_id').eq('list_id', activeListId);
