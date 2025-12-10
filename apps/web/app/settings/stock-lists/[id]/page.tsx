@@ -235,6 +235,28 @@ export default function StockListDetailPage({ params }: { params: { id: string }
     }
   }
 
+  // Remove all styles from list
+  async function removeAllStyles() {
+    if (!confirm(`Remove all ${listStyles?.length ?? 0} styles from ${list?.name}? This action cannot be undone.`)) return;
+    
+    setLoading(true);
+    try {
+      // Delete all colors first
+      await supabase.from('stock_list_colors').delete().eq('list_id', params.id);
+      
+      // Delete all styles
+      await supabase.from('stock_list_styles').delete().eq('list_id', params.id);
+      
+      await mutateListStyles();
+      await mutateListColors();
+      flash('All styles removed');
+    } catch (e: any) {
+      flash(e.message || 'Failed to remove all styles', 'error');
+    } finally {
+      setLoading(false);
+    }
+  }
+
   // Add new unlisted styles (for "Nye styles" list)
   async function addNewStyles() {
     setLoading(true);
@@ -463,10 +485,21 @@ export default function StockListDetailPage({ params }: { params: { id: string }
                 </Button>
               </>
             )}
-            <Button onClick={() => setAddModalOpen(true)}>
+            <Button onClick={() => setAddModalOpen(true)} disabled={loading}>
               <Plus className="h-4 w-4 mr-2" />
               Add Style
             </Button>
+            {(listStyles?.length ?? 0) > 0 && (
+              <Button 
+                variant="outline" 
+                onClick={removeAllStyles} 
+                disabled={loading}
+                className="border-red-300 text-red-600 hover:bg-red-50"
+              >
+                <Trash2 className="h-4 w-4 mr-2" />
+                Remove All Styles
+              </Button>
+            )}
           </div>
         </div>
       </div>
