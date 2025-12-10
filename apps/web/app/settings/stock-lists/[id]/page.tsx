@@ -322,9 +322,7 @@ export default function StockListDetailPage({ params }: { params: { id: string }
         }));
         await supabase
           .from('stock_list_styles')
-          .insert(styleInserts)
-          .onConflict('list_id,style_id')
-          .ignoreDuplicates();
+          .upsert(styleInserts, { onConflict: 'list_id,style_id', ignoreDuplicates: true });
       }
 
       // Copy colors to Passiv
@@ -342,9 +340,7 @@ export default function StockListDetailPage({ params }: { params: { id: string }
         }));
         await supabase
           .from('stock_list_colors')
-          .insert(colorInserts)
-          .onConflict('list_id,style_color_id')
-          .ignoreDuplicates();
+          .upsert(colorInserts, { onConflict: 'list_id,style_color_id', ignoreDuplicates: true });
       }
 
       // Clear Aktiv list
@@ -389,9 +385,7 @@ export default function StockListDetailPage({ params }: { params: { id: string }
         }));
         await supabase
           .from('stock_list_styles')
-          .insert(styleInserts)
-          .onConflict('list_id,style_id')
-          .ignoreDuplicates();
+          .upsert(styleInserts, { onConflict: 'list_id,style_id', ignoreDuplicates: true });
       }
 
       // Copy colors to Aktiv
@@ -409,9 +403,7 @@ export default function StockListDetailPage({ params }: { params: { id: string }
         }));
         await supabase
           .from('stock_list_colors')
-          .insert(colorInserts)
-          .onConflict('list_id,style_color_id')
-          .ignoreDuplicates();
+          .upsert(colorInserts, { onConflict: 'list_id,style_color_id', ignoreDuplicates: true });
       }
 
       await mutateListStyles();
