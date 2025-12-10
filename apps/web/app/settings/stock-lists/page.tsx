@@ -21,11 +21,31 @@ export default function StockListsPage() {
   const { data: lists, mutate } = useSWR('stock-lists:all', async () => {
     const { data, error } = await supabase
       .from('stock_lists')
-      .select('*')
-      .order('fixed', { ascending: false })
-      .order('name', { ascending: true });
+      .select('*');
     if (error) throw error;
-    return (data ?? []) as StockList[];
+    
+    // Custom sort order: Aktiv, Passiv, NOOS, Nye styles, Intet, then alphabetically
+    const sortOrder: Record<string, number> = {
+      'Aktiv': 1,
+      'Passiv': 2,
+      'NOOS': 3,
+      'Nye styles': 4,
+      'Intet': 5,
+    };
+    
+    const sorted = (data ?? []).sort((a, b) => {
+      const aOrder = sortOrder[a.name] ?? 999;
+      const bOrder = sortOrder[b.name] ?? 999;
+      
+      if (aOrder !== bOrder) {
+        return aOrder - bOrder;
+      }
+      
+      // For items not in sortOrder, sort alphabetically
+      return a.name.localeCompare(b.name);
+    });
+    
+    return sorted as StockList[];
   });
 
   const fixedLists = lists?.filter(l => l.fixed) ?? [];

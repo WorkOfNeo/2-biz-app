@@ -422,7 +422,7 @@ export default function StockListPage() {
   React.useEffect(() => {
     if (!activeListId) {
       // eslint-disable-next-line no-console
-      console.log('[stock-list] activeListId cleared (All)');
+      console.log('[stock-list] activeListId cleared (Alle)');
     } else {
       // eslint-disable-next-line no-console
       console.log('[stock-list] activeListId set', {
@@ -593,7 +593,7 @@ export default function StockListPage() {
       
       // Generate filename with timestamp
       const timestamp = new Date().toISOString().split('T')[0];
-      const listName = activeListId ? (stockLists?.find(l => l.id === activeListId)?.name || 'List') : 'All';
+      const listName = activeListId ? (stockLists?.find(l => l.id === activeListId)?.name || 'List') : 'Alle';
       const filename = `stock-list-${listName}-${timestamp}.xlsx`;
       
       // Download
@@ -1662,10 +1662,10 @@ export default function StockListPage() {
             {/* Stock List Tabs */}
             <Tabs value={activeListId || 'all'} onValueChange={(v) => setActiveListId(v === 'all' ? '' : v)}>
               <TabsList className="w-full justify-start">
-                <TabsTrigger value="all">All</TabsTrigger>
                 {(stockLists ?? []).map((row) => (
                   <TabsTrigger key={row.id} value={row.id}>{row.name}</TabsTrigger>
                 ))}
+                <TabsTrigger value="all">Alle</TabsTrigger>
               </TabsList>
             </Tabs>
             
