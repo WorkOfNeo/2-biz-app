@@ -54,12 +54,51 @@ begin
       where list_id = old_list_id
       on conflict (list_id, style_color_id) do nothing;
       
+      -- Add all colors for styles that don't have color entries yet
+      insert into public.stock_list_colors (list_id, style_id, style_color_id, include)
+      select 
+        aktiv_id,
+        sc.style_id,
+        sc.id as style_color_id,
+        true as include
+      from public.style_colors sc
+      inner join public.stock_list_styles sls on sls.style_id = sc.style_id
+      where sls.list_id = aktiv_id
+        and not exists (
+          select 1 from public.stock_list_colors slc 
+          where slc.list_id = aktiv_id 
+          and slc.style_color_id = sc.id
+        )
+      on conflict (list_id, style_color_id) do nothing;
+      
       -- Delete the old list (cascade will handle related records)
       delete from public.stock_lists where id = old_list_id;
       
       raise notice 'Migrated old Aktiv liste (%) to Aktiv (%)', old_list_id, aktiv_id;
     end;
   end if;
+end $$;
+
+-- Ensure all styles in all lists have their colors populated
+-- This handles cases where styles were added but colors weren't
+do $$
+begin
+  insert into public.stock_list_colors (list_id, style_id, style_color_id, include)
+  select 
+    sls.list_id,
+    sc.style_id,
+    sc.id as style_color_id,
+    true as include
+  from public.style_colors sc
+  inner join public.stock_list_styles sls on sls.style_id = sc.style_id
+  where not exists (
+    select 1 from public.stock_list_colors slc 
+    where slc.list_id = sls.list_id 
+    and slc.style_color_id = sc.id
+  )
+  on conflict (list_id, style_color_id) do nothing;
+  
+  raise notice 'Ensured all styles have colors populated';
 end $$;
 
 -- Create index on fixed column for faster queries
