@@ -69,6 +69,31 @@ export default function StockListDetailPage({ params }: { params: { id: string }
     return data as StockList;
   });
 
+  // Load all lists for the move dropdown
+  const { data: allLists } = useSWR('stock-lists:all', async () => {
+    const { data, error } = await supabase
+      .from('stock_lists')
+      .select('id, name')
+      .neq('id', params.id); // Exclude current list
+    if (error) throw error;
+    
+    // Custom sort order
+    const sortOrder: Record<string, number> = {
+      'Aktiv': 1,
+      'Passiv': 2,
+      'NOOS': 3,
+      'Nye styles': 4,
+      'Intet': 5,
+    };
+    
+    return (data ?? []).sort((a, b) => {
+      const aOrder = sortOrder[a.name] ?? 999;
+      const bOrder = sortOrder[b.name] ?? 999;
+      if (aOrder !== bOrder) return aOrder - bOrder;
+      return a.name.localeCompare(b.name);
+    });
+  });
+
   // Load styles in this list
   const { data: listStyles, mutate: mutateListStyles } = useSWR(`stock-list:${params.id}:styles`, async () => {
     const { data, error } = await supabase
@@ -315,22 +340,16 @@ export default function StockListDetailPage({ params }: { params: { id: string }
     }
   }
 
-  // Move all from Aktiv to Passiv
-  async function moveToPassiv() {
-    if (!confirm('Move all styles from Aktiv to Passiv? This will clear the Aktiv list.')) return;
+  // Move all styles to another list
+  async function moveToList(destinationListId: string) {
+    const destList = allLists?.find(l => l.id === destinationListId);
+    if (!destList) return;
+    
+    if (!confirm(`Move all ${listStyles?.length ?? 0} styles from ${list?.name} to ${destList.name}? This will clear ${list?.name}.`)) return;
     
     setLoading(true);
     try {
-      // Get Passiv list ID
-      const { data: passivList } = await supabase
-        .from('stock_lists')
-        .select('id')
-        .eq('name', 'Passiv')
-        .single();
-      
-      if (!passivList) throw new Error('Passiv list not found');
-
-      // Copy styles to Passiv
+      // Copy styles to destination
       const { data: stylesToMove } = await supabase
         .from('stock_list_styles')
         .select('style_id')
@@ -338,7 +357,7 @@ export default function StockListDetailPage({ params }: { params: { id: string }
       
       if (stylesToMove && stylesToMove.length > 0) {
         const styleInserts = stylesToMove.map(s => ({ 
-          list_id: passivList.id, 
+          list_id: destinationListId, 
           style_id: s.style_id 
         }));
         await supabase
@@ -346,7 +365,7 @@ export default function StockListDetailPage({ params }: { params: { id: string }
           .upsert(styleInserts, { onConflict: 'list_id,style_id', ignoreDuplicates: true });
       }
 
-      // Copy colors to Passiv
+      // Copy colors to destination
       const { data: colorsToMove } = await supabase
         .from('stock_list_colors')
         .select('style_id, style_color_id, include')
@@ -354,7 +373,7 @@ export default function StockListDetailPage({ params }: { params: { id: string }
       
       if (colorsToMove && colorsToMove.length > 0) {
         const colorInserts = colorsToMove.map(c => ({
-          list_id: passivList.id,
+          list_id: destinationListId,
           style_id: c.style_id,
           style_color_id: c.style_color_id,
           include: c.include
@@ -364,15 +383,15 @@ export default function StockListDetailPage({ params }: { params: { id: string }
           .upsert(colorInserts, { onConflict: 'list_id,style_color_id', ignoreDuplicates: true });
       }
 
-      // Clear Aktiv list
+      // Clear current list
       await supabase.from('stock_list_styles').delete().eq('list_id', params.id);
       await supabase.from('stock_list_colors').delete().eq('list_id', params.id);
 
       await mutateListStyles();
       await mutateListColors();
-      flash(`Moved ${stylesToMove?.length ?? 0} styles to Passiv`);
+      flash(`Moved ${stylesToMove?.length ?? 0} styles to ${destList.name}`);
     } catch (e: any) {
-      flash(e.message || 'Failed to move to Passiv', 'error');
+      flash(e.message || 'Failed to move styles', 'error');
     } finally {
       setLoading(false);
     }
@@ -474,16 +493,29 @@ export default function StockListDetailPage({ params }: { params: { id: string }
               </Button>
             )}
             {list.name === 'Aktiv' && (
-              <>
-                <Button variant="outline" onClick={moveToPassiv} disabled={loading}>
-                  <Download className="h-4 w-4 mr-2" />
-                  Flyt til Passiv
-                </Button>
-                <Button onClick={importFromNye} disabled={loading}>
-                  <Upload className="h-4 w-4 mr-2" />
-                  Indfør nye styles
-                </Button>
-              </>
+              <Button onClick={importFromNye} disabled={loading}>
+                <Upload className="h-4 w-4 mr-2" />
+                Indfør nye styles
+              </Button>
+            )}
+            {(listStyles?.length ?? 0) > 0 && allLists && allLists.length > 0 && (
+              <div className="flex items-center gap-2">
+                <select
+                  className="rounded border px-3 py-2 text-sm"
+                  onChange={(e) => {
+                    if (e.target.value) {
+                      moveToList(e.target.value);
+                      e.target.value = ''; // Reset selection
+                    }
+                  }}
+                  disabled={loading}
+                >
+                  <option value="">Flyt til...</option>
+                  {allLists.map(l => (
+                    <option key={l.id} value={l.id}>{l.name}</option>
+                  ))}
+                </select>
+              </div>
             )}
             <Button onClick={() => setAddModalOpen(true)} disabled={loading}>
               <Plus className="h-4 w-4 mr-2" />
