@@ -1655,6 +1655,52 @@ export default function StockListPage() {
         </div>
       </div>
 
+      {/* Scraping Progress Banner - Outside Modal */}
+      {scrapingMismatches && scrapeProgress && (
+        <Card className="shadow-sm border-blue-300 bg-blue-50">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <div className="text-sm font-semibold text-blue-900">
+                  🔄 Scraping mismatches in progress...
+                </div>
+                <div className="text-xs text-blue-700 mt-1">
+                  Progress: {scrapeProgress.current} / {scrapeProgress.total} styles 
+                  ({Math.round((scrapeProgress.current / scrapeProgress.total) * 100)}%)
+                </div>
+              </div>
+            </div>
+            <ProgressBar 
+              value={scrapeProgress.current} 
+              max={scrapeProgress.total} 
+              showLabel={true}
+            />
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Scraping Complete/Error Message Banner */}
+      {!scrapingMismatches && scrapeMessage && (
+        <Card className={`shadow-sm ${
+          scrapeMessage.type === 'success' ? 'border-green-300 bg-green-50' :
+          scrapeMessage.type === 'error' ? 'border-red-300 bg-red-50' :
+          'border-blue-300 bg-blue-50'
+        }`}>
+          <CardContent className="p-4">
+            <div className={`text-sm font-semibold ${
+              scrapeMessage.type === 'success' ? 'text-green-900' :
+              scrapeMessage.type === 'error' ? 'text-red-900' :
+              'text-blue-900'
+            }`}>
+              {scrapeMessage.type === 'success' ? '✓ ' : 
+               scrapeMessage.type === 'error' ? '✗ ' : 
+               'ℹ️ '}
+              {scrapeMessage.text}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Stock List Tabs and Filters in Single Row */}
       <Card className="shadow-sm">
         <CardContent className="p-3">
