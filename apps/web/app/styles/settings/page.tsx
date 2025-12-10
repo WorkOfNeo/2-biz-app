@@ -106,7 +106,6 @@ function StockListsTab({ supabase }: { supabase: any }) {
   const [query, setQuery] = ReactNS.useState<string>('');
   const seasonSelectItems = ReactNS.useMemo(() => {
     return (seasons ?? [])
-      .filter((s) => !(s as any).hidden)
       .map((s) => ({ value: String(s.id), label: seasonCodeById.get(String(s.id)) || String(s.id) }));
   }, [seasons && seasons.length, seasonCodeById && Array.from(seasonCodeById.keys()).length]);
   const filtered = ReactNS.useMemo(() => {
@@ -539,7 +538,6 @@ function ScrapingTab({ supabase }: { supabase: any }) {
   }, [styles, selectedSet.size, qRight, seasonRight, styleSeasons && (styleSeasons.labels || []).length]);
   const seasonSelectItems = ReactNS.useMemo(() => {
     return (seasons ?? [])
-      .filter((s) => !(s as any).hidden)
       .map((s) => ({ value: String(s.id), label: seasonCodeById.get(String(s.id)) || String(s.id) }));
   }, [seasons && seasons.length, seasonCodeById && Array.from(seasonCodeById.keys()).length]);
 
