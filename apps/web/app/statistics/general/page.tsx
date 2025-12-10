@@ -1,4 +1,5 @@
 'use client';
+// General Statistics Page - Season comparison and analysis
 import { useState, useEffect, useMemo, useRef, type ReactNode } from 'react';
 import useSWR from 'swr';
 import { supabase } from '../../../lib/supabaseClient';
