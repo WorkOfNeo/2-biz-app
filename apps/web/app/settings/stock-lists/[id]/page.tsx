@@ -29,8 +29,7 @@ type StyleRow = {
 
 type ColorRow = {
   id: string;
-  color_name: string | null;
-  color_code: string | null;
+  color: string;
   style_id: string;
 };
 
@@ -88,7 +87,7 @@ export default function StockListDetailPage({ params }: { params: { id: string }
   const { data: listColors, mutate: mutateListColors } = useSWR(`stock-list:${params.id}:colors`, async () => {
     const { data, error } = await supabase
       .from('stock_list_colors')
-      .select('style_color_id, style_id, include, style_colors!inner(id, color_name, color_code, style_id)')
+      .select('style_color_id, style_id, include, style_colors!inner(id, color, style_id)')
       .eq('list_id', params.id);
     if (error) throw error;
     // Transform the data to match ListColor type
@@ -527,13 +526,7 @@ export default function StockListDetailPage({ params }: { params: { id: string }
                             key={lc.style_color_id}
                             className="flex items-center gap-1 px-2 py-1 bg-gray-50 rounded text-xs border"
                           >
-                            {lc.color.color_code && (
-                              <div 
-                                className="w-3 h-3 rounded border"
-                                style={{ backgroundColor: lc.color.color_code }}
-                              />
-                            )}
-                            <span>{lc.color.color_name || 'Unknown'}</span>
+                            <span>{lc.color.color || 'Unknown'}</span>
                             <button
                               onClick={() => removeColor(lc.style_color_id)}
                               className="ml-1 hover:text-red-600"
