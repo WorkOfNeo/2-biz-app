@@ -252,10 +252,16 @@ export async function exportOverview(ctx: Ctx) {
           }
           rows.sort((a,b)=> a.company.localeCompare(b.company));
         }
+        
         const styles = StyleSheet.create({
           page: { padding: 16, fontSize: 8, color: '#0f172a' },
           h1: { fontSize: 14, marginBottom: 2, color: '#0f172a' },
           small: { fontSize: 8, color: '#64748b', marginBottom: 6, fontWeight: 700 },
+          kpiSection: { marginTop: 8, marginBottom: 10 },
+          kpiRow: { flexDirection: 'row', marginBottom: 6, gap: 6 },
+          kpiCard: { flex: 1, padding: 6, borderWidth: 0.5, borderColor: '#e2e8f0', borderRadius: 4, backgroundColor: '#ffffff' },
+          kpiLabel: { fontSize: 7, color: '#64748b', marginBottom: 2 },
+          kpiValue: { fontSize: 11, fontWeight: 700, color: '#0f172a' },
           tableHeaderGlobal: { flexDirection: 'row', backgroundColor: '#eaeaea', color: '#000000', borderBottom: 0.5, borderColor: '#bfdbfe' },
           tableHeader: { flexDirection: 'row', backgroundColor: '#1d4ed8', color: '#ffffff', borderBottom: 0.5, borderColor: '#bfdbfe' },
           headerCell: { padding: 4, fontSize: 9, fontWeight: 700 },
@@ -273,6 +279,63 @@ export async function exportOverview(ctx: Ctx) {
         });
         const Cell = (txt: string, w: string | number, align: 'left' | 'right' = 'left', extra?: any) => React.createElement(Text, { style: [{ width: w }, styles.cell, align === 'left' ? styles.left : styles.right, extra || {}] }, txt);
         const fmt = (n: number) => new Intl.NumberFormat('da-DK').format(Math.round(n));
+        
+        // Calculate KPI statistics for this salesperson
+        const totalCustomers = items.length;
+        const visitedRows = rows.filter(r => (r.s1Qty > 0 || r.s1Price > 0) && !r.nulled);
+        const customersVisited = visitedRows.length;
+        const customersToVisit = rows.filter(r => {
+          const hasS1Activity = r.s1Qty > 0 || r.s1Price > 0;
+          return !hasS1Activity && !r.nulled;
+        }).length;
+        const nulledCount = rows.filter(r => r.nulled).length;
+        
+        // Aggregate visited customers S1/S2 totals for index calculation
+        const visitedS1Qty = visitedRows.reduce((a, r) => a + r.s1Qty, 0);
+        const visitedS2Qty = visitedRows.reduce((a, r) => a + r.s2Qty, 0);
+        const visitedS1Price = visitedRows.reduce((a, r) => a + r.s1Price, 0);
+        const visitedS2Price = visitedRows.reduce((a, r) => a + r.s2Price, 0);
+        
+        // Index ratios (visited S1 vs S2)
+        const qtyIndexRatio = visitedS2Qty === 0 ? 1 : visitedS1Qty / visitedS2Qty;
+        const priceIndexRatio = visitedS2Price === 0 ? 1 : visitedS1Price / visitedS2Price;
+        const indexQty = qtyIndexRatio * 100;
+        const indexPrice = priceIndexRatio * 100;
+        
+        // Prognosis: apply current index to unvisited customers' S2 totals, add visited S1 totals
+        const unvisitedRows = rows.filter(r => {
+          const hasS1Activity = r.s1Qty > 0 || r.s1Price > 0;
+          return !hasS1Activity && !r.nulled;
+        });
+        const unvisitedS2Qty = unvisitedRows.reduce((a, r) => a + r.s2Qty, 0);
+        const unvisitedS2Price = unvisitedRows.reduce((a, r) => a + r.s2Price, 0);
+        
+        const prognosedQty = visitedS1Qty + (unvisitedS2Qty * qtyIndexRatio);
+        const prognosedPrice = visitedS1Price + (unvisitedS2Price * priceIndexRatio);
+        
+        // KPI Cards - First row: Index & Prognose statistics
+        const kpiCard = (label: string, value: string) => React.createElement(View, { style: styles.kpiCard },
+          React.createElement(Text, { style: styles.kpiLabel }, label),
+          React.createElement(Text, { style: styles.kpiValue }, value)
+        );
+        
+        const kpiSection = React.createElement(View, { style: styles.kpiSection },
+          // First row: Index QTY, Index PRICE, Prognose QTY, Prognose PRICE
+          React.createElement(View, { style: styles.kpiRow },
+            kpiCard('Index stk', indexQty.toFixed(1)),
+            kpiCard('Index oms', indexPrice.toFixed(1)),
+            kpiCard('Prognose stk', fmt(prognosedQty)),
+            kpiCard('Prognose oms', fmt(prognosedPrice))
+          ),
+          // Second row: Customer statistics
+          React.createElement(View, { style: styles.kpiRow },
+            kpiCard('Antal kunder', String(totalCustomers)),
+            kpiCard('Kunder besøgt', String(customersVisited)),
+            kpiCard('Manglende kunder', String(customersToVisit)),
+            kpiCard('Nullet kunder', String(nulledCount))
+          )
+        );
+        
         const groupHeader = React.createElement(View, { style: styles.tableHeaderGlobal },
           Cell('KUNDE', '45%', 'left', styles.headerCell),
           Cell(s1Name ?? 'S1', '20%', 'right', styles.headerCell),
@@ -391,6 +454,7 @@ export async function exportOverview(ctx: Ctx) {
         const pageEl = React.createElement(PdfPage, { size: 'A4', orientation: 'landscape', style: styles.page },
           React.createElement(Text, { style: styles.h1 }, `${sp.name}`),
           React.createElement(Text, { style: styles.small }, `${s1Name ?? 'S1'} vs ${s2Name ?? 'S2'}`),
+          kpiSection,
           groupHeader,
           header,
           ...body,
