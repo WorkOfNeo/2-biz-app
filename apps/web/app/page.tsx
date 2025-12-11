@@ -5,7 +5,7 @@ import useSWR from 'swr';
 import Link from 'next/link';
 import { supabase } from '../lib/supabaseClient';
 
-// Reuse Donut component from overview (smaller for dense layout)
+// Reuse Donut component from overvieww (smaller for dense layout)
 function Donut({ pct }: { pct: number }) {
   const p = Math.max(0, Math.min(100, Math.round(pct)));
   const isGreen = p === 100;
