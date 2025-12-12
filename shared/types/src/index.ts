@@ -135,6 +135,7 @@ export interface CustomerDiff {
   updated: UpdatedCustomerDiff[];
   unchanged: UnchangedCustomerSummary[];
   orphaned: CustomerRow[];
+  noAccount: ScrapedCustomerData[]; // Customers scraped but missing account number
 }
 
 export interface CustomerScrapePreviewRow {

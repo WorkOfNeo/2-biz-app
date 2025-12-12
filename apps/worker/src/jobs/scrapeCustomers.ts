@@ -84,7 +84,8 @@ export async function scrapeCustomers(ctx: Ctx) {
       new_count: diff.new.length,
       updated_count: diff.updated.length,
       unchanged_count: diff.unchanged.length,
-      orphaned_count: diff.orphaned.length
+      orphaned_count: diff.orphaned.length,
+      no_account_count: diff.noAccount.length
     });
     
     // Step 4: Store preview
@@ -112,7 +113,8 @@ export async function scrapeCustomers(ctx: Ctx) {
       new: diff.new.length,
       updated: diff.updated.length,
       unchanged: diff.unchanged.length,
-      orphaned: diff.orphaned.length
+      orphaned: diff.orphaned.length,
+      noAccount: diff.noAccount.length
     };
     
     await log(job.id, 'info', 'STEP:saving_result', resultData);
@@ -153,9 +155,14 @@ async function calculateCustomerDiff(
   const newCustomers: ScrapedCustomerData[] = [];
   const updatedCustomers: any[] = [];
   const unchangedCustomers: any[] = [];
+  const noAccountCustomers: ScrapedCustomerData[] = [];
   
   for (const r of scrapedRows) {
-    if (!r.account) continue;
+    // Track customers without account numbers separately
+    if (!r.account || !r.account.trim()) {
+      noAccountCustomers.push(r);
+      continue;
+    }
     scrapedCustomerIds.add(r.account);
     
     const existing = existingByCustomerId.get(r.account);
@@ -221,7 +228,8 @@ async function calculateCustomerDiff(
     new: newCustomers,
     updated: updatedCustomers,
     unchanged: unchangedCustomers,
-    orphaned: orphanedCustomers
+    orphaned: orphanedCustomers,
+    noAccount: noAccountCustomers
   };
 }
 

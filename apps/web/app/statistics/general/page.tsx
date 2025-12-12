@@ -534,25 +534,65 @@ export default function StatisticsGeneralPage() {
       alert('No account number available');
       return;
     }
-    if (!confirm(`Create customer "${customer_name}" (${account_no}) in the customers database?`)) {
+    
+    // Check if customer exists
+    const existingCustomer = (allCustomers ?? []).find(c => c.customer_id === account_no);
+    const isUpdate = !!existingCustomer;
+    const hasMismatch = existingCustomer && existingCustomer.salesperson_id !== salesperson_id;
+    
+    let confirmMessage = '';
+    if (isUpdate && hasMismatch) {
+      const currentSp = existingCustomer.salesperson_id ? (spNameById[existingCustomer.salesperson_id] || 'Unknown') : 'None';
+      const newSp = salesperson_id ? (spNameById[salesperson_id] || 'Unknown') : 'None';
+      confirmMessage = `Update customer "${customer_name}" (${account_no})?\n\nCurrent salesperson: ${currentSp}\nNew salesperson: ${newSp}`;
+    } else {
+      confirmMessage = `Create customer "${customer_name}" (${account_no}) in the customers database?\n\nSalesperson: ${salesperson_id ? (spNameById[salesperson_id] || 'Unknown') : 'None'}`;
+    }
+    
+    if (!confirm(confirmMessage)) {
       return;
     }
+    
     try {
-      const { error } = await supabase.from('customers').insert({
-        customer_id: account_no,
-        company: customer_name || account_no,
-        city: city || null,
-        salesperson_id: salesperson_id || null,
-        country: null, // Will need to be set manually later
-      });
-      if (error) throw error;
-      alert(`✓ Customer created successfully!\n\nAccount: ${account_no}\nName: ${customer_name}\nSalesperson: ${salesperson_id || 'None'}`);
-      // Refresh customers list
+      if (isUpdate) {
+        // Update existing customer with correct salesperson_id
+        const { error } = await supabase
+          .from('customers')
+          .update({
+            salesperson_id: salesperson_id || null,
+            // Also update name and city if they're missing
+            company: existingCustomer.company || customer_name || account_no,
+            city: existingCustomer.city || city || null,
+          })
+          .eq('customer_id', account_no);
+        if (error) throw error;
+        alert(`✓ Customer updated successfully!\n\nAccount: ${account_no}\nSalesperson: ${salesperson_id ? (spNameById[salesperson_id] || 'Unknown') : 'None'}`);
+      } else {
+        // Insert new customer
+        const { error } = await supabase.from('customers').insert({
+          customer_id: account_no,
+          company: customer_name || account_no,
+          city: city || null,
+          salesperson_id: salesperson_id || null,
+          country: null, // Will need to be set manually later
+        });
+        if (error) throw error;
+        alert(`✓ Customer created successfully!\n\nAccount: ${account_no}\nName: ${customer_name}\nSalesperson: ${salesperson_id ? (spNameById[salesperson_id] || 'Unknown') : 'None'}`);
+      }
+      
+      // Refresh customers list and rows
+      await Promise.all([
+        mutateGeneralRows(),
+        // Refresh allCustomers SWR cache
+        ...(typeof window !== 'undefined' ? [] : [])
+      ]);
+      
+      // Force a page refresh to update the UI
       if (typeof window !== 'undefined') {
         window.location.reload();
       }
     } catch (err: any) {
-      alert(`Failed to create customer: ${err.message}`);
+      alert(`Failed to ${isUpdate ? 'update' : 'create'} customer: ${err.message}`);
       console.error('[general] fixMissingCustomer error', err);
     }
   }
@@ -1210,14 +1250,24 @@ export default function StatisticsGeneralPage() {
                             <div className="flex items-center gap-1.5">
                               {row.customer}
                               {!row.isGroupTotal && (() => {
-                                const customerExists = (allCustomers ?? []).some(c => c.customer_id === row.account_no);
+                                const existingCustomer = (allCustomers ?? []).find(c => c.customer_id === row.account_no);
+                                const customerExists = !!existingCustomer;
+                                const salespersonMismatch = customerExists && existingCustomer.salesperson_id !== row.salespersonId;
+                                // Only show fix button if salesperson exists in salespersons table
+                                const salespersonExists = row.salespersonId ? (salespersons ?? []).some(sp => sp.id === row.salespersonId) : false;
+                                const needsFix = (!customerExists || salespersonMismatch) && row.account_no && row.salespersonId && salespersonExists;
+                                
                                 return (
                                   <>
-                                    {!customerExists && row.account_no && (
+                                    {needsFix && (
                                       <button
                                         onClick={() => fixMissingCustomer(row.account_no, row.customer, row.city, row.salespersonId)}
                                         className="px-2 py-0.5 text-xs bg-orange-500 text-white rounded hover:bg-orange-600"
-                                        title="This customer doesn't exist in the customers table. Click to create."
+                                        title={
+                                          !customerExists 
+                                            ? `This customer doesn't exist in the customers table. Click to create and attach salesperson: ${spNameById[row.salespersonId] || 'Unknown'}`
+                                            : `Customer exists but salesperson mismatch. Current: ${existingCustomer.salesperson_id ? (spNameById[existingCustomer.salesperson_id] || 'Unknown') : 'None'}, Expected: ${spNameById[row.salespersonId] || 'Unknown'}. Click to fix.`
+                                        }
                                       >
                                         Fix
                                       </button>

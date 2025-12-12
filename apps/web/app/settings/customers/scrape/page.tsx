@@ -321,6 +321,7 @@ export default function CustomerScrapePage() {
   };
 
   const hasChanges = diff && (diff.new.length > 0 || diff.updated.length > 0);
+  const hasNoAccount = diff && diff.noAccount && diff.noAccount.length > 0;
 
   return (
     <div className="space-y-6 p-6">
@@ -426,7 +427,7 @@ export default function CustomerScrapePage() {
                 <CardTitle>Summary</CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-sm">
                   <div className="p-3 bg-green-50 border border-green-200 rounded">
                     <div className="text-xs text-green-700 font-medium">New</div>
                     <div className="text-2xl font-bold text-green-900">{diff.new.length}</div>
@@ -442,6 +443,10 @@ export default function CustomerScrapePage() {
                   <div className="p-3 bg-red-50 border border-red-200 rounded">
                     <div className="text-xs text-red-700 font-medium">Orphaned</div>
                     <div className="text-2xl font-bold text-red-900">{diff.orphaned.length}</div>
+                  </div>
+                  <div className="p-3 bg-yellow-50 border border-yellow-200 rounded">
+                    <div className="text-xs text-yellow-700 font-medium">No Account</div>
+                    <div className="text-2xl font-bold text-yellow-900">{diff.noAccount?.length || 0}</div>
                   </div>
                 </div>
               </CardContent>
@@ -584,6 +589,53 @@ export default function CustomerScrapePage() {
                           <td className="p-2 border-b">{customer.company || '-'}</td>
                           <td className="p-2 border-b">{customer.city || '-'}</td>
                           <td className="p-2 border-b">{customer.country || '-'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Customers Without Account Numbers */}
+          {!preview.applied_at && hasNoAccount && (
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <CardTitle>Customers Without Account Numbers</CardTitle>
+                    <Badge className="bg-yellow-100 text-yellow-800 border-yellow-300">
+                      {diff.noAccount?.length || 0} missing account
+                    </Badge>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="text-xs text-gray-600 mb-3">
+                  These customers were scraped from SPY but are missing account numbers. This may indicate a data issue in SPY.
+                </div>
+                <div className="overflow-auto">
+                  <table className="min-w-full text-sm">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="text-left p-2 border-b">Company</th>
+                        <th className="text-left p-2 border-b">City</th>
+                        <th className="text-left p-2 border-b">Country</th>
+                        <th className="text-left p-2 border-b">Salesperson</th>
+                        <th className="text-left p-2 border-b">Phone</th>
+                        <th className="text-left p-2 border-b">SPY ID</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(diff.noAccount || []).map((customer, idx) => (
+                        <tr key={idx} className="hover:bg-gray-50">
+                          <td className="p-2 border-b">{customer.company || '-'}</td>
+                          <td className="p-2 border-b">{customer.city || '-'}</td>
+                          <td className="p-2 border-b">{customer.country || '-'}</td>
+                          <td className="p-2 border-b">{customer.sales_person || '-'}</td>
+                          <td className="p-2 border-b">{customer.phone || '-'}</td>
+                          <td className="p-2 border-b font-mono text-xs">{customer.spy_id || '-'}</td>
                         </tr>
                       ))}
                     </tbody>
