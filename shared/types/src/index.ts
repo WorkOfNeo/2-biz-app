@@ -76,6 +76,7 @@ export interface CustomerRow {
   excluded: boolean;
   nulled: boolean;
   permanently_closed: boolean;
+  inactive: boolean;
   created_at: string;
   updated_at: string;
 }

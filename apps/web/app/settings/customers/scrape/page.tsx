@@ -280,7 +280,7 @@ export default function CustomerScrapePage() {
         method: 'DELETE'
       });
       
-      if (!res.ok) throw new Error('Failed to delete customer');
+      if (!res.ok) throw new Error('Failed to mark customer as inactive');
       
       // Refresh preview
       const refreshRes = await fetch(`/api/customers/preview?id=${previewId}`);
@@ -290,7 +290,7 @@ export default function CustomerScrapePage() {
       setDeleteModalOpen(false);
       setDeleteTarget(null);
     } catch (e: any) {
-      alert(e?.message || 'Failed to delete');
+      alert(e?.message || 'Failed to mark as inactive');
     } finally {
       setDeleting(false);
     }
@@ -305,7 +305,7 @@ export default function CustomerScrapePage() {
         method: 'DELETE'
       });
       
-      if (!res.ok) throw new Error('Failed to delete customers');
+      if (!res.ok) throw new Error('Failed to mark customers as inactive');
       
       // Refresh preview
       const refreshRes = await fetch(`/api/customers/preview?id=${previewId}`);
@@ -314,7 +314,7 @@ export default function CustomerScrapePage() {
       
       setDeleteAllModalOpen(false);
     } catch (e: any) {
-      alert(e?.message || 'Failed to delete');
+      alert(e?.message || 'Failed to mark as inactive');
     } finally {
       setDeleting(false);
     }
@@ -661,13 +661,13 @@ export default function CustomerScrapePage() {
                     size="sm"
                     onClick={() => setDeleteAllModalOpen(true)}
                   >
-                    Delete All
+                    Mark All Inactive
                   </Button>
                 </div>
               </CardHeader>
               <CardContent>
                 <div className="text-xs text-gray-600 mb-3">
-                  These customers exist in your database but were not found in SPY.
+                  These customers exist in your database but were not found in SPY. They will be marked as inactive instead of deleted, so they can be reactivated if they reappear in SPY.
                 </div>
                 <div className="overflow-auto">
                   <table className="min-w-full text-sm">
@@ -689,13 +689,13 @@ export default function CustomerScrapePage() {
                           <td className="p-2 border-b">{customer.country || '-'}</td>
                           <td className="p-2 border-b">
                             <button
-                              className="text-red-600 hover:underline text-xs"
+                              className="text-orange-600 hover:underline text-xs"
                               onClick={() => {
                                 setDeleteTarget({ id: customer.id, company: customer.company || customer.customer_id });
                                 setDeleteModalOpen(true);
                               }}
                             >
-                              Delete
+                              Mark Inactive
                             </button>
                           </td>
                         </tr>
@@ -711,7 +711,7 @@ export default function CustomerScrapePage() {
           <Modal
             open={deleteModalOpen}
             onClose={() => setDeleteModalOpen(false)}
-            title="Delete Customer"
+            title="Mark Customer as Inactive"
             footer={(
               <>
                 <button
@@ -722,18 +722,18 @@ export default function CustomerScrapePage() {
                   Cancel
                 </button>
                 <button
-                  className="px-3 py-1.5 text-sm bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50"
+                  className="px-3 py-1.5 text-sm bg-orange-600 text-white rounded hover:bg-orange-700 disabled:opacity-50"
                   onClick={() => deleteTarget && handleDeleteCustomer(deleteTarget.id)}
                   disabled={deleting}
                 >
-                  {deleting ? 'Deleting...' : 'Delete'}
+                  {deleting ? 'Marking...' : 'Mark Inactive'}
                 </button>
               </>
             )}
           >
             <div className="text-sm">
-              Are you sure you want to delete <strong>{deleteTarget?.company}</strong>?
-              This action cannot be undone.
+              Are you sure you want to mark <strong>{deleteTarget?.company}</strong> as inactive?
+              The customer will be preserved in the database and can be reactivated if they reappear in SPY.
             </div>
           </Modal>
 
@@ -741,7 +741,7 @@ export default function CustomerScrapePage() {
           <Modal
             open={deleteAllModalOpen}
             onClose={() => setDeleteAllModalOpen(false)}
-            title="Delete All Orphaned Customers"
+            title="Mark All Orphaned Customers as Inactive"
             footer={(
               <>
                 <button
@@ -752,18 +752,18 @@ export default function CustomerScrapePage() {
                   Cancel
                 </button>
                 <button
-                  className="px-3 py-1.5 text-sm bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50"
+                  className="px-3 py-1.5 text-sm bg-orange-600 text-white rounded hover:bg-orange-700 disabled:opacity-50"
                   onClick={handleDeleteAllOrphaned}
                   disabled={deleting}
                 >
-                  {deleting ? 'Deleting...' : `Delete All ${diff.orphaned.length}`}
+                  {deleting ? 'Marking...' : `Mark All ${diff.orphaned.length} Inactive`}
                 </button>
               </>
             )}
           >
             <div className="text-sm">
-              Are you sure you want to delete all <strong>{diff.orphaned.length}</strong> orphaned customers?
-              This action cannot be undone.
+              Are you sure you want to mark all <strong>{diff.orphaned.length}</strong> orphaned customers as inactive?
+              The customers will be preserved in the database and can be reactivated if they reappear in SPY.
             </div>
           </Modal>
         </>

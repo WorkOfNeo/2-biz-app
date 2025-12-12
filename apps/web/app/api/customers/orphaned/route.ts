@@ -35,27 +35,27 @@ export async function DELETE(req: Request) {
       if (orphanedIds.length > 0) {
         const { error } = await supabase
           .from('customers')
-          .delete()
+          .update({ inactive: true })
           .in('id', orphanedIds);
         
         if (error) {
-          return NextResponse.json({ error: 'Failed to delete customers' }, { status: 500 });
+          return NextResponse.json({ error: 'Failed to mark customers as inactive' }, { status: 500 });
         }
       }
       
-      return NextResponse.json({ deleted: orphanedIds.length });
+      return NextResponse.json({ marked_inactive: orphanedIds.length });
     } else if (customerId) {
-      // Delete single customer
+      // Mark single customer as inactive
       const { error } = await supabase
         .from('customers')
-        .delete()
+        .update({ inactive: true })
         .eq('id', customerId);
       
       if (error) {
-        return NextResponse.json({ error: 'Failed to delete customer' }, { status: 500 });
+        return NextResponse.json({ error: 'Failed to mark customer as inactive' }, { status: 500 });
       }
       
-      return NextResponse.json({ deleted: 1 });
+      return NextResponse.json({ marked_inactive: 1 });
     }
     
     return NextResponse.json({ error: 'Invalid request' }, { status: 400 });

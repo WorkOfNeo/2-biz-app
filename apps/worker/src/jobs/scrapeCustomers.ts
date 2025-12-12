@@ -289,7 +289,8 @@ export async function applyCustomerScrapePreview(ctx: Omit<Ctx, 'page' | 'findFi
         priority: r.priority,
         orders_link: r.orders_link,
         spy_id: r.spy_id,
-        salesperson_id
+        salesperson_id,
+        inactive: false // New customers are always active
       });
     }
     
@@ -314,8 +315,19 @@ export async function applyCustomerScrapePreview(ctx: Omit<Ctx, 'page' | 'findFi
         priority: scrapedRow.priority,
         orders_link: scrapedRow.orders_link,
         spy_id: scrapedRow.spy_id,
-        salesperson_id
+        salesperson_id,
+        inactive: false // Reactivate if customer reappears in SPY
       }).eq('id', updated.id);
+    }
+    
+    // Mark orphaned customers as inactive (instead of deleting)
+    if (diffData.orphaned.length > 0) {
+      const orphanedIds = diffData.orphaned.map(c => c.id);
+      await supabase
+        .from('customers')
+        .update({ inactive: true })
+        .in('id', orphanedIds);
+      await log(job.id, 'info', 'STEP:orphaned_marked_inactive', { count: orphanedIds.length });
     }
     
     // Mark preview as applied
@@ -328,7 +340,8 @@ export async function applyCustomerScrapePreview(ctx: Omit<Ctx, 'page' | 'findFi
     await saveResult(job.id, 'apply_customer_preview', {
       preview_id: previewId,
       new_applied: diffData.new.length,
-      updated_applied: diffData.updated.length
+      updated_applied: diffData.updated.length,
+      orphaned_marked_inactive: diffData.orphaned.length
     });
     
     await setJobSucceeded(job.id);
