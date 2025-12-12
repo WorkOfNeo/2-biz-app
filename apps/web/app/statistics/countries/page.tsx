@@ -258,8 +258,9 @@ export default function CountriesPage() {
     for (const c of (customers ?? [])) { customerCountryById.set(c.customer_id, c.country ?? null); }
     
     // Track original amounts and converted DKK amounts per currency
-    const s1Agg: Record<string, { original: number; dkk: number }> = { EUR: { original: 0, dkk: 0 }, NOK: { original: 0, dkk: 0 }, SEK: { original: 0, dkk: 0 } };
-    const s2Agg: Record<string, { original: number; dkk: number }> = { EUR: { original: 0, dkk: 0 }, NOK: { original: 0, dkk: 0 }, SEK: { original: 0, dkk: 0 } };
+    type CurrencyKey = 'EUR' | 'NOK' | 'SEK';
+    const s1Agg: Record<CurrencyKey, { original: number; dkk: number }> = { EUR: { original: 0, dkk: 0 }, NOK: { original: 0, dkk: 0 }, SEK: { original: 0, dkk: 0 } };
+    const s2Agg: Record<CurrencyKey, { original: number; dkk: number }> = { EUR: { original: 0, dkk: 0 }, NOK: { original: 0, dkk: 0 }, SEK: { original: 0, dkk: 0 } };
     
     for (const r of (stats ?? []) as any[]) {
       const acc = String(r.account_no || '');
@@ -269,7 +270,7 @@ export default function CountriesPage() {
       }
       const cur = (String(r.currency || 'DKK').toUpperCase());
       if (cur !== 'EUR' && cur !== 'NOK' && cur !== 'SEK') continue;
-      const currency = cur as 'EUR' | 'NOK' | 'SEK';
+      const currency = cur as CurrencyKey;
       const price = Number(r.price || 0);
       if (price <= 0) continue;
       const isNullS1 = acc ? (seasonalNulled.has(acc) || closedCustomers?.setClosed.has(acc) || closedCustomers?.setNulled.has(acc)) : false;
@@ -291,7 +292,7 @@ export default function CountriesPage() {
       if (closedCustomers?.setExcluded.has(acc)) continue;
       const cur = (String(inv.currency || 'DKK').toUpperCase());
       if (cur !== 'EUR' && cur !== 'NOK' && cur !== 'SEK') continue;
-      const currency = cur as 'EUR' | 'NOK' | 'SEK';
+      const currency = cur as CurrencyKey;
       const amount = Number(inv.amount || 0);
       if (amount <= 0) continue;
       const isNullS1 = seasonalHidden.has(acc) || closedCustomers?.setClosed.has(acc) || closedCustomers?.setNulled.has(acc);

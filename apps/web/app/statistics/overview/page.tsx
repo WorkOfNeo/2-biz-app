@@ -396,15 +396,16 @@ export default function OverviewPage() {
     const baseRates = { DKK: 1, ...(currencyRatesRow ?? {}) } as Record<string, number>;
     
     // Track original amounts and converted DKK amounts per currency
-    const s1Agg: Record<string, { original: number; dkk: number }> = { EUR: { original: 0, dkk: 0 }, NOK: { original: 0, dkk: 0 }, SEK: { original: 0, dkk: 0 } };
-    const s2Agg: Record<string, { original: number; dkk: number }> = { EUR: { original: 0, dkk: 0 }, NOK: { original: 0, dkk: 0 }, SEK: { original: 0, dkk: 0 } };
+    type CurrencyKey = 'EUR' | 'NOK' | 'SEK';
+    const s1Agg: Record<CurrencyKey, { original: number; dkk: number }> = { EUR: { original: 0, dkk: 0 }, NOK: { original: 0, dkk: 0 }, SEK: { original: 0, dkk: 0 } };
+    const s2Agg: Record<CurrencyKey, { original: number; dkk: number }> = { EUR: { original: 0, dkk: 0 }, NOK: { original: 0, dkk: 0 }, SEK: { original: 0, dkk: 0 } };
     
     for (const r of (stats ?? []) as StatsRow[]) {
       const acc = r.account_no ?? '';
       if (!acc || !targetAccounts.has(acc)) continue;
       const cur = (r.salesperson_id ? (spCurrencyById[r.salesperson_id] ?? 'DKK') : 'DKK').toUpperCase();
       if (cur !== 'EUR' && cur !== 'NOK' && cur !== 'SEK') continue;
-      const currency = cur as 'EUR' | 'NOK' | 'SEK';
+      const currency = cur as CurrencyKey;
       const price = Number(r.price || 0);
       if (r.season_id === s1) {
         const isNullS1 = isNulled(acc);
@@ -429,7 +430,7 @@ export default function OverviewPage() {
       const spId = c?.salesperson_id ?? null;
       const cur = (spId ? (spCurrencyById[spId] ?? 'DKK') : 'DKK').toUpperCase();
       if (cur !== 'EUR' && cur !== 'NOK' && cur !== 'SEK') continue;
-      const currency = cur as 'EUR' | 'NOK' | 'SEK';
+      const currency = cur as CurrencyKey;
       const amount = Number(inv.amount || 0);
       if (inv.season_id === s1) {
         const isNullS1 = isNulled(acc);
