@@ -285,22 +285,22 @@ export async function exportOverview(ctx: Ctx) {
         HCell('', '7%', 'center'),
         HCell(s1Label, '18%', 'center'),
         HCell(s2Label, '18%', 'center'),
-        HCell('Need to meet', '17%', 'center')
+        HCell('Mangler', '17%', 'center')
       );
       
       const headerRow2 = React.createElement(View, { style: styles.header },
-        HCell('Salesman', '14%', 'left'),
-        HCell('Nulled', '5%', 'center'),
-        HCell('Visited', '7%', 'center'),
+        HCell('Sælger/Agent', '14%', 'left'),
+        HCell('Nullet', '5%', 'center'),
+        HCell('Besøgt', '7%', 'center'),
         HCell('Total', '7%', 'center'),
-        HCell('Not vis.', '7%', 'center'),
-        HCell('Prog.', '7%', 'center'),
-        HCell('Qty', '9%', 'right'),
-        HCell('Price', '9%', 'right'),
-        HCell('Qty', '9%', 'right'),
-        HCell('Price', '9%', 'right'),
-        HCell('Qty', '9%', 'right'),
-        HCell('Price', '8%', 'right')
+        HCell('Ikke besøgt', '7%', 'center'),
+        HCell('Fremskridt', '7%', 'center'),
+        HCell('Stk', '9%', 'right'),
+        HCell('Oms', '9%', 'right'),
+        HCell('Stk', '9%', 'right'),
+        HCell('Oms', '9%', 'right'),
+        HCell('Stk', '9%', 'right'),
+        HCell('Oms', '8%', 'right')
       );
       
       const body = list.map((sp, idx) => {
@@ -314,13 +314,12 @@ export async function exportOverview(ctx: Ctx) {
         
         const diffQty = a.s1Qty - a.s2Qty;
         const diffPrice = a.s1Price - a.s2Price;
-        const needQty = a.s1Qty >= a.s2Qty ? 0 : (a.s2Qty - a.s1Qty);
-        const needPrice = a.s1Price >= a.s2Price ? 0 : (a.s2Price - a.s1Price);
-        const needQtyPct = a.s2Qty === 0 ? 0 : Math.max(0, (needQty / a.s2Qty) * 100);
-        const needPricePct = a.s2Price === 0 ? 0 : Math.max(0, (needPrice / a.s2Price) * 100);
+        // Calculate the actual difference percentage (positive if above, negative if below)
+        const diffQtyPct = a.s2Qty === 0 ? 0 : ((a.s1Qty - a.s2Qty) / a.s2Qty) * 100;
+        const diffPricePct = a.s2Price === 0 ? 0 : ((a.s1Price - a.s2Price) / a.s2Price) * 100;
         
-        const qtyColor = diffQty > 0 ? styles.green : diffQty < 0 ? styles.red : undefined;
-        const priceColor = diffPrice > 0 ? styles.green : diffPrice < 0 ? styles.red : undefined;
+        const qtyColor = diffQtyPct > 0 ? styles.green : diffQtyPct < 0 ? styles.red : undefined;
+        const priceColor = diffPricePct > 0 ? styles.green : diffPricePct < 0 ? styles.red : undefined;
         
         return React.createElement(View, { style: idx % 2 === 1 ? [styles.row, styles.rowAlt] : styles.row },
           Cell(sp.name, '14%', 'left'),
@@ -333,8 +332,8 @@ export async function exportOverview(ctx: Ctx) {
           Cell(fmt(a.s1Price), '9%', 'right'),
           Cell(String(a.s2Qty), '9%', 'right'),
           Cell(fmt(a.s2Price), '9%', 'right'),
-          Cell((needQtyPct > 0 ? '+' : '') + needQtyPct.toFixed(0) + '%', '9%', 'right', qtyColor),
-          Cell((needPricePct > 0 ? '+' : '') + needPricePct.toFixed(0) + '%', '8%', 'right', priceColor)
+          Cell((diffQtyPct >= 0 ? '+' : '') + diffQtyPct.toFixed(2) + '%', '9%', 'right', qtyColor),
+          Cell((diffPricePct >= 0 ? '+' : '') + diffPricePct.toFixed(2) + '%', '8%', 'right', priceColor)
         );
       });
       
@@ -351,17 +350,17 @@ export async function exportOverview(ctx: Ctx) {
         HCell('', '20%', 'left'),
         HCell(s1Label, '24%', 'center'),
         HCell(s2Label, '24%', 'center'),
-        HCell('Progress vs last year', '32%', 'center')
+        HCell('Andel ift. sidste år', '32%', 'center')
       );
       
       const totalsHeaderRow2 = React.createElement(View, { style: styles.header },
         HCell('', '20%', 'left'),
-        HCell('Qty', '12%', 'right'),
-        HCell('Price (DKK)', '12%', 'right'),
-        HCell('Qty', '12%', 'right'),
-        HCell('Price (DKK)', '12%', 'right'),
-        HCell('Qty %', '16%', 'right'),
-        HCell('Price %', '16%', 'right')
+        HCell('Stk', '12%', 'right'),
+        HCell('Oms (DKK)', '12%', 'right'),
+        HCell('Stk', '12%', 'right'),
+        HCell('Oms (DKK)', '12%', 'right'),
+        HCell('Stk %', '16%', 'right'),
+        HCell('Oms %', '16%', 'right')
       );
       
       const totalRow = React.createElement(View, { style: styles.row },
@@ -387,13 +386,13 @@ export async function exportOverview(ctx: Ctx) {
       // Index cards
       const cardSection = React.createElement(View, { style: styles.cardSection },
         React.createElement(View, { style: styles.card },
-          React.createElement(Text, { style: styles.cardLabel }, 'Index qty'),
+          React.createElement(Text, { style: styles.cardLabel }, 'Index stk'),
           React.createElement(Text, { style: styles.cardValue }, indexQty.toFixed(1)),
           React.createElement(Text, { style: { ...styles.cardLabel, marginTop: 2 } }, `${fmt(visitedS1Qty)} vs ${fmt(visitedS2Qty)}`),
           React.createElement(Text, { style: { fontSize: 5, color: '#94a3b8' } }, 'Ud fra besøgte kunder')
         ),
         React.createElement(View, { style: styles.card },
-          React.createElement(Text, { style: styles.cardLabel }, 'Index price'),
+          React.createElement(Text, { style: styles.cardLabel }, 'Index oms'),
           React.createElement(Text, { style: styles.cardValue }, indexPrice.toFixed(1)),
           React.createElement(Text, { style: { ...styles.cardLabel, marginTop: 2 } }, `${fmt(visitedS1Price)} vs ${fmt(visitedS2Price)}`),
           React.createElement(Text, { style: { fontSize: 5, color: '#94a3b8' } }, 'Ud fra besøgte kunder')
