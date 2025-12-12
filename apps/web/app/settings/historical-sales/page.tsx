@@ -113,15 +113,28 @@ export default function HistoricalSalesPage() {
         quantity: Number(r[mapping['quantity'] || ''] ?? 0)
       }));
 
+      console.log('[Historical Sales Upload] Starting upload:', {
+        totalRows: mapped.length,
+        sampleRow: mapped[0]
+      });
+
       // Upload in batches
       const batchSize = 500;
       let successTotal = 0;
       let errorTotal = 0;
+      let warningTotal = 0;
       const allErrors: string[] = [];
+      const allWarnings: string[] = [];
 
       for (let i = 0; i < mapped.length; i += batchSize) {
         const batch = mapped.slice(i, i + batchSize);
         
+        console.log(`[Historical Sales Upload] Batch ${Math.floor(i / batchSize) + 1}:`, {
+          batchSize: batch.length,
+          rangeStart: i,
+          rangeEnd: i + batch.length
+        });
+
         const response = await fetch('/api/historical-sales/upload', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -130,30 +143,59 @@ export default function HistoricalSalesPage() {
 
         const result = await response.json();
         
+        console.log(`[Historical Sales Upload] Batch ${Math.floor(i / batchSize) + 1} response:`, {
+          status: response.status,
+          ok: response.ok,
+          result
+        });
+        
         if (response.ok) {
           successTotal += result.successCount || 0;
           errorTotal += result.errorCount || 0;
+          warningTotal += result.warningCount || 0;
           if (result.errors && Array.isArray(result.errors)) {
             allErrors.push(...result.errors);
           }
+          if (result.warnings && Array.isArray(result.warnings)) {
+            allWarnings.push(...result.warnings);
+          }
         } else {
           errorTotal += batch.length;
-          allErrors.push(result.error || 'Unknown error');
+          const errorMsg = result.error || 'Unknown error';
+          allErrors.push(errorMsg);
+          console.error('[Historical Sales Upload] Batch failed:', errorMsg, result);
         }
 
         setProcessed(Math.min(i + batchSize, mapped.length));
       }
 
+      console.log('[Historical Sales Upload] Complete:', {
+        successTotal,
+        errorTotal,
+        warningTotal,
+        errorsCount: allErrors.length,
+        warningsCount: allWarnings.length
+      });
+
       let message = `Upload complete: ${successTotal} records inserted/updated`;
       if (errorTotal > 0) {
         message += `, ${errorTotal} errors`;
       }
+      if (warningTotal > 0) {
+        message += `, ${warningTotal} warnings`;
+      }
       if (allErrors.length > 0) {
         message += `\n\nFirst errors:\n${allErrors.slice(0, 10).join('\n')}`;
+      }
+      if (allWarnings.length > 0 && allWarnings.length <= 10) {
+        message += `\n\nWarnings:\n${allWarnings.join('\n')}`;
+      } else if (allWarnings.length > 0) {
+        message += `\n\nFirst warnings:\n${allWarnings.slice(0, 5).join('\n')}`;
       }
       
       setSubmitResult(message);
     } catch (err: any) {
+      console.error('[Historical Sales Upload] Exception:', err);
       setSubmitResult(`Error: ${err.message}`);
     } finally {
       setSubmitting(false);

@@ -86,8 +86,11 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'rows array is required' }, { status: 400 });
     }
 
+    console.log('[Historical Sales Upload API] Processing', rows.length, 'rows');
+
     // Validate and process rows
     const errors: string[] = [];
+    const warnings: string[] = [];
     const processedRows: ProcessedRow[] = [];
     
     // Fetch all unique style_nos to get style_ids
@@ -98,8 +101,11 @@ export async function POST(req: Request) {
       .in('style_no', uniqueStyleNos);
     
     if (stylesError) {
+      console.error('[Historical Sales Upload API] Styles query failed:', stylesError);
       return NextResponse.json({ error: stylesError.message }, { status: 500 });
     }
+    
+    console.log('[Historical Sales Upload API] Found', styles?.length || 0, 'styles for', uniqueStyleNos.length, 'unique style_nos');
     
     const styleMap = new Map<string, string>();
     (styles || []).forEach((s: any) => {
@@ -114,14 +120,22 @@ export async function POST(req: Request) {
       .in('style_id', styleIds);
     
     if (colorsError) {
+      console.error('[Historical Sales Upload API] Colors query failed:', colorsError);
       return NextResponse.json({ error: colorsError.message }, { status: 500 });
     }
     
+    console.log('[Historical Sales Upload API] Found', styleColors?.length || 0, 'colors');
+    
     // Build a map of valid style_id + color combinations (case-insensitive)
     const validStyleColorMap = new Map<string, boolean>();
+    const styleColorsByStyleId = new Map<string, string[]>();
     (styleColors || []).forEach((sc: any) => {
       const key = `${sc.style_id}|${String(sc.color || '').trim().toLowerCase()}`;
       validStyleColorMap.set(key, true);
+      if (!styleColorsByStyleId.has(sc.style_id)) {
+        styleColorsByStyleId.set(sc.style_id, []);
+      }
+      styleColorsByStyleId.get(sc.style_id)!.push(sc.color);
     });
     
     // Process each row
@@ -141,11 +155,12 @@ export async function POST(req: Request) {
           continue;
         }
         
-        // Validate that the color exists for this style
+        // Validate that the color exists for this style (warning only, not blocking)
         const colorKey = `${styleId}|${String(row.color || '').trim().toLowerCase()}`;
         if (!validStyleColorMap.has(colorKey)) {
-          errors.push(`Row ${i + 1}: Color "${row.color}" not found for style ${row.style_no}`);
-          continue;
+          const availableColors = styleColorsByStyleId.get(styleId) || [];
+          warnings.push(`Row ${i + 1}: Color "${row.color}" not found in style_colors for style ${row.style_no}. Available: ${availableColors.slice(0, 5).join(', ')}${availableColors.length > 5 ? '...' : ''}`);
+          // Still process the row - don't continue here
         }
         
         const quantity = Number(row.quantity);
@@ -209,12 +224,21 @@ export async function POST(req: Request) {
       }
     }
     
+    console.log('[Historical Sales Upload API] Complete:', {
+      successCount,
+      errorCount: errors.length,
+      warningCount: warnings.length,
+      totalProcessed: processedRows.length
+    });
+
     return NextResponse.json({ 
       successCount,
       errorCount: errors.length,
+      warningCount: warnings.length,
       totalProcessed: processedRows.length,
       totalInput: rows.length,
-      errors: errors.slice(0, 50) // Limit error messages
+      errors: errors.slice(0, 50), // Limit error messages
+      warnings: warnings.slice(0, 20) // Include some warnings
     });
   } catch (error: any) {
     return NextResponse.json({ error: error.message || 'Internal server error' }, { status: 500 });
