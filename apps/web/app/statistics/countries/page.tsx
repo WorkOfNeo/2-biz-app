@@ -247,6 +247,78 @@ export default function CountriesPage() {
     }
     return out;
   }, [stats, invoices, customers, s1, s2, currencyRatesRow, ratesS1, ratesS2, overrides?.nulled?.length, overrides?.hidden?.length, closedCustomers?.setClosed.size, closedCustomers?.setExcluded.size, closedCustomers?.setNulled.size]);
+
+  // Calculate effective currency rates from actual conversions
+  const effectiveRates = useMemo(() => {
+    if (!stats || !invoices || !customers) return { s1: { EUR: 0, NOK: 0, SEK: 0 }, s2: { EUR: 0, NOK: 0, SEK: 0 } };
+    const baseRates = { DKK: 1, ...(currencyRatesRow ?? {}) } as Record<string, number>;
+    const seasonalNulled = new Set(overrides?.nulled ?? []);
+    const seasonalHidden = new Set(overrides?.hidden ?? []);
+    const customerCountryById = new Map<string, string | null>();
+    for (const c of (customers ?? [])) { customerCountryById.set(c.customer_id, c.country ?? null); }
+    
+    // Track original amounts and converted DKK amounts per currency
+    const s1Agg: Record<string, { original: number; dkk: number }> = { EUR: { original: 0, dkk: 0 }, NOK: { original: 0, dkk: 0 }, SEK: { original: 0, dkk: 0 } };
+    const s2Agg: Record<string, { original: number; dkk: number }> = { EUR: { original: 0, dkk: 0 }, NOK: { original: 0, dkk: 0 }, SEK: { original: 0, dkk: 0 } };
+    
+    for (const r of (stats ?? []) as any[]) {
+      const acc = String(r.account_no || '');
+      if (acc) {
+        if (seasonalHidden.has(acc)) continue;
+        if (closedCustomers?.setExcluded.has(acc)) continue;
+      }
+      const cur = (String(r.currency || 'DKK').toUpperCase());
+      if (cur !== 'EUR' && cur !== 'NOK' && cur !== 'SEK') continue;
+      const price = Number(r.price || 0);
+      if (price <= 0) continue;
+      const isNullS1 = acc ? (seasonalNulled.has(acc) || closedCustomers?.setClosed.has(acc) || closedCustomers?.setNulled.has(acc)) : false;
+      if (r.season_id === s1 && !isNullS1) {
+        const rate = { ...baseRates, ...(ratesS1 ?? {}) }[cur] ?? 1;
+        s1Agg[cur].original += price;
+        s1Agg[cur].dkk += price * rate;
+      } else if (r.season_id === s2) {
+        const rate = { ...baseRates, ...(ratesS2 ?? {}) }[cur] ?? 1;
+        s2Agg[cur].original += price;
+        s2Agg[cur].dkk += price * rate;
+      }
+    }
+    
+    for (const inv of (invoices ?? [])) {
+      const acc = inv.account_no ?? '';
+      if (!acc) continue;
+      if (seasonalHidden.has(acc)) continue;
+      if (closedCustomers?.setExcluded.has(acc)) continue;
+      const cur = (String(inv.currency || 'DKK').toUpperCase());
+      if (cur !== 'EUR' && cur !== 'NOK' && cur !== 'SEK') continue;
+      const amount = Number(inv.amount || 0);
+      if (amount <= 0) continue;
+      const isNullS1 = seasonalNulled.has(acc) || closedCustomers?.setClosed.has(acc) || closedCustomers?.setNulled.has(acc);
+      if (inv.season_id === s1 && !isNullS1) {
+        const rate = { ...baseRates, ...(ratesS1 ?? {}) }[cur] ?? 1;
+        s1Agg[cur].original += amount;
+        s1Agg[cur].dkk += amount * rate;
+      } else if (inv.season_id === s2) {
+        const rate = { ...baseRates, ...(ratesS2 ?? {}) }[cur] ?? 1;
+        s2Agg[cur].original += amount;
+        s2Agg[cur].dkk += amount * rate;
+      }
+    }
+    
+    // Calculate effective rates: total_dkk / total_original, fallback to configured rates
+    return {
+      s1: {
+        EUR: s1Agg.EUR.original > 0 ? s1Agg.EUR.dkk / s1Agg.EUR.original : (ratesS1?.EUR ?? baseRates.EUR ?? 0),
+        NOK: s1Agg.NOK.original > 0 ? s1Agg.NOK.dkk / s1Agg.NOK.original : (ratesS1?.NOK ?? baseRates.NOK ?? 0),
+        SEK: s1Agg.SEK.original > 0 ? s1Agg.SEK.dkk / s1Agg.SEK.original : (ratesS1?.SEK ?? baseRates.SEK ?? 0)
+      },
+      s2: {
+        EUR: s2Agg.EUR.original > 0 ? s2Agg.EUR.dkk / s2Agg.EUR.original : (ratesS2?.EUR ?? baseRates.EUR ?? 0),
+        NOK: s2Agg.NOK.original > 0 ? s2Agg.NOK.dkk / s2Agg.NOK.original : (ratesS2?.NOK ?? baseRates.NOK ?? 0),
+        SEK: s2Agg.SEK.original > 0 ? s2Agg.SEK.dkk / s2Agg.SEK.original : (ratesS2?.SEK ?? baseRates.SEK ?? 0)
+      }
+    };
+  }, [stats, invoices, customers, s1, s2, currencyRatesRow, ratesS1, ratesS2, overrides?.nulled?.length, overrides?.hidden?.length, closedCustomers?.setClosed.size, closedCustomers?.setExcluded.size, closedCustomers?.setNulled.size]);
+
   function getSeasonLabel(seasonId: string | undefined) {
     if (!seasonId) return '';
     const s = (seasons ?? []).find((x) => x.id === seasonId);
@@ -392,18 +464,18 @@ export default function CountriesPage() {
             <tbody>
               <tr className="border-t">
                 <td className="p-2 font-medium">EUR</td>
-                <td className="p-2 text-center">{(ratesS1?.EUR ?? rates.EUR ?? 0).toFixed(4)}</td>
-                <td className="p-2 text-center">{(ratesS2?.EUR ?? rates.EUR ?? 0).toFixed(4)}</td>
+                <td className="p-2 text-center">{effectiveRates.s1.EUR.toFixed(4)}</td>
+                <td className="p-2 text-center">{effectiveRates.s2.EUR.toFixed(4)}</td>
               </tr>
               <tr className="border-t">
                 <td className="p-2 font-medium">NOK</td>
-                <td className="p-2 text-center">{(ratesS1?.NOK ?? rates.NOK ?? 0).toFixed(4)}</td>
-                <td className="p-2 text-center">{(ratesS2?.NOK ?? rates.NOK ?? 0).toFixed(4)}</td>
+                <td className="p-2 text-center">{effectiveRates.s1.NOK.toFixed(4)}</td>
+                <td className="p-2 text-center">{effectiveRates.s2.NOK.toFixed(4)}</td>
               </tr>
               <tr className="border-t">
                 <td className="p-2 font-medium">SEK</td>
-                <td className="p-2 text-center">{(ratesS1?.SEK ?? rates.SEK ?? 0).toFixed(4)}</td>
-                <td className="p-2 text-center">{(ratesS2?.SEK ?? rates.SEK ?? 0).toFixed(4)}</td>
+                <td className="p-2 text-center">{effectiveRates.s1.SEK.toFixed(4)}</td>
+                <td className="p-2 text-center">{effectiveRates.s2.SEK.toFixed(4)}</td>
               </tr>
             </tbody>
           </table>

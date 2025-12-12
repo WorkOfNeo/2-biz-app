@@ -382,6 +382,82 @@ export default function OverviewPage() {
     return out;
   }, [customers, stats, invoices, country, s1, s2, currencyRatesRow, ratesS1, ratesS2, spCurrencyById, overrides, closedCustomers]);
 
+  // Calculate effective currency rates from actual conversions
+  const effectiveRates = useMemo(() => {
+    if (!customers || !stats || !invoices) return { s1: { EUR: 0, NOK: 0, SEK: 0 }, s2: { EUR: 0, NOK: 0, SEK: 0 } };
+    const targetCountry = country === 'All' ? null : country.toUpperCase();
+    const targetAccounts = new Set<string>();
+    for (const c of (customers ?? []) as Customer[]) {
+      if (targetCountry && String(c.country ?? '').toUpperCase() !== targetCountry) continue;
+      if (c.customer_id && !isHidden(c.customer_id)) {
+        targetAccounts.add(c.customer_id);
+      }
+    }
+    const baseRates = { DKK: 1, ...(currencyRatesRow ?? {}) } as Record<string, number>;
+    
+    // Track original amounts and converted DKK amounts per currency
+    const s1Agg: Record<string, { original: number; dkk: number }> = { EUR: { original: 0, dkk: 0 }, NOK: { original: 0, dkk: 0 }, SEK: { original: 0, dkk: 0 } };
+    const s2Agg: Record<string, { original: number; dkk: number }> = { EUR: { original: 0, dkk: 0 }, NOK: { original: 0, dkk: 0 }, SEK: { original: 0, dkk: 0 } };
+    
+    for (const r of (stats ?? []) as StatsRow[]) {
+      const acc = r.account_no ?? '';
+      if (!acc || !targetAccounts.has(acc)) continue;
+      const currency = (r.salesperson_id ? (spCurrencyById[r.salesperson_id] ?? 'DKK') : 'DKK').toUpperCase();
+      if (currency !== 'EUR' && currency !== 'NOK' && currency !== 'SEK') continue;
+      const price = Number(r.price || 0);
+      if (r.season_id === s1) {
+        const isNullS1 = isNulled(acc);
+        if (!isNullS1 && price > 0) {
+          const rate = { ...baseRates, ...(ratesS1 ?? {}) }[currency] ?? 1;
+          s1Agg[currency].original += price;
+          s1Agg[currency].dkk += price * rate;
+        }
+      } else if (r.season_id === s2 && price > 0) {
+        const rate = { ...baseRates, ...(ratesS2 ?? {}) }[currency] ?? 1;
+        s2Agg[currency].original += price;
+        s2Agg[currency].dkk += price * rate;
+      }
+    }
+    
+    const customerByIdForInv = new Map<string, Customer>();
+    for (const c of (customers ?? [])) { if (c.customer_id) customerByIdForInv.set(c.customer_id, c); }
+    for (const inv of (invoices ?? [])) {
+      const acc = inv.account_no ?? '';
+      if (!acc || !targetAccounts.has(acc)) continue;
+      const c = customerByIdForInv.get(acc);
+      const spId = c?.salesperson_id ?? null;
+      const currency = (spId ? (spCurrencyById[spId] ?? 'DKK') : 'DKK').toUpperCase();
+      if (currency !== 'EUR' && currency !== 'NOK' && currency !== 'SEK') continue;
+      const amount = Number(inv.amount || 0);
+      if (inv.season_id === s1) {
+        const isNullS1 = isNulled(acc);
+        if (!isNullS1 && amount > 0) {
+          const rate = { ...baseRates, ...(ratesS1 ?? {}) }[currency] ?? 1;
+          s1Agg[currency].original += amount;
+          s1Agg[currency].dkk += amount * rate;
+        }
+      } else if (inv.season_id === s2 && amount > 0) {
+        const rate = { ...baseRates, ...(ratesS2 ?? {}) }[currency] ?? 1;
+        s2Agg[currency].original += amount;
+        s2Agg[currency].dkk += amount * rate;
+      }
+    }
+    
+    // Calculate effective rates: total_dkk / total_original
+    return {
+      s1: {
+        EUR: s1Agg.EUR.original > 0 ? s1Agg.EUR.dkk / s1Agg.EUR.original : (ratesS1?.EUR ?? baseRates.EUR ?? 0),
+        NOK: s1Agg.NOK.original > 0 ? s1Agg.NOK.dkk / s1Agg.NOK.original : (ratesS1?.NOK ?? baseRates.NOK ?? 0),
+        SEK: s1Agg.SEK.original > 0 ? s1Agg.SEK.dkk / s1Agg.SEK.original : (ratesS1?.SEK ?? baseRates.SEK ?? 0)
+      },
+      s2: {
+        EUR: s2Agg.EUR.original > 0 ? s2Agg.EUR.dkk / s2Agg.EUR.original : (ratesS2?.EUR ?? baseRates.EUR ?? 0),
+        NOK: s2Agg.NOK.original > 0 ? s2Agg.NOK.dkk / s2Agg.NOK.original : (ratesS2?.NOK ?? baseRates.NOK ?? 0),
+        SEK: s2Agg.SEK.original > 0 ? s2Agg.SEK.dkk / s2Agg.SEK.original : (ratesS2?.SEK ?? baseRates.SEK ?? 0)
+      }
+    };
+  }, [customers, stats, invoices, country, s1, s2, currencyRatesRow, ratesS1, ratesS2, spCurrencyById, overrides, closedCustomers]);
+
   // Detail rows for modal
   const detailRows = useMemo(() => {
     if (!detailModal || !stats || !invoices || !customers) return [];
@@ -929,18 +1005,18 @@ export default function OverviewPage() {
             <tbody>
               <tr className="border-t">
                 <td className="p-2 font-medium">EUR</td>
-                <td className="p-2 text-center">{(ratesS1?.EUR ?? rates.EUR ?? 0).toFixed(4)}</td>
-                <td className="p-2 text-center">{(ratesS2?.EUR ?? rates.EUR ?? 0).toFixed(4)}</td>
+                <td className="p-2 text-center">{effectiveRates.s1.EUR.toFixed(4)}</td>
+                <td className="p-2 text-center">{effectiveRates.s2.EUR.toFixed(4)}</td>
               </tr>
               <tr className="border-t">
                 <td className="p-2 font-medium">NOK</td>
-                <td className="p-2 text-center">{(ratesS1?.NOK ?? rates.NOK ?? 0).toFixed(4)}</td>
-                <td className="p-2 text-center">{(ratesS2?.NOK ?? rates.NOK ?? 0).toFixed(4)}</td>
+                <td className="p-2 text-center">{effectiveRates.s1.NOK.toFixed(4)}</td>
+                <td className="p-2 text-center">{effectiveRates.s2.NOK.toFixed(4)}</td>
               </tr>
               <tr className="border-t">
                 <td className="p-2 font-medium">SEK</td>
-                <td className="p-2 text-center">{(ratesS1?.SEK ?? rates.SEK ?? 0).toFixed(4)}</td>
-                <td className="p-2 text-center">{(ratesS2?.SEK ?? rates.SEK ?? 0).toFixed(4)}</td>
+                <td className="p-2 text-center">{effectiveRates.s1.SEK.toFixed(4)}</td>
+                <td className="p-2 text-center">{effectiveRates.s2.SEK.toFixed(4)}</td>
               </tr>
             </tbody>
           </table>
