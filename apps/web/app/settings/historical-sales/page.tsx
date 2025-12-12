@@ -123,6 +123,7 @@ export default function HistoricalSalesPage() {
       let successTotal = 0;
       let errorTotal = 0;
       let warningTotal = 0;
+      let fuzzyMatchTotal = 0;
       const allErrors: string[] = [];
       const allWarnings: string[] = [];
 
@@ -153,6 +154,7 @@ export default function HistoricalSalesPage() {
           successTotal += result.successCount || 0;
           errorTotal += result.errorCount || 0;
           warningTotal += result.warningCount || 0;
+          fuzzyMatchTotal += result.fuzzyMatchCount || 0;
           if (result.errors && Array.isArray(result.errors)) {
             allErrors.push(...result.errors);
           }
@@ -173,11 +175,15 @@ export default function HistoricalSalesPage() {
         successTotal,
         errorTotal,
         warningTotal,
+        fuzzyMatchTotal,
         errorsCount: allErrors.length,
         warningsCount: allWarnings.length
       });
 
       let message = `Upload complete: ${successTotal} records inserted/updated`;
+      if (fuzzyMatchTotal > 0) {
+        message += ` (${fuzzyMatchTotal} colors auto-matched)`;
+      }
       if (errorTotal > 0) {
         message += `, ${errorTotal} errors`;
       }

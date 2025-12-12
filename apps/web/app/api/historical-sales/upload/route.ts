@@ -126,17 +126,55 @@ export async function POST(req: Request) {
     
     console.log('[Historical Sales Upload API] Found', styleColors?.length || 0, 'colors');
     
+    let fuzzyMatchCount = 0;
+    
     // Build a map of valid style_id + color combinations (case-insensitive)
     const validStyleColorMap = new Map<string, boolean>();
     const styleColorsByStyleId = new Map<string, string[]>();
+    const styleColorsOriginalCase = new Map<string, string>(); // key -> original case color
     (styleColors || []).forEach((sc: any) => {
-      const key = `${sc.style_id}|${String(sc.color || '').trim().toLowerCase()}`;
+      const colorLower = String(sc.color || '').trim().toLowerCase();
+      const key = `${sc.style_id}|${colorLower}`;
       validStyleColorMap.set(key, true);
+      styleColorsOriginalCase.set(key, sc.color);
       if (!styleColorsByStyleId.has(sc.style_id)) {
         styleColorsByStyleId.set(sc.style_id, []);
       }
       styleColorsByStyleId.get(sc.style_id)!.push(sc.color);
     });
+    
+    // Helper: fuzzy match color for a given style
+    function findBestColorMatch(styleId: string, inputColor: string): string | null {
+      const availableColors = styleColorsByStyleId.get(styleId) || [];
+      const inputLower = inputColor.trim().toLowerCase();
+      
+      // 1. Try exact match (case-insensitive)
+      for (const color of availableColors) {
+        if (color.toLowerCase() === inputLower) {
+          return color;
+        }
+      }
+      
+      // 2. Try finding a color that contains the input as a word
+      const inputWords = inputLower.split(/\s+/).filter(Boolean);
+      for (const color of availableColors) {
+        const colorLower = color.toLowerCase();
+        // Check if all input words are contained in the color
+        if (inputWords.every(word => colorLower.includes(word))) {
+          return color;
+        }
+      }
+      
+      // 3. Try finding a color where the input contains any of its words
+      for (const color of availableColors) {
+        const colorWords = color.toLowerCase().split(/\s+/).filter(Boolean);
+        if (colorWords.some(word => inputLower.includes(word) && word.length > 2)) {
+          return color;
+        }
+      }
+      
+      return null;
+    }
     
     // Process each row
     for (let i = 0; i < rows.length; i++) {
@@ -155,12 +193,20 @@ export async function POST(req: Request) {
           continue;
         }
         
-        // Validate that the color exists for this style (warning only, not blocking)
+        // Validate and fuzzy-match color
+        let finalColor = row.color;
         const colorKey = `${styleId}|${String(row.color || '').trim().toLowerCase()}`;
         if (!validStyleColorMap.has(colorKey)) {
-          const availableColors = styleColorsByStyleId.get(styleId) || [];
-          warnings.push(`Row ${i + 1}: Color "${row.color}" not found in style_colors for style ${row.style_no}. Available: ${availableColors.slice(0, 5).join(', ')}${availableColors.length > 5 ? '...' : ''}`);
-          // Still process the row - don't continue here
+          // Try fuzzy match
+          const fuzzyMatch = findBestColorMatch(styleId, row.color);
+          if (fuzzyMatch) {
+            finalColor = fuzzyMatch;
+            fuzzyMatchCount++;
+            warnings.push(`Row ${i + 1}: Color "${row.color}" auto-matched to "${fuzzyMatch}" for style ${row.style_no}`);
+          } else {
+            const availableColors = styleColorsByStyleId.get(styleId) || [];
+            warnings.push(`Row ${i + 1}: Color "${row.color}" not found for style ${row.style_no}. Available: ${availableColors.slice(0, 5).join(', ')}${availableColors.length > 5 ? '...' : ''}. Using original color.`);
+          }
         }
         
         const quantity = Number(row.quantity);
@@ -183,7 +229,7 @@ export async function POST(req: Request) {
           processedRows.push({
             style_id: styleId,
             style_no: row.style_no,
-            color: row.color,
+            color: finalColor, // Use fuzzy-matched color if available
             date,
             size: row.size,
             quantity: qtyPerDay + remainderAdjustment // Distribute remainder (supports negatives)
@@ -228,6 +274,7 @@ export async function POST(req: Request) {
       successCount,
       errorCount: errors.length,
       warningCount: warnings.length,
+      fuzzyMatchCount,
       totalProcessed: processedRows.length
     });
 
@@ -235,6 +282,7 @@ export async function POST(req: Request) {
       successCount,
       errorCount: errors.length,
       warningCount: warnings.length,
+      fuzzyMatchCount,
       totalProcessed: processedRows.length,
       totalInput: rows.length,
       errors: errors.slice(0, 50), // Limit error messages
