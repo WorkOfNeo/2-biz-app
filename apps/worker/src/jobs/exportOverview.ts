@@ -860,7 +860,7 @@ export async function exportOverview(ctx: Ctx) {
       };
       const { s1, s2 } = await getSeasonCompare();
       if (!s1 || !s2) throw new Error('Missing season compare (s1/s2)');
-      const countries = ['Denmark', 'Norway', 'Sweden', 'Finland', 'Internal'];
+      const countries = ['Denmark', 'Norway', 'Sweden', 'Finland'];
       // Season info for codes
       const getSeason = async (id: string | null): Promise<{ name: string; year: number | null; code: string } | null> => {
         if (!id) return null;
@@ -920,9 +920,9 @@ export async function exportOverview(ctx: Ctx) {
       for (const r of (stats ?? []) as any[]) {
         const acc = String(r.account_no || '');
         let ctry = String(r.customers?.country ?? customerCountryById.get(acc) ?? '').trim();
-        // Map non-standard countries to Internal
+        // Skip non-standard countries
         const standardCountries = ['Denmark', 'Norway', 'Sweden', 'Finland'];
-        if (!standardCountries.includes(ctry)) ctry = 'Internal';
+        if (!standardCountries.includes(ctry)) continue;
         // Filters
         if (acc) {
           // Exclude hidden/excluded entirely
@@ -954,9 +954,9 @@ export async function exportOverview(ctx: Ctx) {
         if (seasonalHidden.has(acc)) continue;
         if (excludedSet.has(acc)) continue;
         let ctry = String(customerCountryById.get(acc) || '').trim();
-        // Map non-standard countries to Internal
+        // Skip non-standard countries
         const standardCountries = ['Denmark', 'Norway', 'Sweden', 'Finland'];
-        if (!standardCountries.includes(ctry)) ctry = 'Internal';
+        if (!standardCountries.includes(ctry)) continue;
         let bucket = totals[ctry];
         if (!bucket) { bucket = totals[ctry] = { s1Qty: 0, s2Qty: 0, s1Price: 0, s2Price: 0 }; }
         const cur = (String(inv.currency || 'DKK').toUpperCase());

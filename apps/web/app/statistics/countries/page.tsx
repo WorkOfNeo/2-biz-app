@@ -126,8 +126,8 @@ export default function CountriesPage() {
     if (error) throw new Error(error.message);
     return (data?.value as Record<string, number> | undefined) ?? {};
   });
-  const countries = useMemo(() => ['Denmark', 'Norway', 'Sweden', 'Finland', 'Internal'], []);
-  const countryCurrency: Record<string, string> = useMemo(() => ({ Denmark: 'DKK', Norway: 'NOK', Sweden: 'SEK', Finland: 'EUR', Internal: 'DKK' }), []);
+  const countries = useMemo(() => ['Denmark', 'Norway', 'Sweden', 'Finland'], []);
+  const countryCurrency: Record<string, string> = useMemo(() => ({ Denmark: 'DKK', Norway: 'NOK', Sweden: 'SEK', Finland: 'EUR' }), []);
   // Season-specific currency rates
   const { data: ratesS1 } = useSWR(s1 ? `season:${s1}:currency-rates` : null, async () => {
     const key = `currency_rates:${s1}`;
@@ -152,9 +152,9 @@ export default function CountriesPage() {
     for (const r of (stats ?? []) as any[]) {
       const acc = String(r.account_no || '');
       let ctry = String((r.customers?.country ?? customerCountryById.get(acc) ?? '')).trim();
-      // Map non-standard countries to Internal
+      // Skip non-standard countries
       const standardCountries = ['Denmark', 'Norway', 'Sweden', 'Finland'];
-      if (!standardCountries.includes(ctry)) ctry = 'Internal';
+      if (!standardCountries.includes(ctry)) continue;
       if (acc) {
         // Exclude hidden/excluded entirely from UI
         if (seasonalHidden.has(acc)) continue;
@@ -178,9 +178,9 @@ export default function CountriesPage() {
       if (seasonalHidden.has(acc)) continue;
       if (closedCustomers?.setExcluded.has(acc)) continue;
       let ctry = String(customerCountryById.get(acc) || '').trim();
-      // Map non-standard countries to Internal
+      // Skip non-standard countries
       const standardCountries = ['Denmark', 'Norway', 'Sweden', 'Finland'];
-      if (!standardCountries.includes(ctry)) ctry = 'Internal';
+      if (!standardCountries.includes(ctry)) continue;
       const bucket = out[ctry] || (out[ctry] = { s1Qty: 0, s2Qty: 0, s1PriceDkk: 0, s2PriceDkk: 0 });
       const cur = (String(inv.currency || 'DKK').toUpperCase());
       const rateS1 = { ...baseRates, ...(ratesS1 ?? {}) }[cur] ?? 1;
@@ -204,9 +204,9 @@ export default function CountriesPage() {
     for (const r of (stats ?? []) as any[]) {
       const acc = String(r.account_no || '');
       let ctry = String((r.customers?.country ?? customerCountryById.get(acc) ?? '')).trim();
-      // Map non-standard countries to Internal
+      // Skip non-standard countries
       const standardCountries = ['Denmark', 'Norway', 'Sweden', 'Finland'];
-      if (!standardCountries.includes(ctry)) ctry = 'Internal';
+      if (!standardCountries.includes(ctry)) continue;
       if (acc) {
         if (seasonalHidden.has(acc)) continue;
         if (closedCustomers?.setExcluded.has(acc)) continue;
@@ -229,9 +229,9 @@ export default function CountriesPage() {
       if (seasonalHidden.has(acc)) continue;
       if (closedCustomers?.setExcluded.has(acc)) continue;
       let ctry = String(customerCountryById.get(acc) || '').trim();
-      // Map non-standard countries to Internal
+      // Skip non-standard countries
       const standardCountries = ['Denmark', 'Norway', 'Sweden', 'Finland'];
-      if (!standardCountries.includes(ctry)) ctry = 'Internal';
+      if (!standardCountries.includes(ctry)) continue;
       const spId = (customerSpById.get(acc) ?? null) || '__unknown__';
       const cur = (String(inv.currency || 'DKK').toUpperCase());
       const rateS1 = { ...baseRates, ...(ratesS1 ?? {}) }[cur] ?? 1;
