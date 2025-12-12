@@ -1347,8 +1347,8 @@ export default function StatisticsGeneralPage() {
                     const totalCustomers = items.length;
                     
                     // Customers visited: has any S1 activity
-                    const visitedRows = items.filter(r => r.s1Qty > 0 || r.s1Price > 0);
-                    const customersVisited = visitedRows.length;
+                    const customersVisitedOnly = items.filter(r => r.s1Qty > 0 || r.s1Price > 0);
+                    const customersVisited = customersVisitedOnly.length;
                     
                     // Customers to visit: no S1 activity AND not nulled/closed
                     const customersToVisit = items.filter(r => {
@@ -1361,7 +1361,10 @@ export default function StatisticsGeneralPage() {
                     const nulledCount = items.reduce((a, r) => a + (nulledSeasonal.has(r.account_no) ? 1 : 0), 0);
                     const permClosedCount = items.reduce((a, r) => a + (closedCustomers?.setClosed.has(r.account_no) ? 1 : 0), 0);
                     
-                    // Aggregate visited customers S1/S2 totals for index calculation
+                    // Index calculation: Include both VISITED and NULLED customers
+                    const visitedRows = items.filter(r => (r.s1Qty > 0 || r.s1Price > 0) || isNulled(r.account_no));
+                    
+                    // Aggregate visited + nulled customers S1/S2 totals for index calculation
                     const visitedS1Qty = visitedRows.reduce((a, r) => a + r.s1Qty, 0);
                     const visitedS2Qty = visitedRows.reduce((a, r) => a + r.s2Qty, 0);
                     const visitedS1Price = visitedRows.reduce((a, r) => a + r.s1Price, 0);
@@ -1419,12 +1422,12 @@ export default function StatisticsGeneralPage() {
                             <div className="rounded-md border p-3">
                               <div className="text-xs text-gray-500">Index QTY</div>
                               <div className="text-xl font-semibold">{indexQty.toFixed(1)}</div>
-                              <div className="text-[11px] text-gray-400">{visitedS1Qty} vs {visitedS2Qty} (visited)</div>
+                              <div className="text-[11px] text-gray-400">{visitedS1Qty} vs {visitedS2Qty} (visited + nulled)</div>
                             </div>
                             <div className="rounded-md border p-3">
                               <div className="text-xs text-gray-500">Index PRICE</div>
                               <div className="text-xl font-semibold">{indexPrice.toFixed(1)}</div>
-                              <div className="text-[11px] text-gray-400">{Math.round(visitedS1Price).toLocaleString('da-DK')} vs {Math.round(visitedS2Price).toLocaleString('da-DK')} (visited)</div>
+                              <div className="text-[11px] text-gray-400">{Math.round(visitedS1Price).toLocaleString('da-DK')} vs {Math.round(visitedS2Price).toLocaleString('da-DK')} (visited + nulled)</div>
                             </div>
                             <div className="rounded-md border p-3">
                               <div className="text-xs text-gray-500">Prognose QTY</div>

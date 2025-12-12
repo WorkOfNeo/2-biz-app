@@ -240,7 +240,8 @@ export async function exportOverview(ctx: Ctx) {
         }
       }
       
-      const visited = Array.from(buckets.values()).filter((v) => v.s1Qty > 0 || v.s1Price > 0);
+      // Index calculation: Include both VISITED and NULLED customers
+      const visited = Array.from(buckets.values()).filter((v) => (v.s1Qty > 0 || v.s1Price > 0) || v.isNulled);
       const visitedS1Qty = visited.reduce((a, v) => a + v.s1Qty, 0);
       const visitedS1Price = visited.reduce((a, v) => a + v.s1Price, 0);
       const visitedS2Qty = visited.reduce((a, v) => a + v.s2Qty, 0);
@@ -389,13 +390,13 @@ export async function exportOverview(ctx: Ctx) {
           React.createElement(Text, { style: styles.cardLabel }, 'Index stk'),
           React.createElement(Text, { style: styles.cardValue }, indexQty.toFixed(1)),
           React.createElement(Text, { style: { ...styles.cardLabel, marginTop: 2 } }, `${fmt(visitedS1Qty)} vs ${fmt(visitedS2Qty)}`),
-          React.createElement(Text, { style: { fontSize: 5, color: '#94a3b8' } }, 'Ud fra besøgte kunder')
+          React.createElement(Text, { style: { fontSize: 5, color: '#94a3b8' } }, 'Ud fra besøgte + nullede kunder')
         ),
         React.createElement(View, { style: styles.card },
           React.createElement(Text, { style: styles.cardLabel }, 'Index oms'),
           React.createElement(Text, { style: styles.cardValue }, indexPrice.toFixed(1)),
           React.createElement(Text, { style: { ...styles.cardLabel, marginTop: 2 } }, `${fmt(visitedS1Price)} vs ${fmt(visitedS2Price)}`),
-          React.createElement(Text, { style: { fontSize: 5, color: '#94a3b8' } }, 'Ud fra besøgte kunder')
+          React.createElement(Text, { style: { fontSize: 5, color: '#94a3b8' } }, 'Ud fra besøgte + nullede kunder')
         )
       );
       
@@ -615,15 +616,18 @@ export async function exportOverview(ctx: Ctx) {
         
         // Calculate KPI statistics for this salesperson
         const totalCustomers = items.length;
-        const visitedRows = rows.filter(r => (r.s1Qty > 0 || r.s1Price > 0) && !r.nulled);
-        const customersVisited = visitedRows.length;
+        const customersVisitedOnly = rows.filter(r => (r.s1Qty > 0 || r.s1Price > 0) && !r.nulled);
+        const customersVisited = customersVisitedOnly.length;
         const customersToVisit = rows.filter(r => {
           const hasS1Activity = r.s1Qty > 0 || r.s1Price > 0;
           return !hasS1Activity && !r.nulled;
         }).length;
         const nulledCount = rows.filter(r => r.nulled).length;
         
-        // Aggregate visited customers S1/S2 totals for index calculation
+        // Index calculation: Include both VISITED and NULLED customers
+        const visitedRows = rows.filter(r => (r.s1Qty > 0 || r.s1Price > 0) || r.nulled);
+        
+        // Aggregate visited + nulled customers S1/S2 totals for index calculation
         const visitedS1Qty = visitedRows.reduce((a, r) => a + r.s1Qty, 0);
         const visitedS2Qty = visitedRows.reduce((a, r) => a + r.s2Qty, 0);
         const visitedS1Price = visitedRows.reduce((a, r) => a + r.s1Price, 0);
