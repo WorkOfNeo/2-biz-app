@@ -22,9 +22,8 @@ async function handle(req: Request) {
 
   const { error, count } = await supabase
     .from('job_logs')
-    .delete()
-    .neq('level', 'error')
-    .select('id', { count: 'exact' });
+    .delete({ count: 'exact' })
+    .neq('level', 'error');
 
   if (error) {
     const errRes = { error: 'job_logs cleanup failed', detail: error.message };
