@@ -124,16 +124,16 @@ export async function exportTopStyles(ctx: Ctx) {
     }
     // Build Overall version (Place, Image, Style Name, Color, Sold, DG, Supplier)
     const HeadOverall = React.createElement(View, { style: styles.header },
-      Cell('Place', '6%','left'), Cell('Image','10%','left'), Cell('Style Name','28%','left'), Cell('Color','22%','left'), Cell('Sold','12%','right'), Cell('DG','10%','left'), Cell('Supplier','12%','left')
+      Cell('Place', '6%','left'), Cell('Image','10%','left'), Cell('Style Name','24%','left'), Cell('Color','18%','left'), Cell('Sold','12%','right'), Cell('DG','8%','left'), Cell('Supplier','22%','left')
     );
     const bodyOverall = list.map((r, i) => React.createElement(View, { style: styles.row },
       Cell(String(i+1), '6%','left'),
       React.createElement(View, { style: [{ width: '10%' as any, padding: 4 }] }, r.image_url ? React.createElement(Image, { style: styles.img, src: r.image_url }) : React.createElement(Text, { style: styles.cell }, '')),
-      Cell(r.style_name || '—', '28%','left'),
-      Cell(r.color || '—', '22%','left'),
+      Cell(r.style_name || '—', '24%','left'),
+      Cell(r.color || '—', '18%','left'),
       Cell(new Intl.NumberFormat('da-DK').format(Math.round(Number(r.qty || 0))), '12%','right'),
-      Cell((r.dg || '') + '', '10%','left'),
-      Cell(supplierByStyle.get(r.style_no) || '—', '12%','left')
+      Cell((r.dg || '') + '', '8%','left'),
+      Cell(supplierByStyle.get(r.style_no) || '—', '22%','left')
     ));
     const docOverall = React.createElement(
       Document,
