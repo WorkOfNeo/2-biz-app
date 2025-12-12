@@ -125,6 +125,20 @@ async function handle(req: Request) {
         }
         stats.unnulled = toUnnull.length;
       }
+      // Also remove from seasonal overrides nulled list
+      const key = `season_overrides:${seasonId}`;
+      const { data: seasonOverrides } = await supabase.from('app_settings').select('id, value').eq('key', key).maybeSingle();
+      if (seasonOverrides) {
+        const val = (seasonOverrides.value as any) || {};
+        const existingNulled: string[] = Array.isArray(val.nulled) ? val.nulled : [];
+        const hidden: string[] = Array.isArray(val.hidden) ? val.hidden : [];
+        // Remove accounts with sales from the nulled list
+        const updatedNulled = existingNulled.filter((acc: string) => !accountsWithSales.has(acc));
+        if (updatedNulled.length !== existingNulled.length) {
+          const next = { nulled: updatedNulled, hidden };
+          await supabase.from('app_settings').update({ value: next }).eq('id', seasonOverrides.id as any);
+        }
+      }
     }
     // Update season overrides (nulled) for this season
     if (nulledAccounts.size > 0) {
