@@ -1265,8 +1265,8 @@ export default function StatisticsGeneralPage() {
                                         className="px-2 py-0.5 text-xs bg-orange-500 text-white rounded hover:bg-orange-600"
                                         title={
                                           !customerExists 
-                                            ? `This customer doesn't exist in the customers table. Click to create and attach salesperson: ${spNameById[row.salespersonId] || 'Unknown'}`
-                                            : `Customer exists but salesperson mismatch. Current: ${existingCustomer.salesperson_id ? (spNameById[existingCustomer.salesperson_id] || 'Unknown') : 'None'}, Expected: ${spNameById[row.salespersonId] || 'Unknown'}. Click to fix.`
+                                            ? `This customer doesn't exist in the customers table. Click to create and attach salesperson: ${row.salespersonId ? (spNameById[row.salespersonId] || 'Unknown') : 'Unknown'}`
+                                            : `Customer exists but salesperson mismatch. Current: ${existingCustomer.salesperson_id ? (spNameById[existingCustomer.salesperson_id] || 'Unknown') : 'None'}, Expected: ${row.salespersonId ? (spNameById[row.salespersonId] || 'Unknown') : 'Unknown'}. Click to fix.`
                                         }
                                       >
                                         Fix
