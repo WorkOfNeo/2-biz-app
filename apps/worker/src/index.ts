@@ -1957,7 +1957,8 @@ async function runJob(job: JobRow) {
           .map((inv) => {
           const accountNo = (inv.matchedAccount || '').trim();
             const invoiceNo = (inv.invoiceNo || '').trim();
-          const pick = inv.userCurrencyAmount || inv.customerCurrencyAmount;
+          // Prefer customer currency (local) over user currency (DKK)
+          const pick = inv.customerCurrencyAmount || inv.userCurrencyAmount;
             const qty = Number(inv.qty || 0) || 0;
           const amount = Number(pick?.amount || 0) || 0;
             const currency = pick?.currency || null;
