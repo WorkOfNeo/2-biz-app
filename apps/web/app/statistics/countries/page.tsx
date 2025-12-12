@@ -392,18 +392,18 @@ export default function CountriesPage() {
             <tbody>
               <tr className="border-t">
                 <td className="p-2 font-medium">EUR</td>
-                <td className="p-2 text-center">{(({ ...rates, ...(ratesS1 ?? {}) }.EUR ?? 0) || 0).toFixed(4)}</td>
-                <td className="p-2 text-center">{(({ ...rates, ...(ratesS2 ?? {}) }.EUR ?? 0) || 0).toFixed(4)}</td>
+                <td className="p-2 text-center">{(ratesS1?.EUR ?? rates.EUR ?? 0).toFixed(4)}</td>
+                <td className="p-2 text-center">{(ratesS2?.EUR ?? rates.EUR ?? 0).toFixed(4)}</td>
               </tr>
               <tr className="border-t">
                 <td className="p-2 font-medium">NOK</td>
-                <td className="p-2 text-center">{(({ ...rates, ...(ratesS1 ?? {}) }.NOK ?? 0) || 0).toFixed(4)}</td>
-                <td className="p-2 text-center">{(({ ...rates, ...(ratesS2 ?? {}) }.NOK ?? 0) || 0).toFixed(4)}</td>
+                <td className="p-2 text-center">{(ratesS1?.NOK ?? rates.NOK ?? 0).toFixed(4)}</td>
+                <td className="p-2 text-center">{(ratesS2?.NOK ?? rates.NOK ?? 0).toFixed(4)}</td>
               </tr>
               <tr className="border-t">
                 <td className="p-2 font-medium">SEK</td>
-                <td className="p-2 text-center">{(({ ...rates, ...(ratesS1 ?? {}) }.SEK ?? 0) || 0).toFixed(4)}</td>
-                <td className="p-2 text-center">{(({ ...rates, ...(ratesS2 ?? {}) }.SEK ?? 0) || 0).toFixed(4)}</td>
+                <td className="p-2 text-center">{(ratesS1?.SEK ?? rates.SEK ?? 0).toFixed(4)}</td>
+                <td className="p-2 text-center">{(ratesS2?.SEK ?? rates.SEK ?? 0).toFixed(4)}</td>
               </tr>
             </tbody>
           </table>
