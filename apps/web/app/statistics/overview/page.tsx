@@ -402,8 +402,9 @@ export default function OverviewPage() {
     for (const r of (stats ?? []) as StatsRow[]) {
       const acc = r.account_no ?? '';
       if (!acc || !targetAccounts.has(acc)) continue;
-      const currency = (r.salesperson_id ? (spCurrencyById[r.salesperson_id] ?? 'DKK') : 'DKK').toUpperCase();
-      if (currency !== 'EUR' && currency !== 'NOK' && currency !== 'SEK') continue;
+      const cur = (r.salesperson_id ? (spCurrencyById[r.salesperson_id] ?? 'DKK') : 'DKK').toUpperCase();
+      if (cur !== 'EUR' && cur !== 'NOK' && cur !== 'SEK') continue;
+      const currency = cur as 'EUR' | 'NOK' | 'SEK';
       const price = Number(r.price || 0);
       if (r.season_id === s1) {
         const isNullS1 = isNulled(acc);
@@ -426,8 +427,9 @@ export default function OverviewPage() {
       if (!acc || !targetAccounts.has(acc)) continue;
       const c = customerByIdForInv.get(acc);
       const spId = c?.salesperson_id ?? null;
-      const currency = (spId ? (spCurrencyById[spId] ?? 'DKK') : 'DKK').toUpperCase();
-      if (currency !== 'EUR' && currency !== 'NOK' && currency !== 'SEK') continue;
+      const cur = (spId ? (spCurrencyById[spId] ?? 'DKK') : 'DKK').toUpperCase();
+      if (cur !== 'EUR' && cur !== 'NOK' && cur !== 'SEK') continue;
+      const currency = cur as 'EUR' | 'NOK' | 'SEK';
       const amount = Number(inv.amount || 0);
       if (inv.season_id === s1) {
         const isNullS1 = isNulled(acc);

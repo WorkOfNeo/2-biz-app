@@ -269,17 +269,18 @@ export default function CountriesPage() {
       }
       const cur = (String(r.currency || 'DKK').toUpperCase());
       if (cur !== 'EUR' && cur !== 'NOK' && cur !== 'SEK') continue;
+      const currency = cur as 'EUR' | 'NOK' | 'SEK';
       const price = Number(r.price || 0);
       if (price <= 0) continue;
       const isNullS1 = acc ? (seasonalNulled.has(acc) || closedCustomers?.setClosed.has(acc) || closedCustomers?.setNulled.has(acc)) : false;
       if (r.season_id === s1 && !isNullS1) {
-        const rate = { ...baseRates, ...(ratesS1 ?? {}) }[cur] ?? 1;
-        s1Agg[cur].original += price;
-        s1Agg[cur].dkk += price * rate;
+        const rate = { ...baseRates, ...(ratesS1 ?? {}) }[currency] ?? 1;
+        s1Agg[currency].original += price;
+        s1Agg[currency].dkk += price * rate;
       } else if (r.season_id === s2) {
-        const rate = { ...baseRates, ...(ratesS2 ?? {}) }[cur] ?? 1;
-        s2Agg[cur].original += price;
-        s2Agg[cur].dkk += price * rate;
+        const rate = { ...baseRates, ...(ratesS2 ?? {}) }[currency] ?? 1;
+        s2Agg[currency].original += price;
+        s2Agg[currency].dkk += price * rate;
       }
     }
     
@@ -290,17 +291,18 @@ export default function CountriesPage() {
       if (closedCustomers?.setExcluded.has(acc)) continue;
       const cur = (String(inv.currency || 'DKK').toUpperCase());
       if (cur !== 'EUR' && cur !== 'NOK' && cur !== 'SEK') continue;
+      const currency = cur as 'EUR' | 'NOK' | 'SEK';
       const amount = Number(inv.amount || 0);
       if (amount <= 0) continue;
-      const isNullS1 = seasonalNulled.has(acc) || closedCustomers?.setClosed.has(acc) || closedCustomers?.setNulled.has(acc);
+      const isNullS1 = seasonalHidden.has(acc) || closedCustomers?.setClosed.has(acc) || closedCustomers?.setNulled.has(acc);
       if (inv.season_id === s1 && !isNullS1) {
-        const rate = { ...baseRates, ...(ratesS1 ?? {}) }[cur] ?? 1;
-        s1Agg[cur].original += amount;
-        s1Agg[cur].dkk += amount * rate;
+        const rate = { ...baseRates, ...(ratesS1 ?? {}) }[currency] ?? 1;
+        s1Agg[currency].original += amount;
+        s1Agg[currency].dkk += amount * rate;
       } else if (inv.season_id === s2) {
-        const rate = { ...baseRates, ...(ratesS2 ?? {}) }[cur] ?? 1;
-        s2Agg[cur].original += amount;
-        s2Agg[cur].dkk += amount * rate;
+        const rate = { ...baseRates, ...(ratesS2 ?? {}) }[currency] ?? 1;
+        s2Agg[currency].original += amount;
+        s2Agg[currency].dkk += amount * rate;
       }
     }
     
