@@ -29,51 +29,377 @@ export async function exportOverview(ctx: Ctx) {
       };
       const { s1, s2 } = await getSeasonCompare();
       if (!s1 || !s2) throw new Error('Missing season compare (s1/s2)');
+      
+      // Get season labels
+      const getSeason = async (id: string | null): Promise<{ name: string; year: number | null } | null> => {
+        if (!id) return null;
+        try {
+          const { data } = await supabase.from('seasons').select('name, year').eq('id', id).maybeSingle();
+          return { name: (data as any)?.name || '', year: (data as any)?.year ?? null };
+        } catch { return null; }
+      };
+      const s1Info = await getSeason(s1);
+      const s2Info = await getSeason(s2);
+      const s1Label = s1Info ? `${s1Info.name}${s1Info.year ? ' ' + s1Info.year : ''}` : 'Season 1';
+      const s2Label = s2Info ? `${s2Info.name}${s2Info.year ? ' ' + s2Info.year : ''}` : 'Season 2';
+      
       const { data: people } = await supabase.from('salespersons').select('id, name, currency').order('sort_index', { ascending: true });
       const list = (people ?? []) as Array<{ id: string; name: string; currency?: string | null }>;
       const { data: customers } = await supabase.from('customers').select('customer_id, country, salesperson_id, nulled, excluded, permanently_closed');
       const custs = (customers ?? []) as Array<{ customer_id: string; country: string | null; salesperson_id: string | null; nulled?: boolean | null; excluded?: boolean | null; permanently_closed?: boolean | null }>;
-      let rates: Record<string, number> = { DKK: 1 };
-      try { const { data: rateRow } = await supabase.from('app_settings').select('value').eq('key', 'currency_rates').maybeSingle(); rates = { DKK: 1, ...((rateRow?.value as any) ?? {}) } as Record<string, number>; } catch {}
+      
+      // Get currency rates (global + season-specific)
+      let baseRates: Record<string, number> = { DKK: 1 };
+      try { const { data: rateRow } = await supabase.from('app_settings').select('value').eq('key', 'currency_rates').maybeSingle(); baseRates = { DKK: 1, ...((rateRow?.value as any) ?? {}) } as Record<string, number>; } catch {}
+      let ratesS1: Record<string, number> = {};
+      let ratesS2: Record<string, number> = {};
+      try { const { data } = await supabase.from('app_settings').select('value').eq('key', `currency_rates:${s1}`).maybeSingle(); ratesS1 = ((data?.value as any) || {}) as Record<string, number>; } catch {}
+      try { const { data } = await supabase.from('app_settings').select('value').eq('key', `currency_rates:${s2}`).maybeSingle(); ratesS2 = ((data?.value as any) || {}) as Record<string, number>; } catch {}
+      
       const spCurrencyById: Record<string, string> = Object.fromEntries(list.map((p) => [p.id, (p.currency || 'DKK').toUpperCase()]));
+      
+      // Get seasonal overrides for S1
+      let seasonalHidden = new Set<string>(); let seasonalNulled = new Set<string>();
+      try {
+        const { data } = await supabase.from('app_settings').select('value').eq('key', `season_overrides:${s1}`).maybeSingle();
+        const val = (data?.value as any) || {};
+        (Array.isArray(val.hidden) ? val.hidden : []).forEach((a: string) => seasonalHidden.add(a));
+        (Array.isArray(val.nulled) ? val.nulled : []).forEach((a: string) => seasonalNulled.add(a));
+      } catch {}
+      
       const { data: stats } = await supabase.from('sales_stats').select('account_no, qty, price, season_id, salesperson_id').in('season_id', [s1, s2]).limit(200000);
       const { data: invoices } = await supabase.from('sales_invoices').select('account_no, qty, amount, currency, season_id').in('season_id', [s1, s2]).limit(200000);
+      
       const customerById = new Map<string, { salesperson_id: string | null; nulled?: boolean | null; excluded?: boolean | null; permanently_closed?: boolean | null }>();
       for (const c of custs) customerById.set(c.customer_id, c);
+      
+      // Helper functions matching frontend logic
+      function isHidden(account: string): boolean {
+        return seasonalHidden.has(account) || Boolean(customerById.get(account)?.excluded);
+      }
+      function isNulled(account: string): boolean {
+        return seasonalNulled.has(account) || Boolean(customerById.get(account)?.nulled) || Boolean(customerById.get(account)?.permanently_closed);
+      }
+      
       const targetsBySp = new Map<string, Set<string>>();
       const validTargetsBySp = new Map<string, Set<string>>();
       for (const sp of list) {
         const all = new Set<string>(); const valid = new Set<string>();
-        for (const c of custs) { if (c.salesperson_id === sp.id && c.customer_id) { all.add(c.customer_id); if (!(c.nulled || c.permanently_closed || c.excluded)) valid.add(c.customer_id); } }
+        for (const c of custs) {
+          if (c.salesperson_id === sp.id && c.customer_id) {
+            all.add(c.customer_id);
+            if (!isHidden(c.customer_id) && !isNulled(c.customer_id)) {
+              valid.add(c.customer_id);
+            }
+          }
+        }
         targetsBySp.set(sp.id, all); validTargetsBySp.set(sp.id, valid);
       }
+      
       const agg = new Map<string, { s1Qty: number; s1Price: number; s2Qty: number; s2Price: number; visitedValid: Set<string> }>();
       for (const sp of list) agg.set(sp.id, { s1Qty: 0, s1Price: 0, s2Qty: 0, s2Price: 0, visitedValid: new Set<string>() });
+      
       for (const r of (stats ?? []) as any[]) {
         const spId = r.salesperson_id ?? ''; const acc = r.account_no ?? ''; if (!spId || !acc) continue;
         const set = targetsBySp.get(spId); if (!set || !set.has(acc)) continue;
-        const row = agg.get(spId)!; const rate = rates[spCurrencyById[spId] || 'DKK'] ?? 1; const priceDkk = Number(r.price || 0) * rate;
-        if (r.season_id === s1) { row.s1Qty += Number(r.qty||0); row.s1Price += priceDkk; if (validTargetsBySp.get(spId)?.has(acc)) row.visitedValid.add(acc); }
-        else if (r.season_id === s2) { row.s2Qty += Number(r.qty||0); row.s2Price += priceDkk; }
+        if (isHidden(acc)) continue;
+        const row = agg.get(spId)!;
+        const currency = spCurrencyById[spId] || 'DKK';
+        const rateS1 = { ...baseRates, ...ratesS1 }[currency] ?? 1;
+        const rateS2 = { ...baseRates, ...ratesS2 }[currency] ?? 1;
+        const price = Number(r.price || 0);
+        const isNullS1 = isNulled(acc);
+        if (r.season_id === s1) {
+          if (!isNullS1) {
+            row.s1Qty += Number(r.qty||0);
+            row.s1Price += price * rateS1;
+          }
+          if (validTargetsBySp.get(spId)?.has(acc)) row.visitedValid.add(acc);
+        } else if (r.season_id === s2) {
+          row.s2Qty += Number(r.qty||0);
+          row.s2Price += price * rateS2;
+        }
       }
+      
       for (const inv of (invoices ?? []) as any[]) {
-        const acc = inv.account_no ?? ''; if (!acc) continue; const c = customerById.get(acc); const spId = c?.salesperson_id ?? ''; if (!spId) continue;
+        const acc = inv.account_no ?? ''; if (!acc) continue;
+        if (isHidden(acc)) continue;
+        const c = customerById.get(acc); const spId = c?.salesperson_id ?? ''; if (!spId) continue;
         const set = targetsBySp.get(spId); if (!set || !set.has(acc)) continue;
-        const row = agg.get(spId)!; const rate = rates[(String(inv.currency || 'DKK').toUpperCase())] ?? 1; const amountDkk = Number(inv.amount || 0) * rate; const qty = Number(inv.qty || 0) || 0;
-        if (inv.season_id === s1) { row.s1Qty += qty; row.s1Price += amountDkk; }
-        else if (inv.season_id === s2) { row.s2Qty += qty; row.s2Price += amountDkk; }
+        const row = agg.get(spId)!;
+        const currency = spCurrencyById[spId] ?? 'DKK';
+        const rateS1 = { ...baseRates, ...ratesS1 }[currency] ?? 1;
+        const rateS2 = { ...baseRates, ...ratesS2 }[currency] ?? 1;
+        const amount = Number(inv.amount || 0);
+        const qty = Number(inv.qty || 0) || 0;
+        const isNullS1 = isNulled(acc);
+        if (inv.season_id === s1) {
+          if (!isNullS1) {
+            row.s1Qty += qty;
+            row.s1Price += amount * rateS1;
+          }
+        } else if (inv.season_id === s2) {
+          row.s2Qty += qty;
+          row.s2Price += amount * rateS2;
+        }
       }
-      const styles = StyleSheet.create({ page: { padding: 16, fontSize: 9, color: '#0f172a' }, h1: { fontSize: 14, marginBottom: 6 }, header: { flexDirection: 'row', backgroundColor: '#1d4ed8', color: '#ffffff' }, cell: { padding: 4, fontSize: 8 }, row: { flexDirection: 'row', borderBottom: 0.5, borderColor: '#e2e8f0' }, left: { textAlign: 'left' }, right: { textAlign: 'right' } });
-      const Cell = (txt: string, w: string | number, align: 'left' | 'right' = 'left', extra?: any) => React.createElement(Text, { style: [{ width: w }, styles.cell, align === 'left' ? styles.left : styles.right, extra || {}] }, txt);
-      const fmt = (n: number) => new Intl.NumberFormat('da-DK').format(Math.round(n));
-      const head = React.createElement(View, { style: styles.header },
-        Cell('Salesman', '28%', 'left'), Cell('S1 Qty', '9%', 'right'), Cell('S1 Price (DKK)', '13%', 'right'), Cell('S2 Qty', '9%', 'right'), Cell('S2 Price (DKK)', '13%', 'right'), Cell('Visited', '8%', 'right'), Cell('Total', '8%', 'right'), Cell('Visited %', '12%', 'right')
-      );
-      const body = list.map((sp) => {
-        const a = agg.get(sp.id)!; const totalCustomers = custs.filter(c => c.salesperson_id === sp.id).length; const nulled = custs.filter(c => c.salesperson_id === sp.id && (c.nulled || c.excluded || c.permanently_closed)).length; const effective = Math.max(0, totalCustomers - nulled);
-        const visited = a.visitedValid.size; const visitedPct = effective > 0 ? (visited / effective) * 100 : 0;
-        return React.createElement(View, { style: styles.row }, Cell(sp.name, '28%'), Cell(String(a.s1Qty), '9%', 'right'), Cell(fmt(a.s1Price), '13%', 'right'), Cell(String(a.s2Qty), '9%', 'right'), Cell(fmt(a.s2Price), '13%', 'right'), Cell(String(visited), '8%', 'right'), Cell(String(effective), '8%', 'right'), Cell(visitedPct.toFixed(2) + '%', '12%', 'right'));
+      
+      // Calculate totals and index for visited customers
+      let totalS1Qty = 0, totalS1Price = 0, totalS2Qty = 0, totalS2Price = 0;
+      const allowedAccounts = new Set<string>();
+      for (const c of custs) {
+        if (c.customer_id && !isHidden(c.customer_id)) {
+          allowedAccounts.add(c.customer_id);
+        }
+      }
+      
+      for (const r of (stats ?? []) as any[]) {
+        const acc = r.account_no ?? '';
+        if (!acc || !allowedAccounts.has(acc)) continue;
+        const currency = r.salesperson_id ? (spCurrencyById[r.salesperson_id] ?? 'DKK') : 'DKK';
+        const rateS1 = { ...baseRates, ...ratesS1 }[currency] ?? 1;
+        const rateS2 = { ...baseRates, ...ratesS2 }[currency] ?? 1;
+        const qty = Number(r.qty || 0);
+        const price = Number(r.price || 0);
+        const isNullS1 = isNulled(acc);
+        if (r.season_id === s1) {
+          if (!isNullS1) {
+            totalS1Qty += qty;
+            totalS1Price += price * rateS1;
+          }
+        } else if (r.season_id === s2) {
+          totalS2Qty += qty;
+          totalS2Price += price * rateS2;
+        }
+      }
+      
+      for (const inv of (invoices ?? []) as any[]) {
+        const acc = inv.account_no ?? '';
+        if (!acc || !allowedAccounts.has(acc)) continue;
+        const c = customerById.get(acc);
+        const spId = c?.salesperson_id ?? null;
+        const currency = spId ? (spCurrencyById[spId] ?? 'DKK') : 'DKK';
+        const rateS1 = { ...baseRates, ...ratesS1 }[currency] ?? 1;
+        const rateS2 = { ...baseRates, ...ratesS2 }[currency] ?? 1;
+        const qty = Number(inv.qty || 0) || 0;
+        const amount = Number(inv.amount || 0);
+        const isNullS1 = isNulled(acc);
+        if (inv.season_id === s1) {
+          if (!isNullS1) {
+            totalS1Qty += qty;
+            totalS1Price += amount * rateS1;
+          }
+        } else if (inv.season_id === s2) {
+          totalS2Qty += qty;
+          totalS2Price += amount * rateS2;
+        }
+      }
+      
+      // Calculate index (visited customers only)
+      type Bucket = { accountId: string; s1Qty: number; s1Price: number; s2Qty: number; s2Price: number; isNulled: boolean };
+      const buckets = new Map<string, Bucket>();
+      for (const acc of allowedAccounts) {
+        buckets.set(acc, { accountId: acc, s1Qty: 0, s1Price: 0, s2Qty: 0, s2Price: 0, isNulled: isNulled(acc) });
+      }
+      
+      for (const r of (stats ?? []) as any[]) {
+        const acc = r.account_no ?? '';
+        const bucket = buckets.get(acc);
+        if (!bucket) continue;
+        const currency = r.salesperson_id ? (spCurrencyById[r.salesperson_id] ?? 'DKK') : 'DKK';
+        const qty = Number(r.qty || 0);
+        const price = Number(r.price || 0);
+        if (r.season_id === s1) {
+          if (!bucket.isNulled) {
+            bucket.s1Qty += qty;
+            bucket.s1Price += price * ({ ...baseRates, ...ratesS1 }[currency] ?? 1);
+          }
+        } else if (r.season_id === s2) {
+          bucket.s2Qty += qty;
+          bucket.s2Price += price * ({ ...baseRates, ...ratesS2 }[currency] ?? 1);
+        }
+      }
+      
+      for (const inv of (invoices ?? []) as any[]) {
+        const acc = inv.account_no ?? '';
+        const bucket = buckets.get(acc);
+        if (!bucket) continue;
+        const meta = customerById.get(acc);
+        const spId = meta?.salesperson_id ?? null;
+        const currency = spId ? (spCurrencyById[spId] ?? 'DKK') : 'DKK';
+        const qty = Number(inv.qty || 0) || 0;
+        const amount = Number(inv.amount || 0);
+        if (inv.season_id === s1) {
+          if (!bucket.isNulled) {
+            bucket.s1Qty += qty;
+            bucket.s1Price += amount * ({ ...baseRates, ...ratesS1 }[currency] ?? 1);
+          }
+        } else if (inv.season_id === s2) {
+          bucket.s2Qty += qty;
+          bucket.s2Price += amount * ({ ...baseRates, ...ratesS2 }[currency] ?? 1);
+        }
+      }
+      
+      const visited = Array.from(buckets.values()).filter((v) => v.s1Qty > 0 || v.s1Price > 0);
+      const visitedS1Qty = visited.reduce((a, v) => a + v.s1Qty, 0);
+      const visitedS1Price = visited.reduce((a, v) => a + v.s1Price, 0);
+      const visitedS2Qty = visited.reduce((a, v) => a + v.s2Qty, 0);
+      const visitedS2Price = visited.reduce((a, v) => a + v.s2Price, 0);
+      const indexQty = visitedS2Qty === 0 ? 100 : (visitedS1Qty / visitedS2Qty) * 100;
+      const indexPrice = visitedS2Price === 0 ? 100 : (visitedS1Price / visitedS2Price) * 100;
+      
+      const styles = StyleSheet.create({
+        page: { padding: 12, fontSize: 7, color: '#0f172a' },
+        h1: { fontSize: 12, marginBottom: 6, fontWeight: 700 },
+        h2: { fontSize: 10, marginTop: 10, marginBottom: 4, fontWeight: 700 },
+        header: { flexDirection: 'row', backgroundColor: '#1d4ed8', color: '#ffffff', borderBottom: 0.5, borderColor: '#bfdbfe' },
+        headerGrouped: { flexDirection: 'row', backgroundColor: '#93c5fd', color: '#1e3a8a', borderBottom: 0.5, borderColor: '#bfdbfe' },
+        headerCell: { padding: 3, fontSize: 7, fontWeight: 700 },
+        cell: { padding: 3, fontSize: 7 },
+        row: { flexDirection: 'row', borderBottom: 0.5, borderColor: '#e2e8f0' },
+        rowAlt: { backgroundColor: '#f1f5f9' },
+        left: { textAlign: 'left' },
+        right: { textAlign: 'right' },
+        center: { textAlign: 'center' },
+        green: { color: '#16a34a' },
+        red: { color: '#dc2626' },
+        cardSection: { flexDirection: 'row', gap: 8, marginTop: 8 },
+        card: { flex: 1, padding: 6, borderWidth: 0.5, borderColor: '#e2e8f0', borderRadius: 3, backgroundColor: '#ffffff' },
+        cardLabel: { fontSize: 6, color: '#64748b', marginBottom: 2 },
+        cardValue: { fontSize: 10, fontWeight: 700 }
       });
+      
+      const Cell = (txt: string, w: string | number, align: 'left' | 'right' | 'center' = 'left', extra?: any) => 
+        React.createElement(Text, { style: [{ width: w }, styles.cell, align === 'left' ? styles.left : align === 'right' ? styles.right : styles.center, extra || {}] }, txt);
+      const HCell = (txt: string, w: string | number, align: 'left' | 'right' | 'center' = 'left') => 
+        React.createElement(Text, { style: [{ width: w }, styles.headerCell, align === 'left' ? styles.left : align === 'right' ? styles.right : styles.center] }, txt);
+      const fmt = (n: number) => new Intl.NumberFormat('da-DK').format(Math.round(n));
+      
+      // Main table header (2 rows)
+      const headerRow1 = React.createElement(View, { style: styles.headerGrouped },
+        HCell('', '14%', 'left'),
+        HCell('', '5%', 'center'),
+        HCell('', '7%', 'center'),
+        HCell('', '7%', 'center'),
+        HCell('', '7%', 'center'),
+        HCell('', '7%', 'center'),
+        HCell(s1Label, '18%', 'center'),
+        HCell(s2Label, '18%', 'center'),
+        HCell('Need to meet', '17%', 'center')
+      );
+      
+      const headerRow2 = React.createElement(View, { style: styles.header },
+        HCell('Salesman', '14%', 'left'),
+        HCell('Nulled', '5%', 'center'),
+        HCell('Visited', '7%', 'center'),
+        HCell('Total', '7%', 'center'),
+        HCell('Not vis.', '7%', 'center'),
+        HCell('Prog.', '7%', 'center'),
+        HCell('Qty', '9%', 'right'),
+        HCell('Price', '9%', 'right'),
+        HCell('Qty', '9%', 'right'),
+        HCell('Price', '9%', 'right'),
+        HCell('Qty', '9%', 'right'),
+        HCell('Price', '8%', 'right')
+      );
+      
+      const body = list.map((sp, idx) => {
+        const a = agg.get(sp.id)!;
+        const totalCustomers = custs.filter(c => c.salesperson_id === sp.id).length;
+        const nulledCount = custs.filter(c => c.salesperson_id === sp.id && c.customer_id && isNulled(c.customer_id)).length;
+        const validTotal = validTargetsBySp.get(sp.id)?.size ?? Math.max(0, totalCustomers - nulledCount);
+        const visited = a.visitedValid.size;
+        const notVisited = Math.max(0, validTotal - visited);
+        const visitedPct = validTotal > 0 ? (visited / validTotal) * 100 : 0;
+        
+        const diffQty = a.s1Qty - a.s2Qty;
+        const diffPrice = a.s1Price - a.s2Price;
+        const needQty = a.s1Qty >= a.s2Qty ? 0 : (a.s2Qty - a.s1Qty);
+        const needPrice = a.s1Price >= a.s2Price ? 0 : (a.s2Price - a.s1Price);
+        const needQtyPct = a.s2Qty === 0 ? 0 : Math.max(0, (needQty / a.s2Qty) * 100);
+        const needPricePct = a.s2Price === 0 ? 0 : Math.max(0, (needPrice / a.s2Price) * 100);
+        
+        const qtyColor = diffQty > 0 ? styles.green : diffQty < 0 ? styles.red : undefined;
+        const priceColor = diffPrice > 0 ? styles.green : diffPrice < 0 ? styles.red : undefined;
+        
+        return React.createElement(View, { style: idx % 2 === 1 ? [styles.row, styles.rowAlt] : styles.row },
+          Cell(sp.name, '14%', 'left'),
+          Cell(String(nulledCount), '5%', 'center'),
+          Cell(String(visited), '7%', 'center'),
+          Cell(String(validTotal), '7%', 'center'),
+          Cell(String(notVisited), '7%', 'center'),
+          Cell(visitedPct.toFixed(0) + '%', '7%', 'center'),
+          Cell(String(a.s1Qty), '9%', 'right'),
+          Cell(fmt(a.s1Price), '9%', 'right'),
+          Cell(String(a.s2Qty), '9%', 'right'),
+          Cell(fmt(a.s2Price), '9%', 'right'),
+          Cell((needQtyPct > 0 ? '+' : '') + needQtyPct.toFixed(0) + '%', '9%', 'right', qtyColor),
+          Cell((needPricePct > 0 ? '+' : '') + needPricePct.toFixed(0) + '%', '8%', 'right', priceColor)
+        );
+      });
+      
+      // Second table: TOTALS
+      const diffQtyPct = totalS2Qty === 0 ? 0 : ((totalS1Qty - totalS2Qty) / totalS2Qty) * 100;
+      const diffPricePct = totalS2Price === 0 ? 0 : ((totalS1Price - totalS2Price) / totalS2Price) * 100;
+      const achievedQtyPct = totalS2Qty === 0 ? 0 : (totalS1Qty / totalS2Qty) * 100;
+      const achievedPricePct = totalS2Price === 0 ? 0 : (totalS1Price / totalS2Price) * 100;
+      
+      const qtyCls = diffQtyPct > 0 ? styles.green : diffQtyPct < 0 ? styles.red : undefined;
+      const priceCls = diffPricePct > 0 ? styles.green : diffPricePct < 0 ? styles.red : undefined;
+      
+      const totalsHeaderRow1 = React.createElement(View, { style: styles.headerGrouped },
+        HCell('', '20%', 'left'),
+        HCell(s1Label, '24%', 'center'),
+        HCell(s2Label, '24%', 'center'),
+        HCell('Progress vs last year', '32%', 'center')
+      );
+      
+      const totalsHeaderRow2 = React.createElement(View, { style: styles.header },
+        HCell('', '20%', 'left'),
+        HCell('Qty', '12%', 'right'),
+        HCell('Price (DKK)', '12%', 'right'),
+        HCell('Qty', '12%', 'right'),
+        HCell('Price (DKK)', '12%', 'right'),
+        HCell('Qty %', '16%', 'right'),
+        HCell('Price %', '16%', 'right')
+      );
+      
+      const totalRow = React.createElement(View, { style: styles.row },
+        Cell('TOTAL', '20%', 'left', { fontWeight: 700 }),
+        Cell(fmt(totalS1Qty), '12%', 'right'),
+        Cell(fmt(totalS1Price), '12%', 'right'),
+        Cell(fmt(totalS2Qty), '12%', 'right'),
+        Cell(fmt(totalS2Price), '12%', 'right'),
+        Cell((diffQtyPct >= 0 ? '+' : '') + diffQtyPct.toFixed(2) + '%', '16%', 'right', qtyCls),
+        Cell((diffPricePct >= 0 ? '+' : '') + diffPricePct.toFixed(2) + '%', '16%', 'right', priceCls)
+      );
+      
+      const andelRow = React.createElement(View, { style: [styles.row, styles.rowAlt] },
+        Cell('Andel ift sidste år', '20%', 'left', { fontWeight: 700 }),
+        Cell('—', '12%', 'right'),
+        Cell('—', '12%', 'right'),
+        Cell('—', '12%', 'right'),
+        Cell('—', '12%', 'right'),
+        Cell(achievedQtyPct.toFixed(2) + '%', '16%', 'right'),
+        Cell(achievedPricePct.toFixed(2) + '%', '16%', 'right')
+      );
+      
+      // Index cards
+      const cardSection = React.createElement(View, { style: styles.cardSection },
+        React.createElement(View, { style: styles.card },
+          React.createElement(Text, { style: styles.cardLabel }, 'Index qty'),
+          React.createElement(Text, { style: styles.cardValue }, indexQty.toFixed(1)),
+          React.createElement(Text, { style: { ...styles.cardLabel, marginTop: 2 } }, `${fmt(visitedS1Qty)} vs ${fmt(visitedS2Qty)}`),
+          React.createElement(Text, { style: { fontSize: 5, color: '#94a3b8' } }, 'Ud fra besøgte kunder')
+        ),
+        React.createElement(View, { style: styles.card },
+          React.createElement(Text, { style: styles.cardLabel }, 'Index price'),
+          React.createElement(Text, { style: styles.cardValue }, indexPrice.toFixed(1)),
+          React.createElement(Text, { style: { ...styles.cardLabel, marginTop: 2 } }, `${fmt(visitedS1Price)} vs ${fmt(visitedS2Price)}`),
+          React.createElement(Text, { style: { fontSize: 5, color: '#94a3b8' } }, 'Ud fra besøgte kunder')
+        )
+      );
+      
       const doc = React.createElement(
         Document,
         null,
@@ -81,10 +407,18 @@ export async function exportOverview(ctx: Ctx) {
           PdfPage,
           { size: 'A4', orientation: 'landscape', style: styles.page },
           React.createElement(Text, { style: styles.h1 }, 'Overview'),
-          head,
-          ...body
+          headerRow1,
+          headerRow2,
+          ...body,
+          React.createElement(Text, { style: styles.h2 }, 'Totals'),
+          totalsHeaderRow1,
+          totalsHeaderRow2,
+          totalRow,
+          andelRow,
+          cardSection
         )
       );
+      
       const pdfOut = await pdf(doc).toBuffer();
       const pdfBuf = await ensureBuffer(pdfOut);
       const path = `overview/${job.id}/overview.pdf`;
