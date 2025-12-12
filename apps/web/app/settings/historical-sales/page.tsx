@@ -4,8 +4,16 @@ import * as XLSX from 'xlsx';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../../components/ui/card';
 import { Button } from '../../../components/ui/button';
 import { Input } from '../../../components/ui/input';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../components/ui/table';
 
 type Row = Record<string, any>;
+type SalesRow = {
+  style_no: string;
+  color: string;
+  date: string;
+  size: string;
+  quantity: number;
+};
 
 const REQUIRED_FIELDS = ['style_no', 'color', 'date', 'size', 'quantity'];
 
@@ -17,8 +25,28 @@ export default function HistoricalSalesPage() {
   const [submitResult, setSubmitResult] = useState<string | null>(null);
   const [processed, setProcessed] = useState(0);
   const [total, setTotal] = useState(0);
+  const [styleInput, setStyleInput] = useState('');
+  const [colorInput, setColorInput] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [salesData, setSalesData] = useState<SalesRow[]>([]);
+  const [salesCount, setSalesCount] = useState<number | null>(null);
+  const [salesLoading, setSalesLoading] = useState(false);
+  const [salesError, setSalesError] = useState<string | null>(null);
 
   const preview = useMemo(() => rows.slice(0, 10), [rows]);
+  const parsedStyleNos = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          styleInput
+            .split(/[\s,;\n]+/)
+            .map((s) => s.trim())
+            .filter(Boolean)
+        )
+      ),
+    [styleInput]
+  );
 
   function parseFile(file: File) {
     const reader = new FileReader();
@@ -132,6 +160,43 @@ export default function HistoricalSalesPage() {
     }
   }
 
+  async function fetchSalesData() {
+    setSalesError(null);
+    if (parsedStyleNos.length === 0) {
+      setSalesError('Enter at least one style number.');
+      return;
+    }
+    setSalesLoading(true);
+    try {
+      const payload: any = {
+        style_nos: parsedStyleNos,
+        start_date: dateFrom || undefined,
+        end_date: dateTo || undefined
+      };
+      if (colorInput.trim()) {
+        payload.colors = [colorInput.trim()];
+      }
+      const res = await fetch('/api/historical-sales/list', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        setSalesError(json.error || 'Failed to fetch sales data');
+        setSalesData([]);
+        setSalesCount(null);
+        return;
+      }
+      setSalesData(json.data || []);
+      setSalesCount(typeof json.count === 'number' ? json.count : null);
+    } catch (err: any) {
+      setSalesError(err.message || 'Failed to fetch sales data');
+    } finally {
+      setSalesLoading(false);
+    }
+  }
+
   return (
     <div className="p-4 space-y-4 max-w-7xl mx-auto">
       <div>
@@ -239,6 +304,100 @@ export default function HistoricalSalesPage() {
               {submitResult}
             </div>
           )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Browse Historical Sales</CardTitle>
+          <CardDescription>
+            Select style(s), optional color, and a date range to view stored sales entries.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-slate-700">Style number(s)</label>
+              <textarea
+                className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm h-24"
+                placeholder="One or more style numbers, separated by comma, space, or newline"
+                value={styleInput}
+                onChange={(e) => setStyleInput(e.target.value)}
+              />
+              <div className="text-[11px] text-slate-500">
+                Parsed styles: {parsedStyleNos.length}
+              </div>
+            </div>
+            <div className="grid grid-cols-1 gap-3">
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-slate-700">Color (optional)</label>
+                <Input
+                  placeholder="Exact color name"
+                  value={colorInput}
+                  onChange={(e) => setColorInput(e.target.value)}
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-slate-700">From date</label>
+                  <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-slate-700">To date</label>
+                  <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+                </div>
+              </div>
+              <div>
+                <Button onClick={fetchSalesData} disabled={salesLoading || parsedStyleNos.length === 0}>
+                  {salesLoading ? 'Loading…' : 'Fetch Sales'}
+                </Button>
+              </div>
+            </div>
+          </div>
+
+          {salesError && (
+            <div className="p-3 rounded-md text-sm bg-red-50 text-red-900 border border-red-200">
+              {salesError}
+            </div>
+          )}
+
+          <div className="border rounded-md overflow-hidden">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Style</TableHead>
+                  <TableHead>Color</TableHead>
+                  <TableHead>Date</TableHead>
+                  <TableHead>Size</TableHead>
+                  <TableHead className="text-right">Qty</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {salesData.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={5} className="text-center text-slate-500">
+                      {salesLoading ? 'Loading sales…' : 'No data yet'}
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  salesData.map((row, idx) => (
+                    <TableRow key={`${row.style_no}-${row.color}-${row.date}-${row.size}-${idx}`}>
+                      <TableCell>{row.style_no}</TableCell>
+                      <TableCell>{row.color}</TableCell>
+                      <TableCell>{row.date}</TableCell>
+                      <TableCell>{row.size}</TableCell>
+                      <TableCell className="text-right">{row.quantity}</TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          </div>
+          <div className="text-xs text-slate-600 flex items-center gap-2">
+            <span>Rows shown: {salesData.length}</span>
+            {salesCount !== null && <span className="text-slate-500">| Total matched: {salesCount}</span>}
+            <span className="text-slate-500">Limit 500 per query</span>
+          </div>
         </CardContent>
       </Card>
 

@@ -106,6 +106,24 @@ export async function POST(req: Request) {
       styleMap.set(s.style_no, s.id);
     });
     
+    // Fetch all style_colors to validate style_no + color combinations
+    const styleIds = Array.from(styleMap.values());
+    const { data: styleColors, error: colorsError } = await supabase
+      .from('style_colors')
+      .select('style_id, color')
+      .in('style_id', styleIds);
+    
+    if (colorsError) {
+      return NextResponse.json({ error: colorsError.message }, { status: 500 });
+    }
+    
+    // Build a map of valid style_id + color combinations (case-insensitive)
+    const validStyleColorMap = new Map<string, boolean>();
+    (styleColors || []).forEach((sc: any) => {
+      const key = `${sc.style_id}|${String(sc.color || '').trim().toLowerCase()}`;
+      validStyleColorMap.set(key, true);
+    });
+    
     // Process each row
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i] as UploadRow;
@@ -123,26 +141,37 @@ export async function POST(req: Request) {
           continue;
         }
         
+        // Validate that the color exists for this style
+        const colorKey = `${styleId}|${String(row.color || '').trim().toLowerCase()}`;
+        if (!validStyleColorMap.has(colorKey)) {
+          errors.push(`Row ${i + 1}: Color "${row.color}" not found for style ${row.style_no}`);
+          continue;
+        }
+        
         const quantity = Number(row.quantity);
-        if (isNaN(quantity) || quantity < 0) {
+        if (isNaN(quantity)) {
           errors.push(`Row ${i + 1}: Invalid quantity ${row.quantity}`);
           continue;
         }
         
         // Parse date or date range
         const dates = parseDateRange(row.date);
-        const qtyPerDay = Math.floor(quantity / dates.length);
-        const remainder = quantity % dates.length;
+        const qtyPerDay = Math.trunc(quantity / dates.length);
+        const remainder = quantity - qtyPerDay * dates.length;
         
         // Create a row for each date
         dates.forEach((date, idx) => {
+          const remainderAdjustment =
+            remainder > 0 ? (idx < remainder ? 1 : 0) :
+            remainder < 0 ? (idx < -remainder ? -1 : 0) :
+            0;
           processedRows.push({
             style_id: styleId,
             style_no: row.style_no,
             color: row.color,
             date,
             size: row.size,
-            quantity: qtyPerDay + (idx < remainder ? 1 : 0) // Distribute remainder
+            quantity: qtyPerDay + remainderAdjustment // Distribute remainder (supports negatives)
           });
         });
       } catch (err: any) {
