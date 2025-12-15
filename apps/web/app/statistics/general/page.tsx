@@ -669,6 +669,7 @@ export default function StatisticsGeneralPage() {
           .filter(c => c.salesperson_id === selectedSalespersonId && c.customer_id)
           .map(c => c.customer_id!);
         targetCustomerIds = customerIds;
+        console.log('[stats] selectedSalespersonId:', selectedSalespersonId, 'targetCustomerIds count:', targetCustomerIds.length, 'sample:', targetCustomerIds.slice(0, 5));
       }
       
       const invoicesQuery = supabase
@@ -691,7 +692,7 @@ export default function StatisticsGeneralPage() {
       if (invoicesRes.error) throw new Error(invoicesRes.error.message);
       const statsData = statsRes.data ?? [];
       const invoicesData = invoicesRes.data ?? [];
-      console.log('[stats] fetched raw rows', statsData.length, 'invoices', invoicesData.length);
+      console.log('[stats] fetched raw rows', statsData.length, 'invoices', invoicesData.length, 'allCustomers count:', (allCustomers ?? []).length);
 
       const map = new Map<string, RowOut>();
       // Seed baseline rows from customers so empty seasons still show the full customer list
@@ -727,8 +728,18 @@ export default function StatisticsGeneralPage() {
         if (!itemCity) itemCity = '-';
         // Step 1: Check sales-data row against customer (match by account_no)
         // Step 2: Get salesperson_id from customers table (source of truth for grouping)
-        const customer = r.account_no ? (allCustomers ?? []).find(c => c.customer_id === r.account_no) : null;
+        // Try both string and number comparison to handle type mismatches
+        const customer = r.account_no ? (allCustomers ?? []).find(c => {
+          // Handle both string and number comparisons
+          const cId = String(c.customer_id || '');
+          const rAccount = String(r.account_no || '');
+          return cId === rAccount || cId === String(Number(rAccount)) || String(Number(cId)) === rAccount;
+        }) : null;
         const customerSalespersonId = customer?.salesperson_id ?? null;
+        // If customer not found in allCustomers but we have stats, still create row but log warning
+        if (r.account_no && !customer && (allCustomers ?? []).length > 0) {
+          console.warn('[stats] Customer not found in allCustomers for account_no:', r.account_no, 'customer_name:', r.customer_name, 'allCustomers sample:', (allCustomers ?? []).slice(0, 3).map(c => c.customer_id));
+        }
         const item = map.get(key) ?? {
           account_no: r.account_no ?? key,
           customer: r.customer_name ?? '-',
@@ -742,6 +753,7 @@ export default function StatisticsGeneralPage() {
           salespersonName: customerSalespersonId ? (spNameById[customerSalespersonId] ?? 'Unknown') : '—'
         };
         // Always use customer's salesperson_id (customers table is source of truth)
+        // If customer found, update salespersonId; if not found, keep as null (will be filtered out if salesperson selected)
         if (customerSalespersonId) {
           item.salespersonId = customerSalespersonId;
           item.salespersonName = spNameById[customerSalespersonId] ?? 'Unknown';
