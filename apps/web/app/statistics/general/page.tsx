@@ -745,6 +745,11 @@ export default function StatisticsGeneralPage() {
           salespersonId: r.salesperson_id ?? null,
           salespersonName: spNameById[r.salesperson_id as string] ?? (r.salesperson_id ? 'Unknown' : '—')
         };
+        // Update salespersonId from stats if present (stats are source of truth for actual sales)
+        if (r.salesperson_id) {
+          item.salespersonId = r.salesperson_id;
+          item.salespersonName = spNameById[r.salesperson_id] ?? 'Unknown';
+        }
         const qty = Number(r.qty ?? 0) || 0;
         const price = Number(r.price ?? 0) || 0;
         if (r.season_id === s1) {
@@ -765,6 +770,16 @@ export default function StatisticsGeneralPage() {
         if (!itemCity && inv.account_no) itemCity = customerIndex?.byId?.[inv.account_no] ?? '';
         if (!itemCity && inv.customer_name) itemCity = customerIndex?.byName?.[inv.customer_name] ?? '';
         if (!itemCity) itemCity = '-';
+        // Look up salesperson from customers table if needed
+        let invoiceSalespersonId: string | null = null;
+        let invoiceSalespersonName = '—';
+        if (inv.account_no) {
+          const customer = (allCustomers ?? []).find(c => c.customer_id === inv.account_no);
+          if (customer?.salesperson_id) {
+            invoiceSalespersonId = customer.salesperson_id;
+            invoiceSalespersonName = spNameById[customer.salesperson_id] ?? 'Unknown';
+          }
+        }
         const item = itemExisting ?? {
           account_no: inv.account_no ?? key,
           customer: inv.customer_name ?? '-',
@@ -774,9 +789,14 @@ export default function StatisticsGeneralPage() {
           s1Price: 0,
           s2Qty: 0,
           s2Price: 0,
-          salespersonId: null,
-          salespersonName: '—'
+          salespersonId: invoiceSalespersonId,
+          salespersonName: invoiceSalespersonName
         } as RowOut;
+        // Update salespersonId from customer lookup if currently null (for existing items)
+        if (item.salespersonId === null && invoiceSalespersonId) {
+          item.salespersonId = invoiceSalespersonId;
+          item.salespersonName = invoiceSalespersonName;
+        }
         const qty = Number(inv.qty ?? 0) || 0;
         const amount = Number(inv.amount ?? 0) || 0;
         if (inv.season_id === s1) {
