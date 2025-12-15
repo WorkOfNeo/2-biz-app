@@ -67,7 +67,10 @@ export default function StyleStatisticsPage() {
           ).sort() as string[];
           setColors(uniqueColors);
           if (uniqueColors.length > 0 && !uniqueColors.includes(selectedColor)) {
-            setSelectedColor(uniqueColors[0]);
+            const firstColor = uniqueColors[0];
+            if (firstColor) {
+              setSelectedColor(firstColor);
+            }
           }
         }
       } catch (err) {
