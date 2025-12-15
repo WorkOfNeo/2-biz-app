@@ -211,7 +211,12 @@ export default function NielsensSalesPage() {
     
     // Search through availability map for matching style
     for (const [key, stockInfo] of availability.entries()) {
-      const [keyStyle, keyColor] = key.split('|');
+      const parts = key.split('|');
+      const keyStyle = parts[0];
+      const keyColor = parts[1];
+      
+      // Check if we have both parts
+      if (!keyStyle || !keyColor) continue;
       
       // Check if style matches
       if (keyStyle !== normalizedStyle) continue;
