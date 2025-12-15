@@ -124,6 +124,12 @@ export default function NielsensSalesPage() {
         map.set(normalizedEan, row);
       }
     }
+    console.log('[Nielsens Debug] Built eanMap with', map.size, 'entries');
+    // Make eanMap available globally for debugging
+    if (typeof window !== 'undefined') {
+      (window as any).debugEanMap = map;
+      console.log('[Nielsens Debug] To check if an EAN exists, run in console: window.debugEanMap.get("YOUR_EAN")');
+    }
     return map;
   }, [eanData]);
 
@@ -190,6 +196,20 @@ export default function NielsensSalesPage() {
       }, zero.slice());
       const available = stockVals.map((v, i) => v - (soldVals[i] ?? 0) + (purchaseVals[i] ?? 0));
       map.set(key, { sizes, available });
+    }
+    console.log('[Nielsens Debug] Built availability map with', map.size, 'style/color combinations');
+    // Make availability map available globally for debugging
+    if (typeof window !== 'undefined') {
+      (window as any).debugAvailability = map;
+      (window as any).debugFindStyle = (stylePart: string) => {
+        const keys = Array.from(map.keys()).filter(k => k.toLowerCase().includes(stylePart.toLowerCase()));
+        console.log(`Found ${keys.length} keys matching "${stylePart}":`, keys);
+        return keys;
+      };
+      console.log('[Nielsens Debug] Debug helpers available:');
+      console.log('  - window.debugAvailability.get("styleno|color") - Check stock for exact key');
+      console.log('  - window.debugFindStyle("rim") - Find all keys containing "rim"');
+      console.log('  - window.debugEanMap.get("YOUR_EAN") - Check EAN mapping');
     }
     return map;
   }, [stock]);
@@ -395,6 +415,9 @@ export default function NielsensSalesPage() {
       all.push(...parsed);
     }
     
+    console.log('[Nielsens Debug] Parsed', all.length, 'rows from Excel');
+    console.log('[Nielsens Debug] First 3 rows:', all.slice(0, 3));
+    
     setRows(all);
     setShowMapping(false);
   }
@@ -406,6 +429,12 @@ export default function NielsensSalesPage() {
     if (!eanMap.size || !availability.size) return;
     
     console.log('[Nielsens Debug] Starting stock check for', rows.length, 'rows');
+    console.log('[Nielsens Debug] Total EAN codes loaded:', eanMap.size);
+    console.log('[Nielsens Debug] Total availability keys:', availability.size);
+    
+    // Show some sample availability keys for debugging
+    const sampleKeys = Array.from(availability.keys()).slice(0, 10);
+    console.log('[Nielsens Debug] Sample availability keys:', sampleKeys);
     
     // Build EAN -> stock availability map
     const eanToStock = new Map<string, { size: string; available: number; style_no: string; color: string }>();
@@ -426,6 +455,8 @@ export default function NielsensSalesPage() {
         }
       }
     }
+    
+    console.log('[Nielsens Debug] Built eanToStock map with', eanToStock.size, 'entries');
     
     // Build working inventory snapshot so deductions persist across lines
     const eanInv = new Map<string, number>();
@@ -461,13 +492,41 @@ export default function NielsensSalesPage() {
       let eanAvailable = 0;
       let eanFound = false;
       if (ean) {
+        const eanInfo = eanMap.get(ean);
+        if (eanInfo) {
+          console.log(`  → EAN ${ean} maps to: Style="${eanInfo.style_no}", Color="${eanInfo.color}", Size="${eanInfo.size}"`);
+          const stockKey = `${normalize(eanInfo.style_no)}|${normalize(eanInfo.color)}`;
+          console.log(`  → Looking up stock key: "${stockKey}"`);
+          const stockInfo = availability.get(stockKey);
+          if (stockInfo) {
+            console.log(`  → Stock info found! Sizes available:`, stockInfo.sizes);
+            console.log(`  → Stock availability values:`, stockInfo.available);
+            const normalizedSize = normalize(eanInfo.size);
+            console.log(`  → Looking for size "${eanInfo.size}" (normalized: "${normalizedSize}")`);
+            const sizeIdx = stockInfo.sizes.findIndex(s => normalize(s) === normalizedSize);
+            console.log(`  → Size index: ${sizeIdx}`);
+            if (sizeIdx !== -1) {
+              eanAvailable = eanInv.get(ean) ?? 0;
+              eanFound = true;
+              console.log(`  → EAN lookup: ✓ Found (available: ${eanAvailable})`);
+            } else {
+              console.log(`  → EAN lookup: ✗ Size not found in stock sizes`);
+            }
+          } else {
+            console.log(`  → EAN lookup: ✗ Stock key not found in availability map`);
+            // Show what keys ARE available for this style
+            const matchingKeys = Array.from(availability.keys()).filter(k => k.startsWith(normalize(eanInfo.style_no) + '|'));
+            if (matchingKeys.length > 0) {
+              console.log(`  → Available keys for style "${eanInfo.style_no}":`, matchingKeys);
+            } else {
+              console.log(`  → No availability keys found for style "${eanInfo.style_no}"`);
+            }
+          }
+        } else {
+          console.log(`  → EAN lookup: ✗ EAN ${ean} not found in eanMap (database has ${eanMap.size} EAN codes total)`);
+        }
         eanAvailable = eanInv.get(ean) ?? 0;
         eanFound = eanToStock.has(ean);
-        if (eanFound) {
-          console.log(`  → EAN lookup: ✓ Found (available: ${eanAvailable})`);
-        } else {
-          console.log(`  → EAN lookup: ✗ Not found in eanMap`);
-        }
       } else {
         console.log(`  → EAN lookup: ✗ No EAN provided`);
       }
