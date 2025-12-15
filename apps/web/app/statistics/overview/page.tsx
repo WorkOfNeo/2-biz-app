@@ -1,5 +1,5 @@
 'use client';
-import { useMemo, useState, useEffect } from 'react';
+import { useMemo, useState, useEffect, useRef, type ReactNode } from 'react';
 import useSWR from 'swr';
 import { supabase } from '../../../lib/supabaseClient';
 import Link from 'next/link';
@@ -8,6 +8,7 @@ import { saveAs } from 'file-saver';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { Modal } from '../../../components/Modal';
+import { EyeOff, Ban, Trash2 } from 'lucide-react';
 
 type Person = { id: string; name: string; currency?: string | null };
 type StatsRow = { account_no: string | null; qty: number; price: number; season_id: string; salesperson_id: string | null };
@@ -94,13 +95,13 @@ export default function OverviewPage() {
   const rates = useMemo(() => ({ DKK: 1, ...(currencyRatesRow ?? {}) } as Record<string, number>), [currencyRatesRow]);
   const spCurrencyById = useMemo(() => Object.fromEntries(((people ?? []) as Person[]).map(p => [p.id, p.currency ?? 'DKK'])), [people]);
 
-  const { data: customers } = useSWR('overview:customers-main', async () => {
+  const { data: customers, mutate: mutateCustomers } = useSWR('overview:customers-main', async () => {
     const { data, error } = await supabase.from('customers').select('customer_id, company, city, country, salesperson_id, nulled, excluded, permanently_closed');
     if (error) throw new Error(error.message);
     return (data ?? []) as Customer[];
   }, { refreshInterval: 10000 });
 
-  const { data: stats } = useSWR(s1 && s2 ? ['overview:stats', s1, s2] : null, async () => {
+  const { data: stats, mutate: mutateStats } = useSWR(s1 && s2 ? ['overview:stats', s1, s2] : null, async () => {
     const { data, error } = await supabase
       .from('sales_stats')
       .select('account_no, qty, price, season_id, salesperson_id')
@@ -123,7 +124,7 @@ export default function OverviewPage() {
 
   // Seasonal overrides (null/hidden) stored in app_settings per season - same as General page
   const overridesKey = s1 ? `season_overrides:${s1}` : null;
-  const { data: overrides } = useSWR(overridesKey, async () => {
+  const { data: overrides, mutate: mutateOverrides } = useSWR(overridesKey, async () => {
     if (!overridesKey) return { id: null, value: { nulled: [], hidden: [] as string[] } };
     const { data, error } = await supabase.from('app_settings').select('id, value').eq('key', overridesKey).maybeSingle();
     if (error) throw new Error(error.message);
@@ -131,7 +132,7 @@ export default function OverviewPage() {
     return { id: data?.id ?? null, value: { nulled: Array.isArray(val.nulled) ? val.nulled : [], hidden: Array.isArray(val.hidden) ? val.hidden : [] } } as { id: string | null, value: { nulled: string[]; hidden: string[] } };
   }, { refreshInterval: 0 });
 
-  const { data: closedCustomers } = useSWR('overview:customers-closed', async () => {
+  const { data: closedCustomers, mutate: mutateClosedCustomers } = useSWR('overview:customers-closed', async () => {
     const { data, error } = await supabase.from('customers').select('customer_id, permanently_closed, excluded, nulled');
     if (error) throw new Error(error.message);
     const setClosed = new Set<string>();
@@ -151,6 +152,69 @@ export default function OverviewPage() {
   }
   function isNulled(account: string): boolean {
     return Boolean(overrides?.value.nulled.includes(account)) || Boolean(closedCustomers?.setNulled.has(account)) || Boolean(closedCustomers?.setClosed.has(account));
+  }
+
+  async function saveOverrides(next: { nulled: string[]; hidden: string[] }) {
+    if (!overridesKey) return;
+    console.log('[overview] saveOverrides', overridesKey, next);
+    if (overrides?.id) {
+      const { error } = await supabase.from('app_settings').update({ value: next }).eq('id', overrides.id);
+      if (error) throw new Error(error.message);
+    } else {
+      const { error } = await supabase.from('app_settings').insert({ key: overridesKey, value: next });
+      if (error) throw new Error(error.message);
+    }
+    await mutateOverrides();
+  }
+
+  async function toggleNull(account: string) {
+    if (!s1) return alert('Select Season 1 first');
+    const nulled = new Set(overrides?.value.nulled ?? []);
+    if (nulled.has(account)) nulled.delete(account); else nulled.add(account);
+    console.log('[overview] toggleNull', account, '->', Array.from(nulled));
+    await saveOverrides({ nulled: Array.from(nulled), hidden: overrides?.value.hidden ?? [] });
+    // Refresh data
+    await Promise.all([
+      mutateCustomers(),
+      mutateStats(),
+      mutateClosedCustomers(),
+      mutateOverrides()
+    ]);
+  }
+
+  async function permanentClose(account: string) {
+    // Mark customer globally; also add seasonal null
+    const { error } = await supabase.from('customers').update({ permanently_closed: true, nulled: true }).eq('customer_id', account);
+    if (error) return alert(error.message);
+    console.log('[overview] permanentClose', account);
+    await toggleNull(account);
+    // Additional refresh after toggleNull
+    await Promise.all([
+      mutateCustomers(),
+      mutateStats(),
+      mutateClosedCustomers()
+    ]);
+  }
+
+  // Action button component with hover tooltip (same as General page)
+  function ActionBtn({ label, onClick, children }: { label: string; onClick: () => void; children: ReactNode }) {
+    const [show, setShow] = useState(false);
+    const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    return (
+      <button
+        className="relative rounded p-1 hover:bg-gray-100"
+        onMouseEnter={() => { timer.current = setTimeout(() => setShow(true), 2000); }}
+        onMouseLeave={() => { if (timer.current) clearTimeout(timer.current); setShow(false); }}
+        onClick={onClick}
+      >
+        {children}
+        {show && (
+          <span className="absolute left-1/2 -translate-x-1/2 translate-y-2 text-[10px] bg-black text-white rounded px-1.5 py-0.5 shadow">
+            {label}
+          </span>
+        )}
+      </button>
+    );
   }
 
   const rows = useMemo(() => {
@@ -989,17 +1053,32 @@ export default function OverviewPage() {
                     <th className="p-2 text-right font-semibold">S1 Price (DKK)</th>
                     <th className="p-2 text-right font-semibold">S2 Qty</th>
                     <th className="p-2 text-right font-semibold">S2 Price (DKK)</th>
+                    <th className="p-2 text-center font-semibold">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {rows.map((row) => (
-                    <tr key={row.accountId} className="border-t">
+                    <tr key={row.accountId} className="border-t hover:bg-gray-50">
                       <td className="p-2">{row.customer}</td>
                       <td className="p-2">{row.city || '-'}</td>
                       <td className="p-2 text-right">{Number(row.s1Qty || 0).toLocaleString('da-DK')}</td>
                       <td className="p-2 text-right">{Math.round(row.s1Price || 0).toLocaleString('da-DK')}</td>
                       <td className="p-2 text-right">{Number(row.s2Qty || 0).toLocaleString('da-DK')}</td>
                       <td className="p-2 text-right">{Math.round(row.s2Price || 0).toLocaleString('da-DK')}</td>
+                      <td className="p-2">
+                        <div className="flex items-center justify-center gap-1">
+                          {row.accountId && (
+                            <>
+                              <ActionBtn label="Null (season)" onClick={() => toggleNull(row.accountId)}>
+                                <EyeOff className="h-4 w-4" />
+                              </ActionBtn>
+                              <ActionBtn label="Close (perm)" onClick={() => permanentClose(row.accountId)}>
+                                <Trash2 className="h-4 w-4" />
+                              </ActionBtn>
+                            </>
+                          )}
+                        </div>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -1163,6 +1242,7 @@ export default function OverviewPage() {
                   <th className="p-2 text-left font-semibold">City</th>
                   <th className="p-2 text-left font-semibold">Country</th>
                   <th className="p-2 text-center font-semibold">Status</th>
+                  <th className="p-2 text-center font-semibold">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -1187,6 +1267,20 @@ export default function OverviewPage() {
                           )}
                           {!customer.nulled && !customer.excluded && !customer.permanently_closed && (
                             <span className="px-1.5 py-0.5 text-xs bg-gray-100 text-gray-500 rounded">Active</span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="p-2">
+                        <div className="flex items-center justify-center gap-1">
+                          {customer.customer_id && (
+                            <>
+                              <ActionBtn label="Null (season)" onClick={() => toggleNull(customer.customer_id)}>
+                                <EyeOff className="h-4 w-4" />
+                              </ActionBtn>
+                              <ActionBtn label="Close (perm)" onClick={() => permanentClose(customer.customer_id)}>
+                                <Trash2 className="h-4 w-4" />
+                              </ActionBtn>
+                            </>
                           )}
                         </div>
                       </td>
