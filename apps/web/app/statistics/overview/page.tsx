@@ -33,6 +33,7 @@ export default function OverviewPage() {
   const [country, setCountry] = useState<typeof COUNTRIES[number]>('All');
   const [indexModal, setIndexModal] = useState<{ mode: 'visited' | 'unvisited' } | null>(null);
   const [detailModal, setDetailModal] = useState<{ salespersonId: string; salespersonName: string; season: 's1' | 's2'; seasonLabel: string } | null>(null);
+  const [notVisitedModal, setNotVisitedModal] = useState<{ salespersonId: string; salespersonName: string; customers: Customer[] } | null>(null);
 
   const { data: saved } = useSWR('app-settings:season-compare', async () => {
     const { data, error } = await supabase.from('app_settings').select('*').eq('key', 'season_compare').maybeSingle();
@@ -280,11 +281,13 @@ export default function OverviewPage() {
       const needPricePct = a.s2Price === 0 ? 0 : Math.max(0, (needPrice / a.s2Price) * 100);
       const notVisitedCount = Math.max(0, validTotal - a.visitedValid.size);
       
+      // Calculate not visited customers for modal
+      const validIds = validTargetsBySp.get(sp.id) || new Set();
+      const notVisitedIds = Array.from(validIds).filter(id => !a.visitedValid.has(id));
+      const notVisitedCustomers = spCustomers.filter(c => c.customer_id && notVisitedIds.includes(c.customer_id));
+      
       // Debug logging for not visited
       if (notVisitedCount > 0) {
-        const validIds = validTargetsBySp.get(sp.id) || new Set();
-        const notVisitedIds = Array.from(validIds).filter(id => !a.visitedValid.has(id));
-        const notVisitedCustomers = spCustomers.filter(c => notVisitedIds.includes(c.customer_id));
         console.log(`[OVERVIEW] ${sp.name} - Not visited (${notVisitedCount}):`,
           notVisitedCustomers.map(c => ({
             id: c.customer_id,
@@ -305,6 +308,7 @@ export default function OverviewPage() {
         effectiveTotal: validTotal,
         visitedPct: validTotal > 0 ? (a.visitedValid.size / validTotal) * 100 : 0,
         notVisited: notVisitedCount,
+        notVisitedCustomers, // Store for modal display
         s1Qty: a.s1Qty, s1Price: a.s1Price, s1Avg,
         s2Qty: a.s2Qty, s2Price: a.s2Price, s2Avg,
         diffPct,
@@ -755,7 +759,19 @@ export default function OverviewPage() {
                 <td className="p-2 font-medium">{r.name}</td>
                 <td className="p-2"><Link className="underline underline-offset-2" href={buildDetailsHref(r.id, 'nulled')}>{r.nulledCount}</Link></td>
                 <td className="p-2"><Link className="underline underline-offset-2" href={buildDetailsHref(r.id, 'visited')}>{r.visited}/{r.effectiveTotal}</Link></td>
-                <td className="p-2"><Link className="underline underline-offset-2" href={buildDetailsHref(r.id, 'not_visited')}>{r.notVisited}</Link></td>
+                <td className="p-2">
+                  <button
+                    onClick={() => setNotVisitedModal({ 
+                      salespersonId: r.id, 
+                      salespersonName: r.name, 
+                      customers: (r as any).notVisitedCustomers || [] 
+                    })}
+                    className="underline underline-offset-2 hover:text-blue-600"
+                    disabled={r.notVisited === 0}
+                  >
+                    {r.notVisited}
+                  </button>
+                </td>
                 <td className="p-2"><Donut pct={r.visitedPct} /></td>
                 <td className="p-2 text-center">
                   <button 
@@ -1115,6 +1131,74 @@ export default function OverviewPage() {
           </div>
         ) : (
           <div className="p-4 text-sm text-gray-600">No detail rows to display.</div>
+        )}
+      </Modal>
+
+      {/* Not Visited Customers Modal */}
+      <Modal
+        open={Boolean(notVisitedModal)}
+        onClose={() => setNotVisitedModal(null)}
+        title={notVisitedModal ? `Not Visited Customers: ${notVisitedModal.salespersonName}` : 'Not Visited Customers'}
+        maxWidth="max-w-4xl"
+        footer={
+          <button
+            type="button"
+            className="rounded border px-3 py-1.5 text-sm"
+            onClick={() => setNotVisitedModal(null)}
+          >
+            Close
+          </button>
+        }
+      >
+        {notVisitedModal && notVisitedModal.customers.length > 0 ? (
+          <div className="max-h-[60vh] overflow-auto">
+            <div className="mb-3 text-sm text-gray-600">
+              Total: <span className="font-semibold">{notVisitedModal.customers.length}</span> customer{notVisitedModal.customers.length !== 1 ? 's' : ''} not visited in {getSeasonLabel(s1) || 'Season 1'}
+            </div>
+            <table className="min-w-full text-sm">
+              <thead className="bg-gray-50 sticky top-0">
+                <tr>
+                  <th className="p-2 text-left font-semibold">Customer ID</th>
+                  <th className="p-2 text-left font-semibold">Company</th>
+                  <th className="p-2 text-left font-semibold">City</th>
+                  <th className="p-2 text-left font-semibold">Country</th>
+                  <th className="p-2 text-center font-semibold">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {notVisitedModal.customers
+                  .sort((a, b) => (a.company || a.customer_id || '').localeCompare(b.company || b.customer_id || ''))
+                  .map((customer) => (
+                    <tr key={customer.customer_id} className="border-t hover:bg-gray-50">
+                      <td className="p-2 font-mono text-xs">{customer.customer_id}</td>
+                      <td className="p-2">{customer.company || '—'}</td>
+                      <td className="p-2">{customer.city || '—'}</td>
+                      <td className="p-2">{customer.country || '—'}</td>
+                      <td className="p-2">
+                        <div className="flex flex-wrap gap-1 justify-center">
+                          {customer.nulled && (
+                            <span className="px-1.5 py-0.5 text-xs bg-orange-100 text-orange-700 rounded">Nulled</span>
+                          )}
+                          {customer.excluded && (
+                            <span className="px-1.5 py-0.5 text-xs bg-red-100 text-red-700 rounded">Excluded</span>
+                          )}
+                          {customer.permanently_closed && (
+                            <span className="px-1.5 py-0.5 text-xs bg-gray-100 text-gray-700 rounded">Closed</span>
+                          )}
+                          {!customer.nulled && !customer.excluded && !customer.permanently_closed && (
+                            <span className="px-1.5 py-0.5 text-xs bg-gray-100 text-gray-500 rounded">Active</span>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="p-4 text-sm text-gray-600">
+            {notVisitedModal ? 'No customers found.' : 'No data available.'}
+          </div>
         )}
       </Modal>
 
