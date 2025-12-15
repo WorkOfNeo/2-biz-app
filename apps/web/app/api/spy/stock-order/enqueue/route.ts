@@ -69,6 +69,14 @@ export async function POST(req: Request) {
     // Validate each run
     for (let i = 0; i < payload.runs.length; i++) {
       const run = payload.runs[i];
+      if (!run) {
+        return new Response(JSON.stringify({
+          error: `Run ${i}: missing run payload`
+        }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
       if (!run.customer_id || typeof run.customer_id !== 'string') {
         return new Response(JSON.stringify({ 
           error: `Run ${i}: customer_id is required and must be a string` 
