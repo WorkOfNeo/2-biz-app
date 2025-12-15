@@ -98,6 +98,14 @@ export async function POST(req: Request) {
       // Validate each item
       for (let j = 0; j < run.items.length; j++) {
         const item = run.items[j];
+        if (!item) {
+          return new Response(JSON.stringify({
+            error: `Run ${i}, Item ${j}: missing item payload`
+          }), {
+            status: 400,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
         if (!item.style_no || !item.color || !item.sizes || !item.qtyBySize) {
           return new Response(JSON.stringify({ 
             error: `Run ${i}, Item ${j}: Missing required fields (style_no, color, sizes, qtyBySize)` 

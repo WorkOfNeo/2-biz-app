@@ -536,7 +536,16 @@ export async function exportOverview(ctx: Ctx) {
           .from('customers')
           .select('customer_id, company, city, group_name, salesperson_id, nulled, excluded, permanently_closed')
           .eq('salesperson_id', sp.id);
-        const items = (customers ?? []) as Array<{ customer_id: string; company: string | null; city: string | null; group_name?: string | null; nulled?: boolean | null; excluded?: boolean | null; permanently_closed?: boolean | null }>;
+        const items = (customers ?? []) as Array<{
+          customer_id: string;
+          company: string | null;
+          city: string | null;
+          group_name?: string | null;
+          salesperson_id: string | null;
+          nulled?: boolean | null;
+          excluded?: boolean | null;
+          permanently_closed?: boolean | null;
+        }>;
         let hiddenSet = new Set<string>(); let nulledSet = new Set<string>();
         try {
           const key = `season_overrides:${s1}`;
