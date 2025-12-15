@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo, useRef, type ReactNode } from 'react';
 import useSWR from 'swr';
 import { supabase } from '../../../lib/supabaseClient';
 import Link from 'next/link';
-import { Menu, EyeOff, Trash2, Ban, MessageCircle } from 'lucide-react';
+import { Menu, EyeOff, Trash2, Ban, MessageCircle, RefreshCw } from 'lucide-react';
 import { SearchSelect } from '../../../components/SearchSelect';
 import { ProgressBar } from '../../../components/ProgressBar';
 import { Modal } from '../../../components/Modal';
@@ -14,7 +14,7 @@ export default function StatisticsGeneralPage() {
     const { data, error } = await supabase.from('seasons').select('*').order('created_at', { ascending: false });
     if (error) throw new Error(error.message);
     return data as { id: string; name: string; year: number | null }[];
-  });
+  }, { refreshInterval: 1800000 }); // 30 minutes
   const { data: saved } = useSWR('app-settings:season-compare', async () => {
     const { data, error } = await supabase.from('app_settings').select('*').eq('key', 'season_compare').maybeSingle();
     if (error) throw new Error(error.message);
@@ -27,9 +27,9 @@ export default function StatisticsGeneralPage() {
       .order('sort_index', { ascending: true });
     if (error) throw new Error(error.message);
     return (data ?? []) as { id: string; name: string; currency?: string | null; sort_index?: number | null }[];
-  });
+  }, { refreshInterval: 1800000 }); // 30 minutes
   // Customer city index to ensure city is shown even if missing on stats rows
-  const { data: customerIndex } = useSWR('customers-index', async () => {
+  const { data: customerIndex, mutate: mutateCustomerIndex } = useSWR('customers-index', async () => {
     const { data, error } = await supabase.from('customers').select('customer_id, company, city, group_name');
     if (error) throw new Error(error.message);
     const byId: Record<string, string> = {};
@@ -41,15 +41,16 @@ export default function StatisticsGeneralPage() {
       if (c.customer_id) groupById[c.customer_id] = c.group_name ?? '';
     }
     return { byId, byName, groupById } as { byId: Record<string, string>; byName: Record<string, string>; groupById: Record<string, string> };
-  }, { refreshInterval: 0 });
+  }, { refreshInterval: 1800000 }); // 30 minutes
   // Full customers list to allow showing baseline rows even when no stats exist for a season
-  const { data: allCustomers } = useSWR('general:customers', async () => {
+  // Refresh every 30 minutes (1800000ms) to keep cache fresh
+  const { data: allCustomers, mutate: mutateAllCustomers } = useSWR('general:customers', async () => {
     const { data, error } = await supabase
       .from('customers')
       .select('customer_id, company, city, salesperson_id, group_name');
     if (error) throw new Error(error.message);
     return (data ?? []) as Array<{ customer_id: string; company: string | null; city: string | null; salesperson_id: string | null; group_name?: string | null }>;
-  });
+  }, { refreshInterval: 1800000 }); // 30 minutes
   // Fetch latest general salesmen PDF export
   const { data: latestExport } = useSWR('exports:latest-general-salesmen', async () => {
     const { data, error } = await supabase
@@ -824,7 +825,7 @@ export default function StatisticsGeneralPage() {
       console.log('[stats] aggregated rows (stats+invoices)', out.length, 'sample', out[0]);
       return out;
     },
-    { refreshInterval: 20000 }
+    { refreshInterval: 1800000 } // 30 minutes (was 20000)
   );
 
   // Seasonal overrides (null/hidden) stored in app_settings per season
@@ -852,7 +853,7 @@ export default function StatisticsGeneralPage() {
       if (c.nulled) setNulled.add(c.customer_id);
     }
     return { setClosed, setExcluded, setNulled };
-  });
+  }, { refreshInterval: 1800000 }); // 30 minutes
 
   async function saveOverrides(next: { nulled: string[]; hidden: string[] }) {
     if (!overridesKey) return;
@@ -985,6 +986,28 @@ export default function StatisticsGeneralPage() {
     alert('Filen er ikke klar endnu. Prøv igen om et øjeblik.');
   }
 
+  // Manual refresh function - reloads all SWR caches
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  async function refreshAllData() {
+    setIsRefreshing(true);
+    try {
+      // Refresh all SWR caches in parallel
+      await Promise.all([
+        mutateAllCustomers(),
+        mutateGeneralRows(),
+        mutateClosedCustomers(),
+        mutateOverrides(),
+        mutateComments(),
+        mutateCustomerIndex()
+      ]);
+      console.log('[stats] All data refreshed');
+    } catch (e: any) {
+      console.error('[stats] Error refreshing data:', e);
+    } finally {
+      setIsRefreshing(false);
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -992,7 +1015,17 @@ export default function StatisticsGeneralPage() {
           <h1 className="text-lg font-semibold tracking-tight text-balance text-slate-700">General statistics</h1>
           <div className="mt-1 text-2xl sm:text-3xl font-bold tracking-tight">{getSeasonLabel(s1) || 'Season 1'} vs {getSeasonLabel(s2) || 'Season 2'}</div>
         </div>
-        <div className="relative">
+        <div className="flex items-center gap-2">
+          <button
+            onClick={refreshAllData}
+            disabled={isRefreshing}
+            className="flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
+            title="Refresh all data (cache refreshes automatically every 30 minutes)"
+          >
+            <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+            {isRefreshing ? 'Refreshing...' : 'Refresh Data'}
+          </button>
+          <div className="relative">
           <details>
             <summary className="list-none inline-flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-sm hover:bg-slate-50"><Menu className="h-4 w-4" /></summary>
             <div className="absolute right-0 z-10 mt-2 w-56 rounded-md border bg-white shadow">
