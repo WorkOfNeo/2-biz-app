@@ -708,6 +708,176 @@ export default function NielsensSalesPage() {
   const [openShops, setOpenShops] = React.useState<Record<string, boolean>>({});
   const toggleShop = (name: string) => setOpenShops((m) => ({ ...m, [name]: !m[name] }));
 
+  // Load all customers for dropdown overrides
+  const { data: allCustomers } = useSWR('customers:all', async () => {
+    const { data, error } = await supabase
+      .from('customers')
+      .select('id, customer_id, company, spy_id')
+      .order('company', { ascending: true });
+    if (error) throw error;
+    return data as Array<{ id: string; customer_id: string; company: string; spy_id: string | null }>;
+  }, { refreshInterval: 0 });
+
+  // SpySystem stock order state
+  const [spyOrderRuns, setSpyOrderRuns] = React.useState<Array<{
+    shopName: string;
+    customer_id: string | null;
+    spy_customer_id_override: string | null;
+    matchedCustomer: { customer_id: string; company: string; spy_id: string | null } | null;
+    items: Array<{ style_no: string; color: string; sizes: string[]; qtyBySize: Record<string, number> }>;
+    totalQty: number;
+  }>>([]);
+  const [spyOrderSeasonId, setSpyOrderSeasonId] = React.useState<number>(0);
+  const [spyOrderPrepared, setSpyOrderPrepared] = React.useState(false);
+  const [spyOrderEnqueueing, setSpyOrderEnqueueing] = React.useState(false);
+  const [spyOrderJobIds, setSpyOrderJobIds] = React.useState<string[]>([]);
+
+  function prepareSpyStockOrders() {
+    if (!allCustomers || !ran || grouped.length === 0) return;
+
+    // Build customer lookup
+    const customerByCustomerId = new Map<string, typeof allCustomers[0]>();
+    for (const c of allCustomers) {
+      customerByCustomerId.set(c.customer_id, c);
+    }
+
+    // Group approved items by shop
+    const runs: typeof spyOrderRuns = [];
+
+    for (const g of grouped) {
+      // Only include approved items
+      const approvedItems = g.items.filter(it => it.approved);
+      if (approvedItems.length === 0) continue;
+
+      // Try to extract customer_id from ShopName or use ShopID
+      let customer_id: string | null = null;
+      
+      // First, check if any item has ShopID that matches a customer_id
+      for (const it of approvedItems) {
+        if (it.ShopID && typeof it.ShopID === 'string') {
+          if (customerByCustomerId.has(it.ShopID)) {
+            customer_id = it.ShopID;
+            break;
+          }
+        }
+      }
+
+      // Try to find by company name (fuzzy match)
+      if (!customer_id) {
+        const shopNameLower = g.shop.toLowerCase().trim();
+        for (const c of allCustomers) {
+          const companyLower = c.company.toLowerCase().trim();
+          if (companyLower === shopNameLower || companyLower.includes(shopNameLower) || shopNameLower.includes(companyLower)) {
+            customer_id = c.customer_id;
+            break;
+          }
+        }
+      }
+
+      const matchedCustomer = customer_id ? customerByCustomerId.get(customer_id) || null : null;
+
+      // Group by style_no + color
+      const itemMap = new Map<string, typeof runs[0]['items'][0]>();
+      
+      for (const it of approvedItems) {
+        const ean = normalizeEan(it.EAN);
+        const eanInfo = eanMap.get(ean);
+        const styleNo = eanInfo?.style_no || it.Style || '';
+        const color = eanInfo?.color || it.Color || '';
+        const size = eanInfo?.size || it.Size || '';
+        const qty = it.Qty || 0;
+
+        if (!styleNo || !color || !size) continue;
+
+        const key = `${styleNo}|${color}`;
+        let item = itemMap.get(key);
+        
+        if (!item) {
+          // Get size order from availability
+          let sizes: string[] = [size];
+          const stockKey = `${normalize(styleNo)}|${normalize(color)}`;
+          const stockInfo = availability.get(stockKey);
+          if (stockInfo) {
+            sizes = stockInfo.sizes;
+          }
+          
+          item = {
+            style_no: styleNo,
+            color: color,
+            sizes: sizes,
+            qtyBySize: {}
+          };
+          itemMap.set(key, item);
+        }
+
+        // Add quantity
+        item.qtyBySize[size] = (item.qtyBySize[size] || 0) + qty;
+      }
+
+      const items = Array.from(itemMap.values());
+      const totalQty = items.reduce((sum, item) => {
+        return sum + Object.values(item.qtyBySize).reduce((s, q) => s + q, 0);
+      }, 0);
+
+      runs.push({
+        shopName: g.shop,
+        customer_id: customer_id,
+        spy_customer_id_override: null,
+        matchedCustomer: matchedCustomer || null,
+        items: items,
+        totalQty: totalQty
+      });
+    }
+
+    setSpyOrderRuns(runs);
+    setSpyOrderPrepared(true);
+    setSpyOrderJobIds([]);
+  }
+
+  async function sendSpyStockOrders() {
+    if (spyOrderRuns.length === 0) return;
+
+    setSpyOrderEnqueueing(true);
+    setSpyOrderJobIds([]);
+
+    try {
+      const payload = {
+        season_id: spyOrderSeasonId,
+        runs: spyOrderRuns.map(run => ({
+          customer_id: run.customer_id || '',
+          spy_customer_id_override: run.spy_customer_id_override || undefined,
+          items: run.items
+        }))
+      };
+
+      const { data: session } = await supabase.auth.getSession();
+      const token = session?.session?.access_token;
+
+      const res = await fetch('/api/spy/stock-order/enqueue', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(payload)
+      });
+
+      if (!res.ok) {
+        const error = await res.json().catch(() => ({ error: 'Unknown error' }));
+        throw new Error(error.error || 'Failed to enqueue jobs');
+      }
+
+      const result = await res.json();
+      setSpyOrderJobIds(result.jobIds || []);
+      alert(`Successfully enqueued ${result.count} job(s)!`);
+    } catch (error: any) {
+      console.error('Failed to send spy stock orders:', error);
+      alert(`Error: ${error.message}`);
+    } finally {
+      setSpyOrderEnqueueing(false);
+    }
+  }
+
   // Detect size set from sizes array
   function detectSizeSet(sizes: string[]): string {
     const sizeStr = sizes.map(s => s.toUpperCase()).sort().join(',');
@@ -1147,6 +1317,150 @@ export default function NielsensSalesPage() {
               );
             })}
           </div>
+        </div>
+      )}
+
+      {ran && grouped.length > 0 && (
+        <div className="rounded-md border bg-white p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-sm font-semibold">SpySystem Stock Orders</div>
+              <div className="text-xs text-gray-600 mt-1">Prepare and send approved orders to SpySystem</div>
+            </div>
+            <div className="flex gap-2">
+              {!spyOrderPrepared && (
+                <button
+                  onClick={prepareSpyStockOrders}
+                  disabled={!allCustomers}
+                  className="text-xs px-3 py-1.5 border rounded bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  Prepare Orders
+                </button>
+              )}
+              {spyOrderPrepared && (
+                <button
+                  onClick={() => {
+                    setSpyOrderPrepared(false);
+                    setSpyOrderRuns([]);
+                    setSpyOrderJobIds([]);
+                  }}
+                  className="text-xs px-3 py-1.5 border rounded bg-white hover:bg-slate-50"
+                >
+                  Reset
+                </button>
+              )}
+            </div>
+          </div>
+
+          {spyOrderPrepared && spyOrderRuns.length > 0 && (
+            <div className="space-y-3">
+              {/* Season ID selector */}
+              <div className="border-t pt-3">
+                <label className="text-xs font-medium mb-1 block">SpySystem Season ID (0 = "-- Select --")</label>
+                <input
+                  type="number"
+                  value={spyOrderSeasonId}
+                  onChange={(e) => setSpyOrderSeasonId(Number(e.target.value))}
+                  className="text-xs border rounded px-2 py-1 w-32"
+                  placeholder="0"
+                />
+              </div>
+
+              {/* Runs preview */}
+              <div className="text-xs font-medium">
+                {spyOrderRuns.length} customer(s) • {spyOrderRuns.reduce((s, r) => s + r.items.length, 0)} style/color(s) • {spyOrderRuns.reduce((s, r) => s + r.totalQty, 0)} pcs total
+              </div>
+
+              <div className="space-y-2 max-h-96 overflow-y-auto">
+                {spyOrderRuns.map((run, idx) => (
+                  <div key={idx} className="border rounded p-2 bg-gray-50">
+                    <div className="flex items-start justify-between mb-2">
+                      <div>
+                        <div className="text-xs font-semibold">{run.shopName}</div>
+                        {run.matchedCustomer ? (
+                          <div className="text-[11px] text-green-700 mt-0.5">
+                            ✓ Matched: {run.matchedCustomer.company} (ID: {run.matchedCustomer.customer_id}, Spy ID: {run.matchedCustomer.spy_id || 'N/A'})
+                          </div>
+                        ) : (
+                          <div className="text-[11px] text-red-700 mt-0.5">
+                            ✗ No match found {run.customer_id ? `for customer_id: ${run.customer_id}` : ''}
+                          </div>
+                        )}
+                      </div>
+                      <div className="text-[10px] text-gray-600">
+                        {run.items.length} item(s) • {run.totalQty} pcs
+                      </div>
+                    </div>
+
+                    {/* Customer override dropdown */}
+                    <div className="mt-2">
+                      <label className="text-[11px] font-medium mb-1 block">Override with different customer:</label>
+                      <select
+                        value={run.spy_customer_id_override || ''}
+                        onChange={(e) => {
+                          const newRuns = [...spyOrderRuns];
+                          newRuns[idx].spy_customer_id_override = e.target.value || null;
+                          setSpyOrderRuns(newRuns);
+                        }}
+                        className="text-[11px] border rounded px-2 py-1 w-full max-w-md"
+                      >
+                        <option value="">-- Use matched customer --</option>
+                        {allCustomers?.map(c => (
+                          <option key={c.id} value={c.spy_id || ''}>
+                            {c.company} (ID: {c.customer_id}, Spy: {c.spy_id || 'N/A'})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Items preview */}
+                    <details className="mt-2">
+                      <summary className="text-[11px] font-medium cursor-pointer">Show {run.items.length} item(s)</summary>
+                      <div className="mt-1 space-y-1 pl-3">
+                        {run.items.map((item, itemIdx) => (
+                          <div key={itemIdx} className="text-[10px] text-gray-700">
+                            {item.style_no} · {item.color} · {Object.entries(item.qtyBySize).filter(([, q]) => q > 0).map(([size, qty]) => `${size}:${qty}`).join(', ')}
+                          </div>
+                        ))}
+                      </div>
+                    </details>
+                  </div>
+                ))}
+              </div>
+
+              {/* Send button */}
+              <div className="border-t pt-3 flex items-center gap-3">
+                <button
+                  onClick={sendSpyStockOrders}
+                  disabled={spyOrderEnqueueing || spyOrderRuns.some(r => !r.matchedCustomer && !r.spy_customer_id_override)}
+                  className="text-xs px-4 py-2 border rounded bg-green-600 text-white hover:bg-green-700 disabled:opacity-60 disabled:cursor-not-allowed font-medium"
+                >
+                  {spyOrderEnqueueing ? 'Sending...' : `Send ${spyOrderRuns.length} Order(s) to Worker`}
+                </button>
+                {spyOrderRuns.some(r => !r.matchedCustomer && !r.spy_customer_id_override) && (
+                  <div className="text-[11px] text-red-600">
+                    ⚠ Some customers are not matched. Please select overrides or remove them.
+                  </div>
+                )}
+              </div>
+
+              {/* Job IDs */}
+              {spyOrderJobIds.length > 0 && (
+                <div className="border-t pt-3">
+                  <div className="text-xs font-medium mb-1">Enqueued Job IDs:</div>
+                  <div className="text-[11px] font-mono text-gray-700 space-y-0.5">
+                    {spyOrderJobIds.map(id => (
+                      <div key={id}>
+                        <a href={`/settings/jobs?id=${id}`} className="text-blue-600 hover:underline" target="_blank" rel="noopener noreferrer">
+                          {id}
+                        </a>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 

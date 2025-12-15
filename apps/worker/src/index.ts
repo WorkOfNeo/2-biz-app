@@ -18,6 +18,7 @@ import { checkStockFix as checkStockFixJob } from './jobs/checkStockFix.js';
 import { scrapeEans as scrapeEansJob } from './jobs/scrapeEans.js';
 import { pushAppPoToSpy } from './jobs/pushAppPoToSpy.js';
 import { syncAppPoFromSpy } from './jobs/syncAppPoFromSpy.js';
+import { createSpyStockOrder } from './jobs/createSpyStockOrder.js';
 // (imported with .js extension above)
 
 const SUPABASE_URL = process.env.SUPABASE_URL!;
@@ -275,7 +276,21 @@ async function runJob(job: JobRow) {
       setJobSucceeded, 
       ensureNotCancelled, 
       supabase, 
-      SPY_BASE_URL 
+      SPY_BASE_URL
+    });
+    return;
+  }
+  if ((job.type as any) === 'create_spy_stock_order') {
+    await createSpyStockOrder({ 
+      job, 
+      page: page!, 
+      log, 
+      saveResult, 
+      setJobFailedOrRequeue: async (jobId: string, error: string) => setJobFailedOrRequeue(job, error), 
+      setJobSucceeded, 
+      ensureNotCancelled, 
+      supabase, 
+      SPY_BASE_URL
     });
     return;
   }
