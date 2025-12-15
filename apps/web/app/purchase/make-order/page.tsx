@@ -192,17 +192,36 @@ export default function PurchaseMakeOrderPage() {
       )}
 
       {!started && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Purchase Order Process</CardTitle>
-            <CardDescription>
-              Start the guided 4-step order flow to create your purchase order.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Button onClick={startProcess}>Start Purchase Order</Button>
-          </CardContent>
-        </Card>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Purchase Order Process</CardTitle>
+              <CardDescription>
+                Start the guided 4-step order flow to create your purchase order.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button onClick={startProcess}>Start Purchase Order</Button>
+            </CardContent>
+          </Card>
+          <Card className="border-2 border-[#C5D5CA]">
+            <CardHeader>
+              <CardTitle>NOOS Call Off</CardTitle>
+              <CardDescription>
+                Replenish NOOS items based on stock levels and AI-powered analysis.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button 
+                variant="outline" 
+                className="border-[#8FA894] text-[#8FA894] hover:bg-[#C5D5CA]/20"
+                onClick={() => router.push('/purchase/call-off')}
+              >
+                Start Call Off
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
       )}
 
       {started && step === 1 && <Step1ChooseStyles selectedStyles={selectedStyles} setSelectedStyles={setSelectedStyles} onContinue={() => setStep(2)} />}
