@@ -1399,7 +1399,9 @@ export default function NielsensSalesPage() {
                         value={run.spy_customer_id_override || ''}
                         onChange={(e) => {
                           const newRuns = [...spyOrderRuns];
-                          newRuns[idx].spy_customer_id_override = e.target.value || null;
+                          const targetRun = newRuns[idx];
+                          if (!targetRun) return;
+                          targetRun.spy_customer_id_override = e.target.value || null;
                           setSpyOrderRuns(newRuns);
                         }}
                         className="text-[11px] border rounded px-2 py-1 w-full max-w-md"
