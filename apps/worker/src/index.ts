@@ -1769,12 +1769,39 @@ async function runJob(job: JobRow) {
             }
           }
           // If customer has sales data (qty or price > 0), remove nulled flag
-          if ((qty > 0 || price > 0) && customerUuid) {
+          if ((qty > 0 || price > 0) && customerUuid && accountNo) {
             try {
-              const { data: customer } = await supabase.from('customers').select('nulled').eq('id', customerUuid).maybeSingle();
+              const { data: customer } = await supabase.from('customers').select('nulled, customer_id').eq('id', customerUuid).maybeSingle();
+              let wasNulled = false;
+              
+              // Un-null in customers table if nulled
               if (customer?.nulled) {
                 await supabase.from('customers').update({ nulled: false }).eq('id', customerUuid);
+                wasNulled = true;
                 await log(job.id, 'info', 'STEP:customer_unnulled', { account: accountNo, customer: customerName });
+              }
+              
+              // Also remove from seasonal overrides nulled list if present (even if not nulled in customers table)
+              if (targetSeasonId) {
+                try {
+                  const key = `season_overrides:${targetSeasonId}`;
+                  const { data: seasonOverrides } = await supabase.from('app_settings').select('id, value').eq('key', key).maybeSingle();
+                  if (seasonOverrides) {
+                    const val = (seasonOverrides.value as any) || {};
+                    const existingNulled: string[] = Array.isArray(val.nulled) ? val.nulled : [];
+                    const hidden: string[] = Array.isArray(val.hidden) ? val.hidden : [];
+                    // Remove this account from the nulled list
+                    const updatedNulled = existingNulled.filter((acc: string) => acc !== accountNo);
+                    if (updatedNulled.length !== existingNulled.length) {
+                      const next = { nulled: updatedNulled, hidden };
+                      await supabase.from('app_settings').update({ value: next }).eq('id', seasonOverrides.id as any);
+                      await log(job.id, 'info', 'STEP:customer_removed_from_seasonal_nulled', { account: accountNo, customer: customerName, wasNulledInTable: wasNulled });
+                    }
+                  }
+                } catch (e) {
+                  // Non-critical, just log
+                  await log(job.id, 'info', 'STEP:seasonal_unnull_failed', { account: accountNo, error: String(e) });
+                }
               }
             } catch (e) {
               // Non-critical, just log

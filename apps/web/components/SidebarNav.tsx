@@ -148,6 +148,7 @@ export function SidebarNav() {
     can('/purchase/make-order') ? <NavLink key="pmo" href="/purchase/make-order" label="Make order" /> : null,
     can('/purchase/app-pos') ? <NavLink key="pap" href="/purchase/app-pos" label="App PO's" /> : null,
     can('/purchase/po-calculator') ? <NavLink key="poc" href="/purchase/po-calculator" label="PO Calculator" /> : null,
+    can('/purchase/style-statistics') ? <NavLink key="pss" href="/purchase/style-statistics" label="Style Statistics" /> : null,
   ].filter(Boolean) as any[];
   const salesLinks = [
     can('/sales/nielsens') ? <NavLink key="sn" href="/sales/nielsens" label="Nielsens" /> : null,
