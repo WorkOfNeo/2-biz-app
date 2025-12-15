@@ -96,10 +96,10 @@ export default function NielsensSalesPage() {
   // Load EAN codes from database
   const { data: eanData } = useSWR<EanRow[]>('style_color_eans:all', async () => {
     const pageSize = 5000;
-    const cap = 100000; // hard cap
     let from = 0;
     const rows: any[] = [];
-    while (from < cap) {
+    console.log('[Nielsens Debug] Loading EAN codes from database...');
+    while (true) {
       const to = from + pageSize - 1;
       const { data, error } = await supabase
         .from('style_color_eans')
@@ -108,9 +108,11 @@ export default function NielsensSalesPage() {
       if (error) throw new Error(error.message);
       const batch = data ?? [];
       rows.push(...batch);
-      if (batch.length < pageSize) break;
+      console.log(`[Nielsens Debug] Loaded ${rows.length} EAN codes so far...`);
+      if (batch.length < pageSize) break; // No more rows
       from += pageSize;
     }
+    console.log(`[Nielsens Debug] Finished loading ${rows.length} total EAN codes`);
     return rows as EanRow[];
   }, { refreshInterval: 0 });
 
