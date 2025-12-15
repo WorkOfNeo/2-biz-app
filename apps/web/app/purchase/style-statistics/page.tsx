@@ -174,11 +174,10 @@ export default function StyleStatisticsPage() {
             <div className="space-y-1">
               <label className="text-xs font-medium text-slate-700">Style</label>
               <SearchSelect
-                options={styleOptions}
+                items={styleOptions}
                 value={selectedStyleNo}
                 onChange={setSelectedStyleNo}
                 placeholder={!styles ? 'Loading styles...' : 'Select style...'}
-                disabled={!styles}
               />
             </div>
 
