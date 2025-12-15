@@ -708,13 +708,37 @@ export default function NielsensSalesPage() {
   const [openShops, setOpenShops] = React.useState<Record<string, boolean>>({});
   const toggleShop = (name: string) => setOpenShops((m) => ({ ...m, [name]: !m[name] }));
 
-  // Build matrix view grouped by style
-  const matrixByStyle = React.useMemo(() => {
+  // Detect size set from sizes array
+  function detectSizeSet(sizes: string[]): string {
+    const sizeStr = sizes.map(s => s.toUpperCase()).sort().join(',');
+    
+    // Define known size sets
+    const sizeSetPatterns: Record<string, string[]> = {
+      'XS-XL': ['XS', 'S', 'M', 'L', 'XL'],
+      'S-XXL': ['S', 'M', 'L', 'XL', 'XXL'],
+      '34-46': ['34', '36', '38', '40', '42', '44', '46'],
+      '44-56': ['44', '46', '48', '50', '52', '54', '56'],
+      '32-42': ['32', '34', '36', '38', '40', '42'],
+    };
+    
+    for (const [name, pattern] of Object.entries(sizeSetPatterns)) {
+      const patternStr = pattern.sort().join(',');
+      if (sizeStr === patternStr || sizes.every(s => pattern.includes(s.toUpperCase()))) {
+        return name;
+      }
+    }
+    
+    return 'Other';
+  }
+
+  // Build matrix view grouped by size set
+  const matrixBySizeSet = React.useMemo(() => {
     if (!ran || grouped.length === 0) return [];
     
     const allItems = grouped.flatMap(g => g.items);
-    const byStyle = new Map<string, typeof allItems>();
     
+    // First, group by style to determine size set
+    const byStyle = new Map<string, typeof allItems>();
     for (const item of allItems) {
       const ean = normalizeEan(item.EAN);
       const eanInfo = eanMap.get(ean);
@@ -726,63 +750,136 @@ export default function NielsensSalesPage() {
       byStyle.set(styleNo, arr);
     }
     
-    return Array.from(byStyle.entries()).map(([styleNo, items]) => {
-      // Get all unique colors and sizes
-      const colors = new Set<string>();
+    // Build style info with size sets
+    const styleInfos: Array<{
+      styleNo: string;
+      styleName: string;
+      sizeSet: string;
+      sizes: string[];
+      items: typeof allItems;
+    }> = [];
+    
+    for (const [styleNo, items] of byStyle.entries()) {
       const sizes = new Set<string>();
-      
       for (const item of items) {
         const ean = normalizeEan(item.EAN);
         const eanInfo = eanMap.get(ean);
-        const color = eanInfo?.color || item.Color || '';
         const size = eanInfo?.size || item.Size || '';
-        if (color) colors.add(color);
         if (size) sizes.add(size);
       }
+      const sizeArray = Array.from(sizes);
+      const sizeSet = detectSizeSet(sizeArray);
       
-      const colorArray = Array.from(colors).sort();
-      const sizeArray = Array.from(sizes).sort();
-      
-      // Build matrix: colorArray × sizeArray -> { qty, approved, matchMethod }
-      const matrix: Record<string, Record<string, { qty: number; approved: boolean; matchMethod?: string }>> = {};
-      
-      for (const color of colorArray) {
-        matrix[color] = {};
-        for (const size of sizeArray) {
-          matrix[color][size] = { qty: 0, approved: false };
-        }
-      }
-      
-      // Fill matrix with actual data
-      for (const item of items) {
-        const ean = normalizeEan(item.EAN);
-        const eanInfo = eanMap.get(ean);
-        const color = eanInfo?.color || item.Color || '';
-        const size = eanInfo?.size || item.Size || '';
-        
-        if (color && size && matrix[color]?.[size]) {
-          matrix[color][size].qty += item.Qty || 0;
-          // If any item is approved, mark as approved
-          if (item.approved) {
-            matrix[color][size].approved = true;
-          }
-          // Keep track of match method
-          if (item.matchMethod) {
-            matrix[color][size].matchMethod = item.matchMethod;
-          }
-        }
-      }
-      
-      return {
+      styleInfos.push({
         styleNo,
         styleName: styleNameByNo.get(styleNo) || '',
-        colors: colorArray,
+        sizeSet,
+        sizes: sizeArray.sort(),
+        items,
+      });
+    }
+    
+    // Group by size set
+    const bySizeSet = new Map<string, typeof styleInfos>();
+    for (const styleInfo of styleInfos) {
+      const arr = bySizeSet.get(styleInfo.sizeSet) || [];
+      arr.push(styleInfo);
+      bySizeSet.set(styleInfo.sizeSet, arr);
+    }
+    
+    // Build output structure
+    return Array.from(bySizeSet.entries()).map(([sizeSet, styles]) => {
+      // Get all unique sizes across all styles in this size set
+      const allSizes = new Set<string>();
+      for (const style of styles) {
+        for (const size of style.sizes) {
+          allSizes.add(size);
+        }
+      }
+      const sizeArray = Array.from(allSizes).sort();
+      
+      // Build rows: one per style/color combination
+      const rows: Array<{
+        styleNo: string;
+        styleName: string;
+        color: string;
+        cells: Record<string, { qty: number; approved: boolean }>;
+        totalQty: number;
+        approvedQty: number;
+      }> = [];
+      
+      for (const style of styles) {
+        // Get all colors for this style
+        const colors = new Set<string>();
+        for (const item of style.items) {
+          const ean = normalizeEan(item.EAN);
+          const eanInfo = eanMap.get(ean);
+          const color = eanInfo?.color || item.Color || '';
+          if (color) colors.add(color);
+        }
+        
+        for (const color of Array.from(colors).sort()) {
+          // Build cells for this style/color
+          const cells: Record<string, { qty: number; approved: boolean }> = {};
+          for (const size of sizeArray) {
+            cells[size] = { qty: 0, approved: false };
+          }
+          
+          let totalQty = 0;
+          let approvedQty = 0;
+          
+          for (const item of style.items) {
+            const ean = normalizeEan(item.EAN);
+            const eanInfo = eanMap.get(ean);
+            const itemColor = eanInfo?.color || item.Color || '';
+            const itemSize = eanInfo?.size || item.Size || '';
+            
+            if (itemColor === color && itemSize && cells[itemSize]) {
+              cells[itemSize].qty += item.Qty || 0;
+              if (item.approved) {
+                cells[itemSize].approved = true;
+              }
+              totalQty += item.Qty || 0;
+              if (item.approved) {
+                approvedQty += item.Qty || 0;
+              }
+            }
+          }
+          
+          rows.push({
+            styleNo: style.styleNo,
+            styleName: style.styleName,
+            color,
+            cells,
+            totalQty,
+            approvedQty,
+          });
+        }
+      }
+      
+      // Sort rows by style then color
+      rows.sort((a, b) => a.styleNo.localeCompare(b.styleNo) || a.color.localeCompare(b.color));
+      
+      const totalQty = rows.reduce((sum, r) => sum + r.totalQty, 0);
+      const approvedQty = rows.reduce((sum, r) => sum + r.approvedQty, 0);
+      
+      return {
+        sizeSet,
         sizes: sizeArray,
-        matrix,
-        totalQty: items.reduce((sum, it) => sum + (it.Qty || 0), 0),
-        approvedQty: items.filter(it => it.approved).reduce((sum, it) => sum + (it.Qty || 0), 0),
+        rows,
+        totalQty,
+        approvedQty,
       };
-    }).sort((a, b) => a.styleNo.localeCompare(b.styleNo));
+    }).sort((a, b) => {
+      // Sort by known size sets first, then alphabetically
+      const order = ['S-XXL', 'XS-XL', '34-46', '44-56', '32-42', 'Other'];
+      const aIdx = order.indexOf(a.sizeSet);
+      const bIdx = order.indexOf(b.sizeSet);
+      if (aIdx !== -1 && bIdx !== -1) return aIdx - bIdx;
+      if (aIdx !== -1) return -1;
+      if (bIdx !== -1) return 1;
+      return a.sizeSet.localeCompare(b.sizeSet);
+    });
   }, [grouped, ran, eanMap, styleNameByNo]);
 
   return (
@@ -1053,36 +1150,41 @@ export default function NielsensSalesPage() {
         </div>
       )}
 
-      {matrixByStyle.length > 0 && (
+      {matrixBySizeSet.length > 0 && (
         <div className="space-y-4">
-          <div className="text-sm font-semibold">Style Matrix View</div>
-          {matrixByStyle.map((style) => (
-            <div key={style.styleNo} className="rounded-md border bg-white overflow-hidden">
+          <div className="text-sm font-semibold">Style Matrix View (Grouped by Size Set)</div>
+          {matrixBySizeSet.map((sizeSetGroup) => (
+            <div key={sizeSetGroup.sizeSet} className="rounded-md border bg-white overflow-hidden">
               <div className="px-3 py-2 bg-slate-50 border-b">
                 <div className="text-sm font-semibold">
-                  {style.styleNo}
-                  {style.styleName && <span className="text-slate-600 font-normal"> · {style.styleName}</span>}
+                  Size Set: {sizeSetGroup.sizeSet}
                 </div>
                 <div className="text-xs text-slate-600 mt-0.5">
-                  Total: {style.totalQty} pcs — Approved: {style.approvedQty} pcs — Not available: {style.totalQty - style.approvedQty} pcs
+                  Total: {sizeSetGroup.totalQty} pcs — Approved: {sizeSetGroup.approvedQty} pcs — Not available: {sizeSetGroup.totalQty - sizeSetGroup.approvedQty} pcs
                 </div>
               </div>
               <div className="overflow-auto">
                 <table className="min-w-full text-xs">
                   <thead className="bg-gray-50">
                     <tr>
-                      <th className="p-2 text-left border-b sticky left-0 bg-gray-50">Color</th>
-                      {style.sizes.map(size => (
+                      <th className="p-2 text-left border-b sticky left-0 bg-gray-50 z-10 min-w-[200px]">Style</th>
+                      <th className="p-2 text-left border-b sticky left-[200px] bg-gray-50 z-10 min-w-[100px]">Color</th>
+                      {sizeSetGroup.sizes.map(size => (
                         <th key={size} className="p-2 text-center border-b min-w-[60px]">{size}</th>
                       ))}
+                      <th className="p-2 text-center border-b min-w-[80px]">Total</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {style.colors.map(color => (
-                      <tr key={color}>
-                        <td className="p-2 border-b font-medium sticky left-0 bg-white">{color}</td>
-                        {style.sizes.map(size => {
-                          const cell = style.matrix[color]?.[size];
+                    {sizeSetGroup.rows.map((row, idx) => (
+                      <tr key={`${row.styleNo}-${row.color}`}>
+                        <td className="p-2 border-b sticky left-0 bg-white z-10">
+                          <div className="font-medium">{row.styleNo}</div>
+                          {row.styleName && <div className="text-[10px] text-slate-600">{row.styleName}</div>}
+                        </td>
+                        <td className="p-2 border-b font-medium sticky left-[200px] bg-white z-10">{row.color}</td>
+                        {sizeSetGroup.sizes.map(size => {
+                          const cell = row.cells[size];
                           if (!cell || cell.qty === 0) {
                             return <td key={size} className="p-2 border-b text-center text-gray-300">—</td>;
                           }
@@ -1093,6 +1195,10 @@ export default function NielsensSalesPage() {
                             </td>
                           );
                         })}
+                        <td className="p-2 border-b text-center font-semibold">
+                          <div>{row.totalQty}</div>
+                          <div className="text-[10px] text-slate-600">({row.approvedQty}/{row.totalQty})</div>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
