@@ -1166,9 +1166,9 @@ export default function StatisticsGeneralPage() {
               </div>
             </div>
           </details>
+          </div>
         </div>
       </div>
-
 
       <div className="space-y-4">
         <div className="flex items-center justify-end gap-2">
