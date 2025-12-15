@@ -357,7 +357,7 @@ function Step1NoosStyles({
                       {style.style_name || '—'}
                     </div>
                     {style.supplier && (
-                      <Badge variant="outline" className="mt-1 text-[10px]">{style.supplier}</Badge>
+                      <Badge className="mt-1 text-[10px]">{style.supplier}</Badge>
                     )}
                   </div>
                 </div>
@@ -505,7 +505,7 @@ function Step2ChooseColors({
                   <div>
                     <div className="text-sm font-semibold">{style.style_no}</div>
                     <div className="text-xs text-slate-600">{style.style_name || '—'}</div>
-                    {style.supplier && <Badge variant="outline" className="mt-1 text-[10px]">{style.supplier}</Badge>}
+                    {style.supplier && <Badge className="mt-1 text-[10px]">{style.supplier}</Badge>}
                   </div>
                 </div>
 
@@ -677,8 +677,11 @@ function Step3EnterQuantities({
   }, []);
 
   const referenceMonthDisplay = React.useMemo(() => {
-    const [year, month] = referenceMonth.split('-');
-    const date = new Date(parseInt(year), parseInt(month) - 1, 1);
+    const parts = referenceMonth.split('-');
+    const year = parts[0];
+    const month = parts[1];
+    if (!year || !month) return referenceMonth;
+    const date = new Date(parseInt(year, 10), parseInt(month, 10) - 1, 1);
     return date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
   }, [referenceMonth]);
 
