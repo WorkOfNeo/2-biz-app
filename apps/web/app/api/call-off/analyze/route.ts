@@ -52,7 +52,18 @@ export async function POST(req: Request) {
     const openai = new OpenAI({ apiKey: openaiApiKey });
 
     // Parse reference month
-    const [year, month] = reference_month.split('-').map(Number);
+    const parts = reference_month.split('-');
+    if (parts.length !== 2) {
+      return NextResponse.json({ error: 'Invalid reference_month format. Use YYYY-MM' }, { status: 400 });
+    }
+    
+    const year = Number(parts[0]);
+    const month = Number(parts[1]);
+    
+    if (isNaN(year) || isNaN(month) || month < 1 || month > 12) {
+      return NextResponse.json({ error: 'Invalid reference_month format. Use YYYY-MM' }, { status: 400 });
+    }
+    
     const startDate = new Date(year, month - 1, 1);
     const endDate = new Date(year, month, 0);
     const startDateStr = startDate.toISOString().split('T')[0];
@@ -138,7 +149,7 @@ export async function POST(req: Request) {
           Array.isArray(r.values) ? r.values : JSON.parse(String(r.values || '[]')),
           num
         );
-        return acc.map((v, i) => v + vals[i]);
+        return acc.map((v, i) => v + (vals[i] ?? 0));
       }, Array(num).fill(0) as number[]);
 
       // Calculate purchase
@@ -148,11 +159,11 @@ export async function POST(req: Request) {
           Array.isArray(r.values) ? r.values : JSON.parse(String(r.values || '[]')),
           num
         );
-        return acc.map((v, i) => v + vals[i]);
+        return acc.map((v, i) => v + (vals[i] ?? 0));
       }, Array(num).fill(0) as number[]);
 
       // Calculate available
-      const available = stock.map((v, i) => v - sold[i] + purchase[i]);
+      const available = stock.map((v, i) => v - (sold[i] ?? 0) + (purchase[i] ?? 0));
       const currentAvailable = available.reduce((a, b) => a + b, 0);
 
       // Get historical sales for this color
