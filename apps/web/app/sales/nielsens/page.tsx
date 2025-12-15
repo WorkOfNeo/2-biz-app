@@ -236,7 +236,7 @@ export default function NielsensSalesPage() {
   }
 
   const [rows, setRows] = React.useState<ExcelRow[]>([]);
-  const [grouped, setGrouped] = React.useState<Array<{ shop: string; items: (ExcelRow & { approved: boolean })[] }>>([]);
+  const [grouped, setGrouped] = React.useState<Array<{ shop: string; items: (ExcelRow & { approved: boolean; matchMethod?: string })[] }>>([]);
   const [ran, setRan] = React.useState(false);
   const [columnMapping, setColumnMapping] = React.useState<ColumnMapping>({});
   const [showMapping, setShowMapping] = React.useState(false);
