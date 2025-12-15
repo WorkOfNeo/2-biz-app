@@ -12,8 +12,18 @@ type ExcelRow = {
   Qty: number;
   Costprice?: number | null;
   RRP?: number | null;
+  Style?: string | null;
+  Color?: string | null;
+  Size?: string | null;
   _sourceFile?: string;
   _originalRow?: any; // Store original row data for column mapping
+};
+
+type MatchResult = {
+  found: boolean;
+  available: number;
+  method: 'ean' | 'fallback' | 'none';
+  details?: string;
 };
 
 type StockRow = {
@@ -45,6 +55,9 @@ type ColumnMapping = {
   qty?: string;
   costprice?: string;
   rrp?: string;
+  style?: string;
+  color?: string;
+  size?: string;
 };
 
 function normalize(s: string | null | undefined): string {
@@ -58,6 +71,23 @@ function normalizeEan(ean: string | number | null | undefined): string {
 function toNumber(val: any): number {
   const n = Number(String(val || '').replace(/[^0-9.,-]/g, '').replace('.', '').replace(',', '.'));
   return Number.isFinite(n) ? n : 0;
+}
+
+function fuzzyMatchColor(colorA: string | null | undefined, colorB: string | null | undefined): boolean {
+  if (!colorA || !colorB) return false;
+  
+  // Normalize: lowercase, remove spaces and common separators
+  const normA = String(colorA).toLowerCase().replace(/[\s\-_/]/g, '');
+  const normB = String(colorB).toLowerCase().replace(/[\s\-_/]/g, '');
+  
+  // Direct equality
+  if (normA === normB) return true;
+  
+  // Bidirectional substring matching (conservative)
+  // e.g., "01" matches "color01" or "black" matches "blackmelange"
+  if (normA.includes(normB) || normB.includes(normA)) return true;
+  
+  return false;
 }
 
 export default function NielsensSalesPage() {
@@ -168,6 +198,38 @@ export default function NielsensSalesPage() {
     return Array.from({ length: len }, (_, i) => Number(arr?.[i] ?? 0) || 0);
   }
 
+  // Fallback stock lookup using Style/Color/Size with fuzzy color matching
+  function findStockByStyleColorSize(
+    styleNo: string | null | undefined,
+    color: string | null | undefined,
+    size: string | null | undefined
+  ): { available: number; matchedColor: string } | null {
+    if (!styleNo || !color || !size) return null;
+    
+    const normalizedStyle = normalize(styleNo);
+    const normalizedSize = normalize(size);
+    
+    // Search through availability map for matching style
+    for (const [key, stockInfo] of availability.entries()) {
+      const [keyStyle, keyColor] = key.split('|');
+      
+      // Check if style matches
+      if (keyStyle !== normalizedStyle) continue;
+      
+      // Check if color matches using fuzzy matching
+      if (!fuzzyMatchColor(color, keyColor)) continue;
+      
+      // Find the size in the stock info
+      const sizeIdx = stockInfo.sizes.findIndex(s => normalize(s) === normalizedSize);
+      if (sizeIdx !== -1) {
+        const available = stockInfo.available[sizeIdx] ?? 0;
+        return { available, matchedColor: keyColor };
+      }
+    }
+    
+    return null;
+  }
+
   const [rows, setRows] = React.useState<ExcelRow[]>([]);
   const [grouped, setGrouped] = React.useState<Array<{ shop: string; items: (ExcelRow & { approved: boolean })[] }>>([]);
   const [ran, setRan] = React.useState(false);
@@ -257,6 +319,15 @@ export default function NielsensSalesPage() {
         if (!autoMapping.rrp && (colLower.includes('rrp') || colLower.includes('retail') || colLower.includes('price'))) {
           autoMapping.rrp = col;
         }
+        if (!autoMapping.style && (colLower.includes('style') || colLower === 'style no' || colLower === 'styleno')) {
+          autoMapping.style = col;
+        }
+        if (!autoMapping.color && (colLower.includes('color') || colLower.includes('colour') || colLower === 'clr')) {
+          autoMapping.color = col;
+        }
+        if (!autoMapping.size && (colLower.includes('size') || colLower === 'sz')) {
+          autoMapping.size = col;
+        }
       }
       setColumnMapping(autoMapping);
       setShowMapping(true);
@@ -278,6 +349,9 @@ export default function NielsensSalesPage() {
       const qty = mapping.qty ? toNumber(r[mapping.qty]) : 0;
       const cost = mapping.costprice ? toNumber(r[mapping.costprice]) : null;
       const rrp = mapping.rrp ? toNumber(r[mapping.rrp]) : null;
+      const style = mapping.style ? String(r[mapping.style] || '').trim() : null;
+      const color = mapping.color ? String(r[mapping.color] || '').trim() : null;
+      const size = mapping.size ? String(r[mapping.size] || '').trim() : null;
       
       const row: ExcelRow = {
         ShopID: shopId,
@@ -286,12 +360,15 @@ export default function NielsensSalesPage() {
         Qty: qty || 0,
         Costprice: Number.isFinite(cost) ? cost : null,
         RRP: Number.isFinite(rrp) ? rrp : null,
+        Style: style,
+        Color: color,
+        Size: size,
         _sourceFile: fileName,
         _originalRow: r
       };
       
-      // Require EAN and ShopName
-      if (row.EAN && row.ShopName) {
+      // Require EAN and ShopName (or Style/Color/Size for fallback)
+      if (row.ShopName && (row.EAN || (row.Style && row.Color && row.Size))) {
         out.push(row);
       }
     }
@@ -323,6 +400,8 @@ export default function NielsensSalesPage() {
   function runAgainstStock() {
     if (!eanMap.size || !availability.size) return;
     
+    console.log('[Nielsens Debug] Starting stock check for', rows.length, 'rows');
+    
     // Build EAN -> stock availability map
     const eanToStock = new Map<string, { size: string; available: number; style_no: string; color: string }>();
     
@@ -344,28 +423,142 @@ export default function NielsensSalesPage() {
     }
     
     // Build working inventory snapshot so deductions persist across lines
-    const inv = new Map<string, number>();
+    const eanInv = new Map<string, number>();
     for (const [ean, stock] of eanToStock.entries()) {
-      inv.set(ean, stock.available);
+      eanInv.set(ean, stock.available);
     }
     
+    // Build fallback inventory tracker (style|color|size -> available)
+    const fallbackInv = new Map<string, number>();
+    for (const [key, stockInfo] of availability.entries()) {
+      for (let i = 0; i < stockInfo.sizes.length; i++) {
+        const size = stockInfo.sizes[i];
+        const available = stockInfo.available[i] ?? 0;
+        const fallbackKey = `${key}|${normalize(size)}`;
+        fallbackInv.set(fallbackKey, available);
+      }
+    }
+    
+    // Track statistics
+    let eanMatches = 0;
+    let fallbackMatches = 0;
+    let bothAgree = 0;
+    let disagree = 0;
+    
     // Evaluate rows sequentially with deductions
-    const decided: Array<ExcelRow & { approved: boolean }> = rows.map((r) => {
+    const decided: Array<ExcelRow & { approved: boolean; matchMethod?: string }> = rows.map((r, idx) => {
       const ean = normalizeEan(r.EAN);
       const want = r.Qty || 0;
       
-      if (!ean) {
-        return { ...r, approved: false };
+      console.log(`[Nielsens Debug] Row ${idx + 1}: EAN=${ean}, Style=${r.Style}, Color=${r.Color}, Size=${r.Size}, Qty=${want}`);
+      
+      // Try EAN method
+      let eanAvailable = 0;
+      let eanFound = false;
+      if (ean) {
+        eanAvailable = eanInv.get(ean) ?? 0;
+        eanFound = eanToStock.has(ean);
+        if (eanFound) {
+          console.log(`  → EAN lookup: ✓ Found (available: ${eanAvailable})`);
+        } else {
+          console.log(`  → EAN lookup: ✗ Not found in eanMap`);
+        }
+      } else {
+        console.log(`  → EAN lookup: ✗ No EAN provided`);
       }
       
-      const have = inv.get(ean) ?? 0;
-      if (have >= want) {
-        inv.set(ean, have - want);
-        return { ...r, approved: true };
+      // Try fallback method
+      let fallbackAvailable = 0;
+      let fallbackFound = false;
+      let matchedColor = '';
+      if (r.Style && r.Color && r.Size) {
+        const fallbackResult = findStockByStyleColorSize(r.Style, r.Color, r.Size);
+        if (fallbackResult) {
+          fallbackFound = true;
+          matchedColor = fallbackResult.matchedColor;
+          // Get from fallback inventory
+          const normalizedStyle = normalize(r.Style);
+          const normalizedSize = normalize(r.Size);
+          const fallbackKey = `${normalizedStyle}|${matchedColor}|${normalizedSize}`;
+          fallbackAvailable = fallbackInv.get(fallbackKey) ?? 0;
+          console.log(`  → Fallback lookup: ✓ Found (available: ${fallbackAvailable}, matched color '${r.Color}' to '${matchedColor}')`);
+        } else {
+          console.log(`  → Fallback lookup: ✗ Not found`);
+        }
+      } else {
+        console.log(`  → Fallback lookup: ✗ Missing Style/Color/Size data`);
       }
       
-      return { ...r, approved: false };
+      // Decision logic: use both methods
+      let approved = false;
+      let matchMethod = 'none';
+      
+      if (eanFound && fallbackFound) {
+        // Both methods found stock
+        const eanCanFulfill = eanAvailable >= want;
+        const fallbackCanFulfill = fallbackAvailable >= want;
+        
+        if (eanCanFulfill === fallbackCanFulfill) {
+          bothAgree++;
+          approved = eanCanFulfill;
+          matchMethod = approved ? 'both-agree-yes' : 'both-agree-no';
+          console.log(`  → ✓ Methods agree: ${approved ? 'approved' : 'not approved'}`);
+        } else {
+          disagree++;
+          // Use EAN as primary
+          approved = eanCanFulfill;
+          matchMethod = 'disagree';
+          console.log(`  → ⚠️ Methods disagree! EAN=${eanCanFulfill}, Fallback=${fallbackCanFulfill}, using EAN result`);
+        }
+        
+        if (approved) {
+          eanMatches++;
+          // Deduct from both inventories
+          eanInv.set(ean, eanAvailable - want);
+          const normalizedStyle = normalize(r.Style!);
+          const normalizedSize = normalize(r.Size!);
+          const fallbackKey = `${normalizedStyle}|${matchedColor}|${normalizedSize}`;
+          fallbackInv.set(fallbackKey, fallbackAvailable - want);
+        }
+      } else if (eanFound) {
+        // Only EAN found
+        approved = eanAvailable >= want;
+        matchMethod = 'ean-only';
+        if (approved) {
+          eanMatches++;
+          eanInv.set(ean, eanAvailable - want);
+          console.log(`  → ✓ EAN match approved`);
+        } else {
+          console.log(`  → ✗ EAN found but insufficient stock`);
+        }
+      } else if (fallbackFound) {
+        // Only fallback found
+        approved = fallbackAvailable >= want;
+        matchMethod = 'fallback-only';
+        if (approved) {
+          fallbackMatches++;
+          const normalizedStyle = normalize(r.Style!);
+          const normalizedSize = normalize(r.Size!);
+          const fallbackKey = `${normalizedStyle}|${matchedColor}|${normalizedSize}`;
+          fallbackInv.set(fallbackKey, fallbackAvailable - want);
+          console.log(`  → ⚠️ Fallback saved this match!`);
+        } else {
+          console.log(`  → ✗ Fallback found but insufficient stock`);
+        }
+      } else {
+        // Neither found
+        console.log(`  → ✗ Not approved (no match found)`);
+      }
+      
+      return { ...r, approved, matchMethod };
     });
+    
+    console.log('[Nielsens Debug] Summary:');
+    console.log(`  - Total rows: ${rows.length}`);
+    console.log(`  - EAN matches: ${eanMatches}`);
+    console.log(`  - Fallback matches: ${fallbackMatches}`);
+    console.log(`  - Both agree: ${bothAgree}`);
+    console.log(`  - Disagree: ${disagree}`);
     
     // Group by ShopName
     const map = new Map<string, (typeof decided)[number][]>();
@@ -458,7 +651,7 @@ export default function NielsensSalesPage() {
             multiple
             onChange={(e) => onFilesSelected(e.currentTarget.files)}
           />
-          <div className="text-xs text-gray-600">Upload Excel files. Map columns to: ShopID, ShopName, EAN, Qty, Costprice, RRP</div>
+          <div className="text-xs text-gray-600">Upload Excel files. Map columns to: ShopID, ShopName, EAN, Qty, Costprice, RRP, Style, Color, Size (for fallback matching)</div>
         </div>
         
         {showMapping && availableColumns.length > 0 && (
@@ -537,6 +730,45 @@ export default function NielsensSalesPage() {
                 <select
                   value={columnMapping.rrp || ''}
                   onChange={(e) => setColumnMapping({ ...columnMapping, rrp: e.target.value || undefined })}
+                  className="w-full border rounded px-2 py-1"
+                >
+                  <option value="">—</option>
+                  {availableColumns.map(col => (
+                    <option key={col} value={col}>{col}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block mb-1 font-medium">Style</label>
+                <select
+                  value={columnMapping.style || ''}
+                  onChange={(e) => setColumnMapping({ ...columnMapping, style: e.target.value || undefined })}
+                  className="w-full border rounded px-2 py-1"
+                >
+                  <option value="">—</option>
+                  {availableColumns.map(col => (
+                    <option key={col} value={col}>{col}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block mb-1 font-medium">Color</label>
+                <select
+                  value={columnMapping.color || ''}
+                  onChange={(e) => setColumnMapping({ ...columnMapping, color: e.target.value || undefined })}
+                  className="w-full border rounded px-2 py-1"
+                >
+                  <option value="">—</option>
+                  {availableColumns.map(col => (
+                    <option key={col} value={col}>{col}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block mb-1 font-medium">Size</label>
+                <select
+                  value={columnMapping.size || ''}
+                  onChange={(e) => setColumnMapping({ ...columnMapping, size: e.target.value || undefined })}
                   className="w-full border rounded px-2 py-1"
                 >
                   <option value="">—</option>
@@ -627,24 +859,39 @@ export default function NielsensSalesPage() {
                             <th className="p-2 text-left border-b">EAN</th>
                             <th className="p-2 text-right border-b">Qty</th>
                             <th className="p-2 text-left border-b">Approved</th>
+                            <th className="p-2 text-left border-b">Method</th>
                           </tr>
                         </thead>
                         <tbody>
-                          {rows.length === 0 && <tr><td colSpan={6} className="p-2 text-gray-500">—</td></tr>}
-                          {rows.map((r, i) => (
-                            <tr key={i} className={r.approved ? '' : 'bg-red-50'}>
-                              <td className="p-2 border-b">{r.style_no}{(() => { const nm = styleNameByNo.get(r.style_no) || ''; return nm ? ` · ${nm}` : ''; })()}</td>
-                              <td className="p-2 border-b">{r.color}</td>
-                              <td className="p-2 border-b">{r.size}</td>
-                              <td className="p-2 border-b font-mono text-[10px]">{r.ean}</td>
-                              <td className="p-2 border-b text-right">{r.qty}</td>
-                              <td className="p-2 border-b">{r.approved ? 'Yes' : 'No'}</td>
-                            </tr>
-                          ))}
+                          {rows.length === 0 && <tr><td colSpan={7} className="p-2 text-gray-500">—</td></tr>}
+                          {rows.map((r, i) => {
+                            const item = grouped.flatMap(g => g.items).find(it => {
+                              const ean = normalizeEan(it.EAN);
+                              return ean === r.ean && it.ShopName === s.shop;
+                            });
+                            return (
+                              <tr key={i} className={r.approved ? '' : 'bg-red-50'}>
+                                <td className="p-2 border-b">{r.style_no}{(() => { const nm = styleNameByNo.get(r.style_no) || ''; return nm ? ` · ${nm}` : ''; })()}</td>
+                                <td className="p-2 border-b">{r.color}</td>
+                                <td className="p-2 border-b">{r.size}</td>
+                                <td className="p-2 border-b font-mono text-[10px]">{r.ean}</td>
+                                <td className="p-2 border-b text-right">{r.qty}</td>
+                                <td className="p-2 border-b">{r.approved ? 'Yes' : 'No'}</td>
+                                <td className="p-2 border-b">
+                                  {item?.matchMethod === 'ean-only' && <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-800">EAN</span>}
+                                  {item?.matchMethod === 'fallback-only' && <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">Fallback</span>}
+                                  {item?.matchMethod === 'both-agree-yes' && <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-800">Both ✓</span>}
+                                  {item?.matchMethod === 'both-agree-no' && <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-800">Both ✗</span>}
+                                  {item?.matchMethod === 'disagree' && <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-100 text-red-800">Disagree</span>}
+                                  {item?.matchMethod === 'none' && <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-500">—</span>}
+                                </td>
+                              </tr>
+                            );
+                          })}
                         </tbody>
                         <tfoot>
                           <tr className="bg-gray-50">
-                            <td className="p-2 text-sm font-medium" colSpan={6}>Kan levere: {sumYes} — Kan ikke: {sumNo}</td>
+                            <td className="p-2 text-sm font-medium" colSpan={7}>Kan levere: {sumYes} — Kan ikke: {sumNo}</td>
                           </tr>
                         </tfoot>
                       </table>
@@ -669,6 +916,7 @@ export default function NielsensSalesPage() {
                 <th className="p-2 text-left border-b">Size</th>
                 <th className="p-2 text-right border-b">Qty</th>
                 <th className="p-2 text-left border-b">Approved</th>
+                <th className="p-2 text-left border-b">Method</th>
                 <th className="p-2 text-left border-b">File</th>
               </tr>
             </thead>
@@ -682,12 +930,20 @@ export default function NielsensSalesPage() {
                       <td className="p-2 border-b">{g.shop}</td>
                       <td className="p-2 border-b font-mono text-[10px]">{ean}</td>
                       <td className="p-2 border-b">
-                        {eanInfo?.style_no || '—'}{(() => { const nm = styleNameByNo.get(eanInfo?.style_no || '') || ''; return nm ? ` · ${nm}` : ''; })()}
+                        {eanInfo?.style_no || it.Style || '—'}{(() => { const nm = styleNameByNo.get(eanInfo?.style_no || it.Style || '') || ''; return nm ? ` · ${nm}` : ''; })()}
                       </td>
-                      <td className="p-2 border-b">{eanInfo?.color || '—'}</td>
-                      <td className="p-2 border-b">{eanInfo?.size || '—'}</td>
+                      <td className="p-2 border-b">{eanInfo?.color || it.Color || '—'}</td>
+                      <td className="p-2 border-b">{eanInfo?.size || it.Size || '—'}</td>
                       <td className="p-2 border-b text-right">{it.Qty}</td>
                       <td className="p-2 border-b">{it.approved ? 'Yes' : 'No'}</td>
+                      <td className="p-2 border-b">
+                        {it.matchMethod === 'ean-only' && <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-800">EAN</span>}
+                        {it.matchMethod === 'fallback-only' && <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">Fallback</span>}
+                        {it.matchMethod === 'both-agree-yes' && <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-800">Both ✓</span>}
+                        {it.matchMethod === 'both-agree-no' && <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-800">Both ✗</span>}
+                        {it.matchMethod === 'disagree' && <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-100 text-red-800">Disagree</span>}
+                        {it.matchMethod === 'none' && <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-500">—</span>}
+                      </td>
                       <td className="p-2 border-b text-gray-500">{it._sourceFile || '—'}</td>
                     </tr>
                   );
