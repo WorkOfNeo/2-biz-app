@@ -708,6 +708,83 @@ export default function NielsensSalesPage() {
   const [openShops, setOpenShops] = React.useState<Record<string, boolean>>({});
   const toggleShop = (name: string) => setOpenShops((m) => ({ ...m, [name]: !m[name] }));
 
+  // Build matrix view grouped by style
+  const matrixByStyle = React.useMemo(() => {
+    if (!ran || grouped.length === 0) return [];
+    
+    const allItems = grouped.flatMap(g => g.items);
+    const byStyle = new Map<string, typeof allItems>();
+    
+    for (const item of allItems) {
+      const ean = normalizeEan(item.EAN);
+      const eanInfo = eanMap.get(ean);
+      const styleNo = eanInfo?.style_no || item.Style || '';
+      if (!styleNo) continue;
+      
+      const arr = byStyle.get(styleNo) || [];
+      arr.push(item);
+      byStyle.set(styleNo, arr);
+    }
+    
+    return Array.from(byStyle.entries()).map(([styleNo, items]) => {
+      // Get all unique colors and sizes
+      const colors = new Set<string>();
+      const sizes = new Set<string>();
+      
+      for (const item of items) {
+        const ean = normalizeEan(item.EAN);
+        const eanInfo = eanMap.get(ean);
+        const color = eanInfo?.color || item.Color || '';
+        const size = eanInfo?.size || item.Size || '';
+        if (color) colors.add(color);
+        if (size) sizes.add(size);
+      }
+      
+      const colorArray = Array.from(colors).sort();
+      const sizeArray = Array.from(sizes).sort();
+      
+      // Build matrix: colorArray × sizeArray -> { qty, approved, matchMethod }
+      const matrix: Record<string, Record<string, { qty: number; approved: boolean; matchMethod?: string }>> = {};
+      
+      for (const color of colorArray) {
+        matrix[color] = {};
+        for (const size of sizeArray) {
+          matrix[color][size] = { qty: 0, approved: false };
+        }
+      }
+      
+      // Fill matrix with actual data
+      for (const item of items) {
+        const ean = normalizeEan(item.EAN);
+        const eanInfo = eanMap.get(ean);
+        const color = eanInfo?.color || item.Color || '';
+        const size = eanInfo?.size || item.Size || '';
+        
+        if (color && size && matrix[color]?.[size]) {
+          matrix[color][size].qty += item.Qty || 0;
+          // If any item is approved, mark as approved
+          if (item.approved) {
+            matrix[color][size].approved = true;
+          }
+          // Keep track of match method
+          if (item.matchMethod) {
+            matrix[color][size].matchMethod = item.matchMethod;
+          }
+        }
+      }
+      
+      return {
+        styleNo,
+        styleName: styleNameByNo.get(styleNo) || '',
+        colors: colorArray,
+        sizes: sizeArray,
+        matrix,
+        totalQty: items.reduce((sum, it) => sum + (it.Qty || 0), 0),
+        approvedQty: items.filter(it => it.approved).reduce((sum, it) => sum + (it.Qty || 0), 0),
+      };
+    }).sort((a, b) => a.styleNo.localeCompare(b.styleNo));
+  }, [grouped, ran, eanMap, styleNameByNo]);
+
   return (
     <div className="space-y-4">
       <div>
@@ -976,53 +1053,53 @@ export default function NielsensSalesPage() {
         </div>
       )}
 
-      {grouped.length > 0 && (
-        <div className="rounded-md border bg-white overflow-hidden">
-          <table className="min-w-full text-xs">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="p-2 text-left border-b">Shop</th>
-                <th className="p-2 text-left border-b">EAN</th>
-                <th className="p-2 text-left border-b">Style</th>
-                <th className="p-2 text-left border-b">Color</th>
-                <th className="p-2 text-left border-b">Size</th>
-                <th className="p-2 text-right border-b">Qty</th>
-                <th className="p-2 text-left border-b">Approved</th>
-                <th className="p-2 text-left border-b">Method</th>
-                <th className="p-2 text-left border-b">File</th>
-              </tr>
-            </thead>
-            <tbody>
-              {grouped.flatMap((g) => (
-                g.items.map((it, i) => {
-                  const ean = normalizeEan(it.EAN);
-                  const eanInfo = eanMap.get(ean);
-                  return (
-                    <tr key={`${g.shop}-${i}`} className={it.approved ? 'bg-green-50' : ''}>
-                      <td className="p-2 border-b">{g.shop}</td>
-                      <td className="p-2 border-b font-mono text-[10px]">{ean}</td>
-                      <td className="p-2 border-b">
-                        {eanInfo?.style_no || it.Style || '—'}{(() => { const nm = styleNameByNo.get(eanInfo?.style_no || it.Style || '') || ''; return nm ? ` · ${nm}` : ''; })()}
-                      </td>
-                      <td className="p-2 border-b">{eanInfo?.color || it.Color || '—'}</td>
-                      <td className="p-2 border-b">{eanInfo?.size || it.Size || '—'}</td>
-                      <td className="p-2 border-b text-right">{it.Qty}</td>
-                      <td className="p-2 border-b">{it.approved ? 'Yes' : 'No'}</td>
-                      <td className="p-2 border-b">
-                        {it.matchMethod === 'ean-only' && <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-800">EAN</span>}
-                        {it.matchMethod === 'fallback-only' && <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">Fallback</span>}
-                        {it.matchMethod === 'both-agree-yes' && <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-800">Both ✓</span>}
-                        {it.matchMethod === 'both-agree-no' && <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-800">Both ✗</span>}
-                        {it.matchMethod === 'disagree' && <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-100 text-red-800">Disagree</span>}
-                        {it.matchMethod === 'none' && <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-500">—</span>}
-                      </td>
-                      <td className="p-2 border-b text-gray-500">{it._sourceFile || '—'}</td>
+      {matrixByStyle.length > 0 && (
+        <div className="space-y-4">
+          <div className="text-sm font-semibold">Style Matrix View</div>
+          {matrixByStyle.map((style) => (
+            <div key={style.styleNo} className="rounded-md border bg-white overflow-hidden">
+              <div className="px-3 py-2 bg-slate-50 border-b">
+                <div className="text-sm font-semibold">
+                  {style.styleNo}
+                  {style.styleName && <span className="text-slate-600 font-normal"> · {style.styleName}</span>}
+                </div>
+                <div className="text-xs text-slate-600 mt-0.5">
+                  Total: {style.totalQty} pcs — Approved: {style.approvedQty} pcs — Not available: {style.totalQty - style.approvedQty} pcs
+                </div>
+              </div>
+              <div className="overflow-auto">
+                <table className="min-w-full text-xs">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="p-2 text-left border-b sticky left-0 bg-gray-50">Color</th>
+                      {style.sizes.map(size => (
+                        <th key={size} className="p-2 text-center border-b min-w-[60px]">{size}</th>
+                      ))}
                     </tr>
-                  );
-                })
-              ))}
-            </tbody>
-          </table>
+                  </thead>
+                  <tbody>
+                    {style.colors.map(color => (
+                      <tr key={color}>
+                        <td className="p-2 border-b font-medium sticky left-0 bg-white">{color}</td>
+                        {style.sizes.map(size => {
+                          const cell = style.matrix[color]?.[size];
+                          if (!cell || cell.qty === 0) {
+                            return <td key={size} className="p-2 border-b text-center text-gray-300">—</td>;
+                          }
+                          const bgClass = cell.approved ? 'bg-green-50' : 'bg-red-50';
+                          return (
+                            <td key={size} className={`p-2 border-b text-center font-medium ${bgClass}`}>
+                              {cell.qty}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ))}
         </div>
       )}
     </div>
