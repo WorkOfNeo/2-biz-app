@@ -992,12 +992,24 @@ export default function StatisticsGeneralPage() {
     return logs.sort((a, b) => a.salespersonName.localeCompare(b.salespersonName));
   }, [salespersons, allCustomers, rows, s1, s2, closedCustomers, overrides]);
 
+  // Filter logging to only show the currently selected salesperson
+  const filteredLogging = useMemo(() => {
+    if (!selectedSalespersonId) return [];
+    return detailedLogging.filter(log => log.salespersonId === selectedSalespersonId);
+  }, [detailedLogging, selectedSalespersonId]);
+
   async function toggleHide(account: string) {
     if (!s1) return alert('Select Season 1 first');
     const hidden = new Set(overrides?.value.hidden ?? []);
     if (hidden.has(account)) hidden.delete(account); else hidden.add(account);
     console.log('[stats] toggleHide', account, '->', Array.from(hidden));
     await saveOverrides({ nulled: overrides?.value.nulled ?? [], hidden: Array.from(hidden) });
+    // Refresh data to update logging view
+    await Promise.all([
+      mutateGeneralRows(),
+      mutateClosedCustomers(),
+      mutateOverrides()
+    ]);
   }
   async function toggleNull(account: string) {
     if (!s1) return alert('Select Season 1 first');
@@ -1005,6 +1017,12 @@ export default function StatisticsGeneralPage() {
     if (nulled.has(account)) nulled.delete(account); else nulled.add(account);
     console.log('[stats] toggleNull', account, '->', Array.from(nulled));
     await saveOverrides({ nulled: Array.from(nulled), hidden: overrides?.value.hidden ?? [] });
+    // Refresh data to update logging view
+    await Promise.all([
+      mutateGeneralRows(),
+      mutateClosedCustomers(),
+      mutateOverrides()
+    ]);
   }
   async function permanentClose(account: string) {
     // Mark customer globally; also add seasonal null
@@ -1012,6 +1030,12 @@ export default function StatisticsGeneralPage() {
     if (error) return alert(error.message);
     console.log('[stats] permanentClose', account);
     await toggleNull(account);
+    // Additional refresh after toggleNull
+    await Promise.all([
+      mutateGeneralRows(),
+      mutateClosedCustomers(),
+      mutateAllCustomers()
+    ]);
   }
 
   function ActionBtn({ label, onClick, children }: { label: string; onClick: () => void; children: ReactNode }) {
@@ -1680,117 +1704,145 @@ export default function StatisticsGeneralPage() {
             </div>
 
             {/* Detailed Logging Section */}
-            <div className="rounded-lg border bg-white">
-              <div className="p-4 border-b">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-lg font-semibold">Detailed Salesperson & Customer Logging</h2>
-                  <button
-                    onClick={() => setShowLogging(!showLogging)}
-                    className="rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50"
-                  >
-                    {showLogging ? 'Hide' : 'Show'} Logging
-                  </button>
-                </div>
-                {showLogging && (
-                  <div className="mt-2 text-sm text-gray-600">
-                    This section shows all salespersons, their customers, and whether each customer appears in the table above with reasons if they don't.
+            {activePerson && selectedSalespersonId && (
+              <div className="rounded-lg border bg-white">
+                <div className="p-4 border-b">
+                  <div className="flex items-center justify-between">
+                    <h2 className="text-lg font-semibold">Customer Logging: {activePerson}</h2>
+                    <button
+                      onClick={() => setShowLogging(!showLogging)}
+                      className="rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50"
+                    >
+                      {showLogging ? 'Hide' : 'Show'} Logging
+                    </button>
                   </div>
-                )}
-              </div>
-              {showLogging && (
-                <div className="p-4 space-y-6">
-                  {detailedLogging.map((spLog) => (
-                    <div key={spLog.salespersonId} className="border rounded-lg p-4">
-                      <div className="mb-3 pb-2 border-b">
-                        <h3 className="text-base font-semibold">{spLog.salespersonName}</h3>
-                        <div className="text-sm text-gray-600 mt-1">
-                          Total customers: {spLog.totalCustomers} | 
-                          In table: <span className="text-green-600 font-medium">{spLog.inTableCount}</span> | 
-                          Not in table: <span className="text-red-600 font-medium">{spLog.notInTableCount}</span>
-                        </div>
-                      </div>
-                      <div className="overflow-x-auto">
-                        <table className="min-w-full text-sm">
-                          <thead>
-                            <tr className="bg-gray-50 border-b">
-                              <th className="text-left p-2 font-semibold">Customer ID</th>
-                              <th className="text-left p-2 font-semibold">Company</th>
-                              <th className="text-left p-2 font-semibold">City</th>
-                              <th className="text-center p-2 font-semibold">In Table</th>
-                              <th className="text-center p-2 font-semibold">S1 Data</th>
-                              <th className="text-center p-2 font-semibold">S2 Data</th>
-                              <th className="text-left p-2 font-semibold">Status Flags</th>
-                              <th className="text-left p-2 font-semibold">Reason</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {spLog.customers.map((customer, idx) => (
-                              <tr key={customer.customer_id || idx} className="border-b hover:bg-gray-50">
-                                <td className="p-2 font-mono text-xs">{customer.customer_id || '—'}</td>
-                                <td className="p-2">{customer.company || '—'}</td>
-                                <td className="p-2">{customer.city || '—'}</td>
-                                <td className="p-2 text-center">
-                                  {customer.inTable ? (
-                                    <span className="text-green-600 font-medium">✓ Yes</span>
-                                  ) : (
-                                    <span className="text-red-600 font-medium">✗ No</span>
-                                  )}
-                                </td>
-                                <td className="p-2 text-center">
-                                  {customer.hasS1Data ? (
-                                    <span className="text-green-600">✓</span>
-                                  ) : (
-                                    <span className="text-gray-400">—</span>
-                                  )}
-                                </td>
-                                <td className="p-2 text-center">
-                                  {customer.hasS2Data ? (
-                                    <span className="text-green-600">✓</span>
-                                  ) : (
-                                    <span className="text-gray-400">—</span>
-                                  )}
-                                </td>
-                                <td className="p-2">
-                                  <div className="flex flex-wrap gap-1">
-                                    {customer.excluded && (
-                                      <span className="px-1.5 py-0.5 text-xs bg-red-100 text-red-700 rounded">Excluded</span>
-                                    )}
-                                    {customer.nulled && (
-                                      <span className="px-1.5 py-0.5 text-xs bg-orange-100 text-orange-700 rounded">Nulled</span>
-                                    )}
-                                    {customer.permanentlyClosed && (
-                                      <span className="px-1.5 py-0.5 text-xs bg-gray-100 text-gray-700 rounded">Closed</span>
-                                    )}
-                                    {customer.hidden && (
-                                      <span className="px-1.5 py-0.5 text-xs bg-yellow-100 text-yellow-700 rounded">Hidden</span>
-                                    )}
-                                    {!customer.excluded && !customer.nulled && !customer.permanentlyClosed && !customer.hidden && (
-                                      <span className="px-1.5 py-0.5 text-xs bg-gray-100 text-gray-500 rounded">—</span>
-                                    )}
-                                  </div>
-                                </td>
-                                <td className="p-2 text-xs text-gray-600">
-                                  {customer.inTable ? (
-                                    <span className="text-green-600">{customer.reason}</span>
-                                  ) : (
-                                    <span className="text-red-600">{customer.reason}</span>
-                                  )}
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  ))}
-                  {detailedLogging.length === 0 && (
-                    <div className="text-center py-8 text-gray-500">
-                      No data available. Please select Season 1 and Season 2.
+                  {showLogging && (
+                    <div className="mt-2 text-sm text-gray-600">
+                      This section shows all customers for the selected salesperson and whether each customer appears in the table above with reasons if they don't. You can make changes directly from this view.
                     </div>
                   )}
                 </div>
-              )}
-            </div>
+                {showLogging && (
+                  <div className="p-4">
+                    {filteredLogging.length > 0 ? (
+                      filteredLogging.map((spLog) => (
+                        <div key={spLog.salespersonId} className="space-y-4">
+                          <div className="pb-2 border-b">
+                            <h3 className="text-base font-semibold">{spLog.salespersonName}</h3>
+                            <div className="text-sm text-gray-600 mt-1">
+                              Total customers: {spLog.totalCustomers} | 
+                              In table: <span className="text-green-600 font-medium">{spLog.inTableCount}</span> | 
+                              Not in table: <span className="text-red-600 font-medium">{spLog.notInTableCount}</span>
+                            </div>
+                          </div>
+                          <div className="overflow-x-auto">
+                            <table className="min-w-full text-sm">
+                              <thead>
+                                <tr className="bg-gray-50 border-b">
+                                  <th className="text-left p-2 font-semibold">Customer ID</th>
+                                  <th className="text-left p-2 font-semibold">Company</th>
+                                  <th className="text-left p-2 font-semibold">City</th>
+                                  <th className="text-center p-2 font-semibold">In Table</th>
+                                  <th className="text-center p-2 font-semibold">S1 Data</th>
+                                  <th className="text-center p-2 font-semibold">S2 Data</th>
+                                  <th className="text-left p-2 font-semibold">Status Flags</th>
+                                  <th className="text-left p-2 font-semibold">Reason</th>
+                                  <th className="text-center p-2 font-semibold">Actions</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {spLog.customers.map((customer, idx) => (
+                                  <tr key={customer.customer_id || idx} className="border-b hover:bg-gray-50">
+                                    <td className="p-2 font-mono text-xs">{customer.customer_id || '—'}</td>
+                                    <td className="p-2">{customer.company || '—'}</td>
+                                    <td className="p-2">{customer.city || '—'}</td>
+                                    <td className="p-2 text-center">
+                                      {customer.inTable ? (
+                                        <span className="text-green-600 font-medium">✓ Yes</span>
+                                      ) : (
+                                        <span className="text-red-600 font-medium">✗ No</span>
+                                      )}
+                                    </td>
+                                    <td className="p-2 text-center">
+                                      {customer.hasS1Data ? (
+                                        <span className="text-green-600">✓</span>
+                                      ) : (
+                                        <span className="text-gray-400">—</span>
+                                      )}
+                                    </td>
+                                    <td className="p-2 text-center">
+                                      {customer.hasS2Data ? (
+                                        <span className="text-green-600">✓</span>
+                                      ) : (
+                                        <span className="text-gray-400">—</span>
+                                      )}
+                                    </td>
+                                    <td className="p-2">
+                                      <div className="flex flex-wrap gap-1">
+                                        {customer.excluded && (
+                                          <span className="px-1.5 py-0.5 text-xs bg-red-100 text-red-700 rounded">Excluded</span>
+                                        )}
+                                        {customer.nulled && (
+                                          <span className="px-1.5 py-0.5 text-xs bg-orange-100 text-orange-700 rounded">Nulled</span>
+                                        )}
+                                        {customer.permanentlyClosed && (
+                                          <span className="px-1.5 py-0.5 text-xs bg-gray-100 text-gray-700 rounded">Closed</span>
+                                        )}
+                                        {customer.hidden && (
+                                          <span className="px-1.5 py-0.5 text-xs bg-yellow-100 text-yellow-700 rounded">Hidden</span>
+                                        )}
+                                        {!customer.excluded && !customer.nulled && !customer.permanentlyClosed && !customer.hidden && (
+                                          <span className="px-1.5 py-0.5 text-xs bg-gray-100 text-gray-500 rounded">—</span>
+                                        )}
+                                      </div>
+                                    </td>
+                                    <td className="p-2 text-xs text-gray-600">
+                                      {customer.inTable ? (
+                                        <span className="text-green-600">{customer.reason}</span>
+                                      ) : (
+                                        <span className="text-red-600">{customer.reason}</span>
+                                      )}
+                                    </td>
+                                    <td className="p-2">
+                                      <div className="flex items-center justify-center gap-1">
+                                        {customer.customer_id && (
+                                          <>
+                                            <ActionBtn label="Hide" onClick={() => toggleHide(customer.customer_id)}>
+                                              <Ban className="h-4 w-4" />
+                                            </ActionBtn>
+                                            <ActionBtn label="Null (season)" onClick={() => toggleNull(customer.customer_id)}>
+                                              <EyeOff className="h-4 w-4" />
+                                            </ActionBtn>
+                                            <ActionBtn label="Close (perm)" onClick={() => permanentClose(customer.customer_id)}>
+                                              <Trash2 className="h-4 w-4" />
+                                            </ActionBtn>
+                                            <button
+                                              onClick={() => openCommentModal(customer.customer_id)}
+                                              className={commentsMap?.[customer.customer_id] ? "text-blue-600 hover:text-blue-800" : "text-gray-400 hover:text-gray-600"}
+                                              title={commentsMap?.[customer.customer_id]?.comment || 'Add comment'}
+                                            >
+                                              <MessageCircle className="h-4 w-4" />
+                                            </button>
+                                          </>
+                                        )}
+                                      </div>
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="text-center py-8 text-gray-500">
+                        {!s1 || !s2 ? 'Please select Season 1 and Season 2.' : 'No customers found for this salesperson.'}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Details modal */}
             <Modal
