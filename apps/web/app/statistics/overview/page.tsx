@@ -1,6 +1,5 @@
 'use client';
-import { useMemo, useState, useEffect, useRef, type ReactNode } from 'react';
-import useSWR from 'swr';
+import { useMemo, useState, useRef, type ReactNode } from 'react';
 import { supabase } from '../../../lib/supabaseClient';
 import Link from 'next/link';
 import JSZip from 'jszip';
@@ -9,10 +8,10 @@ import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { Modal } from '../../../components/Modal';
 import { EyeOff, Ban, Trash2 } from 'lucide-react';
+import { useStatisticsData, type Customer, type Salesperson, type SalesStatRow } from '../_shared/StatisticsDataContext';
 
-type Person = { id: string; name: string; currency?: string | null };
-type StatsRow = { account_no: string | null; qty: number; price: number; season_id: string; salesperson_id: string | null };
-type Customer = { customer_id: string; company?: string | null; city?: string | null; country: string | null; salesperson_id: string | null; nulled?: boolean | null; excluded?: boolean | null; permanently_closed?: boolean | null };
+type Person = Salesperson;
+type StatsRow = SalesStatRow;
 
 const COUNTRIES = ['All', 'Denmark', 'Norway', 'Sweden', 'Finland'] as const;
 
@@ -31,38 +30,30 @@ function Donut({ pct }: { pct: number }) {
 }
 
 export default function OverviewPage() {
+  const {
+    ready,
+    seasons,
+    s1,
+    s2,
+    setS1,
+    setS2,
+    salespersons: people,
+    customers,
+    stats,
+    invoices,
+    overrides,
+    closedCustomers,
+    currencyRatesRow,
+    ratesS1,
+    ratesS2,
+    refreshAll
+  } = useStatisticsData();
+
   const [country, setCountry] = useState<typeof COUNTRIES[number]>('All');
   const [indexModal, setIndexModal] = useState<{ mode: 'visited' | 'unvisited' } | null>(null);
   const [detailModal, setDetailModal] = useState<{ salespersonId: string; salespersonName: string; season: 's1' | 's2'; seasonLabel: string } | null>(null);
   const [notVisitedModal, setNotVisitedModal] = useState<{ salespersonId: string; salespersonName: string; customers: Customer[] } | null>(null);
 
-  const { data: saved } = useSWR('app-settings:season-compare', async () => {
-    const { data, error } = await supabase.from('app_settings').select('*').eq('key', 'season_compare').maybeSingle();
-    if (error) throw new Error(error.message);
-    return data as { id: string; key: string; value: { s1?: string; s2?: string } } | null;
-  });
-  const [s1, setS1] = useState<string>('');
-  const [s2, setS2] = useState<string>('');
-
-  const { data: seasons } = useSWR('seasons-all', async () => {
-    const { data, error } = await supabase.from('seasons').select('id, name, year, is_current').order('created_at', { ascending: false });
-    if (error) throw new Error(error.message);
-    return (data ?? []) as { id: string; name: string; year: number | null }[];
-  });
-  useEffect(() => {
-    if (saved?.value) {
-      if (saved.value.s1) setS1(saved.value.s1);
-      if (saved.value.s2) setS2(saved.value.s2);
-    }
-    if ((!saved?.value?.s1 || !saved?.value?.s2) && (seasons ?? []).length) {
-      const list = (seasons ?? []) as any[];
-      const current = list.find((x) => x.is_current);
-      const first = list[0];
-      const second = list[1] || list.find((x) => x.id !== (current?.id || first?.id));
-      if (!saved?.value?.s1) setS1((current?.id || first?.id) ?? '');
-      if (!saved?.value?.s2) setS2((second?.id) ?? '');
-    }
-  }, [saved?.id, seasons?.length]);
   function getSeasonLabel(seasonId: string | undefined) {
     if (!seasonId) return '';
     const s = (seasons ?? []).find((x) => x.id === seasonId);
@@ -70,81 +61,8 @@ export default function OverviewPage() {
     return `${s.name}${s.year ? ' ' + s.year : ''}`;
   }
 
-  const { data: people } = useSWR('overview:salespersons', async () => {
-    const { data, error } = await supabase.from('salespersons').select('id, name, currency').order('sort_index', { ascending: true });
-    if (error) throw new Error(error.message);
-    return (data ?? []) as Person[];
-  });
-
-  const { data: currencyRatesRow } = useSWR('app-settings:currency-rates', async () => {
-    const { data, error } = await supabase.from('app_settings').select('*').eq('key', 'currency_rates').maybeSingle();
-    if (error) throw new Error(error.message);
-    return (data?.value as Record<string, number> | undefined) ?? {};
-  });
-  // Season-specific currency rates
-  const { data: ratesS1 } = useSWR(s1 ? `season:${s1}:currency-rates` : null, async () => {
-    const key = `currency_rates:${s1}`;
-    const { data } = await supabase.from('app_settings').select('value').eq('key', key).maybeSingle();
-    return ((data?.value as any) || {}) as Record<string, number>;
-  });
-  const { data: ratesS2 } = useSWR(s2 ? `season:${s2}:currency-rates` : null, async () => {
-    const key = `currency_rates:${s2}`;
-    const { data } = await supabase.from('app_settings').select('value').eq('key', key).maybeSingle();
-    return ((data?.value as any) || {}) as Record<string, number>;
-  });
   const rates = useMemo(() => ({ DKK: 1, ...(currencyRatesRow ?? {}) } as Record<string, number>), [currencyRatesRow]);
   const spCurrencyById = useMemo(() => Object.fromEntries(((people ?? []) as Person[]).map(p => [p.id, p.currency ?? 'DKK'])), [people]);
-
-  const { data: customers, mutate: mutateCustomers } = useSWR('overview:customers-main', async () => {
-    const { data, error } = await supabase.from('customers').select('customer_id, company, city, country, salesperson_id, nulled, excluded, permanently_closed');
-    if (error) throw new Error(error.message);
-    return (data ?? []) as Customer[];
-  }, { refreshInterval: 10000 });
-
-  const { data: stats, mutate: mutateStats } = useSWR(s1 && s2 ? ['overview:stats', s1, s2] : null, async () => {
-    const { data, error } = await supabase
-      .from('sales_stats')
-      .select('account_no, qty, price, season_id, salesperson_id')
-      .in('season_id', [s1, s2])
-      .limit(200000);
-    if (error) throw new Error(error.message);
-    return (data ?? []) as StatsRow[];
-  }, { refreshInterval: 20000 });
-
-  // Fetch invoices and combine with stats for aligned totals
-  const { data: invoices } = useSWR(s1 && s2 ? ['overview:invoices', s1, s2] : null, async () => {
-    const { data, error } = await supabase
-      .from('sales_invoices')
-      .select('account_no, qty, amount, currency, season_id')
-      .in('season_id', [s1, s2])
-      .limit(200000);
-    if (error) throw new Error(error.message);
-    return (data ?? []) as { account_no: string | null; qty: number | null; amount: number | null; currency: string | null; season_id: string }[];
-  }, { refreshInterval: 20000 });
-
-  // Seasonal overrides (null/hidden) stored in app_settings per season - same as General page
-  const overridesKey = s1 ? `season_overrides:${s1}` : null;
-  const { data: overrides, mutate: mutateOverrides } = useSWR(overridesKey, async () => {
-    if (!overridesKey) return { id: null, value: { nulled: [], hidden: [] as string[] } };
-    const { data, error } = await supabase.from('app_settings').select('id, value').eq('key', overridesKey).maybeSingle();
-    if (error) throw new Error(error.message);
-    const val = (data?.value as any) || {};
-    return { id: data?.id ?? null, value: { nulled: Array.isArray(val.nulled) ? val.nulled : [], hidden: Array.isArray(val.hidden) ? val.hidden : [] } } as { id: string | null, value: { nulled: string[]; hidden: string[] } };
-  }, { refreshInterval: 0 });
-
-  const { data: closedCustomers, mutate: mutateClosedCustomers } = useSWR('overview:customers-closed', async () => {
-    const { data, error } = await supabase.from('customers').select('customer_id, permanently_closed, excluded, nulled');
-    if (error) throw new Error(error.message);
-    const setClosed = new Set<string>();
-    const setExcluded = new Set<string>();
-    const setNulled = new Set<string>();
-    for (const c of (data ?? []) as any[]) {
-      if (c.permanently_closed) setClosed.add(c.customer_id);
-      if (c.excluded) setExcluded.add(c.customer_id);
-      if (c.nulled) setNulled.add(c.customer_id);
-    }
-    return { setClosed, setExcluded, setNulled };
-  });
 
   // Helper functions to check if customer is hidden or nulled (same logic as General page)
   function isHidden(account: string): boolean {
@@ -155,6 +73,7 @@ export default function OverviewPage() {
   }
 
   async function saveOverrides(next: { nulled: string[]; hidden: string[] }) {
+    const overridesKey = s1 ? `season_overrides:${s1}` : null;
     if (!overridesKey) return;
     console.log('[overview] saveOverrides', overridesKey, next);
     if (overrides?.id) {
@@ -164,7 +83,7 @@ export default function OverviewPage() {
       const { error } = await supabase.from('app_settings').insert({ key: overridesKey, value: next });
       if (error) throw new Error(error.message);
     }
-    await mutateOverrides();
+    await refreshAll();
   }
 
   async function toggleNull(account: string) {
@@ -173,13 +92,7 @@ export default function OverviewPage() {
     if (nulled.has(account)) nulled.delete(account); else nulled.add(account);
     console.log('[overview] toggleNull', account, '->', Array.from(nulled));
     await saveOverrides({ nulled: Array.from(nulled), hidden: overrides?.value.hidden ?? [] });
-    // Refresh data
-    await Promise.all([
-      mutateCustomers(),
-      mutateStats(),
-      mutateClosedCustomers(),
-      mutateOverrides()
-    ]);
+    await refreshAll();
   }
 
   async function permanentClose(account: string) {
@@ -188,12 +101,7 @@ export default function OverviewPage() {
     if (error) return alert(error.message);
     console.log('[overview] permanentClose', account);
     await toggleNull(account);
-    // Additional refresh after toggleNull
-    await Promise.all([
-      mutateCustomers(),
-      mutateStats(),
-      mutateClosedCustomers()
-    ]);
+    await refreshAll();
   }
 
   // Action button component with hover tooltip (same as General page)
@@ -745,7 +653,11 @@ export default function OverviewPage() {
     };
   }
 
-  return (
+  return !ready ? (
+    <div className="flex items-center justify-center p-10">
+      <div className="h-5 w-5 animate-spin rounded-full border-2 border-slate-300 border-t-slate-900" />
+    </div>
+  ) : (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-lg font-semibold tracking-tight text-slate-700">Overview</h1>

@@ -1,9 +1,6 @@
 'use client';
-import useSWR from 'swr';
-import { supabase } from '../../../lib/supabaseClient';
-import { useMemo, useRef, useEffect, useState } from 'react';
-
-type Row = { season_id: string; qty: number; price: number; customer_id?: string | null; account_no?: string | null };
+import { useMemo, useRef, useEffect } from 'react';
+import { useStatisticsData } from '../_shared/StatisticsDataContext';
 
 function Donut({ pct, label }: { pct: number; label: string }) {
   const displayPct = Math.round(pct); // number can exceed 100
@@ -37,115 +34,33 @@ function Donut({ pct, label }: { pct: number; label: string }) {
 }
 
 export default function CountriesPage() {
+  const {
+    ready,
+    seasons,
+    s1,
+    s2,
+    setS1,
+    setS2,
+    stats,
+    invoices,
+    customers,
+    salespersons,
+    overrides,
+    closedCustomers,
+    currencyRatesRow,
+    ratesS1,
+    ratesS2
+  } = useStatisticsData();
+
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const { data: seasons } = useSWR('seasons', async () => {
-    const { data, error } = await supabase.from('seasons').select('id, name, year, is_current').order('created_at', { ascending: false });
-    if (error) throw new Error(error.message);
-    return data as { id: string; name: string; year: number | null }[];
-  });
-  const { data: saved } = useSWR('app-settings:season-compare', async () => {
-    const { data, error } = await supabase.from('app_settings').select('*').eq('key', 'season_compare').maybeSingle();
-    if (error) throw new Error(error.message);
-    return data as { id: string; key: string; value: { s1?: string; s2?: string } } | null;
-  });
-  const [s1, setS1] = useState<string>('');
-  const [s2, setS2] = useState<string>('');
-  useEffect(() => {
-    if (saved?.value) {
-      if (saved.value.s1) setS1(saved.value.s1);
-      if (saved.value.s2) setS2(saved.value.s2);
-    }
-    if ((!saved?.value?.s1 || !saved?.value?.s2) && (seasons ?? []).length) {
-      const list = (seasons ?? []) as any[];
-      const current = list.find((x) => x.is_current);
-      const first = list[0];
-      const second = list[1] || list.find((x) => x.id !== (current?.id || first?.id));
-      if (!saved?.value?.s1) setS1((current?.id || first?.id) ?? '');
-      if (!saved?.value?.s2) setS2((second?.id) ?? '');
-    }
-  }, [saved?.id, seasons?.length]);
-  const { data: stats } = useSWR(s1 && s2 ? ['countries:stats', s1, s2] : null, async () => {
-    const { data, error } = await supabase
-      .from('sales_stats')
-      .select('season_id, qty, price, currency, account_no, customer_id, salesperson_id, customers(country)')
-      .in('season_id', [s1, s2])
-      .limit(200000);
-    if (error) throw new Error(error.message);
-    return data as any[];
-  });
-  // Seasonal overrides (use Season 1 for null/hidden filtering, consistent with @general/)
-  const overridesKey = s1 ? `season_overrides:${s1}` : null;
-  const { data: overrides } = useSWR(overridesKey, async () => {
-    if (!overridesKey) return { nulled: [] as string[], hidden: [] as string[] };
-    const { data, error } = await supabase.from('app_settings').select('value').eq('key', overridesKey).maybeSingle();
-    if (error) throw new Error(error.message);
-    const val = (data?.value as any) || {};
-    return {
-      nulled: Array.isArray(val.nulled) ? (val.nulled as string[]) : [],
-      hidden: Array.isArray(val.hidden) ? (val.hidden as string[]) : []
-    };
-  }, { refreshInterval: 0 });
-  // Closed/excluded customers
-  const { data: closedCustomers } = useSWR('countries:customers-closed', async () => {
-    const { data, error } = await supabase.from('customers').select('customer_id, permanently_closed, excluded, nulled');
-    if (error) throw new Error(error.message);
-    const setClosed = new Set<string>();
-    const setExcluded = new Set<string>();
-    const setNulled = new Set<string>();
-    for (const c of (data ?? []) as any[]) {
-      if (c.permanently_closed) setClosed.add(c.customer_id);
-      if (c.excluded) setExcluded.add(c.customer_id);
-      if (c.nulled) setNulled.add(c.customer_id);
-    }
-    return { setClosed, setExcluded, setNulled };
-  }, { refreshInterval: 0 });
-  // Minimal customers map to resolve country for invoices
-  const { data: customers } = useSWR('countries:customers', async () => {
-    const { data, error } = await supabase.from('customers').select('customer_id, country, salesperson_id');
-    if (error) throw new Error(error.message);
-    return (data ?? []) as { customer_id: string; country: string | null; salesperson_id: string | null }[];
-  });
-  const { data: salespersons } = useSWR('countries:salespersons', async () => {
-    const { data, error } = await supabase.from('salespersons').select('id, name');
-    if (error) throw new Error(error.message);
-    return (data ?? []) as { id: string; name: string }[];
-  });
-  // Fetch invoices
-  const { data: invoices } = useSWR(s1 && s2 ? ['countries:invoices', s1, s2] : null, async () => {
-    const { data, error } = await supabase
-      .from('sales_invoices')
-      .select('account_no, qty, amount, currency, season_id')
-      .in('season_id', [s1, s2])
-      .limit(200000);
-    if (error) throw new Error(error.message);
-    return (data ?? []) as { account_no: string | null; qty: number | null; amount: number | null; currency: string | null; season_id: string }[];
-  });
-  // Currency rates (1 unit equals how many DKK), e.g. { EUR: 7.45, NOK: 0.67, SEK: 0.64 }
-  const { data: currencyRatesRow } = useSWR('app-settings:currency-rates', async () => {
-    const { data, error } = await supabase.from('app_settings').select('*').eq('key', 'currency_rates').maybeSingle();
-    if (error) throw new Error(error.message);
-    return (data?.value as Record<string, number> | undefined) ?? {};
-  });
   const countries = useMemo(() => ['Denmark', 'Norway', 'Sweden', 'Finland'], []);
   const countryCurrency: Record<string, string> = useMemo(() => ({ Denmark: 'DKK', Norway: 'NOK', Sweden: 'SEK', Finland: 'EUR' }), []);
-  // Season-specific currency rates
-  const { data: ratesS1 } = useSWR(s1 ? `season:${s1}:currency-rates` : null, async () => {
-    const key = `currency_rates:${s1}`;
-    const { data } = await supabase.from('app_settings').select('value').eq('key', key).maybeSingle();
-    return ((data?.value as any) || {}) as Record<string, number>;
-  });
-  const { data: ratesS2 } = useSWR(s2 ? `season:${s2}:currency-rates` : null, async () => {
-    const key = `currency_rates:${s2}`;
-    const { data } = await supabase.from('app_settings').select('value').eq('key', key).maybeSingle();
-    return ((data?.value as any) || {}) as Record<string, number>;
-  });
-  const rates = useMemo(() => ({ DKK: 1, ...(currencyRatesRow ?? {}) } as Record<string, number>), [currencyRatesRow]);
   const byCountry = useMemo(() => {
     const out: Record<string, { s1Qty: number; s2Qty: number; s1PriceDkk: number; s2PriceDkk: number }> = {};
     for (const c of countries) out[c] = { s1Qty: 0, s2Qty: 0, s1PriceDkk: 0, s2PriceDkk: 0 };
     const baseRates = { DKK: 1, ...(currencyRatesRow ?? {}) } as Record<string, number>;
-    const seasonalNulled = new Set(overrides?.nulled ?? []);
-    const seasonalHidden = new Set(overrides?.hidden ?? []);
+    const seasonalNulled = new Set(overrides?.value.nulled ?? []);
+    const seasonalHidden = new Set(overrides?.value.hidden ?? []);
     // Build customer -> country map once and use it as a fallback for stats rows too
     const customerCountryById = new Map<string, string | null>();
     for (const c of (customers ?? [])) { customerCountryById.set(c.customer_id, c.country ?? null); }
@@ -192,12 +107,12 @@ export default function CountriesPage() {
       else if (inv.season_id === s2) { bucket.s2Qty += qty; bucket.s2PriceDkk += amount * rateS2; }
     }
     return out;
-  }, [stats, invoices, customers, s1, s2, currencyRatesRow, ratesS1, ratesS2, overrides?.nulled?.length, overrides?.hidden?.length, closedCustomers?.setClosed.size, closedCustomers?.setExcluded.size, closedCustomers?.setNulled.size]);
+  }, [stats, invoices, customers, s1, s2, currencyRatesRow, ratesS1, ratesS2, overrides?.value.nulled.length, overrides?.value.hidden.length, closedCustomers?.setClosed.size, closedCustomers?.setExcluded.size, closedCustomers?.setNulled.size]);
   const byCountrySalespersons = useMemo(() => {
     const out: Record<string, Map<string, { s1Qty: number; s1PriceDkk: number; s2Qty: number; s2PriceDkk: number }>> = {};
     const baseRates = { DKK: 1, ...(currencyRatesRow ?? {}) } as Record<string, number>;
-    const seasonalNulled = new Set(overrides?.nulled ?? []);
-    const seasonalHidden = new Set(overrides?.hidden ?? []);
+    const seasonalNulled = new Set(overrides?.value.nulled ?? []);
+    const seasonalHidden = new Set(overrides?.value.hidden ?? []);
     const customerCountryById = new Map<string, string | null>();
     const customerSpById = new Map<string, string | null>();
     for (const c of (customers ?? [])) { customerCountryById.set(c.customer_id, c.country ?? null); customerSpById.set(c.customer_id, c.salesperson_id ?? null); }
@@ -246,14 +161,14 @@ export default function CountriesPage() {
       m.set(spId, row);
     }
     return out;
-  }, [stats, invoices, customers, s1, s2, currencyRatesRow, ratesS1, ratesS2, overrides?.nulled?.length, overrides?.hidden?.length, closedCustomers?.setClosed.size, closedCustomers?.setExcluded.size, closedCustomers?.setNulled.size]);
+  }, [stats, invoices, customers, s1, s2, currencyRatesRow, ratesS1, ratesS2, overrides?.value.nulled.length, overrides?.value.hidden.length, closedCustomers?.setClosed.size, closedCustomers?.setExcluded.size, closedCustomers?.setNulled.size]);
 
   // Calculate effective currency rates from actual conversions
   const effectiveRates = useMemo(() => {
     if (!stats || !invoices || !customers) return { s1: { EUR: 0, NOK: 0, SEK: 0 }, s2: { EUR: 0, NOK: 0, SEK: 0 } };
     const baseRates = { DKK: 1, ...(currencyRatesRow ?? {}) } as Record<string, number>;
-    const seasonalNulled = new Set(overrides?.nulled ?? []);
-    const seasonalHidden = new Set(overrides?.hidden ?? []);
+    const seasonalNulled = new Set(overrides?.value.nulled ?? []);
+    const seasonalHidden = new Set(overrides?.value.hidden ?? []);
     const customerCountryById = new Map<string, string | null>();
     for (const c of (customers ?? [])) { customerCountryById.set(c.customer_id, c.country ?? null); }
     
@@ -295,7 +210,7 @@ export default function CountriesPage() {
       const currency = cur as CurrencyKey;
       const amount = Number(inv.amount || 0);
       if (amount <= 0) continue;
-      const isNullS1 = seasonalHidden.has(acc) || closedCustomers?.setClosed.has(acc) || closedCustomers?.setNulled.has(acc);
+      const isNullS1 = seasonalNulled.has(acc) || closedCustomers?.setClosed.has(acc) || closedCustomers?.setNulled.has(acc);
       if (inv.season_id === s1 && !isNullS1) {
         const rate = { ...baseRates, ...(ratesS1 ?? {}) }[currency] ?? 1;
         s1Agg[currency].original += amount;
@@ -320,7 +235,7 @@ export default function CountriesPage() {
         SEK: s2Agg.SEK.original > 0 ? s2Agg.SEK.dkk / s2Agg.SEK.original : (ratesS2?.SEK ?? baseRates.SEK ?? 0)
       }
     };
-  }, [stats, invoices, customers, s1, s2, currencyRatesRow, ratesS1, ratesS2, overrides?.nulled?.length, overrides?.hidden?.length, closedCustomers?.setClosed.size, closedCustomers?.setExcluded.size, closedCustomers?.setNulled.size]);
+  }, [stats, invoices, customers, s1, s2, currencyRatesRow, ratesS1, ratesS2, overrides?.value.nulled.length, overrides?.value.hidden.length, closedCustomers?.setClosed.size, closedCustomers?.setExcluded.size, closedCustomers?.setNulled.size]);
 
   function getSeasonLabel(seasonId: string | undefined) {
     if (!seasonId) return '';
@@ -328,7 +243,11 @@ export default function CountriesPage() {
     if (!s) return '';
     return `${s.name}${s.year ? ' ' + s.year : ''}`;
   }
-  return (
+  return !ready ? (
+    <div className="flex items-center justify-center p-10">
+      <div className="h-5 w-5 animate-spin rounded-full border-2 border-slate-300 border-t-slate-900" />
+    </div>
+  ) : (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-lg font-semibold tracking-tight text-slate-700">Countries</h1>

@@ -8,49 +8,29 @@ import { Menu, EyeOff, Trash2, Ban, MessageCircle, RefreshCw } from 'lucide-reac
 import { SearchSelect } from '../../../components/SearchSelect';
 import { ProgressBar } from '../../../components/ProgressBar';
 import { Modal } from '../../../components/Modal';
+import { useStatisticsData } from '../_shared/StatisticsDataContext';
 
 export default function StatisticsGeneralPage() {
-  const { data: seasons } = useSWR('seasons-all', async () => {
-    const { data, error } = await supabase.from('seasons').select('*').order('created_at', { ascending: false });
-    if (error) throw new Error(error.message);
-    return data as { id: string; name: string; year: number | null }[];
-  }, { refreshInterval: 1800000 }); // 30 minutes
-  const { data: saved } = useSWR('app-settings:season-compare', async () => {
-    const { data, error } = await supabase.from('app_settings').select('*').eq('key', 'season_compare').maybeSingle();
-    if (error) throw new Error(error.message);
-    return data as { id: string; key: string; value: { s1?: string; s2?: string } } | null;
-  });
-  const { data: salespersons } = useSWR('salespersons-all', async () => {
-    const { data, error } = await supabase
-      .from('salespersons')
-      .select('id, name, currency, sort_index')
-      .order('sort_index', { ascending: true });
-    if (error) throw new Error(error.message);
-    return (data ?? []) as { id: string; name: string; currency?: string | null; sort_index?: number | null }[];
-  }, { refreshInterval: 1800000 }); // 30 minutes
-  // Customer city index to ensure city is shown even if missing on stats rows
-  const { data: customerIndex, mutate: mutateCustomerIndex } = useSWR('customers-index', async () => {
-    const { data, error } = await supabase.from('customers').select('customer_id, company, city, group_name');
-    if (error) throw new Error(error.message);
-    const byId: Record<string, string> = {};
-    const byName: Record<string, string> = {};
-    const groupById: Record<string, string> = {};
-    for (const c of (data ?? []) as any[]) {
-      if (c.customer_id) byId[c.customer_id] = c.city ?? '';
-      if (c.company) byName[c.company] = c.city ?? '';
-      if (c.customer_id) groupById[c.customer_id] = c.group_name ?? '';
-    }
-    return { byId, byName, groupById } as { byId: Record<string, string>; byName: Record<string, string>; groupById: Record<string, string> };
-  }, { refreshInterval: 1800000 }); // 30 minutes
-  // Full customers list to allow showing baseline rows even when no stats exist for a season
-  // Refresh every 30 minutes (1800000ms) to keep cache fresh
-  const { data: allCustomers, mutate: mutateAllCustomers } = useSWR('general:customers', async () => {
-    const { data, error } = await supabase
-      .from('customers')
-      .select('customer_id, company, city, salesperson_id, group_name');
-    if (error) throw new Error(error.message);
-    return (data ?? []) as Array<{ customer_id: string; company: string | null; city: string | null; salesperson_id: string | null; group_name?: string | null }>;
-  }, { refreshInterval: 1800000 }); // 30 minutes
+  const {
+    ready,
+    seasons,
+    s1,
+    s2,
+    setS1,
+    setS2,
+    salespersons,
+    customers: allCustomers,
+    customerIndex,
+    closedCustomers,
+    overrides,
+    currencyRatesRow,
+    ratesS1,
+    ratesS2,
+    stats,
+    invoices,
+    refreshAll,
+  } = useStatisticsData();
+
   // Fetch latest general salesmen PDF export
   const { data: latestExport } = useSWR('exports:latest-general-salesmen', async () => {
     const { data, error } = await supabase
@@ -63,24 +43,6 @@ export default function StatisticsGeneralPage() {
     if (error) throw new Error(error.message);
     return data as { id: string; kind: string; title: string | null; path: string; public_url: string | null; meta: any; created_at: string } | null;
   }, { refreshInterval: 10000 });
-  // Global currency rates (fallback) and season-specific rates
-  const { data: currencyRatesRow } = useSWR('app-settings:currency-rates', async () => {
-    const { data, error } = await supabase.from('app_settings').select('*').eq('key', 'currency_rates').maybeSingle();
-    if (error) throw new Error(error.message);
-    return (data?.value as Record<string, number> | undefined) ?? {};
-  });
-  const [s1, setS1] = useState<string>('');
-  const [s2, setS2] = useState<string>('');
-  const { data: ratesS1 } = useSWR(s1 ? `season:${s1}:currency-rates` : null, async () => {
-    const key = `currency_rates:${s1}`;
-    const { data } = await supabase.from('app_settings').select('value').eq('key', key).maybeSingle();
-    return ((data?.value as any) || {}) as Record<string, number>;
-  });
-  const { data: ratesS2 } = useSWR(s2 ? `season:${s2}:currency-rates` : null, async () => {
-    const key = `currency_rates:${s2}`;
-    const { data } = await supabase.from('app_settings').select('value').eq('key', key).maybeSingle();
-    return ((data?.value as any) || {}) as Record<string, number>;
-  });
   const [activePerson, setActivePerson] = useState<string>('');
   const [showSave, setShowSave] = useState(false);
   const [updating, setUpdating] = useState(false);
@@ -112,28 +74,13 @@ export default function StatisticsGeneralPage() {
   const [manualCustomerId, setManualCustomerId] = useState<string>('');
   const [manualQty, setManualQty] = useState<string>('');
   const [manualPrice, setManualPrice] = useState<string>('');
-  const { data: customersAll } = useSWR('general:customers-all', async () => {
-    const { data, error } = await supabase.from('customers').select('customer_id, company').order('company', { ascending: true });
-    if (error) throw new Error(error.message);
-    return (data ?? []) as Array<{ customer_id: string; company: string | null }>;
-  });
+  const customersAll = useMemo(() => {
+    const list = (allCustomers ?? []).map((c) => ({ customer_id: c.customer_id, company: c.company ?? null }));
+    list.sort((a, b) => String(a.company ?? '').localeCompare(String(b.company ?? ''), 'da-DK'));
+    return list;
+  }, [allCustomers]);
   const spNameById = useMemo(() => Object.fromEntries(((salespersons ?? []) as { id: string; name: string }[]).map(s => [s.id, s.name])), [salespersons]);
   const spCurrencyById = useMemo(() => Object.fromEntries(((salespersons ?? []) as { id: string; currency?: string | null }[]).map(s => [s.id, s.currency ?? 'DKK'])), [salespersons]);
-  useEffect(() => {
-    if (saved?.value) {
-      setS1(saved.value.s1 ?? '');
-      setS2(saved.value.s2 ?? '');
-    }
-    // Fallback to current season if defaults are missing
-    if ((!saved?.value?.s1 || !saved?.value?.s2) && (seasons ?? []).length) {
-      const list = (seasons ?? []) as any[];
-      const current = list.find((x) => x.is_current);
-      const first = list[0];
-      const second = list[1] || list.find((x) => x.id !== (current?.id || first?.id));
-      if (!saved?.value?.s1) setS1((current?.id || first?.id) ?? '');
-      if (!saved?.value?.s2) setS2((second?.id) ?? '');
-    }
-  }, [saved?.id, seasons?.length]);
   useEffect(() => {
     if (s1 || s2) setShowSave(true);
   }, [s1, s2]);
@@ -654,208 +601,148 @@ export default function StatisticsGeneralPage() {
     }
   }
 
-  const { data: rows, mutate: mutateGeneralRows } = useSWR(
-    s1 && s2 ? ['general-stats', s1, s2, selectedSalespersonId ?? 'all'] : null,
-    async () => {
-      // Fetch both seasons at once and aggregate client-side by account_no
-      // Don't filter by salesperson_id in stats - use customer's salesperson_id from customers table instead
-      const statsQuery = supabase
-        .from('sales_stats')
-        .select('account_no, customer_name, city, qty, price, season_id')
-        .in('season_id', [s1, s2]);
-      
-      // Build invoices query - filter by customer IDs when a salesperson is selected
-      // First get customer IDs for the selected salesperson
-      let targetCustomerIds: string[] = [];
-      if (selectedSalespersonId) {
-        const customerIds = (allCustomers ?? [])
-          .filter(c => c.salesperson_id === selectedSalespersonId && c.customer_id)
-          .map(c => c.customer_id!);
-        targetCustomerIds = customerIds;
-        console.log('[stats] selectedSalespersonId:', selectedSalespersonId, 'targetCustomerIds count:', targetCustomerIds.length, 'sample:', targetCustomerIds.slice(0, 5));
-      }
-      
-      const invoicesQuery = supabase
-        .from('sales_invoices')
-        .select('account_no, customer_name, qty, amount, season_id')
-        .in('season_id', [s1, s2]);
-      
-      // Filter invoices by customer IDs when a salesperson is selected
-      if (selectedSalespersonId && targetCustomerIds.length > 0) {
-        invoicesQuery.in('account_no', targetCustomerIds);
-        // Also filter stats by customer IDs to match
-        statsQuery.in('account_no', targetCustomerIds);
-      }
+  const mutateGeneralRows = refreshAll;
 
-      const [statsRes, invoicesRes] = await Promise.all([
-        statsQuery.limit(100000),
-        invoicesQuery.limit(100000)
-      ]);
-      if (statsRes.error) throw new Error(statsRes.error.message);
-      if (invoicesRes.error) throw new Error(invoicesRes.error.message);
-      const statsData = statsRes.data ?? [];
-      const invoicesData = invoicesRes.data ?? [];
-      console.log('[stats] fetched raw rows', statsData.length, 'invoices', invoicesData.length, 'allCustomers count:', (allCustomers ?? []).length);
+  const rows = useMemo(() => {
+    if (!s1 || !s2) return [] as RowOut[];
+    if (!allCustomers) return [] as RowOut[];
 
-      const map = new Map<string, RowOut>();
-      // Seed baseline rows from customers so empty seasons still show the full customer list
-      for (const c of (allCustomers ?? [])) {
-        if (selectedSalespersonId && c.salesperson_id !== selectedSalespersonId) continue;
-        const key: string = c.customer_id || `${c.company ?? ''}:${c.city ?? ''}`;
-        if (!key) continue;
-        if (!map.has(key)) {
-          const spId = c.salesperson_id;
-          map.set(key, {
-            account_no: c.customer_id || key,
-            customer: c.company ?? '-',
-            city: (c.city && c.city !== '-') ? c.city : (c.customer_id ? (customerIndex?.byId?.[c.customer_id] ?? '-') : (c.company ? (customerIndex?.byName?.[c.company] ?? '-') : '-')),
-            groupName: (c as any).group_name ?? (c.customer_id ? (customerIndex as any)?.groupById?.[c.customer_id] ?? null : null),
-            s1Qty: 0,
-            s1Price: 0,
-            s2Qty: 0,
-            s2Price: 0,
-            salespersonId: spId ?? null,
-            salespersonName: spId ? (spNameById[spId] ?? 'Unknown') : '—'
-          });
-        }
-      }
-      // Aggregate TopSeller (sales_stats)
-      // Logic: 1) Check sales-data row against customer (match by account_no)
-      //        2) Always use customer's salesperson_id from customers table (source of truth for grouping)
-      for (const r of statsData as any[]) {
-        const key: string = r.account_no ?? `${r.customer_name ?? ''}:${r.city ?? ''}`;
-        const rawCity = r.city ?? '';
-        let itemCity: string = rawCity && rawCity !== '-' ? rawCity : '';
-        if (!itemCity && r.account_no) itemCity = customerIndex?.byId?.[r.account_no] ?? '';
-        if (!itemCity && r.customer_name) itemCity = customerIndex?.byName?.[r.customer_name] ?? '';
-        if (!itemCity) itemCity = '-';
-        // Step 1: Check sales-data row against customer (match by account_no)
-        // Step 2: Get salesperson_id from customers table (source of truth for grouping)
-        // Try both string and number comparison to handle type mismatches
-        const customer = r.account_no ? (allCustomers ?? []).find(c => {
-          // Handle both string and number comparisons
-          const cId = String(c.customer_id || '');
-          const rAccount = String(r.account_no || '');
-          return cId === rAccount || cId === String(Number(rAccount)) || String(Number(cId)) === rAccount;
-        }) : null;
-        const customerSalespersonId = customer?.salesperson_id ?? null;
-        // If customer not found in allCustomers but we have stats, still create row but log warning
-        if (r.account_no && !customer && (allCustomers ?? []).length > 0) {
-          console.warn('[stats] Customer not found in allCustomers for account_no:', r.account_no, 'customer_name:', r.customer_name, 'allCustomers sample:', (allCustomers ?? []).slice(0, 3).map(c => c.customer_id));
-        }
-        const item = map.get(key) ?? {
-          account_no: r.account_no ?? key,
-          customer: r.customer_name ?? '-',
-          city: itemCity,
-          groupName: r.account_no ? (customerIndex as any)?.groupById?.[r.account_no] ?? null : null,
+    const statsDataAll = (stats ?? []) as any[];
+    const invoicesDataAll = (invoices ?? []) as any[];
+
+    // Filter by selected salesperson by constraining to their customer_id list.
+    let statsData = statsDataAll;
+    let invoicesData = invoicesDataAll;
+    if (selectedSalespersonId) {
+      const targetCustomerIds = (allCustomers ?? [])
+        .filter((c) => c.salesperson_id === selectedSalespersonId && c.customer_id)
+        .map((c) => c.customer_id);
+      const set = new Set(targetCustomerIds);
+      statsData = statsDataAll.filter((r) => r.account_no && set.has(String(r.account_no)));
+      invoicesData = invoicesDataAll.filter((inv) => inv.account_no && set.has(String(inv.account_no)));
+      console.log('[stats] selectedSalespersonId:', selectedSalespersonId, 'targetCustomerIds count:', targetCustomerIds.length, 'sample:', targetCustomerIds.slice(0, 5));
+    }
+
+    const map = new Map<string, RowOut>();
+    // Seed baseline rows from customers so empty seasons still show the full customer list
+    for (const c of (allCustomers ?? [])) {
+      if (selectedSalespersonId && c.salesperson_id !== selectedSalespersonId) continue;
+      const key: string = c.customer_id || `${c.company ?? ''}:${c.city ?? ''}`;
+      if (!key) continue;
+      if (!map.has(key)) {
+        const spId = c.salesperson_id;
+        map.set(key, {
+          account_no: c.customer_id || key,
+          customer: c.company ?? '-',
+          city: (c.city && c.city !== '-') ? c.city : (c.customer_id ? (customerIndex?.byId?.[c.customer_id] ?? '-') : (c.company ? (customerIndex?.byName?.[c.company] ?? '-') : '-')),
+          groupName: (c as any).group_name ?? (c.customer_id ? (customerIndex as any)?.groupById?.[c.customer_id] ?? null : null),
           s1Qty: 0,
           s1Price: 0,
           s2Qty: 0,
           s2Price: 0,
-          salespersonId: customerSalespersonId,
-          salespersonName: customerSalespersonId ? (spNameById[customerSalespersonId] ?? 'Unknown') : '—'
-        };
-        // Always use customer's salesperson_id (customers table is source of truth)
-        // If customer found, update salespersonId; if not found, keep as null (will be filtered out if salesperson selected)
-        if (customerSalespersonId) {
-          item.salespersonId = customerSalespersonId;
-          item.salespersonName = spNameById[customerSalespersonId] ?? 'Unknown';
-        }
-        const qty = Number(r.qty ?? 0) || 0;
-        const price = Number(r.price ?? 0) || 0;
-        if (r.season_id === s1) {
-          item.s1Qty += qty;
-          item.s1Price += price;
-        } else if (r.season_id === s2) {
-          item.s2Qty += qty;
-          item.s2Price += price;
-        }
-        map.set(key, item);
+          salespersonId: spId ?? null,
+          salespersonName: spId ? (spNameById[spId] ?? 'Unknown') : '—'
+        });
       }
-      // Aggregate Invoices (sales_invoices) into same keys to make top table equal sum of details
-      // Logic: 1) Check sales-data row against customer (match by account_no)
-      //        2) Always use customer's salesperson_id from customers table (source of truth for grouping)
-      for (const inv of invoicesData as any[]) {
-        const key: string = inv.account_no ?? `${inv.customer_name ?? ''}:-`;
-        const itemExisting = map.get(key);
-        // Derive city if possible
-        let itemCity: string = itemExisting?.city ?? '';
-        if (!itemCity && inv.account_no) itemCity = customerIndex?.byId?.[inv.account_no] ?? '';
-        if (!itemCity && inv.customer_name) itemCity = customerIndex?.byName?.[inv.customer_name] ?? '';
-        if (!itemCity) itemCity = '-';
-        // Step 1: Check sales-data row against customer (match by account_no)
-        // Step 2: Get salesperson_id from customers table (source of truth for grouping)
-        let invoiceSalespersonId: string | null = null;
-        let invoiceSalespersonName = '—';
-        if (inv.account_no) {
-          const customer = (allCustomers ?? []).find(c => c.customer_id === inv.account_no);
-          if (customer?.salesperson_id) {
-            invoiceSalespersonId = customer.salesperson_id;
-            invoiceSalespersonName = spNameById[customer.salesperson_id] ?? 'Unknown';
-          }
-        }
-        const item = itemExisting ?? {
-          account_no: inv.account_no ?? key,
-          customer: inv.customer_name ?? '-',
-          city: itemCity,
-          groupName: inv.account_no ? (customerIndex as any)?.groupById?.[inv.account_no] ?? null : null,
-          s1Qty: 0,
-          s1Price: 0,
-          s2Qty: 0,
-          s2Price: 0,
-          salespersonId: invoiceSalespersonId,
-          salespersonName: invoiceSalespersonName
-        } as RowOut;
-        // Update salespersonId from customer lookup if currently null (for existing items)
-        if (item.salespersonId === null && invoiceSalespersonId) {
-          item.salespersonId = invoiceSalespersonId;
-          item.salespersonName = invoiceSalespersonName;
-        }
-        const qty = Number(inv.qty ?? 0) || 0;
-        const amount = Number(inv.amount ?? 0) || 0;
-        if (inv.season_id === s1) {
-          item.s1Qty += qty;
-          item.s1Price += amount;
-        } else if (inv.season_id === s2) {
-          item.s2Qty += qty;
-          item.s2Price += amount;
-        }
-        map.set(key, item);
-      }
+    }
 
-      const out = Array.from(map.values()).sort((a, b) => a.customer.localeCompare(b.customer));
-      console.log('[stats] aggregated rows (stats+invoices)', out.length, 'sample', out[0]);
-      return out;
-    },
-    { refreshInterval: 1800000 } // 30 minutes (was 20000)
-  );
+    // Aggregate TopSeller (sales_stats)
+    for (const r of statsData as any[]) {
+      const key: string = r.account_no ?? `${r.customer_name ?? ''}:${r.city ?? ''}`;
+      const rawCity = r.city ?? '';
+      let itemCity: string = rawCity && rawCity !== '-' ? rawCity : '';
+      if (!itemCity && r.account_no) itemCity = customerIndex?.byId?.[r.account_no] ?? '';
+      if (!itemCity && r.customer_name) itemCity = customerIndex?.byName?.[r.customer_name] ?? '';
+      if (!itemCity) itemCity = '-';
+      const customer = r.account_no ? (allCustomers ?? []).find(c => {
+        const cId = String(c.customer_id || '');
+        const rAccount = String(r.account_no || '');
+        return cId === rAccount || cId === String(Number(rAccount)) || String(Number(cId)) === rAccount;
+      }) : null;
+      const customerSalespersonId = customer?.salesperson_id ?? null;
+      if (r.account_no && !customer && (allCustomers ?? []).length > 0) {
+        console.warn('[stats] Customer not found in allCustomers for account_no:', r.account_no, 'customer_name:', r.customer_name, 'allCustomers sample:', (allCustomers ?? []).slice(0, 3).map(c => c.customer_id));
+      }
+      const item = map.get(key) ?? {
+        account_no: r.account_no ?? key,
+        customer: r.customer_name ?? '-',
+        city: itemCity,
+        groupName: r.account_no ? (customerIndex as any)?.groupById?.[r.account_no] ?? null : null,
+        s1Qty: 0,
+        s1Price: 0,
+        s2Qty: 0,
+        s2Price: 0,
+        salespersonId: customerSalespersonId,
+        salespersonName: customerSalespersonId ? (spNameById[customerSalespersonId] ?? 'Unknown') : '—'
+      };
+      if (customerSalespersonId) {
+        item.salespersonId = customerSalespersonId;
+        item.salespersonName = spNameById[customerSalespersonId] ?? 'Unknown';
+      }
+      const qty = Number(r.qty ?? 0) || 0;
+      const price = Number(r.price ?? 0) || 0;
+      if (r.season_id === s1) {
+        item.s1Qty += qty;
+        item.s1Price += price;
+      } else if (r.season_id === s2) {
+        item.s2Qty += qty;
+        item.s2Price += price;
+      }
+      map.set(key, item);
+    }
+
+    // Aggregate Invoices (sales_invoices)
+    for (const inv of invoicesData as any[]) {
+      const key: string = inv.account_no ?? `${inv.customer_name ?? ''}:-`;
+      const itemExisting = map.get(key);
+      let itemCity: string = itemExisting?.city ?? '';
+      if (!itemCity && inv.account_no) itemCity = customerIndex?.byId?.[inv.account_no] ?? '';
+      if (!itemCity && inv.customer_name) itemCity = customerIndex?.byName?.[inv.customer_name] ?? '';
+      if (!itemCity) itemCity = '-';
+      let invoiceSalespersonId: string | null = null;
+      let invoiceSalespersonName = '—';
+      if (inv.account_no) {
+        const customer = (allCustomers ?? []).find(c => c.customer_id === inv.account_no);
+        if (customer?.salesperson_id) {
+          invoiceSalespersonId = customer.salesperson_id;
+          invoiceSalespersonName = spNameById[customer.salesperson_id] ?? 'Unknown';
+        }
+      }
+      const item = itemExisting ?? {
+        account_no: inv.account_no ?? key,
+        customer: inv.customer_name ?? '-',
+        city: itemCity,
+        groupName: inv.account_no ? (customerIndex as any)?.groupById?.[inv.account_no] ?? null : null,
+        s1Qty: 0,
+        s1Price: 0,
+        s2Qty: 0,
+        s2Price: 0,
+        salespersonId: invoiceSalespersonId,
+        salespersonName: invoiceSalespersonName
+      } as RowOut;
+      if (item.salespersonId === null && invoiceSalespersonId) {
+        item.salespersonId = invoiceSalespersonId;
+        item.salespersonName = invoiceSalespersonName;
+      }
+      const qty = Number(inv.qty ?? 0) || 0;
+      const amount = Number(inv.amount ?? 0) || 0;
+      if (inv.season_id === s1) {
+        item.s1Qty += qty;
+        item.s1Price += amount;
+      } else if (inv.season_id === s2) {
+        item.s2Qty += qty;
+        item.s2Price += amount;
+      }
+      map.set(key, item);
+    }
+
+    const out = Array.from(map.values()).sort((a, b) => a.customer.localeCompare(b.customer));
+    console.log('[stats] aggregated rows (stats+invoices)', out.length, 'sample', out[0]);
+    return out;
+  }, [s1, s2, selectedSalespersonId, allCustomers, customerIndex, spNameById, stats, invoices]);
 
   // Seasonal overrides (null/hidden) stored in app_settings per season
   const overridesKey = s1 ? `season_overrides:${s1}` : null;
-  const { data: overrides, mutate: mutateOverrides } = useSWR(overridesKey, async () => {
-    if (!overridesKey) return { id: null, value: { nulled: [], hidden: [] as string[] } };
-    const { data, error } = await supabase.from('app_settings').select('id, value').eq('key', overridesKey).maybeSingle();
-    if (error) throw new Error(error.message);
-    const val = (data?.value as any) || {};
-    return { id: data?.id ?? null, value: { nulled: Array.isArray(val.nulled) ? val.nulled : [], hidden: Array.isArray(val.hidden) ? val.hidden : [] } } as { id: string | null, value: { nulled: string[]; hidden: string[] } };
-  }, { refreshInterval: 0 });
-  useEffect(() => {
-    if (overridesKey) console.log('[stats] overrides', overridesKey, overrides);
-  }, [overridesKey, overrides?.id, overrides?.value]);
-
-  const { data: closedCustomers, mutate: mutateClosedCustomers } = useSWR('customers-closed', async () => {
-    const { data, error } = await supabase.from('customers').select('customer_id, permanently_closed, excluded, nulled');
-    if (error) throw new Error(error.message);
-    const setClosed = new Set<string>();
-    const setExcluded = new Set<string>();
-    const setNulled = new Set<string>();
-    for (const c of (data ?? []) as any[]) {
-      if (c.permanently_closed) setClosed.add(c.customer_id);
-      if (c.excluded) setExcluded.add(c.customer_id);
-      if (c.nulled) setNulled.add(c.customer_id);
-    }
-    return { setClosed, setExcluded, setNulled };
-  }, { refreshInterval: 1800000 }); // 30 minutes
 
   async function saveOverrides(next: { nulled: string[]; hidden: string[] }) {
     if (!overridesKey) return;
@@ -867,7 +754,7 @@ export default function StatisticsGeneralPage() {
       const { error } = await supabase.from('app_settings').insert({ key: overridesKey, value: next });
       if (error) throw new Error(error.message);
     }
-    await mutateOverrides();
+    await refreshAll();
   }
 
 
@@ -881,8 +768,8 @@ export default function StatisticsGeneralPage() {
   // Detailed logging: For each salesperson, list all customers and their table status
   type CustomerLogEntry = {
     customer_id: string;
-    company: string | null;
-    city: string | null;
+    company: string | null | undefined;
+    city: string | null | undefined;
     inTable: boolean;
     reason: string;
     hasS1Data: boolean;
@@ -1004,12 +891,7 @@ export default function StatisticsGeneralPage() {
     if (hidden.has(account)) hidden.delete(account); else hidden.add(account);
     console.log('[stats] toggleHide', account, '->', Array.from(hidden));
     await saveOverrides({ nulled: overrides?.value.nulled ?? [], hidden: Array.from(hidden) });
-    // Refresh data to update logging view
-    await Promise.all([
-      mutateGeneralRows(),
-      mutateClosedCustomers(),
-      mutateOverrides()
-    ]);
+    await mutateGeneralRows();
   }
   async function toggleNull(account: string) {
     if (!s1) return alert('Select Season 1 first');
@@ -1017,12 +899,7 @@ export default function StatisticsGeneralPage() {
     if (nulled.has(account)) nulled.delete(account); else nulled.add(account);
     console.log('[stats] toggleNull', account, '->', Array.from(nulled));
     await saveOverrides({ nulled: Array.from(nulled), hidden: overrides?.value.hidden ?? [] });
-    // Refresh data to update logging view
-    await Promise.all([
-      mutateGeneralRows(),
-      mutateClosedCustomers(),
-      mutateOverrides()
-    ]);
+    await mutateGeneralRows();
   }
   async function permanentClose(account: string) {
     // Mark customer globally; also add seasonal null
@@ -1030,12 +907,7 @@ export default function StatisticsGeneralPage() {
     if (error) return alert(error.message);
     console.log('[stats] permanentClose', account);
     await toggleNull(account);
-    // Additional refresh after toggleNull
-    await Promise.all([
-      mutateGeneralRows(),
-      mutateClosedCustomers(),
-      mutateAllCustomers()
-    ]);
+    await refreshAll();
   }
 
   function ActionBtn({ label, onClick, children }: { label: string; onClick: () => void; children: ReactNode }) {
@@ -1133,12 +1005,8 @@ export default function StatisticsGeneralPage() {
     try {
       // Refresh all SWR caches in parallel
       await Promise.all([
-        mutateAllCustomers(),
-        mutateGeneralRows(),
-        mutateClosedCustomers(),
-        mutateOverrides(),
-        mutateComments(),
-        mutateCustomerIndex()
+        refreshAll(),
+        mutateComments()
       ]);
       console.log('[stats] All data refreshed');
     } catch (e: any) {
@@ -1148,7 +1016,13 @@ export default function StatisticsGeneralPage() {
     }
   }
 
-  return (
+  const isPageReady = ready && typeof commentsMap !== 'undefined';
+
+  return !isPageReady ? (
+    <div className="flex items-center justify-center p-10">
+      <div className="h-5 w-5 animate-spin rounded-full border-2 border-slate-300 border-t-slate-900" />
+    </div>
+  ) : (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
@@ -2258,13 +2132,8 @@ export default function StatisticsGeneralPage() {
                         setImportResult(js);
                         // Revalidate views so UI reflects seasonal nulls and permanent closures
                         try {
-                          if (importSeasonId && (importSeasonId === s1 || importSeasonId === s2)) {
-                            await mutateGeneralRows();
-                          }
-                          if (importSeasonId && importSeasonId === s1) {
-                            await mutateOverrides();
-                          }
-                          await mutateClosedCustomers();
+                          await refreshAll();
+                          await mutateComments();
                         } catch {}
                       } catch (e: any) {
                         alert(e?.message || 'Import failed');
