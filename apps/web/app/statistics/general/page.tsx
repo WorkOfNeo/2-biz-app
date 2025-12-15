@@ -655,15 +655,13 @@ export default function StatisticsGeneralPage() {
     s1 && s2 ? ['general-stats', s1, s2, selectedSalespersonId ?? 'all'] : null,
     async () => {
       // Fetch both seasons at once and aggregate client-side by account_no
+      // Don't filter by salesperson_id in stats - use customer's salesperson_id from customers table instead
       const statsQuery = supabase
         .from('sales_stats')
-        .select('account_no, customer_name, city, qty, price, season_id, salesperson_id')
+        .select('account_no, customer_name, city, qty, price, season_id')
         .in('season_id', [s1, s2]);
-      if (selectedSalespersonId) {
-        statsQuery.eq('salesperson_id', selectedSalespersonId);
-      }
       
-      // Build invoices query - need to filter by salesperson via customer lookup
+      // Build invoices query - filter by customer IDs when a salesperson is selected
       // First get customer IDs for the selected salesperson
       let targetCustomerIds: string[] = [];
       if (selectedSalespersonId) {
@@ -681,6 +679,8 @@ export default function StatisticsGeneralPage() {
       // Filter invoices by customer IDs when a salesperson is selected
       if (selectedSalespersonId && targetCustomerIds.length > 0) {
         invoicesQuery.in('account_no', targetCustomerIds);
+        // Also filter stats by customer IDs to match
+        statsQuery.in('account_no', targetCustomerIds);
       }
 
       const [statsRes, invoicesRes] = await Promise.all([
@@ -690,16 +690,6 @@ export default function StatisticsGeneralPage() {
       if (statsRes.error) throw new Error(statsRes.error.message);
       if (invoicesRes.error) throw new Error(invoicesRes.error.message);
       const statsData = statsRes.data ?? [];
-      // Debug: surface salesperson mapping issues and season filters
-      try {
-        const bySp = new Map<string, number>();
-        for (const r of statsData as any[]) {
-          const id = String(r.salesperson_id || 'null');
-          bySp.set(id, (bySp.get(id) || 0) + 1);
-        }
-        console.log('[stats] salesperson_id counts', Object.fromEntries(bySp));
-        console.log('[stats] selectedSalespersonId', selectedSalespersonId, 'seasons', s1, s2);
-      } catch {}
       const invoicesData = invoicesRes.data ?? [];
       console.log('[stats] fetched raw rows', statsData.length, 'invoices', invoicesData.length);
 
@@ -726,6 +716,8 @@ export default function StatisticsGeneralPage() {
         }
       }
       // Aggregate TopSeller (sales_stats)
+      // Logic: 1) Check sales-data row against customer (match by account_no)
+      //        2) Always use customer's salesperson_id from customers table (source of truth for grouping)
       for (const r of statsData as any[]) {
         const key: string = r.account_no ?? `${r.customer_name ?? ''}:${r.city ?? ''}`;
         const rawCity = r.city ?? '';
@@ -733,6 +725,10 @@ export default function StatisticsGeneralPage() {
         if (!itemCity && r.account_no) itemCity = customerIndex?.byId?.[r.account_no] ?? '';
         if (!itemCity && r.customer_name) itemCity = customerIndex?.byName?.[r.customer_name] ?? '';
         if (!itemCity) itemCity = '-';
+        // Step 1: Check sales-data row against customer (match by account_no)
+        // Step 2: Get salesperson_id from customers table (source of truth for grouping)
+        const customer = r.account_no ? (allCustomers ?? []).find(c => c.customer_id === r.account_no) : null;
+        const customerSalespersonId = customer?.salesperson_id ?? null;
         const item = map.get(key) ?? {
           account_no: r.account_no ?? key,
           customer: r.customer_name ?? '-',
@@ -742,13 +738,13 @@ export default function StatisticsGeneralPage() {
           s1Price: 0,
           s2Qty: 0,
           s2Price: 0,
-          salespersonId: r.salesperson_id ?? null,
-          salespersonName: spNameById[r.salesperson_id as string] ?? (r.salesperson_id ? 'Unknown' : '—')
+          salespersonId: customerSalespersonId,
+          salespersonName: customerSalespersonId ? (spNameById[customerSalespersonId] ?? 'Unknown') : '—'
         };
-        // Update salespersonId from stats if present (stats are source of truth for actual sales)
-        if (r.salesperson_id) {
-          item.salespersonId = r.salesperson_id;
-          item.salespersonName = spNameById[r.salesperson_id] ?? 'Unknown';
+        // Always use customer's salesperson_id (customers table is source of truth)
+        if (customerSalespersonId) {
+          item.salespersonId = customerSalespersonId;
+          item.salespersonName = spNameById[customerSalespersonId] ?? 'Unknown';
         }
         const qty = Number(r.qty ?? 0) || 0;
         const price = Number(r.price ?? 0) || 0;
@@ -762,6 +758,8 @@ export default function StatisticsGeneralPage() {
         map.set(key, item);
       }
       // Aggregate Invoices (sales_invoices) into same keys to make top table equal sum of details
+      // Logic: 1) Check sales-data row against customer (match by account_no)
+      //        2) Always use customer's salesperson_id from customers table (source of truth for grouping)
       for (const inv of invoicesData as any[]) {
         const key: string = inv.account_no ?? `${inv.customer_name ?? ''}:-`;
         const itemExisting = map.get(key);
@@ -770,7 +768,8 @@ export default function StatisticsGeneralPage() {
         if (!itemCity && inv.account_no) itemCity = customerIndex?.byId?.[inv.account_no] ?? '';
         if (!itemCity && inv.customer_name) itemCity = customerIndex?.byName?.[inv.customer_name] ?? '';
         if (!itemCity) itemCity = '-';
-        // Look up salesperson from customers table if needed
+        // Step 1: Check sales-data row against customer (match by account_no)
+        // Step 2: Get salesperson_id from customers table (source of truth for grouping)
         let invoiceSalespersonId: string | null = null;
         let invoiceSalespersonName = '—';
         if (inv.account_no) {

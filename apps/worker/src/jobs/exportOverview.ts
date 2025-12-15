@@ -496,8 +496,14 @@ export async function exportOverview(ctx: Ctx) {
       if (!s1 || !s2) throw new Error('Missing season compare (s1/s2)');
       const { data: people } = await supabase.from('salespersons').select('id, name, currency').order('sort_index', { ascending: true });
       const list = (people ?? []) as Array<{ id: string; name: string; currency?: string | null }>;
+      // Global currency rates (fallback)
       let rates: Record<string, number> = { DKK: 1 };
       try { const { data: rateRow } = await supabase.from('app_settings').select('value').eq('key', 'currency_rates').maybeSingle(); rates = { DKK: 1, ...((rateRow?.value as any) ?? {}) } as Record<string, number>; } catch {}
+      // Season-specific currency rates (same as frontend)
+      let ratesS1: Record<string, number> = {};
+      try { const { data: rateRowS1 } = await supabase.from('app_settings').select('value').eq('key', `currency_rates:${s1}`).maybeSingle(); ratesS1 = ((rateRowS1?.value as any) || {}) as Record<string, number>; } catch {}
+      let ratesS2: Record<string, number> = {};
+      try { const { data: rateRowS2 } = await supabase.from('app_settings').select('value').eq('key', `currency_rates:${s2}`).maybeSingle(); ratesS2 = ((rateRowS2?.value as any) || {}) as Record<string, number>; } catch {}
       const getSeason = async (id: string | null): Promise<{ name: string; year: number | null; code: string } | null> => {
         if (!id) return null;
         try {
@@ -557,24 +563,58 @@ export async function exportOverview(ctx: Ctx) {
         }
         let rows: Array<{ account: string; company: string; city: string; comment: string; nulled: boolean; s1Qty: number; s1Price: number; s2Qty: number; s2Price: number }>= [];
         if (accountNos.length) {
+          // Don't filter stats by salesperson_id - use customer's salesperson_id from customers table instead
+          // This ensures we get all stats for these customers, then use customer's salesperson_id to determine grouping
           const statResp = await supabase.from('sales_stats').select('account_no, qty, price, season_id').in('season_id', [s1, s2]).in('account_no', accountNos).limit(200000);
           const statRows: Array<{ account_no: string | null; qty: number | null; price: number | null; season_id: string }> = ((statResp as any)?.data ?? []) as any[];
-          // Also fetch invoices to align with General page totals
+          // Also fetch invoices to align with General page totals (filtered by customer IDs, same as frontend)
           const invResp = await supabase.from('sales_invoices').select('account_no, qty, amount, season_id').in('season_id', [s1, s2]).in('account_no', accountNos).limit(200000);
           const invRows: Array<{ account_no: string | null; qty: number | null; amount: number | null; season_id: string }> = ((invResp as any)?.data ?? []) as any[];
           const map = new Map<string, { s1Qty: number; s1Price: number; s2Qty: number; s2Price: number }>();
+          // Aggregate stats WITHOUT currency conversion (same as frontend - prices stored in local currency)
+          // Logic: 1) Check sales-data row against customer (match by account_no)
+          //        2) Always use customer's salesperson_id from customers table (source of truth for grouping)
           for (const rowItem of statRows) {
             const key = String(rowItem.account_no || ''); if (!key) continue;
+            // Step 1: Check sales-data row against customer (match by account_no)
+            const customer = items.find(c => c.customer_id === key);
+            // Step 2: Use customer's salesperson_id from customers table to determine grouping
+            if (!customer || customer.salesperson_id !== sp.id) continue; // Skip if customer doesn't belong to this salesperson
             const agg = map.get(key) || { s1Qty: 0, s1Price: 0, s2Qty: 0, s2Price: 0 };
-            if (rowItem.season_id === s1) { agg.s1Qty += Number(rowItem.qty||0); agg.s1Price += Number(rowItem.price||0); }
-            else if (rowItem.season_id === s2) { agg.s2Qty += Number(rowItem.qty||0); agg.s2Price += Number(rowItem.price||0); }
+            const qty = Number(rowItem.qty||0);
+            const price = Number(rowItem.price||0);
+            if (rowItem.season_id === s1) {
+              // Store prices as-is (no conversion during aggregation, same as frontend)
+              agg.s1Qty += qty;
+              agg.s1Price += price;
+            } else if (rowItem.season_id === s2) {
+              // Store prices as-is (no conversion during aggregation, same as frontend)
+              agg.s2Qty += qty;
+              agg.s2Price += price;
+            }
             map.set(key, agg);
           }
+          // Aggregate invoices WITHOUT currency conversion (same as frontend - prices stored in local currency)
+          // Logic: 1) Check sales-data row against customer (match by account_no)
+          //        2) Always use customer's salesperson_id from customers table (source of truth for grouping)
           for (const inv of invRows) {
             const key = String(inv.account_no || ''); if (!key) continue;
+            // Step 1: Check sales-data row against customer (match by account_no)
+            const customer = items.find(c => c.customer_id === key);
+            // Step 2: Use customer's salesperson_id from customers table to determine grouping
+            if (!customer || customer.salesperson_id !== sp.id) continue; // Skip if customer doesn't belong to this salesperson
             const agg = map.get(key) || { s1Qty: 0, s1Price: 0, s2Qty: 0, s2Price: 0 };
-            if (inv.season_id === s1) { agg.s1Qty += Number(inv.qty||0); agg.s1Price += Number(inv.amount||0); }
-            else if (inv.season_id === s2) { agg.s2Qty += Number(inv.qty||0); agg.s2Price += Number(inv.amount||0); }
+            const qty = Number(inv.qty||0);
+            const amount = Number(inv.amount||0);
+            if (inv.season_id === s1) {
+              // Store prices as-is (no conversion during aggregation, same as frontend)
+              agg.s1Qty += qty;
+              agg.s1Price += amount;
+            } else if (inv.season_id === s2) {
+              // Store prices as-is (no conversion during aggregation, same as frontend)
+              agg.s2Qty += qty;
+              agg.s2Price += amount;
+            }
             map.set(key, agg);
           }
           for (const c of items) {
@@ -755,10 +795,22 @@ export async function exportOverview(ctx: Ctx) {
               Cell((devPrice>0?'+':'')+fmt(devPrice), '7%', 'right', r.nulled ? [devPriceStyle, styles.strike] : devPriceStyle)
             );
         });
-        const totals = rows.reduce((a, r) => ({ s1Qty: a.s1Qty + r.s1Qty, s2Qty: a.s2Qty + r.s2Qty, s1Price: a.s1Price + r.s1Price, s2Price: a.s2Price + r.s2Price }), { s1Qty: 0, s2Qty: 0, s1Price: 0, s2Price: 0 });
+        // Calculate totals - exclude nulled customers from S1 totals (same as frontend)
+        const nulledSeasonal = new Set(nulledSet);
+        const totals = rows.reduce((a, r) => {
+          const isNullS1 = r.nulled;
+          a.s1Qty += isNullS1 ? 0 : r.s1Qty;
+          a.s2Qty += r.s2Qty;
+          a.s1Price += isNullS1 ? 0 : r.s1Price;
+          a.s2Price += r.s2Price;
+          return a;
+        }, { s1Qty: 0, s2Qty: 0, s1Price: 0, s2Price: 0 });
+        // Get salesperson currency and season-specific rates (same as frontend)
         const currency = (sp.currency || 'DKK').toUpperCase();
-        const rate = rates[currency] ?? 1;
-        const totalsDkk = { s1: totals.s1Price * rate, s2: totals.s2Price * rate };
+        const baseRates = { DKK: 1, ...rates } as Record<string, number>;
+        const rateS1 = { ...baseRates, ...ratesS1 }[currency] ?? 1;
+        const rateS2 = { ...baseRates, ...ratesS2 }[currency] ?? 1;
+        const totalsDkk = { s1: totals.s1Price * rateS1, s2: totals.s2Price * rateS2 };
         const totalsLocal = { s1: totals.s1Price, s2: totals.s2Price };
         const totalsQty = { s1: totals.s1Qty, s2: totals.s2Qty };
         const totalsView = React.createElement(View, { style: { marginTop: 6 } },
