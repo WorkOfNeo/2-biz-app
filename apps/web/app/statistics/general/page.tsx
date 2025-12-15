@@ -330,6 +330,8 @@ export default function StatisticsGeneralPage() {
   const [commentText, setCommentText] = useState<string>('');
   const [commentIsPermanent, setCommentIsPermanent] = useState(false);
   const [commentLoading, setCommentLoading] = useState(false);
+  // Detailed logging section state
+  const [showLogging, setShowLogging] = useState(false);
 
   async function openDetails(row: RowOut) {
     if (!s1 && !s2) return;
@@ -875,6 +877,120 @@ export default function StatisticsGeneralPage() {
   function isNulled(account: string): boolean {
     return Boolean(overrides?.value.nulled.includes(account)) || Boolean(closedCustomers?.setNulled.has(account)) || Boolean(closedCustomers?.setClosed.has(account));
   }
+
+  // Detailed logging: For each salesperson, list all customers and their table status
+  type CustomerLogEntry = {
+    customer_id: string;
+    company: string | null;
+    city: string | null;
+    inTable: boolean;
+    reason: string;
+    hasS1Data: boolean;
+    hasS2Data: boolean;
+    excluded: boolean;
+    nulled: boolean;
+    permanentlyClosed: boolean;
+    hidden: boolean;
+  };
+
+  type SalespersonLog = {
+    salespersonId: string;
+    salespersonName: string;
+    customers: CustomerLogEntry[];
+    totalCustomers: number;
+    inTableCount: number;
+    notInTableCount: number;
+  };
+
+  const detailedLogging = useMemo((): SalespersonLog[] => {
+    if (!salespersons || !allCustomers || !rows || !s1 || !s2) return [];
+
+    // Create a map of account_no to row data for quick lookup
+    const rowsByAccount = new Map<string, RowOut>();
+    for (const row of rows) {
+      if (row.account_no && !row.isGroupTotal) {
+        rowsByAccount.set(row.account_no, row);
+      }
+    }
+
+    const logs: SalespersonLog[] = [];
+
+    for (const sp of salespersons) {
+      // Get all customers for this salesperson
+      const spCustomers = (allCustomers ?? []).filter(c => c.salesperson_id === sp.id);
+
+      const customerLogs: CustomerLogEntry[] = spCustomers.map(customer => {
+        const accountNo = customer.customer_id || '';
+        const rowInTable = accountNo ? rowsByAccount.get(accountNo) : null;
+        // Customer is "in table" if they have data AND are not hidden
+        // Note: Even if hidden, they still have data, so we check both conditions
+        const inTable = !!rowInTable && !isHidden(accountNo);
+
+        // Determine reason if not in table
+        let reason = '';
+        if (inTable) {
+          reason = 'In table';
+        } else {
+          const reasons: string[] = [];
+          
+          // If rowInTable is null, there's no sales data for this customer in the selected seasons
+          if (!rowInTable) {
+            reasons.push('No sales data for selected seasons');
+          } else {
+            // Customer has data but is not visible in table
+            if (isHidden(accountNo)) {
+              reasons.push('Hidden (excluded from view)');
+            }
+          }
+          
+          if (isNulled(accountNo)) {
+            if (closedCustomers?.setClosed.has(accountNo)) {
+              reasons.push('Permanently closed');
+            } else if (closedCustomers?.setNulled.has(accountNo)) {
+              reasons.push('Nulled (permanent)');
+            } else {
+              reasons.push('Nulled (seasonal)');
+            }
+          }
+          
+          if (closedCustomers?.setExcluded.has(accountNo) && !isHidden(accountNo)) {
+            reasons.push('Excluded');
+          }
+
+          reason = reasons.length > 0 ? reasons.join(', ') : 'Unknown reason';
+        }
+
+        // Check if customer has data in each season
+        const hasS1Data = rowInTable ? (rowInTable.s1Qty > 0 || rowInTable.s1Price > 0) : false;
+        const hasS2Data = rowInTable ? (rowInTable.s2Qty > 0 || rowInTable.s2Price > 0) : false;
+
+        return {
+          customer_id: accountNo,
+          company: customer.company,
+          city: customer.city,
+          inTable,
+          reason,
+          hasS1Data,
+          hasS2Data,
+          excluded: closedCustomers?.setExcluded.has(accountNo) ?? false,
+          nulled: closedCustomers?.setNulled.has(accountNo) ?? false,
+          permanentlyClosed: closedCustomers?.setClosed.has(accountNo) ?? false,
+          hidden: isHidden(accountNo),
+        };
+      });
+
+      logs.push({
+        salespersonId: sp.id,
+        salespersonName: sp.name,
+        customers: customerLogs.sort((a, b) => (a.company || a.customer_id || '').localeCompare(b.company || b.customer_id || '')),
+        totalCustomers: customerLogs.length,
+        inTableCount: customerLogs.filter(c => c.inTable).length,
+        notInTableCount: customerLogs.filter(c => !c.inTable).length,
+      });
+    }
+
+    return logs.sort((a, b) => a.salespersonName.localeCompare(b.salespersonName));
+  }, [salespersons, allCustomers, rows, s1, s2, closedCustomers, overrides]);
 
   async function toggleHide(account: string) {
     if (!s1) return alert('Select Season 1 first');
@@ -1562,6 +1678,120 @@ export default function StatisticsGeneralPage() {
               )}
               {/* Totals section removed per request */}
             </div>
+
+            {/* Detailed Logging Section */}
+            <div className="rounded-lg border bg-white">
+              <div className="p-4 border-b">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-lg font-semibold">Detailed Salesperson & Customer Logging</h2>
+                  <button
+                    onClick={() => setShowLogging(!showLogging)}
+                    className="rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50"
+                  >
+                    {showLogging ? 'Hide' : 'Show'} Logging
+                  </button>
+                </div>
+                {showLogging && (
+                  <div className="mt-2 text-sm text-gray-600">
+                    This section shows all salespersons, their customers, and whether each customer appears in the table above with reasons if they don't.
+                  </div>
+                )}
+              </div>
+              {showLogging && (
+                <div className="p-4 space-y-6">
+                  {detailedLogging.map((spLog) => (
+                    <div key={spLog.salespersonId} className="border rounded-lg p-4">
+                      <div className="mb-3 pb-2 border-b">
+                        <h3 className="text-base font-semibold">{spLog.salespersonName}</h3>
+                        <div className="text-sm text-gray-600 mt-1">
+                          Total customers: {spLog.totalCustomers} | 
+                          In table: <span className="text-green-600 font-medium">{spLog.inTableCount}</span> | 
+                          Not in table: <span className="text-red-600 font-medium">{spLog.notInTableCount}</span>
+                        </div>
+                      </div>
+                      <div className="overflow-x-auto">
+                        <table className="min-w-full text-sm">
+                          <thead>
+                            <tr className="bg-gray-50 border-b">
+                              <th className="text-left p-2 font-semibold">Customer ID</th>
+                              <th className="text-left p-2 font-semibold">Company</th>
+                              <th className="text-left p-2 font-semibold">City</th>
+                              <th className="text-center p-2 font-semibold">In Table</th>
+                              <th className="text-center p-2 font-semibold">S1 Data</th>
+                              <th className="text-center p-2 font-semibold">S2 Data</th>
+                              <th className="text-left p-2 font-semibold">Status Flags</th>
+                              <th className="text-left p-2 font-semibold">Reason</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {spLog.customers.map((customer, idx) => (
+                              <tr key={customer.customer_id || idx} className="border-b hover:bg-gray-50">
+                                <td className="p-2 font-mono text-xs">{customer.customer_id || '—'}</td>
+                                <td className="p-2">{customer.company || '—'}</td>
+                                <td className="p-2">{customer.city || '—'}</td>
+                                <td className="p-2 text-center">
+                                  {customer.inTable ? (
+                                    <span className="text-green-600 font-medium">✓ Yes</span>
+                                  ) : (
+                                    <span className="text-red-600 font-medium">✗ No</span>
+                                  )}
+                                </td>
+                                <td className="p-2 text-center">
+                                  {customer.hasS1Data ? (
+                                    <span className="text-green-600">✓</span>
+                                  ) : (
+                                    <span className="text-gray-400">—</span>
+                                  )}
+                                </td>
+                                <td className="p-2 text-center">
+                                  {customer.hasS2Data ? (
+                                    <span className="text-green-600">✓</span>
+                                  ) : (
+                                    <span className="text-gray-400">—</span>
+                                  )}
+                                </td>
+                                <td className="p-2">
+                                  <div className="flex flex-wrap gap-1">
+                                    {customer.excluded && (
+                                      <span className="px-1.5 py-0.5 text-xs bg-red-100 text-red-700 rounded">Excluded</span>
+                                    )}
+                                    {customer.nulled && (
+                                      <span className="px-1.5 py-0.5 text-xs bg-orange-100 text-orange-700 rounded">Nulled</span>
+                                    )}
+                                    {customer.permanentlyClosed && (
+                                      <span className="px-1.5 py-0.5 text-xs bg-gray-100 text-gray-700 rounded">Closed</span>
+                                    )}
+                                    {customer.hidden && (
+                                      <span className="px-1.5 py-0.5 text-xs bg-yellow-100 text-yellow-700 rounded">Hidden</span>
+                                    )}
+                                    {!customer.excluded && !customer.nulled && !customer.permanentlyClosed && !customer.hidden && (
+                                      <span className="px-1.5 py-0.5 text-xs bg-gray-100 text-gray-500 rounded">—</span>
+                                    )}
+                                  </div>
+                                </td>
+                                <td className="p-2 text-xs text-gray-600">
+                                  {customer.inTable ? (
+                                    <span className="text-green-600">{customer.reason}</span>
+                                  ) : (
+                                    <span className="text-red-600">{customer.reason}</span>
+                                  )}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  ))}
+                  {detailedLogging.length === 0 && (
+                    <div className="text-center py-8 text-gray-500">
+                      No data available. Please select Season 1 and Season 2.
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
             {/* Details modal */}
             <Modal
               open={detailsOpen}
