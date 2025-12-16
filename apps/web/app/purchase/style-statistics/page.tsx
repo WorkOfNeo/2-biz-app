@@ -47,6 +47,7 @@ export default function StyleStatisticsPage() {
   const [error, setError] = useState<string | null>(null);
   const [viewType, setViewType] = useState<ViewType>('total');
   const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
+  const [currentPeriodIndex, setCurrentPeriodIndex] = useState(0);
 
   // Fetch available styles using SWR
   const { data: styles } = useSWR('styles:all:statistics', async () => {
@@ -162,6 +163,11 @@ export default function StyleStatisticsPage() {
       fetchSalesData();
     }
   }, [selectedColor, dateFrom, dateTo]);
+
+  // Reset period index when view type changes
+  useEffect(() => {
+    setCurrentPeriodIndex(0);
+  }, [viewType]);
 
   // Check if multiple months or weeks are selected
   const hasMultipleMonths = useMemo(() => {
@@ -506,8 +512,10 @@ export default function StyleStatisticsPage() {
           {/* Chart */}
           {loading && (
             <div className="border-t pt-4">
-              <div className="text-center py-8 text-slate-500">
-                Loading data...
+              <div className="flex flex-col items-center justify-center py-12">
+                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-slate-900 mb-4"></div>
+                <div className="text-sm font-medium text-slate-700">Loading statistics...</div>
+                <div className="text-xs text-slate-500 mt-1">Analyzing sales data</div>
               </div>
             </div>
           )}
@@ -526,7 +534,7 @@ export default function StyleStatisticsPage() {
 
               {/* Vertical Bar Chart */}
               <div className="bg-white border rounded-lg p-6">
-                <div className="flex items-end justify-around gap-2 h-64">
+                <div className="flex items-end justify-around gap-3 h-80">
                   {aggregatedData.map((item) => {
                     const total = aggregatedData.reduce((sum, d) => sum + d.quantity, 0);
                     const percentage = maxQuantity > 0 ? (item.quantity / maxQuantity) * 100 : 0;
@@ -534,19 +542,22 @@ export default function StyleStatisticsPage() {
                     return (
                       <div key={item.size} className="flex flex-col items-center flex-1 min-w-0">
                         <div className="flex-1 w-full flex flex-col justify-end items-center">
-                          <div className="text-xs font-medium text-slate-700 mb-1">
+                          <div className="text-xs font-semibold text-slate-900 mb-1">
                             {item.quantity}
                           </div>
-                          <div className="text-xs text-slate-500 mb-1">
+                          <div className="text-xs font-medium text-slate-600 mb-2">
                             {percentOfTotal.toFixed(1)}%
                           </div>
                           <div
-                            className="w-full bg-slate-800 rounded-t-md transition-all hover:bg-slate-700 flex items-end justify-center pb-2"
-                            style={{ height: `${Math.max(percentage, 5)}%`, minHeight: '20px' }}
+                            className="w-full bg-gradient-to-t from-slate-800 to-slate-600 rounded-t-lg transition-all hover:from-slate-700 hover:to-slate-500 shadow-sm"
+                            style={{ 
+                              height: `${Math.max(percentage, 3)}%`,
+                              minHeight: percentage < 5 ? '12px' : '0px'
+                            }}
                           >
                           </div>
                         </div>
-                        <div className="text-sm font-medium text-slate-700 mt-2 whitespace-nowrap">
+                        <div className="text-sm font-semibold text-slate-800 mt-3 whitespace-nowrap">
                           {item.size}
                         </div>
                       </div>
@@ -559,44 +570,69 @@ export default function StyleStatisticsPage() {
 
           {/* Week View Charts */}
           {!loading && weeklyAggregatedData.length > 0 && viewType === 'week' && (
-            <div className="border-t pt-4 space-y-8">
-              {weeklyAggregatedData.map((weekData) => {
+            <div className="border-t pt-4">
+              {(() => {
+                const weekData = weeklyAggregatedData[currentPeriodIndex];
+                if (!weekData) return null;
+                
                 const weekTotal = weekData.data.reduce((sum, d) => sum + d.quantity, 0);
                 const weekMax = weekData.data.reduce((max, item) => Math.max(max, item.quantity), 0);
                 
                 return (
-                  <div key={weekData.week}>
-                    <div className="mb-4">
-                      <h3 className="text-sm font-semibold">
-                        {selectedStyleNo} - {selectedColor} - {weekData.week}
-                      </h3>
-                      <p className="text-xs text-slate-600">
-                        Total Quantity: {weekTotal}
-                      </p>
+                  <div>
+                    {/* Navigation Header */}
+                    <div className="flex items-center justify-between mb-4">
+                      <Button
+                        onClick={() => setCurrentPeriodIndex(Math.max(0, currentPeriodIndex - 1))}
+                        disabled={currentPeriodIndex === 0}
+                        variant="outline"
+                        size="sm"
+                      >
+                        ← Previous Week
+                      </Button>
+                      <div className="text-center">
+                        <h3 className="text-sm font-semibold">
+                          {selectedStyleNo} - {selectedColor} - {weekData.week}
+                        </h3>
+                        <p className="text-xs text-slate-600">
+                          Week {currentPeriodIndex + 1} of {weeklyAggregatedData.length} | Total: {weekTotal} units
+                        </p>
+                      </div>
+                      <Button
+                        onClick={() => setCurrentPeriodIndex(Math.min(weeklyAggregatedData.length - 1, currentPeriodIndex + 1))}
+                        disabled={currentPeriodIndex === weeklyAggregatedData.length - 1}
+                        variant="outline"
+                        size="sm"
+                      >
+                        Next Week →
+                      </Button>
                     </div>
 
                     {/* Vertical Bar Chart */}
                     <div className="bg-white border rounded-lg p-6">
-                      <div className="flex items-end justify-around gap-2 h-64">
+                      <div className="flex items-end justify-around gap-3 h-80">
                         {weekData.data.map((item) => {
                           const percentage = weekMax > 0 ? (item.quantity / weekMax) * 100 : 0;
                           const percentOfTotal = weekTotal > 0 ? (item.quantity / weekTotal) * 100 : 0;
                           return (
                             <div key={item.size} className="flex flex-col items-center flex-1 min-w-0">
                               <div className="flex-1 w-full flex flex-col justify-end items-center">
-                                <div className="text-xs font-medium text-slate-700 mb-1">
+                                <div className="text-xs font-semibold text-slate-900 mb-1">
                                   {item.quantity}
                                 </div>
-                                <div className="text-xs text-slate-500 mb-1">
+                                <div className="text-xs font-medium text-slate-600 mb-2">
                                   {percentOfTotal.toFixed(1)}%
                                 </div>
                                 <div
-                                  className="w-full bg-slate-800 rounded-t-md transition-all hover:bg-slate-700"
-                                  style={{ height: `${Math.max(percentage, 5)}%`, minHeight: '20px' }}
+                                  className="w-full bg-gradient-to-t from-slate-800 to-slate-600 rounded-t-lg transition-all hover:from-slate-700 hover:to-slate-500 shadow-sm"
+                                  style={{ 
+                                    height: `${Math.max(percentage, 3)}%`,
+                                    minHeight: percentage < 5 ? '12px' : '0px'
+                                  }}
                                 >
                                 </div>
                               </div>
-                              <div className="text-sm font-medium text-slate-700 mt-2 whitespace-nowrap">
+                              <div className="text-sm font-semibold text-slate-800 mt-3 whitespace-nowrap">
                                 {item.size}
                               </div>
                             </div>
@@ -606,50 +642,75 @@ export default function StyleStatisticsPage() {
                     </div>
                   </div>
                 );
-              })}
+              })()}
             </div>
           )}
 
           {/* Month View Charts */}
           {!loading && monthlyAggregatedData.length > 0 && viewType === 'month' && (
-            <div className="border-t pt-4 space-y-8">
-              {monthlyAggregatedData.map((monthData) => {
+            <div className="border-t pt-4">
+              {(() => {
+                const monthData = monthlyAggregatedData[currentPeriodIndex];
+                if (!monthData) return null;
+                
                 const monthTotal = monthData.data.reduce((sum, d) => sum + d.quantity, 0);
                 const monthMax = monthData.data.reduce((max, item) => Math.max(max, item.quantity), 0);
                 
                 return (
-                  <div key={monthData.month}>
-                    <div className="mb-4">
-                      <h3 className="text-sm font-semibold">
-                        {selectedStyleNo} - {selectedColor} - {monthData.month}
-                      </h3>
-                      <p className="text-xs text-slate-600">
-                        Total Quantity: {monthTotal}
-                      </p>
+                  <div>
+                    {/* Navigation Header */}
+                    <div className="flex items-center justify-between mb-4">
+                      <Button
+                        onClick={() => setCurrentPeriodIndex(Math.max(0, currentPeriodIndex - 1))}
+                        disabled={currentPeriodIndex === 0}
+                        variant="outline"
+                        size="sm"
+                      >
+                        ← Previous Month
+                      </Button>
+                      <div className="text-center">
+                        <h3 className="text-sm font-semibold">
+                          {selectedStyleNo} - {selectedColor} - {monthData.month}
+                        </h3>
+                        <p className="text-xs text-slate-600">
+                          Month {currentPeriodIndex + 1} of {monthlyAggregatedData.length} | Total: {monthTotal} units
+                        </p>
+                      </div>
+                      <Button
+                        onClick={() => setCurrentPeriodIndex(Math.min(monthlyAggregatedData.length - 1, currentPeriodIndex + 1))}
+                        disabled={currentPeriodIndex === monthlyAggregatedData.length - 1}
+                        variant="outline"
+                        size="sm"
+                      >
+                        Next Month →
+                      </Button>
                     </div>
 
                     {/* Vertical Bar Chart */}
                     <div className="bg-white border rounded-lg p-6">
-                      <div className="flex items-end justify-around gap-2 h-64">
+                      <div className="flex items-end justify-around gap-3 h-80">
                         {monthData.data.map((item) => {
                           const percentage = monthMax > 0 ? (item.quantity / monthMax) * 100 : 0;
                           const percentOfTotal = monthTotal > 0 ? (item.quantity / monthTotal) * 100 : 0;
                           return (
                             <div key={item.size} className="flex flex-col items-center flex-1 min-w-0">
                               <div className="flex-1 w-full flex flex-col justify-end items-center">
-                                <div className="text-xs font-medium text-slate-700 mb-1">
+                                <div className="text-xs font-semibold text-slate-900 mb-1">
                                   {item.quantity}
                                 </div>
-                                <div className="text-xs text-slate-500 mb-1">
+                                <div className="text-xs font-medium text-slate-600 mb-2">
                                   {percentOfTotal.toFixed(1)}%
                                 </div>
                                 <div
-                                  className="w-full bg-slate-800 rounded-t-md transition-all hover:bg-slate-700"
-                                  style={{ height: `${Math.max(percentage, 5)}%`, minHeight: '20px' }}
+                                  className="w-full bg-gradient-to-t from-slate-800 to-slate-600 rounded-t-lg transition-all hover:from-slate-700 hover:to-slate-500 shadow-sm"
+                                  style={{ 
+                                    height: `${Math.max(percentage, 3)}%`,
+                                    minHeight: percentage < 5 ? '12px' : '0px'
+                                  }}
                                 >
                                 </div>
                               </div>
-                              <div className="text-sm font-medium text-slate-700 mt-2 whitespace-nowrap">
+                              <div className="text-sm font-semibold text-slate-800 mt-3 whitespace-nowrap">
                                 {item.size}
                               </div>
                             </div>
@@ -659,7 +720,7 @@ export default function StyleStatisticsPage() {
                     </div>
                   </div>
                 );
-              })}
+              })()}
             </div>
           )}
 
