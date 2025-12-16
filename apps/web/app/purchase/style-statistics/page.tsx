@@ -4,6 +4,7 @@ import useSWR from 'swr';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../../components/ui/card';
 import { Button } from '../../../components/ui/button';
+import { Input } from '../../../components/ui/input';
 import { SearchSelect } from '../../../components/SearchSelect';
 
 type SalesRow = {
@@ -396,9 +397,34 @@ export default function StyleStatisticsPage() {
                 <option value="last_3_months">Last 3 Months</option>
                 <option value="last_6_months">Last 6 Months</option>
                 <option value="this_year">This Year</option>
+                <option value="custom">Custom Range</option>
               </select>
             </div>
           </div>
+
+          {/* Custom Date Range Inputs */}
+          {datePreset === 'custom' && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-slate-700">From Date</label>
+                <Input
+                  type="date"
+                  value={dateFrom}
+                  onChange={(e) => setDateFrom(e.target.value)}
+                  className="h-9"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-slate-700">To Date</label>
+                <Input
+                  type="date"
+                  value={dateTo}
+                  onChange={(e) => setDateTo(e.target.value)}
+                  className="h-9"
+                />
+              </div>
+            </div>
+          )}
 
           <div className="flex items-center gap-3">
             <Button
@@ -407,9 +433,11 @@ export default function StyleStatisticsPage() {
             >
               {loading ? 'Loading...' : 'Load Statistics'}
             </Button>
-            <span className="text-xs text-slate-500">
-              {dateFrom && dateTo && `${dateFrom} to ${dateTo}`}
-            </span>
+            {dateFrom && dateTo && (
+              <span className="text-xs text-slate-500">
+                {dateFrom} to {dateTo}
+              </span>
+            )}
           </div>
 
           {error && (
