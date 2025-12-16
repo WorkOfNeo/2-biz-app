@@ -1,3 +1,7 @@
+import dotenv from 'dotenv';
+// Load environment variables from .env.local
+dotenv.config({ path: '.env.local' });
+
 import { createClient } from '@supabase/supabase-js';
 import { chromium } from 'playwright-core';
 import type { Browser, BrowserContext, Page } from 'playwright-core';
