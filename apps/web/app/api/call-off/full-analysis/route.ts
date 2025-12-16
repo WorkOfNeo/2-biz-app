@@ -171,23 +171,63 @@ export async function POST(req: Request) {
       rowsReturned: stockData?.length || 0
     });
 
-    // Fetch historical sales using the SAME query approach as historical-sales/list
-    // This ensures consistency between style-statistics and call-off
-    console.log('🔍 [DEBUG] Fetching historical data (same query as historical-sales/list)...');
+    // Fetch historical sales with PROPER pagination
+    // Supabase has a server-side limit of 1000 rows per query (PGRST_MAX_ROWS)
+    // We use .range() to paginate, ensuring we get ALL data without duplicates
+    console.log('🔍 [DEBUG] Fetching historical data with pagination...');
     
-    const { data: historicalData, error: historicalError, count: historicalCount } = await supabase
-      .from('historical_sales')
-      .select('style_no, color, size, quantity', { count: 'exact' })
-      .in('style_no', styleNos)
-      .in('color', colors)
-      .gte('date', startDate)
-      .lte('date', endDate)
-      .order('date', { ascending: false })
-      .limit(50000); // Same limit as historical-sales/list
+    const PAGE_SIZE = 1000;
+    let allHistoricalData: any[] = [];
+    let historicalCount = 0;
+    let currentOffset = 0;
+    
+    while (true) {
+      const from = currentOffset;
+      const to = currentOffset + PAGE_SIZE - 1;
+      
+      const { data: pageData, error: pageError, count } = await supabase
+        .from('historical_sales')
+        .select('style_no, color, size, quantity', { count: 'exact' })
+        .in('style_no', styleNos)
+        .in('color', colors)
+        .gte('date', startDate)
+        .lte('date', endDate)
+        .order('date', { ascending: false })
+        .order('style_no', { ascending: true })  // Add secondary sort for consistency
+        .order('color', { ascending: true })     // Add tertiary sort
+        .order('size', { ascending: true })      // Add quaternary sort
+        .range(from, to);
 
-    if (historicalError) {
-      return NextResponse.json({ error: historicalError.message }, { status: 500 });
+      if (pageError) {
+        return NextResponse.json({ error: pageError.message }, { status: 500 });
+      }
+
+      if (count !== null && currentOffset === 0) {
+        historicalCount = count;
+        console.log(`🔍 [DEBUG] Total rows to fetch: ${count}`);
+      }
+
+      if (pageData && pageData.length > 0) {
+        allHistoricalData = allHistoricalData.concat(pageData);
+        console.log(`🔍 [DEBUG] Fetched rows ${from}-${from + pageData.length - 1} (${pageData.length} rows, total: ${allHistoricalData.length})`);
+      }
+
+      // Break if we got less than PAGE_SIZE rows (end of data)
+      if (!pageData || pageData.length < PAGE_SIZE) {
+        break;
+      }
+
+      // Move to next page
+      currentOffset += PAGE_SIZE;
+
+      // Safety break
+      if (currentOffset > 100000) {
+        console.warn('⚠️ [WARNING] Reached safety limit (100k rows)');
+        break;
+      }
     }
+
+    const historicalData = allHistoricalData;
 
     console.log('🔍 [DEBUG] Historical data query COMPLETE:', {
       dateRange: `${startDate} to ${endDate}`,
@@ -200,20 +240,46 @@ export async function POST(req: Request) {
     const totalHistoricalQty = (historicalData || []).reduce((sum: number, row: any) => sum + (row.quantity || 0), 0);
     console.log('🔍 [DEBUG] Total historical quantity:', totalHistoricalQty);
 
-    // Fetch next month historical data for trend comparison (same query approach)
-    const { data: nextMonthData, error: nextMonthError } = await supabase
-      .from('historical_sales')
-      .select('style_no, color, size, quantity')
-      .in('style_no', styleNos)
-      .in('color', colors)
-      .gte('date', nextMonthStartStr)
-      .lte('date', nextMonthEndStr)
-      .order('date', { ascending: false })
-      .limit(50000);
+    // Fetch next month historical data for trend comparison (with pagination)
+    let allNextMonthData: any[] = [];
+    let nextMonthOffset = 0;
+    
+    while (true) {
+      const from = nextMonthOffset;
+      const to = nextMonthOffset + PAGE_SIZE - 1;
+      
+      const { data: pageData, error: pageError } = await supabase
+        .from('historical_sales')
+        .select('style_no, color, size, quantity')
+        .in('style_no', styleNos)
+        .in('color', colors)
+        .gte('date', nextMonthStartStr)
+        .lte('date', nextMonthEndStr)
+        .order('date', { ascending: false })
+        .order('style_no', { ascending: true })
+        .order('color', { ascending: true })
+        .order('size', { ascending: true })
+        .range(from, to);
 
-    if (nextMonthError) {
-      console.warn('Could not fetch next month data:', nextMonthError.message);
+      if (pageError) {
+        console.warn('Could not fetch next month data:', pageError.message);
+        break;
+      }
+
+      if (pageData && pageData.length > 0) {
+        allNextMonthData = allNextMonthData.concat(pageData);
+      }
+
+      if (!pageData || pageData.length < PAGE_SIZE) {
+        break;
+      }
+
+      nextMonthOffset += PAGE_SIZE;
+
+      if (nextMonthOffset > 100000) break;
     }
+
+    const nextMonthData = allNextMonthData;
     console.log('🔍 [DEBUG] Next month data loaded:', nextMonthData?.length || 0, 'rows');
 
     // Process each selection
