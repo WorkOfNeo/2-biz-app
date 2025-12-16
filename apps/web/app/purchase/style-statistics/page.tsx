@@ -341,8 +341,13 @@ export default function StyleStatisticsPage() {
     label: `${s.style_no}${s.style_name ? ` - ${s.style_name}` : ''}`
   }));
 
+  // Clean size string - remove .0 or .00 decimal endings
+  const cleanSize = (size: string): string => {
+    return size.replace(/\.0+$/, '');
+  };
+
   return (
-    <div className="p-4 space-y-4 max-w-7xl mx-auto">
+    <div className="p-4 space-y-4 max-w-7xl mx-auto min-h-screen">
       <div>
         <div className="text-xs text-slate-500">Purchase</div>
         <h1 className="text-2xl font-semibold">Style Statistics</h1>
@@ -453,7 +458,7 @@ export default function StyleStatisticsPage() {
           )}
 
           {/* Color Switcher */}
-          {(aggregatedData.length > 0 || loading) && colors.length > 1 && (
+          {colors.length > 1 && (
             <div className="border-t pt-4">
               <div className="text-sm font-medium text-slate-700 mb-2">Switch Color:</div>
               <div className="flex flex-wrap gap-2">
@@ -556,7 +561,7 @@ export default function StyleStatisticsPage() {
                         >
                         </div>
                         <div className="text-sm font-semibold text-slate-800 mt-3 whitespace-nowrap">
-                          {item.size}
+                          {cleanSize(item.size)}
                         </div>
                       </div>
                     );
@@ -629,7 +634,7 @@ export default function StyleStatisticsPage() {
                               >
                               </div>
                               <div className="text-sm font-semibold text-slate-800 mt-3 whitespace-nowrap">
-                                {item.size}
+                                {cleanSize(item.size)}
                               </div>
                             </div>
                           );
@@ -705,7 +710,7 @@ export default function StyleStatisticsPage() {
                               >
                               </div>
                               <div className="text-sm font-semibold text-slate-800 mt-3 whitespace-nowrap">
-                                {item.size}
+                                {cleanSize(item.size)}
                               </div>
                             </div>
                           );
