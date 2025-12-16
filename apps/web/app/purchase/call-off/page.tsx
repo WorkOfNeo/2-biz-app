@@ -639,27 +639,74 @@ function Step2ChooseColors({
     setFullAnalysisResult(null);
     setFullAnalysisOpen(true);
     
+    const requestPayload = {
+      selections,
+      weeks_cover: fullAnalysisWeeksCover,
+      startDate: fullAnalysisDateRange.start,
+      endDate: fullAnalysisDateRange.end
+    };
+    
+    console.group('🔍 NOOS Call-Off Analysis Debug');
+    console.log('📤 Request payload:', requestPayload);
+    console.log('📅 Date range:', fullAnalysisDateRange.start, 'to', fullAnalysisDateRange.end);
+    console.log('📊 Selections:', selections.length, 'items');
+    selections.forEach((s, i) => console.log(`   ${i + 1}. ${s.style_no} - ${s.color}`));
+    
     try {
       const res = await fetch('/api/call-off/full-analysis', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          selections,
-          weeks_cover: fullAnalysisWeeksCover,
-          startDate: fullAnalysisDateRange.start,
-          endDate: fullAnalysisDateRange.end
-        })
+        body: JSON.stringify(requestPayload)
       });
       
       if (!res.ok) {
         const error = await res.json();
+        console.error('❌ API Error:', error);
+        console.groupEnd();
         throw new Error(error.error || 'Analysis failed');
       }
       
       const data = await res.json();
+      
+      console.log('📥 Response received:');
+      console.log('   Date range used:', data.dateRange?.display);
+      console.log('   Next month range:', data.nextMonthRange?.display);
+      console.log('   Total items:', data.items?.length);
+      console.log('   Total suggested order:', data.summary?.totalSuggestedOrder);
+      
+      // Debug info from server
+      if (data._debug) {
+        console.log('\n🔧 SERVER DEBUG INFO:');
+        console.log('   Historical rows loaded:', data._debug.historicalRowsLoaded);
+        console.log('   Historical total count (in DB):', data._debug.historicalTotalCount);
+        console.log('   Total historical quantity:', data._debug.totalHistoricalQty);
+        console.log('   Stock rows loaded:', data._debug.stockRowsLoaded);
+        console.log('   Query date range:', data._debug.queryDateRange);
+        console.log('   Query styles:', data._debug.queryStyleNos);
+        console.log('   Query colors:', data._debug.queryColors);
+      }
+      
+      // Debug each item's data
+      console.log('\n📋 Item-by-Item Breakdown:');
+      data.items?.forEach((item: any, i: number) => {
+        console.group(`   ${i + 1}. ${item.style_name || item.style_no} - ${item.color}`);
+        console.log('Stock:', item.stock, '→ Total:', item.totalStock);
+        console.log('Sold:', item.sold, '→ Total:', item.totalSold);
+        console.log('Net Stock:', item.netStock, '→ Total:', item.totalNetStock);
+        console.log('Historical:', item.historical, '→ Total:', item.totalHistorical);
+        console.log('Weekly Rate:', item.weeklyRate?.toFixed(2));
+        console.log('Target:', item.targetStock);
+        console.log('Suggested Order:', item.suggestedOrder);
+        console.log('Status:', item.status);
+        console.groupEnd();
+      });
+      
+      console.groupEnd();
+      
       setFullAnalysisResult(data);
     } catch (error: any) {
-      console.error('Full analysis error:', error);
+      console.error('❌ Full analysis error:', error);
+      console.groupEnd();
       alert('Analysis failed: ' + (error.message || 'Unknown error'));
     } finally {
       setFullAnalysisLoading(false);

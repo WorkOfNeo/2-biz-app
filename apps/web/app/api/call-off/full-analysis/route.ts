@@ -78,6 +78,16 @@ type FullAnalysisResponse = {
     end: string;
     display: string;
   };
+  _debug?: {
+    historicalRowsLoaded: number;
+    historicalTotalCount: number | null;
+    totalHistoricalQty: number;
+    stockRowsLoaded: number;
+    nextMonthRowsLoaded: number;
+    queryDateRange: { startDate: string; endDate: string };
+    queryStyleNos: string[];
+    queryColors: string[];
+  };
 };
 
 export async function POST(req: Request) {
@@ -155,11 +165,17 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: stockError.message }, { status: 500 });
     }
 
+    console.log('🔍 [DEBUG] Stock data query:', {
+      styleNos,
+      colors,
+      rowsReturned: stockData?.length || 0
+    });
+
     // Fetch historical sales for the date range
     // Use a high limit to ensure we get all data (Supabase default is 1000)
-    const { data: historicalData, error: historicalError } = await supabase
+    const { data: historicalData, error: historicalError, count: historicalCount } = await supabase
       .from('historical_sales')
-      .select('style_no, color, size, quantity')
+      .select('style_no, color, size, quantity', { count: 'exact' })
       .in('style_no', styleNos)
       .in('color', colors)
       .gte('date', startDate)
@@ -169,6 +185,17 @@ export async function POST(req: Request) {
     if (historicalError) {
       return NextResponse.json({ error: historicalError.message }, { status: 500 });
     }
+
+    console.log('🔍 [DEBUG] Historical data query:', {
+      dateRange: `${startDate} to ${endDate}`,
+      rowsReturned: historicalData?.length || 0,
+      totalCount: historicalCount,
+      sampleRows: historicalData?.slice(0, 5)
+    });
+
+    // Calculate total quantity from historical data
+    const totalHistoricalQty = (historicalData || []).reduce((sum: number, row: any) => sum + (row.quantity || 0), 0);
+    console.log('🔍 [DEBUG] Total historical quantity:', totalHistoricalQty);
 
     // Fetch next month historical data for trend comparison
     const { data: nextMonthData, error: nextMonthError } = await supabase
@@ -260,6 +287,12 @@ export async function POST(req: Request) {
         (h: any) => h.style_no === style_no && h.color === color
       );
 
+      console.log(`🔍 [DEBUG] ${style_no} - ${color}:`, {
+        historicalRowsForColor: colorHistorical.length,
+        sampleRows: colorHistorical.slice(0, 3),
+        sizes: sizes
+      });
+
       // Aggregate historical by size (with normalization for sizes like "44.00" -> "44")
       const historicalBySize = new Map<string, number>();
       colorHistorical.forEach((h: any) => {
@@ -268,12 +301,22 @@ export async function POST(req: Request) {
         historicalBySize.set(normalizedSize, current + h.quantity);
       });
 
+      console.log(`🔍 [DEBUG] ${style_no} - ${color} historicalBySize:`, Object.fromEntries(historicalBySize));
+
       // Match sizes with normalization
       const historical = sizes.map((size: string) => {
         const normalizedSize = normalizeSize(size);
         return historicalBySize.get(normalizedSize) || historicalBySize.get(size) || 0;
       });
       const totalHistorical = historical.reduce((a: number, b: number) => a + b, 0);
+
+      console.log(`🔍 [DEBUG] ${style_no} - ${color} final:`, {
+        historical,
+        totalHistorical,
+        stock,
+        sold,
+        netStock: stock.map((v, i) => v - (sold[i] ?? 0))
+      });
 
       // Get next month historical sales for this color (for trend analysis)
       const colorNextMonth = (nextMonthData || []).filter(
@@ -486,8 +529,21 @@ Keep it SHORT. Only mention specific styles. No general business advice.`;
         start: nextMonthStartStr,
         end: nextMonthEndStr,
         display: nextMonthDisplay
+      },
+      // Debug info
+      _debug: {
+        historicalRowsLoaded: historicalData?.length || 0,
+        historicalTotalCount: historicalCount,
+        totalHistoricalQty,
+        stockRowsLoaded: stockData?.length || 0,
+        nextMonthRowsLoaded: nextMonthData?.length || 0,
+        queryDateRange: { startDate, endDate },
+        queryStyleNos: styleNos,
+        queryColors: colors
       }
     };
+
+    console.log('🔍 [DEBUG] Response debug info:', response._debug);
 
     return NextResponse.json(response);
   } catch (error: any) {
