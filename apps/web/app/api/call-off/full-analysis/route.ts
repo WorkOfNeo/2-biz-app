@@ -171,155 +171,50 @@ export async function POST(req: Request) {
       rowsReturned: stockData?.length || 0
     });
 
-    // Fetch historical sales for the date range WITH PAGINATION
-    // Supabase has a server-side limit (PGRST_MAX_ROWS) that defaults to 1000
-    // We need to paginate to get all data
-    const PAGE_SIZE = 1000;
-    let allHistoricalData: any[] = [];
-    let historicalCount = 0;
-    let page = 0;
-    let hasMore = true;
+    // Fetch historical sales using the SAME query approach as historical-sales/list
+    // This ensures consistency between style-statistics and call-off
+    console.log('🔍 [DEBUG] Fetching historical data (same query as historical-sales/list)...');
+    
+    const { data: historicalData, error: historicalError, count: historicalCount } = await supabase
+      .from('historical_sales')
+      .select('style_no, color, size, quantity', { count: 'exact' })
+      .in('style_no', styleNos)
+      .in('color', colors)
+      .gte('date', startDate)
+      .lte('date', endDate)
+      .order('date', { ascending: false })
+      .limit(50000); // Same limit as historical-sales/list
 
-    console.log('🔍 [DEBUG] Fetching historical data with pagination...');
-
-    while (hasMore) {
-      const from = page * PAGE_SIZE;
-      const to = from + PAGE_SIZE - 1;
-      
-      const { data: pageData, error: pageError, count } = await supabase
-        .from('historical_sales')
-        .select('style_no, color, size, quantity', { count: 'exact' })
-        .in('style_no', styleNos)
-        .in('color', colors)
-        .gte('date', startDate)
-        .lte('date', endDate)
-        .range(from, to);
-
-      if (pageError) {
-        return NextResponse.json({ error: pageError.message }, { status: 500 });
-      }
-
-      if (page === 0 && count !== null) {
-        historicalCount = count;
-        console.log(`🔍 [DEBUG] Total historical rows to fetch: ${count}`);
-      }
-
-      if (pageData && pageData.length > 0) {
-        allHistoricalData = allHistoricalData.concat(pageData);
-        console.log(`🔍 [DEBUG] Page ${page + 1}: fetched ${pageData.length} rows (total so far: ${allHistoricalData.length})`);
-      }
-
-      // Check if we got less than PAGE_SIZE, meaning we're done
-      hasMore = pageData !== null && pageData.length === PAGE_SIZE;
-      page++;
-
-      // Safety limit to prevent infinite loops
-      if (page > 100) {
-        console.warn('⚠️ [WARNING] Reached max pagination limit (100 pages)');
-        break;
-      }
+    if (historicalError) {
+      return NextResponse.json({ error: historicalError.message }, { status: 500 });
     }
-
-    const historicalData = allHistoricalData;
 
     console.log('🔍 [DEBUG] Historical data query COMPLETE:', {
       dateRange: `${startDate} to ${endDate}`,
       rowsReturned: historicalData?.length || 0,
       totalCount: historicalCount,
-      pagesLoaded: page,
       sampleRows: historicalData?.slice(0, 5)
     });
-
-    // 🔍 DIAGNOSTIC: Direct query for a specific style/color to compare with bulk+filter
-    // This helps identify if the discrepancy is in bulk query, JS filter, or data layer
-    const testStyleNo = '1010191';
-    const testColor = '807 BLACK';
-    if (styleNos.includes(testStyleNo) && colors.includes(testColor)) {
-      const { data: directQueryData, count: directCount } = await supabase
-        .from('historical_sales')
-        .select('style_no, color, size, quantity', { count: 'exact' })
-        .eq('style_no', testStyleNo)
-        .eq('color', testColor)
-        .gte('date', startDate)
-        .lte('date', endDate);
-      
-      const directQty = (directQueryData || []).reduce((sum: number, r: any) => sum + (r.quantity || 0), 0);
-      
-      // Count from bulk query + JS filter
-      const bulkFiltered = historicalData.filter(
-        (h: any) => h.style_no === testStyleNo && h.color === testColor
-      );
-      const bulkQty = bulkFiltered.reduce((sum: number, h: any) => sum + (h.quantity || 0), 0);
-      
-      console.log('🔬 [DIAGNOSTIC] Direct vs Bulk comparison for 1010191 - 807 BLACK:');
-      console.log(`   DIRECT QUERY: ${directQueryData?.length || 0} rows, ${directQty} qty (DB count: ${directCount})`);
-      console.log(`   BULK + FILTER: ${bulkFiltered.length} rows, ${bulkQty} qty`);
-      console.log(`   MATCH: ${directQueryData?.length === bulkFiltered.length && directQty === bulkQty ? '✅ YES' : '❌ NO - DISCREPANCY!'}`);
-      
-      if (directQueryData?.length !== bulkFiltered.length) {
-        // Find what's different
-        const directKeys = new Set((directQueryData || []).map((r: any) => `${r.size}|${r.quantity}`));
-        const bulkKeys = new Set(bulkFiltered.map((r: any) => `${r.size}|${r.quantity}`));
-        
-        const onlyInDirect = (directQueryData || []).filter((r: any) => !bulkKeys.has(`${r.size}|${r.quantity}`));
-        const onlyInBulk = bulkFiltered.filter((r: any) => !directKeys.has(`${r.size}|${r.quantity}`));
-        
-        console.log(`   Only in DIRECT (first 5):`, onlyInDirect.slice(0, 5));
-        console.log(`   Only in BULK (first 5):`, onlyInBulk.slice(0, 5));
-        
-        // Check if there are duplicates in bulk data
-        const bulkDuplicateCheck = new Map<string, number>();
-        bulkFiltered.forEach((r: any) => {
-          const key = JSON.stringify(r);
-          bulkDuplicateCheck.set(key, (bulkDuplicateCheck.get(key) || 0) + 1);
-        });
-        const duplicates = Array.from(bulkDuplicateCheck.entries()).filter(([_, count]) => count > 1);
-        if (duplicates.length > 0) {
-          console.log(`   ⚠️ DUPLICATES FOUND IN BULK DATA:`, duplicates.length, 'unique rows with duplicates');
-          console.log(`   Sample duplicates:`, duplicates.slice(0, 3));
-        }
-      }
-    }
 
     // Calculate total quantity from historical data
     const totalHistoricalQty = (historicalData || []).reduce((sum: number, row: any) => sum + (row.quantity || 0), 0);
     console.log('🔍 [DEBUG] Total historical quantity:', totalHistoricalQty);
 
-    // Fetch next month historical data for trend comparison WITH PAGINATION
-    let allNextMonthData: any[] = [];
-    let nextMonthPage = 0;
-    let nextMonthHasMore = true;
+    // Fetch next month historical data for trend comparison (same query approach)
+    const { data: nextMonthData, error: nextMonthError } = await supabase
+      .from('historical_sales')
+      .select('style_no, color, size, quantity')
+      .in('style_no', styleNos)
+      .in('color', colors)
+      .gte('date', nextMonthStartStr)
+      .lte('date', nextMonthEndStr)
+      .order('date', { ascending: false })
+      .limit(50000);
 
-    while (nextMonthHasMore) {
-      const from = nextMonthPage * PAGE_SIZE;
-      const to = from + PAGE_SIZE - 1;
-      
-      const { data: pageData, error: pageError } = await supabase
-        .from('historical_sales')
-        .select('style_no, color, size, quantity')
-        .in('style_no', styleNos)
-        .in('color', colors)
-        .gte('date', nextMonthStartStr)
-        .lte('date', nextMonthEndStr)
-        .range(from, to);
-
-      if (pageError) {
-        console.warn('Could not fetch next month data:', pageError.message);
-        break;
-      }
-
-      if (pageData && pageData.length > 0) {
-        allNextMonthData = allNextMonthData.concat(pageData);
-      }
-
-      nextMonthHasMore = pageData !== null && pageData.length === PAGE_SIZE;
-      nextMonthPage++;
-
-      if (nextMonthPage > 100) break;
+    if (nextMonthError) {
+      console.warn('Could not fetch next month data:', nextMonthError.message);
     }
-
-    const nextMonthData = allNextMonthData;
-    console.log('🔍 [DEBUG] Next month data loaded:', nextMonthData.length, 'rows');
+    console.log('🔍 [DEBUG] Next month data loaded:', nextMonthData?.length || 0, 'rows');
 
     // Process each selection
     const items: ItemAnalysis[] = [];
