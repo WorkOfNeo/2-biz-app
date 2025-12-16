@@ -114,13 +114,15 @@ export async function POST(req: Request) {
     }
 
     // Fetch historical sales for reference month
+    // Use a high limit to ensure we get all data (Supabase default is 1000)
     const { data: historicalData, error: historicalError } = await supabase
       .from('historical_sales')
       .select('style_no, color, size, quantity')
       .in('style_no', styleNos)
       .in('color', colors)
       .gte('date', startDateStr)
-      .lte('date', endDateStr);
+      .lte('date', endDateStr)
+      .limit(50000);
 
     if (historicalError) {
       return NextResponse.json({ error: historicalError.message }, { status: 500 });
@@ -162,6 +164,18 @@ export async function POST(req: Request) {
       const ensureNums = (arr: any[], len: number): number[] =>
         Array.from({ length: len }, (_, i) => Number(arr?.[i] ?? 0) || 0);
 
+      // Helper to normalize size strings: "44.00" -> "44", "44.0" -> "44"
+      const normalizeSize = (size: string): string => {
+        const trimmed = String(size).trim();
+        const num = parseFloat(trimmed);
+        if (!isNaN(num) && trimmed.includes('.')) {
+          if (Number.isInteger(num)) {
+            return String(Math.floor(num));
+          }
+        }
+        return trimmed;
+      };
+
       // Calculate current stock
       const stock = stockRow
         ? ensureNums(
@@ -189,14 +203,19 @@ export async function POST(req: Request) {
         (h: any) => h.style_no === style_no && h.color === color
       );
 
-      // Aggregate historical by size
+      // Aggregate historical by size (with normalization for sizes like "44.00" -> "44")
       const historicalBySize = new Map<string, number>();
       colorHistorical.forEach((h: any) => {
-        const current = historicalBySize.get(h.size) || 0;
-        historicalBySize.set(h.size, current + h.quantity);
+        const normalizedSize = normalizeSize(h.size);
+        const current = historicalBySize.get(normalizedSize) || 0;
+        historicalBySize.set(normalizedSize, current + h.quantity);
       });
 
-      const historical = sizes.map((size: string) => historicalBySize.get(size) || 0);
+      // Match sizes with normalization
+      const historical = sizes.map((size: string) => {
+        const normalizedSize = normalizeSize(size);
+        return historicalBySize.get(normalizedSize) || historicalBySize.get(size) || 0;
+      });
       const totalHistorical = historical.reduce((a: number, b: number) => a + b, 0);
 
       // Calculate weekly rate from historical data

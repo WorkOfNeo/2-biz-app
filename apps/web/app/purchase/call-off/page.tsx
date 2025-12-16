@@ -1648,8 +1648,13 @@ function FullAnalysisModal({
   onRunAnalysis: () => void;
 }) {
   const [filter, setFilter] = React.useState<'all' | 'critical' | 'low' | 'ok' | 'surplus'>('all');
+  const [expandedItem, setExpandedItem] = React.useState<string | null>(null);
 
   if (!isOpen) return null;
+
+  const toggleExpand = (key: string) => {
+    setExpandedItem(expandedItem === key ? null : key);
+  };
 
   const filteredItems = result?.items.filter(item => {
     if (filter === 'all') return true;
@@ -1846,40 +1851,135 @@ function FullAnalysisModal({
                 <table className="w-full text-sm">
                   <thead className="bg-[#F5F3F0]">
                     <tr>
+                      <th className="text-left p-3 font-medium w-8"></th>
                       <th className="text-left p-3 font-medium">Style / Color</th>
                       <th className="text-center p-3 font-medium">Status</th>
+                      <th className="text-right p-3 font-medium">Stock</th>
+                      <th className="text-right p-3 font-medium">Sold</th>
                       <th className="text-right p-3 font-medium">Net Stock</th>
+                      <th className="text-right p-3 font-medium">Historical</th>
                       <th className="text-right p-3 font-medium">Target</th>
-                      <th className="text-right p-3 font-medium">Weekly Rate</th>
-                      <th className="text-right p-3 font-medium">Suggested Order</th>
+                      <th className="text-right p-3 font-medium">Suggested</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredItems.map((item, idx) => (
-                      <tr key={idx} className="border-t hover:bg-slate-50">
-                        <td className="p-3">
-                          <div className="font-medium">{item.style_no}</div>
-                          <div className="text-xs text-slate-500">{item.color}</div>
-                        </td>
-                        <td className="p-3 text-center">
-                          {getStatusBadge(item.status)}
-                        </td>
-                        <td className={`p-3 text-right font-medium ${item.totalNetStock < 0 ? 'text-red-600' : ''}`}>
-                          {item.totalNetStock}
-                        </td>
-                        <td className="p-3 text-right text-slate-600">
-                          {item.targetStock}
-                        </td>
-                        <td className="p-3 text-right text-slate-600">
-                          {item.weeklyRate.toFixed(1)}/wk
-                        </td>
-                        <td className="p-3 text-right">
-                          <span className={`font-bold ${item.suggestedOrder > 0 ? 'text-[#8FA894]' : 'text-slate-400'}`}>
-                            {item.suggestedOrder > 0 ? `+${item.suggestedOrder}` : '—'}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
+                    {filteredItems.map((item, idx) => {
+                      const itemKey = `${item.style_no}|${item.color}`;
+                      const isExpanded = expandedItem === itemKey;
+                      return (
+                        <React.Fragment key={idx}>
+                          <tr 
+                            className={`border-t hover:bg-slate-50 cursor-pointer ${isExpanded ? 'bg-[#F5F3F0]' : ''}`}
+                            onClick={() => toggleExpand(itemKey)}
+                          >
+                            <td className="p-3 text-center">
+                              <svg 
+                                className={`w-4 h-4 text-slate-400 transition-transform ${isExpanded ? 'rotate-90' : ''}`} 
+                                fill="none" 
+                                stroke="currentColor" 
+                                viewBox="0 0 24 24"
+                              >
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                              </svg>
+                            </td>
+                            <td className="p-3">
+                              <div className="font-medium">{item.style_no}</div>
+                              <div className="text-xs text-slate-500">{item.color}</div>
+                            </td>
+                            <td className="p-3 text-center">
+                              {getStatusBadge(item.status)}
+                            </td>
+                            <td className="p-3 text-right text-slate-600">
+                              {item.totalStock}
+                            </td>
+                            <td className="p-3 text-right text-slate-600">
+                              {item.totalSold}
+                            </td>
+                            <td className={`p-3 text-right font-medium ${item.totalNetStock < 0 ? 'text-red-600' : ''}`}>
+                              {item.totalNetStock}
+                            </td>
+                            <td className="p-3 text-right text-slate-600">
+                              {item.totalHistorical}
+                            </td>
+                            <td className="p-3 text-right text-slate-600">
+                              {item.targetStock}
+                            </td>
+                            <td className="p-3 text-right">
+                              <span className={`font-bold ${item.suggestedOrder > 0 ? 'text-[#8FA894]' : 'text-slate-400'}`}>
+                                {item.suggestedOrder > 0 ? `+${item.suggestedOrder}` : '—'}
+                              </span>
+                            </td>
+                          </tr>
+                          {/* Expanded Detail Row */}
+                          {isExpanded && (
+                            <tr className="border-t bg-slate-50">
+                              <td colSpan={9} className="p-4">
+                                <div className="space-y-3">
+                                  <div className="text-xs font-semibold text-slate-600 uppercase">Size Breakdown</div>
+                                  <div className="overflow-x-auto">
+                                    <table className="w-full text-xs border">
+                                      <thead className="bg-slate-100">
+                                        <tr>
+                                          <th className="p-2 text-left border-r font-medium">Metric</th>
+                                          {item.sizes.map((size, i) => (
+                                            <th key={i} className="p-2 text-center border-r font-medium min-w-[50px]">{size}</th>
+                                          ))}
+                                          <th className="p-2 text-center font-bold bg-slate-200">Total</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        <tr className="border-t">
+                                          <td className="p-2 font-medium border-r bg-slate-50">Stock</td>
+                                          {item.stock.map((v, i) => (
+                                            <td key={i} className="p-2 text-center border-r">{v}</td>
+                                          ))}
+                                          <td className="p-2 text-center font-bold bg-slate-100">{item.totalStock}</td>
+                                        </tr>
+                                        <tr className="border-t">
+                                          <td className="p-2 font-medium border-r bg-slate-50">Sold</td>
+                                          {item.sold.map((v, i) => (
+                                            <td key={i} className="p-2 text-center border-r text-red-600">{v > 0 ? `-${v}` : '0'}</td>
+                                          ))}
+                                          <td className="p-2 text-center font-bold bg-slate-100 text-red-600">{item.totalSold > 0 ? `-${item.totalSold}` : '0'}</td>
+                                        </tr>
+                                        <tr className="border-t bg-amber-50">
+                                          <td className="p-2 font-medium border-r bg-amber-100">Net Stock</td>
+                                          {item.netStock.map((v, i) => (
+                                            <td key={i} className={`p-2 text-center border-r font-semibold ${v < 0 ? 'text-red-700' : v > 0 ? 'text-green-700' : ''}`}>{v}</td>
+                                          ))}
+                                          <td className={`p-2 text-center font-bold bg-amber-100 ${item.totalNetStock < 0 ? 'text-red-700' : 'text-green-700'}`}>{item.totalNetStock}</td>
+                                        </tr>
+                                        <tr className="border-t">
+                                          <td className="p-2 font-medium border-r bg-slate-50">Historical Sales</td>
+                                          {item.historical.map((v, i) => (
+                                            <td key={i} className="p-2 text-center border-r text-blue-600">{v}</td>
+                                          ))}
+                                          <td className="p-2 text-center font-bold bg-slate-100 text-blue-600">{item.totalHistorical}</td>
+                                        </tr>
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                  <div className="flex items-center gap-6 text-xs text-slate-600 pt-2 border-t">
+                                    <div>
+                                      <span className="text-slate-500">Weekly Rate:</span>{' '}
+                                      <strong>{item.weeklyRate.toFixed(1)} units/wk</strong>
+                                    </div>
+                                    <div>
+                                      <span className="text-slate-500">Target Stock:</span>{' '}
+                                      <strong>{item.targetStock} units</strong>
+                                    </div>
+                                    <div>
+                                      <span className="text-slate-500">Suggested Order:</span>{' '}
+                                      <strong className="text-[#8FA894]">{item.suggestedOrder > 0 ? `+${item.suggestedOrder}` : 'None needed'}</strong>
+                                    </div>
+                                  </div>
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </React.Fragment>
+                      );
+                    })}
                   </tbody>
                 </table>
                 {filteredItems.length === 0 && (

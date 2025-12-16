@@ -49,17 +49,33 @@ export async function POST(req: Request) {
     const colors = Array.from(new Set(selections.map((s: any) => s.color)));
 
     // Fetch historical sales data for the reference month
-    const { data: historicalData, error } = await supabase
+    // Use a high limit to ensure we get all data (Supabase default is 1000)
+    const { data: historicalData, error, count } = await supabase
       .from('historical_sales')
-      .select('style_no, color, size, quantity, date')
+      .select('style_no, color, size, quantity, date', { count: 'exact' })
       .in('style_no', styleNos)
       .in('color', colors)
       .gte('date', startDateStr)
-      .lte('date', endDateStr);
+      .lte('date', endDateStr)
+      .limit(50000); // High limit to get all rows
 
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
+
+    // Helper to normalize size strings: "44.00" -> "44", "44.0" -> "44"
+    const normalizeSize = (size: string): string => {
+      const trimmed = String(size).trim();
+      // If it looks like a decimal number, try to convert and normalize
+      const num = parseFloat(trimmed);
+      if (!isNaN(num) && trimmed.includes('.')) {
+        // Check if it's a whole number (e.g., 44.00)
+        if (Number.isInteger(num)) {
+          return String(Math.floor(num));
+        }
+      }
+      return trimmed;
+    };
 
     // Group by style_no|color and aggregate by size
     type AggregateMap = Map<string, Map<string, number>>;
@@ -71,8 +87,9 @@ export async function POST(req: Request) {
         aggregates.set(key, new Map());
       }
       const sizeMap = aggregates.get(key)!;
-      const current = sizeMap.get(row.size) || 0;
-      sizeMap.set(row.size, current + row.quantity);
+      const normalizedSize = normalizeSize(row.size);
+      const current = sizeMap.get(normalizedSize) || 0;
+      sizeMap.set(normalizedSize, current + row.quantity);
     }
 
     // Convert to response format: { "style_no|color": { "34": 10, "36": 20, ... } }
@@ -91,7 +108,9 @@ export async function POST(req: Request) {
       data: result, 
       startDate: startDateStr,
       endDate: endDateStr,
-      daysInPeriod: daysDiff
+      daysInPeriod: daysDiff,
+      rowsLoaded: historicalData?.length || 0,
+      totalRows: count || 0
     });
   } catch (error: any) {
     return NextResponse.json({ error: error.message || 'Internal server error' }, { status: 500 });
