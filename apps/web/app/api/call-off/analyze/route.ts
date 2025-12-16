@@ -34,15 +34,62 @@ export async function POST(req: Request) {
     const supabase = createRouteHandlerClient({ cookies });
     const body = await req.json();
     
-    const { selections, weeks_cover = 4, reference_month } = body;
+    const { selections, weeks_cover = 4, startDate, endDate, reference_month } = body;
     
     if (!Array.isArray(selections) || selections.length === 0) {
       return NextResponse.json({ error: 'selections array is required' }, { status: 400 });
     }
 
-    if (!reference_month || typeof reference_month !== 'string') {
-      return NextResponse.json({ error: 'reference_month is required (format: YYYY-MM)' }, { status: 400 });
+    let startDateStr: string;
+    let endDateStr: string;
+    let periodDisplay: string;
+
+    // Support both new format (startDate/endDate) and legacy format (reference_month)
+    if (startDate && endDate && typeof startDate === 'string' && typeof endDate === 'string') {
+      startDateStr = startDate;
+      endDateStr = endDate;
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+      periodDisplay = `${start.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })} - ${end.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}`;
+    } else if (reference_month && typeof reference_month === 'string') {
+      // Legacy support: parse reference_month
+      const parts = reference_month.split('-');
+      if (parts.length !== 2) {
+        return NextResponse.json({ error: 'Invalid reference_month format. Use YYYY-MM' }, { status: 400 });
+      }
+      
+      const year = Number(parts[0]);
+      const month = Number(parts[1]);
+      
+      if (isNaN(year) || isNaN(month) || month < 1 || month > 12) {
+        return NextResponse.json({ error: 'Invalid reference_month format. Use YYYY-MM' }, { status: 400 });
+      }
+      
+      const start = new Date(year, month - 1, 1);
+      const end = new Date(year, month, 0);
+      const startStr = start.toISOString().split('T')[0];
+      const endStr = end.toISOString().split('T')[0];
+      if (!startStr || !endStr) {
+        return NextResponse.json({ error: 'Failed to parse reference_month dates' }, { status: 400 });
+      }
+      startDateStr = startStr;
+      endDateStr = endStr;
+      periodDisplay = start.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+    } else {
+      return NextResponse.json({ error: 'Either startDate/endDate or reference_month is required' }, { status: 400 });
     }
+
+    // Validate dates
+    const start = new Date(startDateStr);
+    const end = new Date(endDateStr);
+    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+      return NextResponse.json({ error: 'Invalid date format. Use YYYY-MM-DD' }, { status: 400 });
+    }
+    if (start > end) {
+      return NextResponse.json({ error: 'Start date must be before end date' }, { status: 400 });
+    }
+
+    const daysInPeriod = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
 
     const openaiApiKey = process.env.OPENAI_API_KEY;
     if (!openaiApiKey) {
@@ -50,25 +97,6 @@ export async function POST(req: Request) {
     }
 
     const openai = new OpenAI({ apiKey: openaiApiKey });
-
-    // Parse reference month
-    const parts = reference_month.split('-');
-    if (parts.length !== 2) {
-      return NextResponse.json({ error: 'Invalid reference_month format. Use YYYY-MM' }, { status: 400 });
-    }
-    
-    const year = Number(parts[0]);
-    const month = Number(parts[1]);
-    
-    if (isNaN(year) || isNaN(month) || month < 1 || month > 12) {
-      return NextResponse.json({ error: 'Invalid reference_month format. Use YYYY-MM' }, { status: 400 });
-    }
-    
-    const startDate = new Date(year, month - 1, 1);
-    const endDate = new Date(year, month, 0);
-    const startDateStr = startDate.toISOString().split('T')[0];
-    const endDateStr = endDate.toISOString().split('T')[0];
-    const daysInMonth = endDate.getDate();
 
     // Get unique style numbers and colors
     const styleNos = Array.from(new Set(selections.map((s: SelectionInput) => s.style_no)));
@@ -152,19 +180,9 @@ export async function POST(req: Request) {
         return acc.map((v, i) => v + (vals[i] ?? 0));
       }, Array(num).fill(0) as number[]);
 
-      // Calculate purchase
-      const purchaseRows = latestRows.filter((r) => r.section === 'Purchase (Running + Shipped)');
-      const purchase = purchaseRows.reduce((acc, r) => {
-        const vals = ensureNums(
-          Array.isArray(r.values) ? r.values : JSON.parse(String(r.values || '[]')),
-          num
-        );
-        return acc.map((v, i) => v + (vals[i] ?? 0));
-      }, Array(num).fill(0) as number[]);
-
-      // Calculate available
-      const available = stock.map((v, i) => v - (sold[i] ?? 0) + (purchase[i] ?? 0));
-      const currentAvailable = available.reduce((a, b) => a + b, 0);
+      // Calculate net stock (Stock - Sold, no purchase included for NOOS)
+      const netStock = stock.map((v, i) => v - (sold[i] ?? 0));
+      const currentNetStock = netStock.reduce((a, b) => a + b, 0);
 
       // Get historical sales for this color
       const colorHistorical = (historicalData || []).filter(
@@ -181,13 +199,13 @@ export async function POST(req: Request) {
       const historical = sizes.map((size: string) => historicalBySize.get(size) || 0);
       const totalHistorical = historical.reduce((a: number, b: number) => a + b, 0);
 
-      // Calculate weekly rate from monthly historical data
-      const weeksInMonth = daysInMonth / 7;
-      const weeklyRate = totalHistorical / weeksInMonth;
+      // Calculate weekly rate from historical data
+      const weeksInPeriod = daysInPeriod / 7;
+      const weeklyRate = totalHistorical / weeksInPeriod;
       const targetStock = Math.ceil(weeklyRate * weeks_cover);
 
       // Calculate what we need to order
-      const neededTotal = Math.max(0, targetStock - currentAvailable);
+      const neededTotal = Math.max(0, targetStock - currentNetStock);
 
       // Distribute order by historical pressure
       const historicalTotal = historical.reduce((a: number, b: number) => a + b, 0);
@@ -218,8 +236,6 @@ export async function POST(req: Request) {
       }
 
       // Use OpenAI to generate a human-readable analysis
-      const monthName = startDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-      
       const prompt = `You are a stock replenishment advisor for a fashion/apparel company. Analyze the following data and provide a brief, actionable recommendation (2-3 sentences max).
 
 Style: ${style_no}
@@ -228,11 +244,11 @@ Color: ${color}
 Current Stock Situation:
 - Stock on hand: ${stock.reduce((a, b) => a + b, 0)} units
 - Already sold: ${sold.reduce((a, b) => a + b, 0)} units  
-- Purchase orders incoming: ${purchase.reduce((a, b) => a + b, 0)} units
-- Available (Stock - Sold + Purchase): ${currentAvailable} units
+- Net Stock (Stock - Sold): ${currentNetStock} units
 
-Historical Reference (${monthName}):
-- Total sold in ${monthName}: ${totalHistorical} units
+Historical Reference (${periodDisplay}):
+- Total sold in period: ${totalHistorical} units
+- Period duration: ${daysInPeriod} days
 - Weekly sales rate: ${weeklyRate.toFixed(1)} units/week
 
 Target:
@@ -260,28 +276,28 @@ Provide a brief analysis explaining why we should order ${neededTotal} units (or
         });
 
         const analysis = completion.choices[0]?.message?.content || 
-          `Based on ${monthName} sales of ${totalHistorical} units (${weeklyRate.toFixed(1)}/week), with ${currentAvailable} units available and a target of ${targetStock} units for ${weeks_cover} weeks cover, ordering ${neededTotal} units is recommended.`;
+          `Based on ${periodDisplay} sales of ${totalHistorical} units (${weeklyRate.toFixed(1)}/week), with ${currentNetStock} units net stock and a target of ${targetStock} units for ${weeks_cover} weeks cover, ordering ${neededTotal} units is recommended.`;
 
         suggestions.push({
           style_no,
           color,
           analysis,
           weekly_rate: weeklyRate,
-          current_available: currentAvailable,
+          current_available: currentNetStock,
           target_stock: targetStock,
           order_suggestion: orderSuggestion,
           sizes
         });
       } catch (aiError: any) {
         // Fallback if OpenAI fails
-        const analysis = `Based on ${monthName} sales of ${totalHistorical} units (${weeklyRate.toFixed(1)}/week), with ${currentAvailable} units available and a target of ${targetStock} units for ${weeks_cover} weeks cover, ordering ${neededTotal} units is recommended.`;
+        const analysis = `Based on ${periodDisplay} sales of ${totalHistorical} units (${weeklyRate.toFixed(1)}/week), with ${currentNetStock} units net stock and a target of ${targetStock} units for ${weeks_cover} weeks cover, ordering ${neededTotal} units is recommended.`;
         
         suggestions.push({
           style_no,
           color,
           analysis,
           weekly_rate: weeklyRate,
-          current_available: currentAvailable,
+          current_available: currentNetStock,
           target_stock: targetStock,
           order_suggestion: orderSuggestion,
           sizes
@@ -292,8 +308,9 @@ Provide a brief analysis explaining why we should order ${neededTotal} units (or
     return NextResponse.json({
       suggestions,
       weeks_cover,
-      reference_month,
-      month_display: startDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+      period_display: periodDisplay,
+      start_date: startDateStr,
+      end_date: endDateStr
     });
   } catch (error: any) {
     console.error('Analysis error:', error);

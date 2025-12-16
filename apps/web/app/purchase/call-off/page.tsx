@@ -29,6 +29,8 @@ export default function CallOffPage() {
     selections: 'callOff.process.selections',
     inputs: 'callOff.process.inputs',
     weeksCover: 'callOff.process.weeksCover',
+    startDate: 'callOff.process.startDate',
+    endDate: 'callOff.process.endDate',
   }), []);
 
   const [started, setStarted] = React.useState<boolean>(false);
@@ -48,6 +50,43 @@ export default function CallOffPage() {
   
   // Weeks cover for AI analysis
   const [weeksCover, setWeeksCover] = React.useState<number>(4);
+  
+  // Date range for historical analysis (default: same month last year)
+  const getDefaultDateRange = React.useCallback((): { start: string; end: string } => {
+    const now = new Date();
+    const lastYear = now.getFullYear() - 1;
+    const month = now.getMonth() + 1;
+    const startDate = new Date(lastYear, month - 1, 1);
+    const endDate = new Date(lastYear, month, 0);
+    return {
+      start: startDate.toISOString().split('T')[0] || '',
+      end: endDate.toISOString().split('T')[0] || ''
+    };
+  }, []);
+  
+  const [dateRange, setDateRange] = React.useState<{ start: string; end: string }>(() => {
+    try {
+      const stored = localStorage.getItem('callOff.process.startDate');
+      const storedEnd = localStorage.getItem('callOff.process.endDate');
+      if (stored && storedEnd) {
+        return { start: stored, end: storedEnd };
+      }
+    } catch {}
+    return getDefaultDateRange();
+  });
+
+  // Format date range for display
+  const dateRangeDisplay = React.useMemo(() => {
+    try {
+      const start = new Date(dateRange.start);
+      const end = new Date(dateRange.end);
+      const startStr = start.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+      const endStr = end.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+      return `${startStr} - ${endStr}`;
+    } catch {
+      return dateRange.start + ' - ' + dateRange.end;
+    }
+  }, [dateRange]);
 
   // AI suggestions state
   const [aiSuggestions, setAiSuggestions] = React.useState<Record<string, AISuggestion>>({});
@@ -107,6 +146,8 @@ export default function CallOffPage() {
       const sel = localStorage.getItem(STORAGE_KEYS.selections);
       const inp = localStorage.getItem(STORAGE_KEYS.inputs);
       const wc = localStorage.getItem(STORAGE_KEYS.weeksCover);
+      const startDate = localStorage.getItem(STORAGE_KEYS.startDate);
+      const endDate = localStorage.getItem(STORAGE_KEYS.endDate);
       
       if (s === '1') setStarted(true);
       if (typeof r === 'string') setReturnPath(r);
@@ -123,6 +164,9 @@ export default function CallOffPage() {
       if (wc) {
         const num = Number(wc) || 4;
         setWeeksCover(num);
+      }
+      if (startDate && endDate) {
+        setDateRange({ start: startDate, end: endDate });
       }
     } catch {}
   }, [STORAGE_KEYS]);
@@ -143,6 +187,13 @@ export default function CallOffPage() {
   React.useEffect(() => {
     try { localStorage.setItem(STORAGE_KEYS.weeksCover, String(weeksCover)); } catch {}
   }, [weeksCover, STORAGE_KEYS.weeksCover]);
+
+  React.useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEYS.startDate, dateRange.start);
+      localStorage.setItem(STORAGE_KEYS.endDate, dateRange.end);
+    } catch {}
+  }, [dateRange, STORAGE_KEYS.startDate, STORAGE_KEYS.endDate]);
 
   function startProcess() {
     try {
@@ -282,6 +333,9 @@ export default function CallOffPage() {
           setInputsByKey={setInputsByKey}
           weeksCover={weeksCover}
           setWeeksCover={setWeeksCover}
+          dateRange={dateRange}
+          setDateRange={setDateRange}
+          dateRangeDisplay={dateRangeDisplay}
           aiSuggestions={aiSuggestions}
           setAiSuggestions={setAiSuggestions}
           aiLoading={aiLoading}
@@ -594,6 +648,9 @@ function Step3EnterQuantities({
   setInputsByKey,
   weeksCover,
   setWeeksCover,
+  dateRange,
+  setDateRange,
+  dateRangeDisplay,
   aiSuggestions,
   setAiSuggestions,
   aiLoading,
@@ -608,6 +665,9 @@ function Step3EnterQuantities({
   setInputsByKey: React.Dispatch<React.SetStateAction<InputRecord>>;
   weeksCover: number;
   setWeeksCover: React.Dispatch<React.SetStateAction<number>>;
+  dateRange: { start: string; end: string };
+  setDateRange: React.Dispatch<React.SetStateAction<{ start: string; end: string }>>;
+  dateRangeDisplay: string;
   aiSuggestions: Record<string, AISuggestion>;
   setAiSuggestions: React.Dispatch<React.SetStateAction<Record<string, AISuggestion>>>;
   aiLoading: boolean;
@@ -668,31 +728,16 @@ function Step3EnterQuantities({
     }
   );
 
-  // Calculate reference month (same month last year)
-  const referenceMonth = React.useMemo(() => {
-    const now = new Date();
-    const lastYear = now.getFullYear() - 1;
-    const month = now.getMonth() + 1;
-    return `${lastYear}-${String(month).padStart(2, '0')}`;
-  }, []);
-
-  const referenceMonthDisplay = React.useMemo(() => {
-    const parts = referenceMonth.split('-');
-    const year = parts[0];
-    const month = parts[1];
-    if (!year || !month) return referenceMonth;
-    const date = new Date(parseInt(year, 10), parseInt(month, 10) - 1, 1);
-    return date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-  }, [referenceMonth]);
-
-  // Fetch historical sales for same month last year
+  // Fetch historical sales for selected date range
   const { data: historicalData } = useSWR(
-    selections.length ? ['callOff:historical', selections.map(s => `${s.style_no}|${s.color}`).join(','), referenceMonth] : null,
+    selections.length && dateRange.start && dateRange.end 
+      ? ['callOff:historical', selections.map(s => `${s.style_no}|${s.color}`).join(','), dateRange.start, dateRange.end] 
+      : null,
     async () => {
       const response = await fetch('/api/call-off/historical', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ selections, referenceMonth })
+        body: JSON.stringify({ selections, startDate: dateRange.start, endDate: dateRange.end })
       });
       if (!response.ok) return {};
       const json = await response.json();
@@ -710,8 +755,7 @@ function Step3EnterQuantities({
       sizes: string[];
       stock: number[];
       sold: number[];
-      purchase: number[];
-      available: number[];
+      netStock: number[];  // Stock - Sold (actual inventory after commitments)
       historical: number[];
     };
 
@@ -758,16 +802,8 @@ function Step3EnterQuantities({
         return acc.map((v, i) => v + vals[i]);
       }, zero.slice());
 
-      const purchaseRows = latestRows.filter((r) => r.section === 'Purchase (Running + Shipped)');
-      const purchase = purchaseRows.reduce((acc, r) => {
-        const vals = ensureNums(
-          Array.isArray(r.values) ? r.values : JSON.parse(String(r.values || '[]')),
-          num
-        );
-        return acc.map((v, i) => v + vals[i]);
-      }, zero.slice());
-
-      const available = stock.map((v, i) => v - sold[i] + purchase[i]);
+      // Net Stock = Stock - Sold (no purchase included for NOOS)
+      const netStock = stock.map((v, i) => v - sold[i]);
 
       // Get historical data for this color
       const key = `${style_no}|${color}`.toLowerCase();
@@ -780,8 +816,7 @@ function Step3EnterQuantities({
         sizes,
         stock,
         sold,
-        purchase,
-        available,
+        netStock,
         historical
       });
     });
@@ -828,7 +863,8 @@ function Step3EnterQuantities({
         body: JSON.stringify({
           selections,
           weeks_cover: weeksCover,
-          reference_month: referenceMonth
+          startDate: dateRange.start,
+          endDate: dateRange.end
         })
       });
       
@@ -870,8 +906,8 @@ function Step3EnterQuantities({
     if (total <= 0) return;
     const pressureSource = colorGroup.historical.some((v: number) => v > 0) ? colorGroup.historical : colorGroup.sold;
     const targetDistribution = distributeByPressure(total, pressureSource);
-    const netNeed = colorGroup.available;
-    const order = targetDistribution.map((target, i) => Math.max(0, target - netNeed[i]));
+    const netStock = colorGroup.netStock;
+    const order = targetDistribution.map((target, i) => Math.max(0, target - netStock[i]));
     setInputsByKey((prev) => ({ ...prev, [key]: order }));
     setFillAmount((prev) => ({ ...prev, [key]: '' }));
   }, [fillAmount]);
@@ -881,8 +917,8 @@ function Step3EnterQuantities({
     if (targetTotal <= 0) return;
     const pressureSource = colorGroup.historical.some((v: number) => v > 0) ? colorGroup.historical : colorGroup.sold;
     const targetDistribution = distributeByPressure(targetTotal, pressureSource);
-    const netNeed = colorGroup.available;
-    const order = targetDistribution.map((target, i) => Math.max(0, target - netNeed[i]));
+    const netStock = colorGroup.netStock;
+    const order = targetDistribution.map((target, i) => Math.max(0, target - netStock[i]));
     setInputsByKey((prev) => ({ ...prev, [key]: order }));
     setFillAmount((prev) => ({ ...prev, [key]: '' }));
   }, [fillAmount]);
@@ -913,14 +949,16 @@ function Step3EnterQuantities({
     ? inputsByKey[key]
     : Array(currentItem.sizes.length).fill(0);
 
-  const netNeed = currentItem.available;
-  const newNetNeed = netNeed.map((n: number, i: number) => n + (inputs?.[i] ?? 0));
+  // Net Stock = Stock - Sold (no purchase included for NOOS)
+  const netStock = currentItem.netStock;
+  const newNetStock = netStock.map((n: number, i: number) => n + (inputs?.[i] ?? 0));
   
   const stockPressure = calculatePressure(currentItem.stock);
   const soldPressure = calculatePressure(currentItem.sold);
+  const netStockPressure = calculatePressure(netStock.map((v: number) => Math.abs(v)));
   const historicalPressure = calculatePressure(currentItem.historical);
   const orderPressure = calculatePressure(inputs || []);
-  const newNetNeedPressure = calculatePressure(newNetNeed.map((v: number) => Math.abs(v)));
+  const newNetStockPressure = calculatePressure(newNetStock.map((v: number) => Math.abs(v)));
 
   const currentSuggestion = aiSuggestions[key];
 
@@ -938,7 +976,7 @@ function Step3EnterQuantities({
           <CardContent className="space-y-6">
             {/* AI Analysis Controls */}
             <div className="flex items-center justify-between gap-4 p-4 bg-gradient-to-r from-[#B8A8D8]/20 to-[#D4E4E8]/20 rounded-lg border border-[#B8A8D8]/30">
-              <div className="flex items-center gap-4">
+              <div className="flex items-center gap-4 flex-wrap">
                 <div className="flex items-center gap-2">
                   <label className="text-sm font-medium text-slate-700">Weeks Cover:</label>
                   <Input
@@ -950,8 +988,24 @@ function Step3EnterQuantities({
                     className="w-20 h-9"
                   />
                 </div>
-                <div className="text-sm text-slate-600">
-                  Reference: <strong>{referenceMonthDisplay}</strong>
+                <div className="flex items-center gap-2">
+                  <label className="text-sm font-medium text-slate-700">Period:</label>
+                  <Input
+                    type="date"
+                    value={dateRange.start}
+                    onChange={(e) => setDateRange(prev => ({ ...prev, start: e.target.value }))}
+                    className="w-40 h-9"
+                  />
+                  <span className="text-sm text-slate-500">to</span>
+                  <Input
+                    type="date"
+                    value={dateRange.end}
+                    onChange={(e) => setDateRange(prev => ({ ...prev, end: e.target.value }))}
+                    className="w-40 h-9"
+                  />
+                </div>
+                <div className="text-xs text-slate-500">
+                  {dateRangeDisplay}
                 </div>
               </div>
               <div className="flex items-center gap-2">
@@ -1058,31 +1112,26 @@ function Step3EnterQuantities({
                     ))}
                     <td className="p-3 text-center font-bold text-slate-900">{sum(currentItem.sold)}</td>
                   </tr>
-                  <tr className="border-t border-slate-300 hover:bg-slate-50">
-                    <td className="p-3 font-medium border-r border-slate-300 bg-slate-50">Purchase</td>
-                    {currentItem.purchase.map((v: number, i: number) => (
-                      <td key={i} className="p-3 text-center border-r border-slate-300">
-                        <div className="font-semibold text-slate-900">{v}</div>
-                      </td>
-                    ))}
-                    <td className="p-3 text-center font-bold text-slate-900">{sum(currentItem.purchase)}</td>
-                  </tr>
                   <tr className="border-t border-slate-300 bg-amber-50">
-                    <td className="p-3 font-medium border-r border-slate-300 bg-amber-100">Available</td>
-                    {currentItem.available.map((v: number, i: number) => (
+                    <td className="p-3 font-medium border-r border-slate-300 bg-amber-100">
+                      <div>Net Stock</div>
+                      <div className="text-[10px] text-slate-500 font-normal">(Stock - Sold)</div>
+                    </td>
+                    {netStock.map((v: number, i: number) => (
                       <td key={i} className="p-3 text-center border-r border-slate-300">
                         <div className={`font-semibold ${v < 0 ? 'text-red-700' : v > 0 ? 'text-green-700' : 'text-slate-900'}`}>
                           {v}
                         </div>
+                        <div className="text-[10px] text-slate-400 mt-1">{netStockPressure[i]}%</div>
                       </td>
                     ))}
-                    <td className={`p-3 text-center font-bold ${sum(currentItem.available) < 0 ? 'text-red-700' : 'text-green-700'}`}>
-                      {sum(currentItem.available)}
+                    <td className={`p-3 text-center font-bold ${sum(netStock) < 0 ? 'text-red-700' : 'text-green-700'}`}>
+                      {sum(netStock)}
                     </td>
                   </tr>
                   <tr className="border-t border-slate-300 bg-[#B8A8D8]/20">
                     <td className="p-3 font-medium border-r border-slate-300 bg-[#B8A8D8]/30">
-                      Historical ({referenceMonthDisplay})
+                      Historical ({dateRangeDisplay})
                     </td>
                     {currentItem.historical.map((v: number, i: number) => (
                       <td key={i} className="p-3 text-center border-r border-slate-300">
@@ -1112,17 +1161,20 @@ function Step3EnterQuantities({
                     <td className="p-3 text-center font-bold text-[#8FA894]">{sum(inputs || [])}</td>
                   </tr>
                   <tr className="border-t border-slate-300 bg-green-50">
-                    <td className="p-3 font-medium border-r border-slate-300 bg-green-100">New Available</td>
-                    {newNetNeed.map((v: number, i: number) => (
+                    <td className="p-3 font-medium border-r border-slate-300 bg-green-100">
+                      <div>New Net Stock</div>
+                      <div className="text-[10px] text-slate-500 font-normal">(After Order)</div>
+                    </td>
+                    {newNetStock.map((v: number, i: number) => (
                       <td key={i} className="p-3 text-center border-r border-slate-300">
                         <div className={`font-semibold ${v < 0 ? 'text-red-700' : v > 0 ? 'text-green-700' : 'text-slate-900'}`}>
                           {v}
                         </div>
-                        <div className="text-[10px] text-slate-400 mt-1">{newNetNeedPressure[i]}%</div>
+                        <div className="text-[10px] text-slate-400 mt-1">{newNetStockPressure[i]}%</div>
                       </td>
                     ))}
-                    <td className={`p-3 text-center font-bold ${sum(newNetNeed) < 0 ? 'text-red-700' : 'text-green-700'}`}>
-                      {sum(newNetNeed)}
+                    <td className={`p-3 text-center font-bold ${sum(newNetStock) < 0 ? 'text-red-700' : 'text-green-700'}`}>
+                      {sum(newNetStock)}
                     </td>
                   </tr>
                 </tbody>
@@ -1220,7 +1272,7 @@ function Step3EnterQuantities({
                 </Button>
               </div>
               <CardDescription>
-                Based on {weeksCover} weeks cover using {referenceMonthDisplay} sales
+                Based on {weeksCover} weeks cover using {dateRangeDisplay} sales
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -1244,7 +1296,7 @@ function Step3EnterQuantities({
                       <div className="font-semibold">{currentSuggestion.target_stock}</div>
                     </div>
                     <div className="bg-slate-50 p-2 rounded">
-                      <div className="text-slate-500">Current Available</div>
+                      <div className="text-slate-500">Net Stock</div>
                       <div className="font-semibold">{currentSuggestion.current_available}</div>
                     </div>
                     <div className="bg-[#8FA894]/20 p-2 rounded">

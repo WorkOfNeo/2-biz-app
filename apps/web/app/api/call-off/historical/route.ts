@@ -7,28 +7,42 @@ export async function POST(req: Request) {
     const supabase = createRouteHandlerClient({ cookies });
     const body = await req.json();
     
-    const { selections, referenceMonth } = body;
+    const { selections, startDate, endDate, referenceMonth } = body;
     
     if (!Array.isArray(selections) || selections.length === 0) {
       return NextResponse.json({ error: 'selections array is required' }, { status: 400 });
     }
 
-    if (!referenceMonth || typeof referenceMonth !== 'string') {
-      return NextResponse.json({ error: 'referenceMonth is required (format: YYYY-MM)' }, { status: 400 });
+    let startDateStr: string;
+    let endDateStr: string;
+
+    // Support both new format (startDate/endDate) and legacy format (referenceMonth)
+    if (startDate && endDate && typeof startDate === 'string' && typeof endDate === 'string') {
+      startDateStr = startDate;
+      endDateStr = endDate;
+    } else if (referenceMonth) {
+      // Legacy support: parse referenceMonth
+      const [year, month] = referenceMonth.split('-').map(Number);
+      if (!year || !month || month < 1 || month > 12) {
+        return NextResponse.json({ error: 'Invalid referenceMonth format. Use YYYY-MM' }, { status: 400 });
+      }
+      const start = new Date(year, month - 1, 1);
+      const end = new Date(year, month, 0);
+      startDateStr = start.toISOString().split('T')[0];
+      endDateStr = end.toISOString().split('T')[0];
+    } else {
+      return NextResponse.json({ error: 'Either startDate/endDate or referenceMonth is required' }, { status: 400 });
     }
 
-    // Parse the reference month to get start and end dates
-    const [year, month] = referenceMonth.split('-').map(Number);
-    if (!year || !month || month < 1 || month > 12) {
-      return NextResponse.json({ error: 'Invalid referenceMonth format. Use YYYY-MM' }, { status: 400 });
+    // Validate dates
+    const start = new Date(startDateStr);
+    const end = new Date(endDateStr);
+    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+      return NextResponse.json({ error: 'Invalid date format. Use YYYY-MM-DD' }, { status: 400 });
     }
-
-    // Get first and last day of the reference month
-    const startDate = new Date(year, month - 1, 1);
-    const endDate = new Date(year, month, 0); // Last day of the month
-    
-    const startDateStr = startDate.toISOString().split('T')[0];
-    const endDateStr = endDate.toISOString().split('T')[0];
+    if (start > end) {
+      return NextResponse.json({ error: 'Start date must be before end date' }, { status: 400 });
+    }
 
     // Extract unique style numbers and colors
     const styleNos = Array.from(new Set(selections.map((s: any) => s.style_no)));
@@ -71,12 +85,13 @@ export async function POST(req: Request) {
       result[key] = sizeObj;
     }
 
+    const daysDiff = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+    
     return NextResponse.json({ 
       data: result, 
-      referenceMonth,
       startDate: startDateStr,
       endDate: endDateStr,
-      daysInMonth: endDate.getDate()
+      daysInPeriod: daysDiff
     });
   } catch (error: any) {
     return NextResponse.json({ error: error.message || 'Internal server error' }, { status: 500 });
