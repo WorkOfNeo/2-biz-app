@@ -230,6 +230,57 @@ export async function POST(req: Request) {
       sampleRows: historicalData?.slice(0, 5)
     });
 
+    // 🔍 DIAGNOSTIC: Direct query for a specific style/color to compare with bulk+filter
+    // This helps identify if the discrepancy is in bulk query, JS filter, or data layer
+    const testStyleNo = '1010191';
+    const testColor = '807 BLACK';
+    if (styleNos.includes(testStyleNo) && colors.includes(testColor)) {
+      const { data: directQueryData, count: directCount } = await supabase
+        .from('historical_sales')
+        .select('style_no, color, size, quantity', { count: 'exact' })
+        .eq('style_no', testStyleNo)
+        .eq('color', testColor)
+        .gte('date', startDate)
+        .lte('date', endDate);
+      
+      const directQty = (directQueryData || []).reduce((sum: number, r: any) => sum + (r.quantity || 0), 0);
+      
+      // Count from bulk query + JS filter
+      const bulkFiltered = historicalData.filter(
+        (h: any) => h.style_no === testStyleNo && h.color === testColor
+      );
+      const bulkQty = bulkFiltered.reduce((sum: number, h: any) => sum + (h.quantity || 0), 0);
+      
+      console.log('🔬 [DIAGNOSTIC] Direct vs Bulk comparison for 1010191 - 807 BLACK:');
+      console.log(`   DIRECT QUERY: ${directQueryData?.length || 0} rows, ${directQty} qty (DB count: ${directCount})`);
+      console.log(`   BULK + FILTER: ${bulkFiltered.length} rows, ${bulkQty} qty`);
+      console.log(`   MATCH: ${directQueryData?.length === bulkFiltered.length && directQty === bulkQty ? '✅ YES' : '❌ NO - DISCREPANCY!'}`);
+      
+      if (directQueryData?.length !== bulkFiltered.length) {
+        // Find what's different
+        const directKeys = new Set((directQueryData || []).map((r: any) => `${r.size}|${r.quantity}`));
+        const bulkKeys = new Set(bulkFiltered.map((r: any) => `${r.size}|${r.quantity}`));
+        
+        const onlyInDirect = (directQueryData || []).filter((r: any) => !bulkKeys.has(`${r.size}|${r.quantity}`));
+        const onlyInBulk = bulkFiltered.filter((r: any) => !directKeys.has(`${r.size}|${r.quantity}`));
+        
+        console.log(`   Only in DIRECT (first 5):`, onlyInDirect.slice(0, 5));
+        console.log(`   Only in BULK (first 5):`, onlyInBulk.slice(0, 5));
+        
+        // Check if there are duplicates in bulk data
+        const bulkDuplicateCheck = new Map<string, number>();
+        bulkFiltered.forEach((r: any) => {
+          const key = JSON.stringify(r);
+          bulkDuplicateCheck.set(key, (bulkDuplicateCheck.get(key) || 0) + 1);
+        });
+        const duplicates = Array.from(bulkDuplicateCheck.entries()).filter(([_, count]) => count > 1);
+        if (duplicates.length > 0) {
+          console.log(`   ⚠️ DUPLICATES FOUND IN BULK DATA:`, duplicates.length, 'unique rows with duplicates');
+          console.log(`   Sample duplicates:`, duplicates.slice(0, 3));
+        }
+      }
+    }
+
     // Calculate total quantity from historical data
     const totalHistoricalQty = (historicalData || []).reduce((sum: number, row: any) => sum + (row.quantity || 0), 0);
     console.log('🔍 [DEBUG] Total historical quantity:', totalHistoricalQty);
