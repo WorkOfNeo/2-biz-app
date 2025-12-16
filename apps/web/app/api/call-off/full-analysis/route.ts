@@ -287,10 +287,16 @@ export async function POST(req: Request) {
         (h: any) => h.style_no === style_no && h.color === color
       );
 
+      // Get unique sizes from historical data for this color
+      const historicalSizes = new Set<string>();
+      colorHistorical.forEach((h: any) => historicalSizes.add(String(h.size)));
+      
       console.log(`🔍 [DEBUG] ${style_no} - ${color}:`, {
         historicalRowsForColor: colorHistorical.length,
-        sampleRows: colorHistorical.slice(0, 3),
-        sizes: sizes
+        historicalTotalQty: colorHistorical.reduce((sum: number, h: any) => sum + (h.quantity || 0), 0),
+        stockSizes: sizes,
+        historicalSizes: Array.from(historicalSizes),
+        sampleRows: colorHistorical.slice(0, 5)
       });
 
       // Aggregate historical by size (with normalization for sizes like "44.00" -> "44")
@@ -301,21 +307,37 @@ export async function POST(req: Request) {
         historicalBySize.set(normalizedSize, current + h.quantity);
       });
 
-      console.log(`🔍 [DEBUG] ${style_no} - ${color} historicalBySize:`, Object.fromEntries(historicalBySize));
+      console.log(`🔍 [DEBUG] ${style_no} - ${color} historicalBySize (after normalization):`, Object.fromEntries(historicalBySize));
 
-      // Match sizes with normalization
-      const historical = sizes.map((size: string) => {
-        const normalizedSize = normalizeSize(size);
-        return historicalBySize.get(normalizedSize) || historicalBySize.get(size) || 0;
+      // Match sizes with normalization and log each match
+      const historical = sizes.map((size: string, idx: number) => {
+        const normalizedStockSize = normalizeSize(size);
+        const matchedQty = historicalBySize.get(normalizedStockSize) || historicalBySize.get(size) || 0;
+        console.log(`   Size[${idx}] "${size}" → normalized: "${normalizedStockSize}" → matched qty: ${matchedQty}`);
+        return matchedQty;
       });
       const totalHistorical = historical.reduce((a: number, b: number) => a + b, 0);
 
-      console.log(`🔍 [DEBUG] ${style_no} - ${color} final:`, {
+      // Check for unmatched historical sizes
+      const matchedNormalizedSizes = new Set(sizes.map((s: string) => normalizeSize(s)));
+      const unmatchedHistorical: Record<string, number> = {};
+      historicalBySize.forEach((qty, size) => {
+        if (!matchedNormalizedSizes.has(size)) {
+          unmatchedHistorical[size] = qty;
+        }
+      });
+      
+      if (Object.keys(unmatchedHistorical).length > 0) {
+        console.warn(`⚠️ [WARNING] ${style_no} - ${color}: Unmatched historical sizes:`, unmatchedHistorical);
+        console.warn(`   Stock sizes (normalized):`, Array.from(matchedNormalizedSizes));
+        console.warn(`   Historical sizes:`, Array.from(historicalBySize.keys()));
+      }
+
+      console.log(`🔍 [DEBUG] ${style_no} - ${color} FINAL:`, {
         historical,
         totalHistorical,
-        stock,
-        sold,
-        netStock: stock.map((v, i) => v - (sold[i] ?? 0))
+        rawHistoricalTotal: colorHistorical.reduce((sum: number, h: any) => sum + (h.quantity || 0), 0),
+        matchedCorrectly: totalHistorical === colorHistorical.reduce((sum: number, h: any) => sum + (h.quantity || 0), 0)
       });
 
       // Get next month historical sales for this color (for trend analysis)
