@@ -21,6 +21,43 @@ type AISuggestion = {
   sizes: string[];
 };
 
+type FullAnalysisItem = {
+  style_no: string;
+  color: string;
+  sizes: string[];
+  stock: number[];
+  sold: number[];
+  netStock: number[];
+  historical: number[];
+  totalStock: number;
+  totalSold: number;
+  totalNetStock: number;
+  totalHistorical: number;
+  weeklyRate: number;
+  targetStock: number;
+  suggestedOrder: number;
+  status: 'critical' | 'low' | 'ok' | 'surplus';
+  priority: number;
+};
+
+type FullAnalysisResult = {
+  items: FullAnalysisItem[];
+  summary: {
+    totalItems: number;
+    criticalItems: number;
+    lowItems: number;
+    okItems: number;
+    surplusItems: number;
+    totalSuggestedOrder: number;
+    aiSummary: string;
+  };
+  dateRange: {
+    start: string;
+    end: string;
+    display: string;
+  };
+};
+
 export default function CallOffPage() {
   const STORAGE_KEYS = React.useMemo(() => ({
     started: 'callOff.process.started',
@@ -92,6 +129,23 @@ export default function CallOffPage() {
   const [aiSuggestions, setAiSuggestions] = React.useState<Record<string, AISuggestion>>({});
   const [aiLoading, setAiLoading] = React.useState<boolean>(false);
   const [aiPanelOpen, setAiPanelOpen] = React.useState<boolean>(false);
+  
+  // Full AI analysis state
+  const [fullAnalysisOpen, setFullAnalysisOpen] = React.useState<boolean>(false);
+  const [fullAnalysisLoading, setFullAnalysisLoading] = React.useState<boolean>(false);
+  const [fullAnalysisResult, setFullAnalysisResult] = React.useState<FullAnalysisResult | null>(null);
+  const [fullAnalysisDateRange, setFullAnalysisDateRange] = React.useState<{ start: string; end: string }>(() => {
+    const now = new Date();
+    const lastYear = now.getFullYear() - 1;
+    const month = now.getMonth() + 1;
+    const startDate = new Date(lastYear, month - 1, 1);
+    const endDate = new Date(lastYear, month, 0);
+    return {
+      start: startDate.toISOString().split('T')[0] || '',
+      end: endDate.toISOString().split('T')[0] || ''
+    };
+  });
+  const [fullAnalysisWeeksCover, setFullAnalysisWeeksCover] = React.useState<number>(4);
 
   // Fetch NOOS stock list styles
   const { data: noosData } = useSWR('callOff:noosStyles', async () => {
@@ -323,7 +377,17 @@ export default function CallOffPage() {
           selections={selections} 
           setSelections={setSelections} 
           onBack={() => setStep(1)} 
-          onContinue={() => setStep(3)} 
+          onContinue={() => setStep(3)}
+          fullAnalysisOpen={fullAnalysisOpen}
+          setFullAnalysisOpen={setFullAnalysisOpen}
+          fullAnalysisLoading={fullAnalysisLoading}
+          setFullAnalysisLoading={setFullAnalysisLoading}
+          fullAnalysisResult={fullAnalysisResult}
+          setFullAnalysisResult={setFullAnalysisResult}
+          fullAnalysisDateRange={fullAnalysisDateRange}
+          setFullAnalysisDateRange={setFullAnalysisDateRange}
+          fullAnalysisWeeksCover={fullAnalysisWeeksCover}
+          setFullAnalysisWeeksCover={setFullAnalysisWeeksCover}
         />
       )}
       {started && step === 3 && (
@@ -441,7 +505,17 @@ function Step2ChooseColors({
   selections,
   setSelections,
   onBack,
-  onContinue
+  onContinue,
+  fullAnalysisOpen,
+  setFullAnalysisOpen,
+  fullAnalysisLoading,
+  setFullAnalysisLoading,
+  fullAnalysisResult,
+  setFullAnalysisResult,
+  fullAnalysisDateRange,
+  setFullAnalysisDateRange,
+  fullAnalysisWeeksCover,
+  setFullAnalysisWeeksCover
 }: {
   noosStyles: Array<{
     id: string;
@@ -454,6 +528,16 @@ function Step2ChooseColors({
   setSelections: React.Dispatch<React.SetStateAction<Selection[]>>;
   onBack: () => void;
   onContinue: () => void;
+  fullAnalysisOpen: boolean;
+  setFullAnalysisOpen: React.Dispatch<React.SetStateAction<boolean>>;
+  fullAnalysisLoading: boolean;
+  setFullAnalysisLoading: React.Dispatch<React.SetStateAction<boolean>>;
+  fullAnalysisResult: FullAnalysisResult | null;
+  setFullAnalysisResult: React.Dispatch<React.SetStateAction<FullAnalysisResult | null>>;
+  fullAnalysisDateRange: { start: string; end: string };
+  setFullAnalysisDateRange: React.Dispatch<React.SetStateAction<{ start: string; end: string }>>;
+  fullAnalysisWeeksCover: number;
+  setFullAnalysisWeeksCover: React.Dispatch<React.SetStateAction<number>>;
 }) {
   const styleNos = React.useMemo(() => noosStyles.map(s => s.style_no), [noosStyles]);
 
@@ -521,6 +605,41 @@ function Step2ChooseColors({
     });
     return map;
   }, [colorData]);
+
+  // Run full AI analysis
+  async function runFullAnalysis() {
+    if (selections.length === 0) return;
+    
+    setFullAnalysisLoading(true);
+    setFullAnalysisResult(null);
+    setFullAnalysisOpen(true);
+    
+    try {
+      const res = await fetch('/api/call-off/full-analysis', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          selections,
+          weeks_cover: fullAnalysisWeeksCover,
+          startDate: fullAnalysisDateRange.start,
+          endDate: fullAnalysisDateRange.end
+        })
+      });
+      
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.error || 'Analysis failed');
+      }
+      
+      const data = await res.json();
+      setFullAnalysisResult(data);
+    } catch (error: any) {
+      console.error('Full analysis error:', error);
+      alert('Analysis failed: ' + (error.message || 'Unknown error'));
+    } finally {
+      setFullAnalysisLoading(false);
+    }
+  }
 
   return (
     <div className="space-y-4">
@@ -599,6 +718,14 @@ function Step2ChooseColors({
               <div className="text-sm text-slate-600">
                 Selected: <strong>{selections.length}</strong> color{selections.length !== 1 ? 's' : ''}
               </div>
+              <Button 
+                onClick={() => setFullAnalysisOpen(true)} 
+                disabled={selections.length === 0} 
+                variant="outline"
+                className="border-[#B8A8D8] text-[#B8A8D8] hover:bg-[#B8A8D8]/10"
+              >
+                Full AI Analysis
+              </Button>
               <Button onClick={onContinue} disabled={selections.length === 0} className="bg-[#8FA894] hover:bg-[#C5D5CA]">
                 Continue to Step 3
               </Button>
@@ -606,6 +733,22 @@ function Step2ChooseColors({
           </div>
         </CardContent>
       </Card>
+
+      {/* Full Analysis Modal */}
+      {fullAnalysisOpen && (
+        <FullAnalysisModal
+          isOpen={fullAnalysisOpen}
+          onClose={() => setFullAnalysisOpen(false)}
+          selections={selections}
+          dateRange={fullAnalysisDateRange}
+          setDateRange={setFullAnalysisDateRange}
+          weeksCover={fullAnalysisWeeksCover}
+          setWeeksCover={setFullAnalysisWeeksCover}
+          loading={fullAnalysisLoading}
+          result={fullAnalysisResult}
+          onRunAnalysis={runFullAnalysis}
+        />
+      )}
     </div>
   );
 }
@@ -1480,3 +1623,300 @@ function Step4Review({
   );
 }
 
+// ==================== FULL ANALYSIS MODAL ====================
+function FullAnalysisModal({
+  isOpen,
+  onClose,
+  selections,
+  dateRange,
+  setDateRange,
+  weeksCover,
+  setWeeksCover,
+  loading,
+  result,
+  onRunAnalysis
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  selections: Selection[];
+  dateRange: { start: string; end: string };
+  setDateRange: React.Dispatch<React.SetStateAction<{ start: string; end: string }>>;
+  weeksCover: number;
+  setWeeksCover: React.Dispatch<React.SetStateAction<number>>;
+  loading: boolean;
+  result: FullAnalysisResult | null;
+  onRunAnalysis: () => void;
+}) {
+  const [filter, setFilter] = React.useState<'all' | 'critical' | 'low' | 'ok' | 'surplus'>('all');
+
+  if (!isOpen) return null;
+
+  const filteredItems = result?.items.filter(item => {
+    if (filter === 'all') return true;
+    return item.status === filter;
+  }) || [];
+
+  const getStatusBadge = (status: 'critical' | 'low' | 'ok' | 'surplus') => {
+    switch (status) {
+      case 'critical':
+        return <Badge className="bg-red-500 text-white text-[10px]">Critical</Badge>;
+      case 'low':
+        return <Badge className="bg-amber-500 text-white text-[10px]">Low</Badge>;
+      case 'ok':
+        return <Badge className="bg-green-500 text-white text-[10px]">OK</Badge>;
+      case 'surplus':
+        return <Badge className="bg-blue-500 text-white text-[10px]">Surplus</Badge>;
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      {/* Backdrop */}
+      <div 
+        className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+        onClick={onClose}
+      />
+      
+      {/* Modal */}
+      <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-5xl max-h-[90vh] overflow-hidden flex flex-col mx-4">
+        {/* Header */}
+        <div className="flex items-center justify-between p-5 border-b bg-[#F5F3F0]">
+          <div>
+            <h2 className="text-xl font-bold text-slate-900">Full AI Analysis</h2>
+            <p className="text-sm text-slate-600">
+              Comprehensive stock analysis for {selections.length} selected items
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-2 hover:bg-slate-200 rounded-full transition-colors"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        {/* Content */}
+        <div className="flex-1 overflow-auto p-5 space-y-5">
+          {/* Configuration */}
+          {!result && (
+            <Card className="border-[#C5D5CA]">
+              <CardHeader>
+                <CardTitle className="text-lg">Analysis Configuration</CardTitle>
+                <CardDescription>
+                  Set the comparison date range and target weeks cover for the analysis
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div>
+                    <label className="block text-xs font-medium text-slate-700 mb-1">Start Date</label>
+                    <Input
+                      type="date"
+                      value={dateRange.start}
+                      onChange={(e) => setDateRange(prev => ({ ...prev, start: e.target.value }))}
+                      className="border-[#C5D5CA]"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-slate-700 mb-1">End Date</label>
+                    <Input
+                      type="date"
+                      value={dateRange.end}
+                      onChange={(e) => setDateRange(prev => ({ ...prev, end: e.target.value }))}
+                      className="border-[#C5D5CA]"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-slate-700 mb-1">Target Weeks Cover</label>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={52}
+                      value={weeksCover}
+                      onChange={(e) => setWeeksCover(Math.max(1, parseInt(e.target.value) || 4))}
+                      className="border-[#C5D5CA]"
+                    />
+                  </div>
+                </div>
+                
+                <Button
+                  onClick={onRunAnalysis}
+                  disabled={loading || !dateRange.start || !dateRange.end}
+                  className="w-full bg-[#B8A8D8] hover:bg-[#B8A8D8]/80 text-white"
+                >
+                  {loading ? (
+                    <span className="flex items-center gap-2">
+                      <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                      </svg>
+                      Analyzing {selections.length} items...
+                    </span>
+                  ) : (
+                    `Run Full AI Analysis (${selections.length} items)`
+                  )}
+                </Button>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Loading State */}
+          {loading && (
+            <div className="flex items-center justify-center py-16">
+              <div className="text-center space-y-4">
+                <svg className="animate-spin h-12 w-12 mx-auto text-[#B8A8D8]" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                </svg>
+                <p className="text-slate-600">Analyzing stock levels and generating AI insights...</p>
+                <p className="text-sm text-slate-400">This may take a moment for {selections.length} items</p>
+              </div>
+            </div>
+          )}
+
+          {/* Results */}
+          {result && !loading && (
+            <>
+              {/* Summary Cards */}
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                <div className="bg-slate-50 rounded-lg p-4 text-center">
+                  <div className="text-2xl font-bold text-slate-900">{result.summary.totalItems}</div>
+                  <div className="text-xs text-slate-600">Total Items</div>
+                </div>
+                <div className="bg-red-50 rounded-lg p-4 text-center cursor-pointer hover:bg-red-100 transition-colors" onClick={() => setFilter('critical')}>
+                  <div className="text-2xl font-bold text-red-600">{result.summary.criticalItems}</div>
+                  <div className="text-xs text-red-700">Critical</div>
+                </div>
+                <div className="bg-amber-50 rounded-lg p-4 text-center cursor-pointer hover:bg-amber-100 transition-colors" onClick={() => setFilter('low')}>
+                  <div className="text-2xl font-bold text-amber-600">{result.summary.lowItems}</div>
+                  <div className="text-xs text-amber-700">Low Stock</div>
+                </div>
+                <div className="bg-green-50 rounded-lg p-4 text-center cursor-pointer hover:bg-green-100 transition-colors" onClick={() => setFilter('ok')}>
+                  <div className="text-2xl font-bold text-green-600">{result.summary.okItems}</div>
+                  <div className="text-xs text-green-700">OK</div>
+                </div>
+                <div className="bg-blue-50 rounded-lg p-4 text-center cursor-pointer hover:bg-blue-100 transition-colors" onClick={() => setFilter('surplus')}>
+                  <div className="text-2xl font-bold text-blue-600">{result.summary.surplusItems}</div>
+                  <div className="text-xs text-blue-700">Surplus</div>
+                </div>
+              </div>
+
+              {/* AI Summary */}
+              <Card className="border-[#B8A8D8] bg-[#B8A8D8]/5">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm flex items-center gap-2">
+                    <svg className="w-4 h-4 text-[#B8A8D8]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                    </svg>
+                    AI Analysis Summary
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-sm text-slate-700 whitespace-pre-wrap">{result.summary.aiSummary}</p>
+                  <div className="mt-3 flex items-center gap-4 text-xs text-slate-500">
+                    <span>Period: {result.dateRange.display}</span>
+                    <span>Total Suggested Order: <strong className="text-[#8FA894]">{result.summary.totalSuggestedOrder} units</strong></span>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Filter Tabs */}
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-slate-600">Filter:</span>
+                {(['all', 'critical', 'low', 'ok', 'surplus'] as const).map((f) => (
+                  <button
+                    key={f}
+                    onClick={() => setFilter(f)}
+                    className={`px-3 py-1 rounded-full text-xs font-medium transition-all ${
+                      filter === f
+                        ? 'bg-[#8FA894] text-white'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    {f === 'all' ? 'All' : f.charAt(0).toUpperCase() + f.slice(1)} 
+                    ({f === 'all' ? result.items.length : result.items.filter(i => i.status === f).length})
+                  </button>
+                ))}
+              </div>
+
+              {/* Items Table */}
+              <div className="border rounded-lg overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead className="bg-[#F5F3F0]">
+                    <tr>
+                      <th className="text-left p-3 font-medium">Style / Color</th>
+                      <th className="text-center p-3 font-medium">Status</th>
+                      <th className="text-right p-3 font-medium">Net Stock</th>
+                      <th className="text-right p-3 font-medium">Target</th>
+                      <th className="text-right p-3 font-medium">Weekly Rate</th>
+                      <th className="text-right p-3 font-medium">Suggested Order</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredItems.map((item, idx) => (
+                      <tr key={idx} className="border-t hover:bg-slate-50">
+                        <td className="p-3">
+                          <div className="font-medium">{item.style_no}</div>
+                          <div className="text-xs text-slate-500">{item.color}</div>
+                        </td>
+                        <td className="p-3 text-center">
+                          {getStatusBadge(item.status)}
+                        </td>
+                        <td className={`p-3 text-right font-medium ${item.totalNetStock < 0 ? 'text-red-600' : ''}`}>
+                          {item.totalNetStock}
+                        </td>
+                        <td className="p-3 text-right text-slate-600">
+                          {item.targetStock}
+                        </td>
+                        <td className="p-3 text-right text-slate-600">
+                          {item.weeklyRate.toFixed(1)}/wk
+                        </td>
+                        <td className="p-3 text-right">
+                          <span className={`font-bold ${item.suggestedOrder > 0 ? 'text-[#8FA894]' : 'text-slate-400'}`}>
+                            {item.suggestedOrder > 0 ? `+${item.suggestedOrder}` : '—'}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {filteredItems.length === 0 && (
+                  <div className="p-8 text-center text-slate-500">
+                    No items match the selected filter
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-between p-5 border-t bg-[#F5F3F0]">
+          {result && !loading ? (
+            <>
+              <Button variant="outline" onClick={() => {
+                setFilter('all');
+                onRunAnalysis();
+              }}>
+                Re-run Analysis
+              </Button>
+              <div className="flex gap-2">
+                <Button variant="outline" onClick={onClose}>
+                  Close
+                </Button>
+              </div>
+            </>
+          ) : (
+            <div className="w-full flex justify-end">
+              <Button variant="outline" onClick={onClose}>
+                Cancel
+              </Button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
