@@ -200,8 +200,15 @@ export default function PurchaseMakeOrderPage() {
               Start the guided 4-step order flow to create your purchase order.
             </CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="flex gap-3">
             <Button onClick={startProcess}>Start Purchase Order</Button>
+            <Button 
+              variant="outline" 
+              onClick={() => router.push('/purchase/make-order/analyses')}
+              className="border-[#B8A8D8] text-[#B8A8D8] hover:bg-[#B8A8D8]/10"
+            >
+              View AI Analyses
+            </Button>
           </CardContent>
         </Card>
           <Card className="border-2 border-[#C5D5CA]">

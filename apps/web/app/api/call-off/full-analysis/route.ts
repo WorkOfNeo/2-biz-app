@@ -78,6 +78,7 @@ type FullAnalysisResponse = {
     end: string;
     display: string;
   };
+  supplierRulesSnapshot?: any;
   _debug?: {
     historicalRowsLoaded: number;
     historicalTotalCount: number | null;
@@ -550,12 +551,62 @@ export async function POST(req: Request) {
     const downTrends = items.filter(i => i.trendDirection === 'down').length;
     const trendSummary = `${upTrends} items trending up, ${downTrends} trending down for next month`;
 
+    // Fetch recent feedback for these items to include in AI prompt
+    let feedbackSummary = '';
+    try {
+      const { data: recentFeedback } = await supabase
+        .from('call_off_feedback')
+        .select('style_no, color, verdict, notes, created_at')
+        .in('style_no', styleNos)
+        .in('color', colors)
+        .order('created_at', { ascending: false })
+        .limit(20);
+
+      if (recentFeedback && recentFeedback.length > 0) {
+        const correct = recentFeedback.filter(f => f.verdict === 'correct').length;
+        const incorrect = recentFeedback.filter(f => f.verdict === 'incorrect').length;
+        const withNotes = recentFeedback.filter(f => f.notes);
+        
+        feedbackSummary = `\n\nPREVIOUS FEEDBACK (${recentFeedback.length} entries, ${correct} correct, ${incorrect} incorrect):`;
+        if (withNotes.length > 0) {
+          feedbackSummary += '\nUser notes:';
+          withNotes.slice(0, 3).forEach(f => {
+            feedbackSummary += `\n- ${f.style_no} ${f.color} (${f.verdict}): ${f.notes}`;
+          });
+        }
+      }
+    } catch (e) {
+      console.warn('Could not fetch feedback:', e);
+    }
+
+    // Fetch supplier data to check for BELL_RAIN pull-first logic
+    let supplierRulesSnapshot: any = null;
+    let bellRainInfo = '';
+    try {
+      const { data: suppliers } = await supabase
+        .from('suppliers')
+        .select('id, name, tags, lead_time_days, travel_time_days, moq')
+        .eq('active', true);
+
+      if (suppliers && suppliers.length > 0) {
+        supplierRulesSnapshot = { suppliers, fetchedAt: new Date().toISOString() };
+        
+        // Check for BELL_RAIN tagged supplier
+        const bellRain = suppliers.find(s => s.tags?.includes('BELL_RAIN'));
+        if (bellRain) {
+          bellRainInfo = `\nNote: BELL_RAIN stock available - pull from secondary storage before ordering new.`;
+        }
+      }
+    } catch (e) {
+      console.warn('Could not fetch suppliers:', e);
+    }
+
     // Generate AI summary
     const topCritical = items.filter(i => i.status === 'critical').slice(0, 5);
     const topSurplus = items.filter(i => i.status === 'surplus').slice(0, 3);
     const topTrending = items.filter(i => i.trendDirection === 'up').slice(0, 3);
 
-    const aiPrompt = `Analyze this NOOS inventory data and provide a focused summary. Be concise and stick to the data - no generic business advice.
+    const aiPrompt = `Analyze this NOOS inventory data and provide a focused summary. Be concise and stick to the data - no generic business advice.${bellRainInfo}
 
 PERIOD: ${periodDisplay} | TARGET: ${weeks_cover} weeks cover
 
@@ -578,7 +629,7 @@ Provide a brief summary in 3-4 sentences:
 1. What to order now (style names and quantities)
 2. What's trending up for next month
 3. Any items with too much stock
-
+${feedbackSummary}
 Keep it SHORT. Only mention specific styles. No general business advice.`;
 
     let aiSummary = '';
@@ -623,6 +674,7 @@ Keep it SHORT. Only mention specific styles. No general business advice.`;
         end: nextMonthEndStr,
         display: nextMonthDisplay
       },
+      supplierRulesSnapshot,
       // Debug info
       _debug: {
         historicalRowsLoaded: historicalData?.length || 0,

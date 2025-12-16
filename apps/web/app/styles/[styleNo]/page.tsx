@@ -33,14 +33,14 @@ export default function StyleDetailPage({ params }: { params: { styleNo: string 
   });
 
   const { data: colors, mutate: mutateColors } = useSWR(['style:colors', styleNo, meta?.id], async () => {
-    if (!meta?.id) return [] as Array<{ id: string; color: string; maybe_inactive: boolean; inactive: boolean; updated_at: string | null }>;
+    if (!meta?.id) return [] as Array<{ id: string; color: string; maybe_inactive: boolean; inactive: boolean; is_noos: boolean; updated_at: string | null }>;
     const { data, error } = await supabase
       .from('style_colors')
-      .select('id, color, maybe_inactive, inactive, updated_at')
+      .select('id, color, maybe_inactive, inactive, is_noos, updated_at')
       .eq('style_id', meta.id)
       .order('color');
     if (error) throw error as any;
-    return (data ?? []) as Array<{ id: string; color: string; maybe_inactive: boolean; inactive: boolean; updated_at: string | null }>;
+    return (data ?? []) as Array<{ id: string; color: string; maybe_inactive: boolean; inactive: boolean; is_noos: boolean; updated_at: string | null }>;
   });
   
   const { has } = useRoles();
@@ -336,7 +336,68 @@ export default function StyleDetailPage({ params }: { params: { styleNo: string 
                       </div>
 
                       {!has('sales') && (
-                        <div>
+                        <div className="space-y-2">
+                          {/* NOOS Toggle */}
+                          <button
+                            onClick={async () => {
+                              try {
+                                setUpdatingColorId(c.id);
+                                const newNoos = !c.is_noos;
+                                
+                                // Optimistic update
+                                mutateColors((current) => {
+                                  if (!current) return current;
+                                  return current.map(color => 
+                                    color.id === c.id 
+                                      ? { ...color, is_noos: newNoos } 
+                                      : color
+                                  );
+                                }, false);
+                                
+                                // Update database
+                                const { error } = await supabase
+                                  .from('style_colors')
+                                  .update({ is_noos: newNoos })
+                                  .eq('id', c.id);
+                                
+                                if (error) throw error;
+                                
+                                await mutateColors();
+                                
+                                if (typeof window !== 'undefined') {
+                                  window.dispatchEvent(new CustomEvent('toast', { 
+                                    detail: { 
+                                      message: newNoos ? 'Marked as NOOS item' : 'Removed from NOOS',
+                                      type: 'success' 
+                                    } 
+                                  }));
+                                }
+                              } catch (err) {
+                                console.error('Failed to toggle NOOS', err);
+                                alert('Failed to update NOOS status');
+                                await mutateColors();
+                              } finally {
+                                setUpdatingColorId(null);
+                              }
+                            }}
+                            disabled={updatingColorId === c.id}
+                            className={`w-full text-sm px-4 py-2 rounded border font-medium transition-colors ${
+                              updatingColorId === c.id
+                                ? 'bg-gray-100 text-gray-400 border-gray-300 cursor-not-allowed'
+                                : c.is_noos 
+                                  ? 'bg-[#8FA894]/20 text-[#8FA894] border-[#8FA894] hover:bg-[#8FA894]/30' 
+                                  : 'bg-slate-50 text-slate-600 border-slate-300 hover:bg-slate-100'
+                            }`}
+                          >
+                            {updatingColorId === c.id 
+                              ? 'Updating...' 
+                              : c.is_noos 
+                                ? '✓ NOOS Item' 
+                                : 'Mark as NOOS'
+                            }
+                          </button>
+                          
+                          {/* Inactive Toggle */}
                           <button
                             onClick={async () => {
                               try {

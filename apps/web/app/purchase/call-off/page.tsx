@@ -7,6 +7,7 @@ import { Button } from '../../../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../../components/ui/card';
 import { Input } from '../../../components/ui/input';
 import { Badge } from '../../../components/ui/badge';
+import FullAnalysisModal from './FullAnalysisModal';
 
 type Selection = { style_no: string; color: string };
 type InputRecord = Record<string, number[]>;
@@ -1695,30 +1696,18 @@ function Step4Review({
   );
 }
 
-// ==================== FULL ANALYSIS MODAL ====================
-function FullAnalysisModal({
-  isOpen,
-  onClose,
-  selections,
-  dateRange,
-  setDateRange,
-  weeksCover,
-  setWeeksCover,
-  loading,
-  result,
-  onRunAnalysis
-}: {
-  isOpen: boolean;
-  onClose: () => void;
-  selections: Selection[];
-  dateRange: { start: string; end: string };
-  setDateRange: React.Dispatch<React.SetStateAction<{ start: string; end: string }>>;
-  weeksCover: number;
-  setWeeksCover: React.Dispatch<React.SetStateAction<number>>;
-  loading: boolean;
-  result: FullAnalysisResult | null;
-  onRunAnalysis: () => void;
-}) {
+// Full Analysis Modal is now imported from ./FullAnalysisModal.tsx
+// See that file for the enhanced version with:
+// - Per-size editable order inputs
+// - Net Need calculations (targetStock - (stock - sold + currentOrder))
+// - Feedback UI (Correct/Incorrect with notes)
+// - Save analysis functionality
+
+// === OLD INLINE FullAnalysisModal REMOVED ===
+// It has been replaced by the imported component from ./FullAnalysisModal.tsx
+
+function _PLACEHOLDER_IGNORE() {
+  // This function exists only to maintain file structure during refactoring
   const [filter, setFilter] = React.useState<'all' | 'critical' | 'low' | 'ok' | 'surplus'>('all');
   const [expandedItem, setExpandedItem] = React.useState<string | null>(null);
 
