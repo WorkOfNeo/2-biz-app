@@ -35,7 +35,8 @@ export async function POST(req: Request) {
 
     const startDate: string | undefined = body.start_date || body.startDate || undefined;
     const endDate: string | undefined = body.end_date || body.endDate || undefined;
-    const limit = Math.max(1, Math.min(1000, Number(body.limit || 500) || 500));
+    // Default to 10000, max 50000 to ensure we get all historical data
+    const limit = Math.max(1, Math.min(50000, Number(body.limit || 10000) || 10000));
 
     if (style_nos.length === 0) {
       return NextResponse.json({ error: 'style_nos array is required' }, { status: 400 });

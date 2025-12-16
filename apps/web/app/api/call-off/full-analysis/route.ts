@@ -20,6 +20,7 @@ type SelectionInput = {
 
 type ItemAnalysis = {
   style_no: string;
+  style_name: string;
   color: string;
   sizes: string[];
   stock: number[];
@@ -45,6 +46,7 @@ type ItemAnalysis = {
 
 type OrderByStyle = {
   style_no: string;
+  style_name: string;
   totalOrder: number;
   colors: Array<{
     color: string;
@@ -130,6 +132,17 @@ export async function POST(req: Request) {
     // Get unique style numbers and colors
     const styleNos = Array.from(new Set(selections.map((s: SelectionInput) => s.style_no)));
     const colors = Array.from(new Set(selections.map((s: SelectionInput) => s.color)));
+
+    // Fetch style names for display
+    const { data: stylesData } = await supabase
+      .from('styles')
+      .select('style_no, style_name')
+      .in('style_no', styleNos);
+    
+    const styleNameMap = new Map<string, string>();
+    (stylesData || []).forEach((s: any) => {
+      styleNameMap.set(s.style_no, s.style_name || s.style_no);
+    });
 
     // Fetch current stock data
     const { data: stockData, error: stockError } = await supabase
@@ -338,6 +351,7 @@ export async function POST(req: Request) {
 
       items.push({
         style_no,
+        style_name: styleNameMap.get(style_no) || style_no,
         color,
         sizes,
         stock,
@@ -379,6 +393,7 @@ export async function POST(req: Request) {
         if (!ordersByStyleMap.has(item.style_no)) {
           ordersByStyleMap.set(item.style_no, {
             style_no: item.style_no,
+            style_name: item.style_name,
             totalOrder: 0,
             colors: []
           });
@@ -404,44 +419,31 @@ export async function POST(req: Request) {
     const topSurplus = items.filter(i => i.status === 'surplus').slice(0, 3);
     const topTrending = items.filter(i => i.trendDirection === 'up').slice(0, 3);
 
-    const aiPrompt = `You are an expert inventory analyst for a fashion retailer specializing in NOOS (Never Out Of Stock) replenishment. Provide a comprehensive, actionable analysis.
+    const aiPrompt = `Analyze this NOOS inventory data and provide a focused summary. Be concise and stick to the data - no generic business advice.
 
-## Current Analysis Period: ${periodDisplay}
-## Next Month Comparison: ${nextMonthDisplay}
-## Target Stock Coverage: ${weeks_cover} weeks
+PERIOD: ${periodDisplay} | TARGET: ${weeks_cover} weeks cover
 
-### STOCK STATUS OVERVIEW
-- Total items analyzed: ${items.length}
-- CRITICAL (out of stock or <25% of target): ${criticalItems} items
-- LOW STOCK (25-50% of target): ${lowItems} items  
-- HEALTHY: ${okItems} items
-- SURPLUS (>150% of target): ${surplusItems} items
-- **TOTAL SUGGESTED ORDER: ${totalSuggestedOrder} units**
+STATUS: ${criticalItems} critical, ${lowItems} low, ${okItems} OK, ${surplusItems} surplus
+TOTAL ORDER NEEDED: ${totalSuggestedOrder} units
 
-### TREND ANALYSIS (comparing to next month historical data)
-- Items with INCREASING demand: ${upTrends}
-- Items with DECREASING demand: ${downTrends}
-- Items with STABLE demand: ${items.length - upTrends - downTrends}
+${topCritical.length > 0 ? `CRITICAL (order immediately):
+${topCritical.map(i => `• ${i.style_name} (${i.color}): ${i.totalNetStock} in stock → need +${i.suggestedOrder}${i.trendDirection === 'up' ? ' [demand rising]' : ''}`).join('\n')}` : ''}
 
-${topCritical.length > 0 ? `### CRITICAL ITEMS (Immediate Action Required)
-${topCritical.map(i => `• ${i.style_no} - ${i.color}: Currently ${i.totalNetStock} units, need ${i.suggestedOrder} more (target: ${i.targetStock})${i.trendDirection === 'up' ? ' ⬆️ DEMAND RISING' : ''}`).join('\n')}` : ''}
+${topTrending.length > 0 ? `RISING DEMAND (prepare extra):
+${topTrending.map(i => `• ${i.style_name} (${i.color}): +${i.trendPercent.toFixed(0)}% vs next month`).join('\n')}` : ''}
 
-${topTrending.length > 0 ? `### TRENDING UP (Watch These)
-${topTrending.map(i => `• ${i.style_no} - ${i.color}: +${i.trendPercent.toFixed(0)}% expected demand increase`).join('\n')}` : ''}
+${topSurplus.length > 0 ? `SURPLUS (slow movers):
+${topSurplus.map(i => `• ${i.style_name} (${i.color}): ${i.totalNetStock - i.targetStock} units above target`).join('\n')}` : ''}
 
-${topSurplus.length > 0 ? `### SURPLUS ITEMS (Consider Promotions)
-${topSurplus.map(i => `• ${i.style_no} - ${i.color}: ${i.totalNetStock} units (${i.totalNetStock - i.targetStock} above target)${i.trendDirection === 'down' ? ' ⬇️ DEMAND FALLING' : ''}`).join('\n')}` : ''}
+${ordersByStyle.length > 0 ? `ORDER BY STYLE:
+${ordersByStyle.slice(0, 5).map(s => `• ${s.style_name}: +${s.totalOrder} (${s.colors.length} colors)`).join('\n')}` : ''}
 
-${ordersByStyle.length > 0 ? `### ORDER SUMMARY BY STYLE
-${ordersByStyle.slice(0, 5).map(s => `• ${s.style_no}: ${s.totalOrder} units across ${s.colors.length} colors`).join('\n')}` : ''}
+Provide a brief summary in 3-4 sentences:
+1. What to order now (style names and quantities)
+2. What's trending up for next month
+3. Any items with too much stock
 
-Provide a professional analysis with:
-1. **IMMEDIATE ACTIONS** - What needs to be ordered NOW
-2. **NEXT MONTH PREPARATION** - What to watch based on trends
-3. **RISK ASSESSMENT** - Any patterns or concerns
-4. **RECOMMENDATIONS** - Specific suggestions for optimization
-
-Keep the response focused and actionable. Use bullet points where helpful.`;
+Keep it SHORT. Only mention specific styles. No general business advice.`;
 
     let aiSummary = '';
     try {

@@ -23,6 +23,7 @@ type AISuggestion = {
 
 type FullAnalysisItem = {
   style_no: string;
+  style_name: string;
   color: string;
   sizes: string[];
   stock: number[];
@@ -48,6 +49,7 @@ type FullAnalysisItem = {
 
 type OrderByStyle = {
   style_no: string;
+  style_name: string;
   totalOrder: number;
   colors: Array<{
     color: string;
@@ -1697,6 +1699,92 @@ function FullAnalysisModal({
     }
   };
 
+  // Simple markdown renderer for AI summary
+  const renderMarkdown = (text: string) => {
+    // Split by lines and process each
+    const lines = text.split('\n');
+    const elements: React.ReactNode[] = [];
+    let inList = false;
+    let listItems: string[] = [];
+
+    const processLine = (line: string) => {
+      // Bold text: **text** or __text__
+      line = line.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+      line = line.replace(/__(.*?)__/g, '<strong>$1</strong>');
+      // Italic: *text* or _text_
+      line = line.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+      line = line.replace(/_([^_]+)_/g, '<em>$1</em>');
+      return line;
+    };
+
+    const flushList = () => {
+      if (listItems.length > 0) {
+        elements.push(
+          <ul key={`list-${elements.length}`} className="list-disc list-inside my-2 space-y-1">
+            {listItems.map((item, i) => (
+              <li key={i} className="text-sm" dangerouslySetInnerHTML={{ __html: processLine(item) }} />
+            ))}
+          </ul>
+        );
+        listItems = [];
+      }
+      inList = false;
+    };
+
+    lines.forEach((line, idx) => {
+      const trimmed = line.trim();
+      
+      // Headers
+      if (trimmed.startsWith('### ')) {
+        flushList();
+        elements.push(
+          <h4 key={idx} className="font-semibold text-slate-800 mt-4 mb-2 text-sm">
+            {trimmed.slice(4)}
+          </h4>
+        );
+      } else if (trimmed.startsWith('## ')) {
+        flushList();
+        elements.push(
+          <h3 key={idx} className="font-bold text-slate-900 mt-4 mb-2">
+            {trimmed.slice(3)}
+          </h3>
+        );
+      } else if (trimmed.startsWith('# ')) {
+        flushList();
+        elements.push(
+          <h2 key={idx} className="font-bold text-lg text-slate-900 mt-4 mb-2">
+            {trimmed.slice(2)}
+          </h2>
+        );
+      }
+      // Bullet points
+      else if (trimmed.startsWith('- ') || trimmed.startsWith('• ') || trimmed.startsWith('* ')) {
+        inList = true;
+        listItems.push(trimmed.slice(2));
+      }
+      // Numbered lists
+      else if (/^\d+\.\s/.test(trimmed)) {
+        inList = true;
+        listItems.push(trimmed.replace(/^\d+\.\s/, ''));
+      }
+      // Empty line
+      else if (trimmed === '') {
+        flushList();
+        elements.push(<div key={idx} className="h-2" />);
+      }
+      // Regular paragraph
+      else {
+        flushList();
+        elements.push(
+          <p key={idx} className="text-sm my-1" dangerouslySetInnerHTML={{ __html: processLine(trimmed) }} />
+        );
+      }
+    });
+
+    flushList();
+    return elements;
+  };
+
   // Generate and download PDF report
   const downloadPDF = () => {
     if (!result) return;
@@ -1803,7 +1891,7 @@ function FullAnalysisModal({
     <tbody>
       ${result.ordersByStyle.map(s => `
         <tr>
-          <td><strong>${s.style_no}</strong></td>
+          <td><strong>${s.style_name || s.style_no}</strong></td>
           <td class="text-right"><strong>+${s.totalOrder}</strong></td>
           <td>${s.colors.map(c => `${c.color}: +${c.order}`).join(', ')}</td>
         </tr>
@@ -1837,7 +1925,7 @@ function FullAnalysisModal({
     <tbody>
       ${result.items.map(item => `
         <tr>
-          <td>${item.style_no}</td>
+          <td>${item.style_name || item.style_no}</td>
           <td>${item.color}</td>
           <td class="text-center"><span class="badge ${item.status}">${item.status.toUpperCase()}</span></td>
           <td class="text-center ${item.trendDirection === 'up' ? 'trend-up' : item.trendDirection === 'down' ? 'trend-down' : ''}">
@@ -2018,7 +2106,7 @@ function FullAnalysisModal({
                       {result.ordersByStyle.map((style) => (
                         <div key={style.style_no} className="border rounded-lg p-3 bg-white">
                           <div className="flex items-center justify-between mb-2">
-                            <span className="font-semibold text-sm">{style.style_no}</span>
+                            <span className="font-semibold text-sm">{style.style_name || style.style_no}</span>
                             <span className="text-lg font-bold text-[#8FA894]">+{style.totalOrder}</span>
                           </div>
                           <div className="flex flex-wrap gap-1">
@@ -2053,8 +2141,8 @@ function FullAnalysisModal({
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="prose prose-sm max-w-none text-slate-700">
-                    <div className="whitespace-pre-wrap text-sm">{result.summary.aiSummary}</div>
+                  <div className="text-slate-700">
+                    {renderMarkdown(result.summary.aiSummary)}
                   </div>
                   <div className="mt-4 pt-3 border-t flex items-center gap-4 text-xs text-slate-500">
                     <span>Analysis Period: {result.dateRange.display}</span>
@@ -2127,7 +2215,7 @@ function FullAnalysisModal({
                               </svg>
                             </td>
                             <td className="p-3">
-                              <div className="font-medium">{item.style_no}</div>
+                              <div className="font-medium">{item.style_name || item.style_no}</div>
                               <div className="text-xs text-slate-500">{item.color}</div>
                             </td>
                             <td className="p-3 text-center">
