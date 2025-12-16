@@ -171,25 +171,62 @@ export async function POST(req: Request) {
       rowsReturned: stockData?.length || 0
     });
 
-    // Fetch historical sales for the date range
-    // Use a high limit to ensure we get all data (Supabase default is 1000)
-    const { data: historicalData, error: historicalError, count: historicalCount } = await supabase
-      .from('historical_sales')
-      .select('style_no, color, size, quantity', { count: 'exact' })
-      .in('style_no', styleNos)
-      .in('color', colors)
-      .gte('date', startDate)
-      .lte('date', endDate)
-      .limit(50000);
+    // Fetch historical sales for the date range WITH PAGINATION
+    // Supabase has a server-side limit (PGRST_MAX_ROWS) that defaults to 1000
+    // We need to paginate to get all data
+    const PAGE_SIZE = 1000;
+    let allHistoricalData: any[] = [];
+    let historicalCount = 0;
+    let page = 0;
+    let hasMore = true;
 
-    if (historicalError) {
-      return NextResponse.json({ error: historicalError.message }, { status: 500 });
+    console.log('🔍 [DEBUG] Fetching historical data with pagination...');
+
+    while (hasMore) {
+      const from = page * PAGE_SIZE;
+      const to = from + PAGE_SIZE - 1;
+      
+      const { data: pageData, error: pageError, count } = await supabase
+        .from('historical_sales')
+        .select('style_no, color, size, quantity', { count: 'exact' })
+        .in('style_no', styleNos)
+        .in('color', colors)
+        .gte('date', startDate)
+        .lte('date', endDate)
+        .range(from, to);
+
+      if (pageError) {
+        return NextResponse.json({ error: pageError.message }, { status: 500 });
+      }
+
+      if (page === 0 && count !== null) {
+        historicalCount = count;
+        console.log(`🔍 [DEBUG] Total historical rows to fetch: ${count}`);
+      }
+
+      if (pageData && pageData.length > 0) {
+        allHistoricalData = allHistoricalData.concat(pageData);
+        console.log(`🔍 [DEBUG] Page ${page + 1}: fetched ${pageData.length} rows (total so far: ${allHistoricalData.length})`);
+      }
+
+      // Check if we got less than PAGE_SIZE, meaning we're done
+      hasMore = pageData !== null && pageData.length === PAGE_SIZE;
+      page++;
+
+      // Safety limit to prevent infinite loops
+      if (page > 100) {
+        console.warn('⚠️ [WARNING] Reached max pagination limit (100 pages)');
+        break;
+      }
     }
 
-    console.log('🔍 [DEBUG] Historical data query:', {
+    const historicalData = allHistoricalData;
+
+    console.log('🔍 [DEBUG] Historical data query COMPLETE:', {
       dateRange: `${startDate} to ${endDate}`,
       rowsReturned: historicalData?.length || 0,
       totalCount: historicalCount,
+      pagesLoaded: page,
       sampleRows: historicalData?.slice(0, 5)
     });
 
@@ -197,19 +234,41 @@ export async function POST(req: Request) {
     const totalHistoricalQty = (historicalData || []).reduce((sum: number, row: any) => sum + (row.quantity || 0), 0);
     console.log('🔍 [DEBUG] Total historical quantity:', totalHistoricalQty);
 
-    // Fetch next month historical data for trend comparison
-    const { data: nextMonthData, error: nextMonthError } = await supabase
-      .from('historical_sales')
-      .select('style_no, color, size, quantity')
-      .in('style_no', styleNos)
-      .in('color', colors)
-      .gte('date', nextMonthStartStr)
-      .lte('date', nextMonthEndStr)
-      .limit(50000);
+    // Fetch next month historical data for trend comparison WITH PAGINATION
+    let allNextMonthData: any[] = [];
+    let nextMonthPage = 0;
+    let nextMonthHasMore = true;
 
-    if (nextMonthError) {
-      console.warn('Could not fetch next month data:', nextMonthError.message);
+    while (nextMonthHasMore) {
+      const from = nextMonthPage * PAGE_SIZE;
+      const to = from + PAGE_SIZE - 1;
+      
+      const { data: pageData, error: pageError } = await supabase
+        .from('historical_sales')
+        .select('style_no, color, size, quantity')
+        .in('style_no', styleNos)
+        .in('color', colors)
+        .gte('date', nextMonthStartStr)
+        .lte('date', nextMonthEndStr)
+        .range(from, to);
+
+      if (pageError) {
+        console.warn('Could not fetch next month data:', pageError.message);
+        break;
+      }
+
+      if (pageData && pageData.length > 0) {
+        allNextMonthData = allNextMonthData.concat(pageData);
+      }
+
+      nextMonthHasMore = pageData !== null && pageData.length === PAGE_SIZE;
+      nextMonthPage++;
+
+      if (nextMonthPage > 100) break;
     }
+
+    const nextMonthData = allNextMonthData;
+    console.log('🔍 [DEBUG] Next month data loaded:', nextMonthData.length, 'rows');
 
     // Process each selection
     const items: ItemAnalysis[] = [];

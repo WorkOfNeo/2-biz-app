@@ -193,17 +193,17 @@ export default function PurchaseMakeOrderPage() {
 
       {!started && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Purchase Order Process</CardTitle>
-              <CardDescription>
-                Start the guided 4-step order flow to create your purchase order.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <Button onClick={startProcess}>Start Purchase Order</Button>
-            </CardContent>
-          </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle>Purchase Order Process</CardTitle>
+            <CardDescription>
+              Start the guided 4-step order flow to create your purchase order.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button onClick={startProcess}>Start Purchase Order</Button>
+          </CardContent>
+        </Card>
           <Card className="border-2 border-[#C5D5CA]">
             <CardHeader>
               <CardTitle>NOOS Call Off</CardTitle>
