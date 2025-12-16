@@ -315,6 +315,12 @@ export default function StyleStatisticsPage() {
       if (dateFrom) payload.start_date = dateFrom;
       if (dateTo) payload.end_date = dateTo;
 
+      console.group('🔍 STYLE STATISTICS Debug');
+      console.log('📤 Request payload:', payload);
+      console.log('📅 Date range:', dateFrom, 'to', dateTo);
+      console.log('👕 Style:', selectedStyleNo);
+      console.log('🎨 Color:', selectedColor);
+
       const response = await fetch('/api/historical-sales/list', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -323,13 +329,50 @@ export default function StyleStatisticsPage() {
 
       const json = await response.json();
       if (!response.ok) {
+        console.error('❌ API Error:', json);
+        console.groupEnd();
         setError(json.error || 'Failed to fetch sales data');
         return;
       }
 
-      setSalesData(json.data || []);
+      // Debug logging
+      const data = json.data || [];
+      console.log('📥 Response received:');
+      console.log('   Rows returned:', data.length);
+      console.log('   Total count (in DB):', json.count);
+      
+      // Server debug info
+      if (json._debug) {
+        console.log('🔧 SERVER DEBUG:', json._debug);
+      }
+      
+      // Calculate total quantity
+      const totalQty = data.reduce((sum: number, row: SalesRow) => sum + row.quantity, 0);
+      console.log('   Total quantity:', totalQty);
+      
+      // Show sample rows
+      console.log('   Sample rows (first 5):', data.slice(0, 5));
+      
+      // Aggregate by size for comparison
+      const sizeMap = new Map<string, number>();
+      for (const row of data) {
+        const currentQty = sizeMap.get(row.size) || 0;
+        sizeMap.set(row.size, currentQty + row.quantity);
+      }
+      console.log('   Aggregated by size:', Object.fromEntries(sizeMap));
+      
+      // Show unique dates
+      const uniqueDates = Array.from(new Set(data.map((r: SalesRow) => r.date))).sort();
+      console.log('   Date range in data:', uniqueDates[0], 'to', uniqueDates[uniqueDates.length - 1]);
+      console.log('   Unique dates count:', uniqueDates.length);
+      
+      console.groupEnd();
+
+      setSalesData(data);
       setHasLoadedOnce(true);
     } catch (err: any) {
+      console.error('❌ Fetch error:', err);
+      console.groupEnd();
       setError(err.message || 'Failed to fetch sales data');
     } finally {
       setLoading(false);

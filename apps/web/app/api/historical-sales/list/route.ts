@@ -42,6 +42,14 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'style_nos array is required' }, { status: 400 });
     }
 
+    console.log('🔍 [DEBUG] historical-sales/list query:', {
+      style_nos,
+      colors,
+      startDate,
+      endDate,
+      limit
+    });
+
     let query = supabase
       .from('historical_sales')
       .select('style_no, color, size, date, quantity', { count: 'exact' })
@@ -62,10 +70,30 @@ export async function POST(req: Request) {
     const { data, error, count } = await query;
 
     if (error) {
+      console.error('🔍 [DEBUG] Query error:', error);
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    return NextResponse.json({ data, count });
+    // Calculate total quantity
+    const totalQty = (data || []).reduce((sum: number, row: any) => sum + (row.quantity || 0), 0);
+    
+    console.log('🔍 [DEBUG] historical-sales/list result:', {
+      rowsReturned: data?.length || 0,
+      totalCount: count,
+      totalQuantity: totalQty,
+      sampleRows: (data || []).slice(0, 3)
+    });
+
+    return NextResponse.json({ 
+      data, 
+      count,
+      _debug: {
+        queryParams: { style_nos, colors, startDate, endDate, limit },
+        rowsReturned: data?.length || 0,
+        totalCount: count,
+        totalQuantity: totalQty
+      }
+    });
   } catch (error: any) {
     return NextResponse.json({ error: error.message || 'Internal server error' }, { status: 500 });
   }
