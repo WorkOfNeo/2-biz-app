@@ -534,28 +534,26 @@ export default function StyleStatisticsPage() {
 
               {/* Vertical Bar Chart */}
               <div className="bg-white border rounded-lg p-6">
-                <div className="flex items-end justify-around gap-3 h-80">
+                <div className="flex items-end justify-around gap-3" style={{ height: '320px' }}>
                   {aggregatedData.map((item) => {
                     const total = aggregatedData.reduce((sum, d) => sum + d.quantity, 0);
-                    const percentage = maxQuantity > 0 ? (item.quantity / maxQuantity) * 100 : 0;
+                    const percentage = maxQuantity > 0 ? (item.quantity / maxQuantity) : 0;
                     const percentOfTotal = total > 0 ? (item.quantity / total) * 100 : 0;
+                    const barHeight = Math.max(percentage * 280, 20); // 280px max height, 20px minimum
                     return (
-                      <div key={item.size} className="flex flex-col items-center flex-1 min-w-0">
-                        <div className="flex-1 w-full flex flex-col justify-end items-center">
-                          <div className="text-xs font-semibold text-slate-900 mb-1">
-                            {item.quantity}
-                          </div>
-                          <div className="text-xs font-medium text-slate-600 mb-2">
-                            {percentOfTotal.toFixed(1)}%
-                          </div>
-                          <div
-                            className="w-full bg-gradient-to-t from-slate-800 to-slate-600 rounded-t-lg transition-all hover:from-slate-700 hover:to-slate-500 shadow-sm"
-                            style={{ 
-                              height: `${Math.max(percentage, 3)}%`,
-                              minHeight: percentage < 5 ? '12px' : '0px'
-                            }}
-                          >
-                          </div>
+                      <div key={item.size} className="flex flex-col items-center" style={{ flex: '1 1 0', minWidth: 0 }}>
+                        <div className="text-xs font-semibold text-slate-900 mb-1">
+                          {item.quantity}
+                        </div>
+                        <div className="text-xs font-medium text-slate-600 mb-2">
+                          {percentOfTotal.toFixed(1)}%
+                        </div>
+                        <div
+                          className="w-full bg-gradient-to-t from-slate-800 to-slate-600 rounded-t-lg transition-all hover:from-slate-700 hover:to-slate-500 shadow-sm"
+                          style={{ 
+                            height: `${barHeight}px`
+                          }}
+                        >
                         </div>
                         <div className="text-sm font-semibold text-slate-800 mt-3 whitespace-nowrap">
                           {item.size}
@@ -610,27 +608,25 @@ export default function StyleStatisticsPage() {
 
                     {/* Vertical Bar Chart */}
                     <div className="bg-white border rounded-lg p-6">
-                      <div className="flex items-end justify-around gap-3 h-80">
+                      <div className="flex items-end justify-around gap-3" style={{ height: '320px' }}>
                         {weekData.data.map((item) => {
-                          const percentage = weekMax > 0 ? (item.quantity / weekMax) * 100 : 0;
+                          const percentage = weekMax > 0 ? (item.quantity / weekMax) : 0;
                           const percentOfTotal = weekTotal > 0 ? (item.quantity / weekTotal) * 100 : 0;
+                          const barHeight = Math.max(percentage * 280, 20); // 280px max height, 20px minimum
                           return (
-                            <div key={item.size} className="flex flex-col items-center flex-1 min-w-0">
-                              <div className="flex-1 w-full flex flex-col justify-end items-center">
-                                <div className="text-xs font-semibold text-slate-900 mb-1">
-                                  {item.quantity}
-                                </div>
-                                <div className="text-xs font-medium text-slate-600 mb-2">
-                                  {percentOfTotal.toFixed(1)}%
-                                </div>
-                                <div
-                                  className="w-full bg-gradient-to-t from-slate-800 to-slate-600 rounded-t-lg transition-all hover:from-slate-700 hover:to-slate-500 shadow-sm"
-                                  style={{ 
-                                    height: `${Math.max(percentage, 3)}%`,
-                                    minHeight: percentage < 5 ? '12px' : '0px'
-                                  }}
-                                >
-                                </div>
+                            <div key={item.size} className="flex flex-col items-center" style={{ flex: '1 1 0', minWidth: 0 }}>
+                              <div className="text-xs font-semibold text-slate-900 mb-1">
+                                {item.quantity}
+                              </div>
+                              <div className="text-xs font-medium text-slate-600 mb-2">
+                                {percentOfTotal.toFixed(1)}%
+                              </div>
+                              <div
+                                className="w-full bg-gradient-to-t from-slate-800 to-slate-600 rounded-t-lg transition-all hover:from-slate-700 hover:to-slate-500 shadow-sm"
+                                style={{ 
+                                  height: `${barHeight}px`
+                                }}
+                              >
                               </div>
                               <div className="text-sm font-semibold text-slate-800 mt-3 whitespace-nowrap">
                                 {item.size}
@@ -688,27 +684,25 @@ export default function StyleStatisticsPage() {
 
                     {/* Vertical Bar Chart */}
                     <div className="bg-white border rounded-lg p-6">
-                      <div className="flex items-end justify-around gap-3 h-80">
+                      <div className="flex items-end justify-around gap-3" style={{ height: '320px' }}>
                         {monthData.data.map((item) => {
-                          const percentage = monthMax > 0 ? (item.quantity / monthMax) * 100 : 0;
+                          const percentage = monthMax > 0 ? (item.quantity / monthMax) : 0;
                           const percentOfTotal = monthTotal > 0 ? (item.quantity / monthTotal) * 100 : 0;
+                          const barHeight = Math.max(percentage * 280, 20); // 280px max height, 20px minimum
                           return (
-                            <div key={item.size} className="flex flex-col items-center flex-1 min-w-0">
-                              <div className="flex-1 w-full flex flex-col justify-end items-center">
-                                <div className="text-xs font-semibold text-slate-900 mb-1">
-                                  {item.quantity}
-                                </div>
-                                <div className="text-xs font-medium text-slate-600 mb-2">
-                                  {percentOfTotal.toFixed(1)}%
-                                </div>
-                                <div
-                                  className="w-full bg-gradient-to-t from-slate-800 to-slate-600 rounded-t-lg transition-all hover:from-slate-700 hover:to-slate-500 shadow-sm"
-                                  style={{ 
-                                    height: `${Math.max(percentage, 3)}%`,
-                                    minHeight: percentage < 5 ? '12px' : '0px'
-                                  }}
-                                >
-                                </div>
+                            <div key={item.size} className="flex flex-col items-center" style={{ flex: '1 1 0', minWidth: 0 }}>
+                              <div className="text-xs font-semibold text-slate-900 mb-1">
+                                {item.quantity}
+                              </div>
+                              <div className="text-xs font-medium text-slate-600 mb-2">
+                                {percentOfTotal.toFixed(1)}%
+                              </div>
+                              <div
+                                className="w-full bg-gradient-to-t from-slate-800 to-slate-600 rounded-t-lg transition-all hover:from-slate-700 hover:to-slate-500 shadow-sm"
+                                style={{ 
+                                  height: `${barHeight}px`
+                                }}
+                              >
                               </div>
                               <div className="text-sm font-semibold text-slate-800 mt-3 whitespace-nowrap">
                                 {item.size}
