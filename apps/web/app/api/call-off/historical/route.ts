@@ -28,8 +28,8 @@ export async function POST(req: Request) {
       }
       const start = new Date(year, month - 1, 1);
       const end = new Date(year, month, 0);
-      startDateStr = start.toISOString().split('T')[0];
-      endDateStr = end.toISOString().split('T')[0];
+      startDateStr = start.toISOString().split('T')[0] as string;
+      endDateStr = end.toISOString().split('T')[0] as string;
     } else {
       return NextResponse.json({ error: 'Either startDate/endDate or referenceMonth is required' }, { status: 400 });
     }
