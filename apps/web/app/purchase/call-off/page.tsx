@@ -29,19 +29,36 @@ type FullAnalysisItem = {
   sold: number[];
   netStock: number[];
   historical: number[];
+  nextMonthHistorical: number[];
   totalStock: number;
   totalSold: number;
   totalNetStock: number;
   totalHistorical: number;
+  totalNextMonthHistorical: number;
   weeklyRate: number;
+  nextMonthWeeklyRate: number;
   targetStock: number;
   suggestedOrder: number;
+  suggestedOrderBySize: number[];
+  trendDirection: 'up' | 'down' | 'stable';
+  trendPercent: number;
   status: 'critical' | 'low' | 'ok' | 'surplus';
   priority: number;
 };
 
+type OrderByStyle = {
+  style_no: string;
+  totalOrder: number;
+  colors: Array<{
+    color: string;
+    order: number;
+    status: 'critical' | 'low' | 'ok' | 'surplus';
+  }>;
+};
+
 type FullAnalysisResult = {
   items: FullAnalysisItem[];
+  ordersByStyle: OrderByStyle[];
   summary: {
     totalItems: number;
     criticalItems: number;
@@ -50,8 +67,14 @@ type FullAnalysisResult = {
     surplusItems: number;
     totalSuggestedOrder: number;
     aiSummary: string;
+    trendSummary: string;
   };
   dateRange: {
+    start: string;
+    end: string;
+    display: string;
+  };
+  nextMonthRange: {
     start: string;
     end: string;
     display: string;
@@ -1674,6 +1697,176 @@ function FullAnalysisModal({
     }
   };
 
+  // Generate and download PDF report
+  const downloadPDF = () => {
+    if (!result) return;
+
+    // Create a printable HTML document
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      alert('Please allow popups to download the PDF report');
+      return;
+    }
+
+    const html = `
+<!DOCTYPE html>
+<html>
+<head>
+  <title>NOOS Call Off Analysis Report</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 40px; color: #333; }
+    h1 { color: #8FA894; margin-bottom: 5px; }
+    h2 { color: #666; margin-top: 30px; border-bottom: 2px solid #C5D5CA; padding-bottom: 5px; }
+    h3 { color: #888; margin-top: 20px; }
+    .meta { color: #888; font-size: 12px; margin-bottom: 30px; }
+    .summary-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin: 20px 0; }
+    .summary-box { padding: 15px; border-radius: 8px; text-align: center; }
+    .summary-box.critical { background: #FEE2E2; color: #991B1B; }
+    .summary-box.low { background: #FEF3C7; color: #92400E; }
+    .summary-box.ok { background: #D1FAE5; color: #065F46; }
+    .summary-box.surplus { background: #DBEAFE; color: #1E40AF; }
+    .summary-box.total { background: #F3F4F6; color: #374151; }
+    .summary-box .number { font-size: 24px; font-weight: bold; }
+    .summary-box .label { font-size: 11px; text-transform: uppercase; }
+    .order-section { background: #F0FDF4; padding: 20px; border-radius: 8px; margin: 20px 0; }
+    .order-total { font-size: 28px; font-weight: bold; color: #8FA894; }
+    table { width: 100%; border-collapse: collapse; margin: 15px 0; font-size: 11px; }
+    th, td { padding: 8px; text-align: left; border: 1px solid #E5E7EB; }
+    th { background: #F5F3F0; font-weight: 600; }
+    .text-right { text-align: right; }
+    .text-center { text-align: center; }
+    .badge { padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: 600; }
+    .badge.critical { background: #EF4444; color: white; }
+    .badge.low { background: #F59E0B; color: white; }
+    .badge.ok { background: #22C55E; color: white; }
+    .badge.surplus { background: #3B82F6; color: white; }
+    .trend-up { color: #16A34A; }
+    .trend-down { color: #DC2626; }
+    .ai-summary { background: #F5F3FF; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #B8A8D8; }
+    .ai-summary pre { white-space: pre-wrap; font-family: inherit; margin: 0; }
+    .page-break { page-break-before: always; }
+    @media print { 
+      body { margin: 20px; }
+      .no-print { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <h1>NOOS Call Off Analysis Report</h1>
+  <div class="meta">
+    Generated: ${new Date().toLocaleString()}<br>
+    Analysis Period: ${result.dateRange.display}<br>
+    ${result.nextMonthRange ? `Next Month Comparison: ${result.nextMonthRange.display}<br>` : ''}
+    Target Coverage: ${weeksCover} weeks
+  </div>
+
+  <h2>Summary</h2>
+  <div class="summary-grid">
+    <div class="summary-box total">
+      <div class="number">${result.summary.totalItems}</div>
+      <div class="label">Total Items</div>
+    </div>
+    <div class="summary-box critical">
+      <div class="number">${result.summary.criticalItems}</div>
+      <div class="label">Critical</div>
+    </div>
+    <div class="summary-box low">
+      <div class="number">${result.summary.lowItems}</div>
+      <div class="label">Low Stock</div>
+    </div>
+    <div class="summary-box ok">
+      <div class="number">${result.summary.okItems}</div>
+      <div class="label">OK</div>
+    </div>
+    <div class="summary-box surplus">
+      <div class="number">${result.summary.surplusItems}</div>
+      <div class="label">Surplus</div>
+    </div>
+  </div>
+
+  <div class="order-section">
+    <h3 style="margin-top: 0;">📦 Total Suggested Order</h3>
+    <div class="order-total">+${result.summary.totalSuggestedOrder} units</div>
+    ${result.summary.trendSummary ? `<div style="margin-top: 10px; color: #666;">📊 ${result.summary.trendSummary}</div>` : ''}
+  </div>
+
+  ${result.ordersByStyle && result.ordersByStyle.length > 0 ? `
+  <h2>Order by Style</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Style</th>
+        <th class="text-right">Total Order</th>
+        <th>Colors Breakdown</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${result.ordersByStyle.map(s => `
+        <tr>
+          <td><strong>${s.style_no}</strong></td>
+          <td class="text-right"><strong>+${s.totalOrder}</strong></td>
+          <td>${s.colors.map(c => `${c.color}: +${c.order}`).join(', ')}</td>
+        </tr>
+      `).join('')}
+    </tbody>
+  </table>
+  ` : ''}
+
+  <h2>AI Analysis & Recommendations</h2>
+  <div class="ai-summary">
+    <pre>${result.summary.aiSummary}</pre>
+  </div>
+
+  <div class="page-break"></div>
+  <h2>Detailed Item Analysis</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Style</th>
+        <th>Color</th>
+        <th class="text-center">Status</th>
+        <th class="text-center">Trend</th>
+        <th class="text-right">Stock</th>
+        <th class="text-right">Sold</th>
+        <th class="text-right">Net Stock</th>
+        <th class="text-right">Historical</th>
+        <th class="text-right">Target</th>
+        <th class="text-right">Order</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${result.items.map(item => `
+        <tr>
+          <td>${item.style_no}</td>
+          <td>${item.color}</td>
+          <td class="text-center"><span class="badge ${item.status}">${item.status.toUpperCase()}</span></td>
+          <td class="text-center ${item.trendDirection === 'up' ? 'trend-up' : item.trendDirection === 'down' ? 'trend-down' : ''}">
+            ${item.trendDirection === 'up' ? `↑ +${item.trendPercent.toFixed(0)}%` : item.trendDirection === 'down' ? `↓ ${item.trendPercent.toFixed(0)}%` : '—'}
+          </td>
+          <td class="text-right">${item.totalStock}</td>
+          <td class="text-right">${item.totalSold}</td>
+          <td class="text-right" style="color: ${item.totalNetStock < 0 ? '#DC2626' : 'inherit'}; font-weight: ${item.totalNetStock < 0 ? 'bold' : 'normal'};">${item.totalNetStock}</td>
+          <td class="text-right">${item.totalHistorical}</td>
+          <td class="text-right">${item.targetStock}</td>
+          <td class="text-right" style="color: #8FA894; font-weight: bold;">${item.suggestedOrder > 0 ? `+${item.suggestedOrder}` : '—'}</td>
+        </tr>
+      `).join('')}
+    </tbody>
+  </table>
+
+  <div class="no-print" style="margin-top: 40px; text-align: center;">
+    <button onclick="window.print()" style="padding: 10px 30px; background: #8FA894; color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 14px;">
+      Print / Save as PDF
+    </button>
+  </div>
+</body>
+</html>
+    `;
+
+    printWindow.document.write(html);
+    printWindow.document.close();
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       {/* Backdrop */}
@@ -1808,6 +2001,47 @@ function FullAnalysisModal({
                 </div>
               </div>
 
+              {/* Order Overview by Style */}
+              {result.ordersByStyle && result.ordersByStyle.length > 0 && (
+                <Card className="border-[#8FA894] bg-[#8FA894]/5">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm flex items-center gap-2">
+                      <svg className="w-4 h-4 text-[#8FA894]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+                      </svg>
+                      Suggested Order Summary
+                      <Badge className="ml-2 bg-[#8FA894] text-white">{result.summary.totalSuggestedOrder} units total</Badge>
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                      {result.ordersByStyle.map((style) => (
+                        <div key={style.style_no} className="border rounded-lg p-3 bg-white">
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="font-semibold text-sm">{style.style_no}</span>
+                            <span className="text-lg font-bold text-[#8FA894]">+{style.totalOrder}</span>
+                          </div>
+                          <div className="flex flex-wrap gap-1">
+                            {style.colors.map((c, i) => (
+                              <span 
+                                key={i} 
+                                className={`text-[10px] px-2 py-0.5 rounded-full ${
+                                  c.status === 'critical' ? 'bg-red-100 text-red-700' :
+                                  c.status === 'low' ? 'bg-amber-100 text-amber-700' :
+                                  'bg-slate-100 text-slate-600'
+                                }`}
+                              >
+                                {c.color}: +{c.order}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
               {/* AI Summary */}
               <Card className="border-[#B8A8D8] bg-[#B8A8D8]/5">
                 <CardHeader className="pb-2">
@@ -1815,15 +2049,24 @@ function FullAnalysisModal({
                     <svg className="w-4 h-4 text-[#B8A8D8]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
                     </svg>
-                    AI Analysis Summary
+                    AI Analysis & Recommendations
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <p className="text-sm text-slate-700 whitespace-pre-wrap">{result.summary.aiSummary}</p>
-                  <div className="mt-3 flex items-center gap-4 text-xs text-slate-500">
-                    <span>Period: {result.dateRange.display}</span>
-                    <span>Total Suggested Order: <strong className="text-[#8FA894]">{result.summary.totalSuggestedOrder} units</strong></span>
+                  <div className="prose prose-sm max-w-none text-slate-700">
+                    <div className="whitespace-pre-wrap text-sm">{result.summary.aiSummary}</div>
                   </div>
+                  <div className="mt-4 pt-3 border-t flex items-center gap-4 text-xs text-slate-500">
+                    <span>Analysis Period: {result.dateRange.display}</span>
+                    {result.nextMonthRange && (
+                      <span>Next Month Comparison: {result.nextMonthRange.display}</span>
+                    )}
+                  </div>
+                  {result.summary.trendSummary && (
+                    <div className="mt-2 text-xs text-slate-600">
+                      📊 {result.summary.trendSummary}
+                    </div>
+                  )}
                 </CardContent>
               </Card>
 
@@ -1854,6 +2097,7 @@ function FullAnalysisModal({
                       <th className="text-left p-3 font-medium w-8"></th>
                       <th className="text-left p-3 font-medium">Style / Color</th>
                       <th className="text-center p-3 font-medium">Status</th>
+                      <th className="text-center p-3 font-medium">Trend</th>
                       <th className="text-right p-3 font-medium">Stock</th>
                       <th className="text-right p-3 font-medium">Sold</th>
                       <th className="text-right p-3 font-medium">Net Stock</th>
@@ -1889,6 +2133,21 @@ function FullAnalysisModal({
                             <td className="p-3 text-center">
                               {getStatusBadge(item.status)}
                             </td>
+                            <td className="p-3 text-center">
+                              {item.trendDirection === 'up' && (
+                                <span className="text-green-600 text-xs font-medium" title={`+${item.trendPercent.toFixed(0)}%`}>
+                                  ↑ +{item.trendPercent.toFixed(0)}%
+                                </span>
+                              )}
+                              {item.trendDirection === 'down' && (
+                                <span className="text-red-600 text-xs font-medium" title={`${item.trendPercent.toFixed(0)}%`}>
+                                  ↓ {item.trendPercent.toFixed(0)}%
+                                </span>
+                              )}
+                              {item.trendDirection === 'stable' && (
+                                <span className="text-slate-400 text-xs">—</span>
+                              )}
+                            </td>
                             <td className="p-3 text-right text-slate-600">
                               {item.totalStock}
                             </td>
@@ -1913,7 +2172,7 @@ function FullAnalysisModal({
                           {/* Expanded Detail Row */}
                           {isExpanded && (
                             <tr className="border-t bg-slate-50">
-                              <td colSpan={9} className="p-4">
+                              <td colSpan={10} className="p-4">
                                 <div className="space-y-3">
                                   <div className="text-xs font-semibold text-slate-600 uppercase">Size Breakdown</div>
                                   <div className="overflow-x-auto">
@@ -2003,6 +2262,16 @@ function FullAnalysisModal({
                 Re-run Analysis
               </Button>
               <div className="flex gap-2">
+                <Button 
+                  variant="outline" 
+                  onClick={downloadPDF}
+                  className="border-[#8FA894] text-[#8FA894] hover:bg-[#8FA894]/10"
+                >
+                  <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                  Download PDF Report
+                </Button>
                 <Button variant="outline" onClick={onClose}>
                   Close
                 </Button>

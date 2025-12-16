@@ -26,19 +26,36 @@ type ItemAnalysis = {
   sold: number[];
   netStock: number[];
   historical: number[];
+  nextMonthHistorical: number[];
   totalStock: number;
   totalSold: number;
   totalNetStock: number;
   totalHistorical: number;
+  totalNextMonthHistorical: number;
   weeklyRate: number;
+  nextMonthWeeklyRate: number;
   targetStock: number;
   suggestedOrder: number;
+  suggestedOrderBySize: number[];
+  trendDirection: 'up' | 'down' | 'stable';
+  trendPercent: number;
   status: 'critical' | 'low' | 'ok' | 'surplus';
   priority: number;
 };
 
+type OrderByStyle = {
+  style_no: string;
+  totalOrder: number;
+  colors: Array<{
+    color: string;
+    order: number;
+    status: 'critical' | 'low' | 'ok' | 'surplus';
+  }>;
+};
+
 type FullAnalysisResponse = {
   items: ItemAnalysis[];
+  ordersByStyle: OrderByStyle[];
   summary: {
     totalItems: number;
     criticalItems: number;
@@ -47,8 +64,14 @@ type FullAnalysisResponse = {
     surplusItems: number;
     totalSuggestedOrder: number;
     aiSummary: string;
+    trendSummary: string;
   };
   dateRange: {
+    start: string;
+    end: string;
+    display: string;
+  };
+  nextMonthRange: {
     start: string;
     end: string;
     display: string;
@@ -83,6 +106,19 @@ export async function POST(req: Request) {
     const weeksInPeriod = daysInPeriod / 7;
     
     const periodDisplay = `${start.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} - ${end.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+
+    // Calculate "next month" date range (one month after the selected period for trend comparison)
+    // This helps understand if demand is expected to increase or decrease
+    const nextMonthStart = new Date(start);
+    nextMonthStart.setMonth(nextMonthStart.getMonth() + 1);
+    const nextMonthEnd = new Date(end);
+    nextMonthEnd.setMonth(nextMonthEnd.getMonth() + 1);
+    
+    const nextMonthStartStr = nextMonthStart.toISOString().split('T')[0] as string;
+    const nextMonthEndStr = nextMonthEnd.toISOString().split('T')[0] as string;
+    const nextMonthDisplay = `${nextMonthStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} - ${nextMonthEnd.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+    const nextMonthDays = Math.ceil((nextMonthEnd.getTime() - nextMonthStart.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+    const nextMonthWeeks = nextMonthDays / 7;
 
     const openaiApiKey = process.env.OPENAI_API_KEY;
     if (!openaiApiKey) {
@@ -119,6 +155,20 @@ export async function POST(req: Request) {
 
     if (historicalError) {
       return NextResponse.json({ error: historicalError.message }, { status: 500 });
+    }
+
+    // Fetch next month historical data for trend comparison
+    const { data: nextMonthData, error: nextMonthError } = await supabase
+      .from('historical_sales')
+      .select('style_no, color, size, quantity')
+      .in('style_no', styleNos)
+      .in('color', colors)
+      .gte('date', nextMonthStartStr)
+      .lte('date', nextMonthEndStr)
+      .limit(50000);
+
+    if (nextMonthError) {
+      console.warn('Could not fetch next month data:', nextMonthError.message);
     }
 
     // Process each selection
@@ -212,12 +262,58 @@ export async function POST(req: Request) {
       });
       const totalHistorical = historical.reduce((a: number, b: number) => a + b, 0);
 
+      // Get next month historical sales for this color (for trend analysis)
+      const colorNextMonth = (nextMonthData || []).filter(
+        (h: any) => h.style_no === style_no && h.color === color
+      );
+      const nextMonthBySize = new Map<string, number>();
+      colorNextMonth.forEach((h: any) => {
+        const normalizedSize = normalizeSize(h.size);
+        const current = nextMonthBySize.get(normalizedSize) || 0;
+        nextMonthBySize.set(normalizedSize, current + h.quantity);
+      });
+      const nextMonthHistorical = sizes.map((size: string) => {
+        const normalizedSize = normalizeSize(size);
+        return nextMonthBySize.get(normalizedSize) || nextMonthBySize.get(size) || 0;
+      });
+      const totalNextMonthHistorical = nextMonthHistorical.reduce((a: number, b: number) => a + b, 0);
+      const nextMonthWeeklyRate = totalNextMonthHistorical / nextMonthWeeks;
+
+      // Calculate trend direction and percentage
+      let trendDirection: 'up' | 'down' | 'stable' = 'stable';
+      let trendPercent = 0;
+      if (totalHistorical > 0 && totalNextMonthHistorical > 0) {
+        trendPercent = ((totalNextMonthHistorical - totalHistorical) / totalHistorical) * 100;
+        if (trendPercent > 10) trendDirection = 'up';
+        else if (trendPercent < -10) trendDirection = 'down';
+      }
+
       // Calculate weekly rate and target stock
       const weeklyRate = totalHistorical / weeksInPeriod;
       const targetStock = Math.ceil(weeklyRate * weeks_cover);
 
-      // Calculate suggested order
+      // Calculate suggested order total
       const suggestedOrder = Math.max(0, targetStock - totalNetStock);
+
+      // Calculate suggested order per size (distributed by historical pressure)
+      const historicalTotal = historical.reduce((a: number, b: number) => a + b, 0);
+      let suggestedOrderBySize: number[];
+      if (historicalTotal > 0 && suggestedOrder > 0) {
+        const exact = historical.map((h: number) => (h / historicalTotal) * suggestedOrder);
+        const floored = exact.map((v: number) => Math.floor(v));
+        let remaining = suggestedOrder - floored.reduce((a: number, b: number) => a + b, 0);
+        const fractional = exact.map((v: number, i: number) => ({ i, frac: v - Math.floor(v) }));
+        fractional.sort((a, b) => b.frac - a.frac);
+        for (let k = 0; k < remaining && k < fractional.length; k++) {
+          const item = fractional[k];
+          if (item && item.i >= 0 && item.i < floored.length) {
+            floored[item.i] = (floored[item.i] || 0) + 1;
+          }
+        }
+        suggestedOrderBySize = floored;
+      } else {
+        suggestedOrderBySize = sizes.map(() => 0);
+      }
 
       // Determine status based on stock level relative to target
       let status: 'critical' | 'low' | 'ok' | 'surplus';
@@ -248,13 +344,19 @@ export async function POST(req: Request) {
         sold,
         netStock,
         historical,
+        nextMonthHistorical,
         totalStock: stock.reduce((a, b) => a + b, 0),
         totalSold: sold.reduce((a, b) => a + b, 0),
         totalNetStock,
         totalHistorical,
+        totalNextMonthHistorical,
         weeklyRate,
+        nextMonthWeeklyRate,
         targetStock,
         suggestedOrder,
+        suggestedOrderBySize,
+        trendDirection,
+        trendPercent,
         status,
         priority
       });
@@ -270,49 +372,99 @@ export async function POST(req: Request) {
     const surplusItems = items.filter(i => i.status === 'surplus').length;
     const totalSuggestedOrder = items.reduce((sum, i) => sum + i.suggestedOrder, 0);
 
+    // Group orders by style for easy overview
+    const ordersByStyleMap = new Map<string, OrderByStyle>();
+    for (const item of items) {
+      if (item.suggestedOrder > 0) {
+        if (!ordersByStyleMap.has(item.style_no)) {
+          ordersByStyleMap.set(item.style_no, {
+            style_no: item.style_no,
+            totalOrder: 0,
+            colors: []
+          });
+        }
+        const styleGroup = ordersByStyleMap.get(item.style_no)!;
+        styleGroup.totalOrder += item.suggestedOrder;
+        styleGroup.colors.push({
+          color: item.color,
+          order: item.suggestedOrder,
+          status: item.status
+        });
+      }
+    }
+    const ordersByStyle = Array.from(ordersByStyleMap.values()).sort((a, b) => b.totalOrder - a.totalOrder);
+
+    // Calculate trend summary
+    const upTrends = items.filter(i => i.trendDirection === 'up').length;
+    const downTrends = items.filter(i => i.trendDirection === 'down').length;
+    const trendSummary = `${upTrends} items trending up, ${downTrends} trending down for next month`;
+
     // Generate AI summary
     const topCritical = items.filter(i => i.status === 'critical').slice(0, 5);
     const topSurplus = items.filter(i => i.status === 'surplus').slice(0, 3);
+    const topTrending = items.filter(i => i.trendDirection === 'up').slice(0, 3);
 
-    const aiPrompt = `You are an inventory analyst for a fashion retailer. Analyze this NOOS (Never Out Of Stock) replenishment summary and provide a brief, actionable overview (3-4 sentences max).
+    const aiPrompt = `You are an expert inventory analyst for a fashion retailer specializing in NOOS (Never Out Of Stock) replenishment. Provide a comprehensive, actionable analysis.
 
-Analysis Period: ${periodDisplay}
-Target Coverage: ${weeks_cover} weeks
+## Current Analysis Period: ${periodDisplay}
+## Next Month Comparison: ${nextMonthDisplay}
+## Target Stock Coverage: ${weeks_cover} weeks
 
-Summary:
+### STOCK STATUS OVERVIEW
 - Total items analyzed: ${items.length}
-- Critical (need immediate attention): ${criticalItems}
-- Low stock: ${lowItems}
-- OK: ${okItems}
-- Surplus (excess stock): ${surplusItems}
-- Total suggested order quantity: ${totalSuggestedOrder} units
+- CRITICAL (out of stock or <25% of target): ${criticalItems} items
+- LOW STOCK (25-50% of target): ${lowItems} items  
+- HEALTHY: ${okItems} items
+- SURPLUS (>150% of target): ${surplusItems} items
+- **TOTAL SUGGESTED ORDER: ${totalSuggestedOrder} units**
 
-${topCritical.length > 0 ? `Most Critical Items:
-${topCritical.map(i => `- ${i.style_no} ${i.color}: Net stock ${i.totalNetStock}, Target ${i.targetStock}, Need ${i.suggestedOrder}`).join('\n')}` : ''}
+### TREND ANALYSIS (comparing to next month historical data)
+- Items with INCREASING demand: ${upTrends}
+- Items with DECREASING demand: ${downTrends}
+- Items with STABLE demand: ${items.length - upTrends - downTrends}
 
-${topSurplus.length > 0 ? `Items with Surplus:
-${topSurplus.map(i => `- ${i.style_no} ${i.color}: Net stock ${i.totalNetStock}, Target ${i.targetStock}, Excess ${i.totalNetStock - i.targetStock}`).join('\n')}` : ''}
+${topCritical.length > 0 ? `### CRITICAL ITEMS (Immediate Action Required)
+${topCritical.map(i => `• ${i.style_no} - ${i.color}: Currently ${i.totalNetStock} units, need ${i.suggestedOrder} more (target: ${i.targetStock})${i.trendDirection === 'up' ? ' ⬆️ DEMAND RISING' : ''}`).join('\n')}` : ''}
 
-Provide a concise summary highlighting:
-1. Priority actions needed
-2. Any concerning patterns
-3. Overall stock health assessment`;
+${topTrending.length > 0 ? `### TRENDING UP (Watch These)
+${topTrending.map(i => `• ${i.style_no} - ${i.color}: +${i.trendPercent.toFixed(0)}% expected demand increase`).join('\n')}` : ''}
+
+${topSurplus.length > 0 ? `### SURPLUS ITEMS (Consider Promotions)
+${topSurplus.map(i => `• ${i.style_no} - ${i.color}: ${i.totalNetStock} units (${i.totalNetStock - i.targetStock} above target)${i.trendDirection === 'down' ? ' ⬇️ DEMAND FALLING' : ''}`).join('\n')}` : ''}
+
+${ordersByStyle.length > 0 ? `### ORDER SUMMARY BY STYLE
+${ordersByStyle.slice(0, 5).map(s => `• ${s.style_no}: ${s.totalOrder} units across ${s.colors.length} colors`).join('\n')}` : ''}
+
+Provide a professional analysis with:
+1. **IMMEDIATE ACTIONS** - What needs to be ordered NOW
+2. **NEXT MONTH PREPARATION** - What to watch based on trends
+3. **RISK ASSESSMENT** - Any patterns or concerns
+4. **RECOMMENDATIONS** - Specific suggestions for optimization
+
+Keep the response focused and actionable. Use bullet points where helpful.`;
 
     let aiSummary = '';
     try {
       const completion = await openai.chat.completions.create({
         model: 'gpt-4o-mini',
         messages: [{ role: 'user', content: aiPrompt }],
-        max_tokens: 300,
+        max_tokens: 600,
         temperature: 0.7
       });
       aiSummary = completion.choices[0]?.message?.content || 'Unable to generate AI summary.';
     } catch (e) {
-      aiSummary = `Analysis complete: ${criticalItems} critical items need immediate attention, ${lowItems} are low stock. Total recommended order: ${totalSuggestedOrder} units across ${items.length} items.`;
+      aiSummary = `## Analysis Complete
+
+**Immediate Action Required:** ${criticalItems} critical items need attention.
+
+**Order Summary:** ${totalSuggestedOrder} units recommended across ${items.length} items.
+
+**Trend Alert:** ${upTrends} items showing increased demand for next month - consider ordering extra.`;
     }
 
     const response: FullAnalysisResponse = {
       items,
+      ordersByStyle,
       summary: {
         totalItems: items.length,
         criticalItems,
@@ -320,12 +472,18 @@ Provide a concise summary highlighting:
         okItems,
         surplusItems,
         totalSuggestedOrder,
-        aiSummary
+        aiSummary,
+        trendSummary
       },
       dateRange: {
         start: startDate,
         end: endDate,
         display: periodDisplay
+      },
+      nextMonthRange: {
+        start: nextMonthStartStr,
+        end: nextMonthEndStr,
+        display: nextMonthDisplay
       }
     };
 
