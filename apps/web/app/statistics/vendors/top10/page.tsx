@@ -488,6 +488,12 @@ export default function Top10VendorsPage() {
     return collections.find(c => c.id === activeTab) || collections[0] || null;
   }, [collections, activeTab]);
 
+  // Get current vendor row (must be before conditional returns)
+  const currentVendorRow = React.useMemo(() => {
+    if (!openVendorSheet) return null;
+    return currentCollection?.rows.find(r => r.id === openVendorSheet) || null;
+  }, [openVendorSheet, currentCollection]);
+
   // Update activeTab if current collection doesn't exist
   React.useEffect(() => {
     if (!loading && collections.length > 0 && !collections.find(c => c.id === activeTab)) {
