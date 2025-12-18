@@ -947,19 +947,68 @@ export default function StockListPage() {
                 // Build SPY data map
                 const spyDataMap = new Map<string, { stock: number }>();
                 for (const item of spyStyles) {
-                  spyDataMap.set(item.style_no, { stock: item.spy_stock ?? 0 });
+                  if (item.style_no) {
+                    spyDataMap.set(item.style_no, { stock: item.spy_stock ?? 0 });
+                  }
                 }
                 
-                // Calculate totals per style from local stock data (same logic as runChecker)
+                console.log('SPY Verification - SPY Data Map:', {
+                  spyDataMapSize: spyDataMap.size,
+                  sampleSpyData: Array.from(spyDataMap.entries()).slice(0, 5)
+                });
+                
+                // Calculate totals per style from local stock data
+                // Use ALL data (not filtered) to get complete comparison
                 const currentData = new Map<string, { name: string | null; total: number }>();
-                for (const { styleNo, colors } of groupedByStyle) {
+                
+                // Build a map of all styles from raw data (unfiltered)
+                const allStylesMap = new Map<string, Map<string, Row[]>>();
+                for (const r of (data ?? [])) {
+                  if (!allStylesMap.has(r.style_no)) allStylesMap.set(r.style_no, new Map());
+                  const byColor = allStylesMap.get(r.style_no)!;
+                  if (!byColor.has(r.color)) byColor.set(r.color, []);
+                  byColor.get(r.color)!.push(r);
+                }
+                
+                // Calculate totals for each style
+                for (const [styleNo, byColor] of allStylesMap.entries()) {
                   const meta = styleMetaByNo[styleNo] || { name: null };
                   let styleTotal = 0;
-                  for (const color of colors) {
-                    styleTotal += color.stock.reduce((sum, v) => sum + (Number(v) || 0), 0);
+                  
+                  for (const [color, rows] of byColor.entries()) {
+                    // Get latest Stock row for this color (deduplicate by section + row_label)
+                    const stockRows = rows.filter(r => r.section === 'Stock');
+                    if (stockRows.length > 0) {
+                      // Group by section + row_label and get latest
+                      const latestByKey = new Map<string, Row>();
+                      for (const r of stockRows) {
+                        const key = `${r.section}|${r.row_label || ''}`;
+                        const existing = latestByKey.get(key);
+                        if (!existing || new Date(r.scraped_at).getTime() > new Date(existing.scraped_at).getTime()) {
+                          latestByKey.set(key, r);
+                        }
+                      }
+                      
+                      // Sum all Stock rows for this color
+                      for (const stockRow of latestByKey.values()) {
+                        const values = Array.isArray(stockRow.values) 
+                          ? stockRow.values 
+                          : JSON.parse(String(stockRow.values || '[]'));
+                        const colorTotal = Array.isArray(values) 
+                          ? values.reduce((sum: number, v: any) => sum + (Number(v) || 0), 0) 
+                          : Number(values) || 0;
+                        styleTotal += colorTotal;
+                      }
+                    }
                   }
+                  
                   currentData.set(styleNo, { name: meta.name, total: styleTotal });
                 }
+                
+                console.log('SPY Verification - Current Data:', {
+                  currentDataSize: currentData.size,
+                  sampleCurrentData: Array.from(currentData.entries()).slice(0, 5)
+                });
                 
                 // Compare and find differences
                 const differences: Array<{
