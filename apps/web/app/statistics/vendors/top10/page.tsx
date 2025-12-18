@@ -1334,6 +1334,43 @@ export default function Top10VendorsPage() {
                       </div>
                     </div>
                   </div>
+                  <div className="pt-2 border-t border-[#C5D5CA]">
+                    <Button
+                      onClick={async () => {
+                        if (!currentVendorRow.styles || currentVendorRow.styles.length === 0) {
+                          alert('No styles to scrape. Please add styles first.');
+                          return;
+                        }
+                        if (!window.confirm(`Scrape Raw Costs for ${currentVendorRow.styles.length} style(s)? This will update the price_per_sample for each style.`)) {
+                          return;
+                        }
+                        try {
+                          const res = await fetch('/api/enqueue', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                              type: 'scrape_style_raw_costs',
+                              payload: { vendor_row_id: currentVendorRow.id }
+                            })
+                          });
+                          if (!res.ok) throw new Error('Failed to start job');
+                          const { jobId } = await res.json();
+                          alert(`Job started! Job ID: ${jobId}. Check the jobs page to see progress.`);
+                        } catch (error: any) {
+                          console.error('Failed to start scraping job:', error);
+                          alert(`Failed to start job: ${error.message}`);
+                        }
+                      }}
+                      variant="outline"
+                      size="sm"
+                      className="w-full border-[#8FA894] text-[#8FA894] hover:bg-[#8FA894]/10"
+                    >
+                      🔍 Scrape Raw Costs from SPY
+                    </Button>
+                    <div className="text-[10px] text-gray-500 mt-1">
+                      Fetches Raw Cost from SPY for all styles in this vendor and updates price_per_sample
+                    </div>
+                  </div>
                 </CardContent>
               </Card>
 

@@ -40,7 +40,7 @@ export async function POST(req: Request) {
       global: { headers: auth ? { Authorization: auth } : {} }
     });
     const isStock = type === 'update_style_stock' || type === 'scrape_eans';
-    const isFast = type === 'scrape_purchase_orders' || type === 'check_purchase_orders';
+    const isFast = type === 'scrape_purchase_orders' || type === 'check_purchase_orders' || type === 'scrape_style_raw_costs';
     const insertBody = { type, payload, status: 'queued', max_attempts: 3, queue: isStock ? 'stock' : (isFast ? 'fast' : 'default'), priority: isStock ? 200 : 100 } as any;
     const { data, error } = await supabase.from('jobs').insert(insertBody).select('id').single();
     if (error) return new Response(JSON.stringify({ error: error.message }), { status: 500 });
