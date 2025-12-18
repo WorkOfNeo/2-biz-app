@@ -78,7 +78,14 @@ export async function scrapeStyleRawCosts(ctx: Ctx) {
         await log(job.id, 'info', `Scraping style: ${style.style_no}`);
         
         // Navigate to style statistics page
-        const url = `https://2-biz.spysystem.dk/?controller=Style%5CStatistics&action=List&Spy\\Model\\Style\\Statistics\\ListReportSearch[bForceSearch]=true&Spy\\Model\\Style\\Statistics\\ListReportSearch[strStyleNo]=${encodeURIComponent(style.style_no)}`;
+        // URL format: controller=Style\Statistics&action=List&Spy\Model\Style\Statistics\ListReportSearch[...]
+        // Backslashes need to be URL-encoded as %5C
+        const baseUrl = 'https://2-biz.spysystem.dk/?controller=Style%5CStatistics&action=List';
+        const searchParams = new URLSearchParams({
+          'Spy\\Model\\Style\\Statistics\\ListReportSearch[bForceSearch]': 'true',
+          'Spy\\Model\\Style\\Statistics\\ListReportSearch[strStyleNo]': style.style_no
+        });
+        const url = `${baseUrl}&${searchParams.toString()}`;
         
         await page.goto(url, { waitUntil: 'networkidle', timeout: 120_000 });
         await log(job.id, 'info', `Loaded page for ${style.style_no}`);
