@@ -73,6 +73,10 @@ export default function Top10VendorsPage() {
   const [newName, setNewName] = React.useState('');
   const [openVendorSheet, setOpenVendorSheet] = React.useState<string | null>(null);
   const [bulkImportText, setBulkImportText] = React.useState('');
+  
+  // Local state for input values to avoid saving on every keystroke
+  const [localRowValues, setLocalRowValues] = React.useState<Record<string, Partial<VendorRow>>>({});
+  const [localStyleValues, setLocalStyleValues] = React.useState<Record<string, Partial<VendorStyle>>>({});
 
   // Load collections from Supabase
   React.useEffect(() => {
@@ -336,7 +340,7 @@ export default function Top10VendorsPage() {
       const inCollection = styles.filter(s => !s.out_of_collection);
       const outOfCollection = styles.filter(s => s.out_of_collection);
       
-      // Each style row = 9 samples, multiply price by 9
+      // Always multiply price by 9 (samples per row)
       const totalPrice = styles.reduce((sum, s) => {
         const priceInDKK = convertToDKK(s.price_per_sample, row.currency || 'DKK', row.exchange_rate || DEFAULT_CURRENCY_RATES[row.currency || 'DKK']);
         return sum + (priceInDKK * SAMPLES_PER_ROW);
@@ -351,10 +355,11 @@ export default function Top10VendorsPage() {
         ? totalPrice / (styles.length * SAMPLES_PER_ROW)
         : 0;
       
-      // Prøvefaktor = total samples / styles in collection
-      const prøvefaktor = inCollection.length > 0 
+      // Prøvefaktor: use manual value if set, otherwise calculate from samples
+      const manualPrøvefaktor = row.prøvefaktor && row.prøvefaktor > 0 ? row.prøvefaktor : null;
+      const prøvefaktor = manualPrøvefaktor || (inCollection.length > 0 
         ? totalSamples / inCollection.length 
-        : (row.prøvefaktor || 0);
+        : 0);
       
       return {
         ...row,
@@ -371,9 +376,10 @@ export default function Top10VendorsPage() {
     // Fallback to manual calculation if no styles
     const total = (row.antal_prøver || 0) * (row.gns_pris_pr_prøve || 0);
     const diff = total - (row.total_ubrugte || 0);
-    const prøvefaktor = (row.styles_i_koll || 0) > 0 
+    const manualPrøvefaktor = row.prøvefaktor && row.prøvefaktor > 0 ? row.prøvefaktor : null;
+    const prøvefaktor = manualPrøvefaktor || ((row.styles_i_koll || 0) > 0 
       ? (row.antal_prøver || 0) / (row.styles_i_koll || 1) 
-      : 0;
+      : 0);
     
     return {
       ...row,
@@ -589,7 +595,7 @@ export default function Top10VendorsPage() {
     }
   };
 
-  // Update row field
+  // Update row field (saves immediately)
   const updateRow = async (rowId: string, field: keyof VendorRow, value: string | number) => {
     // Update in database
     if (!rowId.startsWith('row-')) {
@@ -619,6 +625,36 @@ export default function Top10VendorsPage() {
           }
         : c
     ));
+  };
+
+  // Update local row value (for input fields, saves on blur)
+  const updateLocalRowValue = (rowId: string, field: keyof VendorRow, value: string | number) => {
+    setLocalRowValues(prev => ({
+      ...prev,
+      [rowId]: {
+        ...prev[rowId],
+        [field]: value,
+      },
+    }));
+  };
+
+  // Save local row value on blur
+  const saveLocalRowValue = (rowId: string, field: keyof VendorRow) => {
+    const localValue = localRowValues[rowId]?.[field];
+    if (localValue !== undefined) {
+      updateRow(rowId, field, localValue);
+      // Clear local value after saving
+      setLocalRowValues(prev => {
+        const next = { ...prev };
+        if (next[rowId]) {
+          delete next[rowId][field];
+          if (Object.keys(next[rowId]).length === 0) {
+            delete next[rowId];
+          }
+        }
+        return next;
+      });
+    }
   };
 
   // Delete row
@@ -688,7 +724,7 @@ export default function Top10VendorsPage() {
     }
   };
 
-  // Update style
+  // Update style (saves immediately for checkboxes, on blur for inputs)
   const updateStyle = async (vendorId: string, styleId: string, field: keyof VendorStyle, value: string | number | boolean) => {
     // Update in database
     if (!styleId.startsWith('style-')) {
@@ -723,6 +759,38 @@ export default function Top10VendorsPage() {
           }
         : c
     ));
+  };
+
+  // Update local style value (for input fields, saves on blur)
+  const updateLocalStyleValue = (vendorId: string, styleId: string, field: keyof VendorStyle, value: string | number) => {
+    const key = `${vendorId}-${styleId}`;
+    setLocalStyleValues(prev => ({
+      ...prev,
+      [key]: {
+        ...prev[key],
+        [field]: value,
+      },
+    }));
+  };
+
+  // Save local style value on blur
+  const saveLocalStyleValue = (vendorId: string, styleId: string, field: keyof VendorStyle) => {
+    const key = `${vendorId}-${styleId}`;
+    const localValue = localStyleValues[key]?.[field];
+    if (localValue !== undefined) {
+      updateStyle(vendorId, styleId, field, localValue);
+      // Clear local value after saving
+      setLocalStyleValues(prev => {
+        const next = { ...prev };
+        if (next[key]) {
+          delete next[key][field];
+          if (Object.keys(next[key]).length === 0) {
+            delete next[key];
+          }
+        }
+        return next;
+      });
+    }
   };
 
   // Delete style
@@ -1204,14 +1272,17 @@ export default function Top10VendorsPage() {
                       />
                     </div>
                     <div>
-                      <label className="block text-xs font-medium text-gray-700 mb-1">Prøvefaktor</label>
+                      <label className="block text-xs font-medium text-gray-700 mb-1">Prøvefaktor (Manual Override)</label>
                       <Input
                         type="number"
-                        value={currentVendorRow.prøvefaktor || ''}
+                        value={localRowValues[currentVendorRow.id]?.prøvefaktor !== undefined 
+                          ? localRowValues[currentVendorRow.id].prøvefaktor as number 
+                          : (currentVendorRow.prøvefaktor || '')}
                         onChange={(e) => {
                           const newFactor = parseFloat(e.target.value) || 0;
-                          updateRow(currentVendorRow.id, 'prøvefaktor', newFactor);
+                          updateLocalRowValue(currentVendorRow.id, 'prøvefaktor', newFactor);
                         }}
+                        onBlur={() => saveLocalRowValue(currentVendorRow.id, 'prøvefaktor')}
                         className="w-full text-xs"
                         min="0"
                         step="0.01"
@@ -1219,7 +1290,7 @@ export default function Top10VendorsPage() {
                       />
                       <div className="text-[10px] text-gray-500 mt-1">
                         {currentVendorRow.styles?.length ? 
-                          `Auto: ${((currentVendorRow.antal_prøver || 0) / (currentVendorRow.styles_i_koll || 1)).toFixed(2)}` : 
+                          `Auto-calculated: ${((currentVendorRow.antal_prøver || 0) / (currentVendorRow.styles_i_koll || 1)).toFixed(2)} (9 samples per style row)` : 
                           'Set manually or auto-calculated'}
                       </div>
                     </div>
@@ -1337,8 +1408,11 @@ export default function Top10VendorsPage() {
                             <TableCell>
                               <Input
                                 type="number"
-                                value={style.price_per_sample || ''}
-                                onChange={(e) => updateStyle(currentVendorRow.id, style.id, 'price_per_sample', parseFloat(e.target.value) || 0)}
+                                value={localStyleValues[`${currentVendorRow.id}-${style.id}`]?.price_per_sample !== undefined 
+                                  ? localStyleValues[`${currentVendorRow.id}-${style.id}`].price_per_sample as number 
+                                  : (style.price_per_sample || '')}
+                                onChange={(e) => updateLocalStyleValue(currentVendorRow.id, style.id, 'price_per_sample', parseFloat(e.target.value) || 0)}
+                                onBlur={() => saveLocalStyleValue(currentVendorRow.id, style.id, 'price_per_sample')}
                                 className="w-full text-xs text-right"
                                 min="0"
                                 step="0.01"
