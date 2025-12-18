@@ -642,12 +642,6 @@ export default function Top10VendorsPage() {
     }
   };
 
-  // Get current vendor row
-  const currentVendorRow = React.useMemo(() => {
-    if (!openVendorSheet) return null;
-    return currentCollection?.rows.find(r => r.id === openVendorSheet) || null;
-  }, [openVendorSheet, currentCollection]);
-
   // Add style to vendor
   const addStyle = async (vendorId: string) => {
     try {
