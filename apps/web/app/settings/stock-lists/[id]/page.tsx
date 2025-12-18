@@ -10,6 +10,7 @@ import { Modal } from '../../../../components/Modal';
 import { Badge } from '../../../../components/ui/badge';
 import Link from 'next/link';
 import { ArrowLeft, Plus, Download, Upload, Trash2, X } from 'lucide-react';
+import * as XLSX from 'xlsx';
 
 type StockList = {
   id: string;
@@ -529,6 +530,10 @@ export default function StockListDetailPage({ params }: { params: { id: string }
             </p>
           </div>
           <div className="flex items-center gap-2">
+            <Button onClick={exportToExcel} disabled={loading || (listStyles?.length ?? 0) === 0} variant="outline">
+              <Download className="h-4 w-4 mr-2" />
+              Export to Excel
+            </Button>
             {list.name === 'Nye styles' && (
               <Button onClick={addNewStyles} disabled={loading}>
                 <Plus className="h-4 w-4 mr-2" />
