@@ -364,3 +364,4 @@ export default function AnalysisDetailPage({ params }: { params: { id: string } 
   );
 }
 
+

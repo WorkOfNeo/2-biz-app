@@ -255,3 +255,4 @@ insert into public.suppliers (name, tags, notes)
 values ('BELL_RAIN', array['BELL_RAIN'], 'Secondary storage - pull stock first before buying new')
 on conflict (name) do nothing;
 
+
