@@ -52,27 +52,8 @@ const DEFAULT_CURRENCY_RATES: Record<Currency, number> = {
 export default function Top10VendorsPage() {
   const supabase = createClientComponentClient();
   
-  const [collections, setCollections] = React.useState<Collection[]>(() => {
-    try {
-      const stored = localStorage.getItem(STORAGE_KEY);
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        // Ensure all rows have styles array, season_id, currency, and exchange_rate
-        return parsed.map((c: Collection) => ({
-          ...c,
-          season_id: c.season_id || null,
-          rows: c.rows.map((r: VendorRow) => ({
-            ...r,
-            styles: r.styles || [],
-            currency: r.currency || 'DKK',
-            exchange_rate: r.exchange_rate || DEFAULT_CURRENCY_RATES[r.currency || 'DKK'],
-          })),
-        }));
-      }
-    } catch {}
-    // Default: one empty collection
-    return [{ id: 'default', name: 'Collection 1', season_id: null, rows: [] }];
-  });
+  const [collections, setCollections] = React.useState<Collection[]>([]);
+  const [loading, setLoading] = React.useState(true);
 
   // Load seasons from database
   const { data: seasons } = useSWR('seasons:list:top10', async () => {
@@ -85,15 +66,7 @@ export default function Top10VendorsPage() {
     return (data ?? []) as Array<{ id: string; name: string; year: number | null }>;
   }, { refreshInterval: 0 });
 
-  const [currency, setCurrency] = React.useState<Currency>(() => {
-    try {
-      const stored = localStorage.getItem(CURRENCY_KEY);
-      if (stored && (stored === 'DKK' || stored === 'EUR' || stored === 'USD')) {
-        return stored as Currency;
-      }
-    } catch {}
-    return 'DKK';
-  });
+  const [currency, setCurrency] = React.useState<Currency>('DKK');
 
   const [activeTab, setActiveTab] = React.useState<string>(collections[0]?.id || 'default');
   const [editingName, setEditingName] = React.useState<string | null>(null);
@@ -101,22 +74,247 @@ export default function Top10VendorsPage() {
   const [openVendorSheet, setOpenVendorSheet] = React.useState<string | null>(null);
   const [bulkImportText, setBulkImportText] = React.useState('');
 
-  // Persist to localStorage
+  // Load collections from Supabase
   React.useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(collections));
-    } catch (e) {
-      console.error('Failed to save collections:', e);
+    async function loadCollections() {
+      try {
+        setLoading(true);
+        // Load collections
+        const { data: collectionsData, error: collectionsError } = await supabase
+          .from('vendor_collections')
+          .select('*')
+          .order('sort_order', { ascending: true });
+        
+        if (collectionsError) throw collectionsError;
+        
+        if (!collectionsData || collectionsData.length === 0) {
+          // Create default collection if none exist
+          const { data: newCollection, error: createError } = await supabase
+            .from('vendor_collections')
+            .insert({
+              name: 'Collection 1',
+              season_id: null,
+              sort_order: 0,
+            })
+            .select()
+            .single();
+          
+          if (createError) throw createError;
+          
+          setCollections([{
+            id: newCollection.id,
+            name: newCollection.name,
+            season_id: newCollection.season_id,
+            rows: [],
+          }]);
+          setActiveTab(newCollection.id);
+          setLoading(false);
+          return;
+        }
+        
+        // Load vendor rows for all collections
+        const collectionIds = collectionsData.map(c => c.id);
+        const { data: rowsData, error: rowsError } = await supabase
+          .from('vendor_rows')
+          .select('*')
+          .in('collection_id', collectionIds)
+          .order('sort_order', { ascending: true });
+        
+        if (rowsError) throw rowsError;
+        
+        // Load styles for all vendor rows
+        const rowIds = (rowsData || []).map(r => r.id);
+        const { data: stylesData, error: stylesError } = await supabase
+          .from('vendor_styles')
+          .select('*')
+          .in('vendor_row_id', rowIds.length > 0 ? rowIds : ['00000000-0000-0000-0000-000000000000'])
+          .order('sort_order', { ascending: true });
+        
+        if (stylesError) throw stylesError;
+        
+        // Build collections structure
+        const collectionsMap = new Map<string, Collection>();
+        for (const c of collectionsData) {
+          collectionsMap.set(c.id, {
+            id: c.id,
+            name: c.name,
+            season_id: c.season_id,
+            rows: [],
+          });
+        }
+        
+        // Add rows to collections
+        const stylesMap = new Map<string, VendorStyle[]>();
+        for (const s of (stylesData || [])) {
+          const arr = stylesMap.get(s.vendor_row_id) || [];
+          arr.push({
+            id: s.id,
+            style_no: s.style_no,
+            original_input: s.original_input || undefined,
+            price_per_sample: s.price_per_sample,
+            out_of_collection: s.out_of_collection,
+          });
+          stylesMap.set(s.vendor_row_id, arr);
+        }
+        
+        for (const r of (rowsData || [])) {
+          const collection = collectionsMap.get(r.collection_id);
+          if (collection) {
+            collection.rows.push({
+              id: r.id,
+              leverandør: r.leverandør,
+              antal_prøver: r.antal_prøver,
+              styles_i_koll: r.styles_i_koll,
+              gns_pris_pr_prøve: r.gns_pris_pr_prøve,
+              total: r.total,
+              total_ubrugte: r.total_ubrugte,
+              diff: r.diff,
+              prøvefaktor: r.prøvefaktor,
+              currency: (r.currency as Currency) || 'DKK',
+              exchange_rate: r.exchange_rate || DEFAULT_CURRENCY_RATES[(r.currency as Currency) || 'DKK'],
+              styles: stylesMap.get(r.id) || [],
+            });
+          }
+        }
+        
+        const loadedCollections = Array.from(collectionsMap.values());
+        setCollections(loadedCollections);
+        if (loadedCollections.length > 0 && !activeTab) {
+          setActiveTab(loadedCollections[0].id);
+        }
+      } catch (error) {
+        console.error('Failed to load collections:', error);
+        // Fallback to default
+        setCollections([{ id: 'default', name: 'Collection 1', season_id: null, rows: [] }]);
+      } finally {
+        setLoading(false);
+      }
     }
-  }, [collections]);
+    
+    loadCollections();
+  }, []); // Only run on mount
 
-  React.useEffect(() => {
+  // Save collections to Supabase (debounced for field updates only)
+  const saveTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
+  const isSavingRef = React.useRef(false);
+  
+  const saveCollectionData = React.useCallback(async (collectionsToSave: Collection[]) => {
+    if (isSavingRef.current) return;
+    isSavingRef.current = true;
+    
     try {
-      localStorage.setItem(CURRENCY_KEY, currency);
-    } catch (e) {
-      console.error('Failed to save currency:', e);
+      // Get current user
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        isSavingRef.current = false;
+        return;
+      }
+      
+      // Save collections (only updates, not creates - creates are handled in addCollection)
+      for (const collection of collectionsToSave) {
+        if (collection.id.startsWith('collection-') || collection.id === 'default') {
+          continue; // Skip temporary IDs, they'll be created by addCollection
+        }
+        
+        // Update existing collection
+        await supabase
+          .from('vendor_collections')
+          .update({
+            name: collection.name,
+            season_id: collection.season_id,
+            sort_order: collectionsToSave.indexOf(collection),
+          })
+          .eq('id', collection.id);
+        
+        // Save vendor rows
+        for (const row of collection.rows) {
+          if (row.id.startsWith('row-')) {
+            continue; // Skip temporary IDs, they'll be created by addRow
+          }
+          
+          // Update existing row
+          await supabase
+            .from('vendor_rows')
+            .update({
+              leverandør: row.leverandør,
+              antal_prøver: row.antal_prøver,
+              styles_i_koll: row.styles_i_koll,
+              gns_pris_pr_prøve: row.gns_pris_pr_prøve,
+              total: row.total,
+              total_ubrugte: row.total_ubrugte,
+              diff: row.diff,
+              prøvefaktor: row.prøvefaktor,
+              currency: row.currency,
+              exchange_rate: row.exchange_rate,
+              sort_order: collection.rows.indexOf(row),
+            })
+            .eq('id', row.id);
+          
+          // Save styles
+          // First, delete styles that are no longer in the row
+          const { data: existingStyles } = await supabase
+            .from('vendor_styles')
+            .select('id')
+            .eq('vendor_row_id', row.id);
+          
+          const existingStyleIds = new Set((existingStyles || []).map(s => s.id));
+          const currentStyleIds = new Set((row.styles || []).map(s => s.id).filter(id => !id.startsWith('style-')));
+          const stylesToDelete = Array.from(existingStyleIds).filter(id => !currentStyleIds.has(id));
+          
+          if (stylesToDelete.length > 0) {
+            await supabase
+              .from('vendor_styles')
+              .delete()
+              .in('id', stylesToDelete);
+          }
+          
+          // Update existing styles
+          for (const style of (row.styles || [])) {
+            if (style.id.startsWith('style-')) {
+              continue; // Skip temporary IDs, they'll be created by addStyle
+            }
+            
+            // Update existing style
+            await supabase
+              .from('vendor_styles')
+              .update({
+                style_no: style.style_no,
+                original_input: style.original_input,
+                price_per_sample: style.price_per_sample,
+                out_of_collection: style.out_of_collection,
+                sort_order: (row.styles || []).indexOf(style),
+              })
+              .eq('id', style.id);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Failed to save collections:', error);
+    } finally {
+      isSavingRef.current = false;
     }
-  }, [currency]);
+  }, [supabase]);
+  
+  // Debounce saves for field updates
+  React.useEffect(() => {
+    if (loading || collections.length === 0) return;
+    
+    // Clear previous timeout
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+    }
+    
+    // Debounce saves to avoid too many API calls
+    saveTimeoutRef.current = setTimeout(() => {
+      saveCollectionData(collections);
+    }, 2000); // 2 second debounce
+    
+    return () => {
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+      }
+    };
+  }, [collections, loading, saveCollectionData]);
 
   // Convert price to DKK based on vendor's currency and exchange rate
   const convertToDKK = (price: number, vendorCurrency: Currency, vendorExchangeRate: number): number => {
@@ -130,31 +328,31 @@ export default function Top10VendorsPage() {
     
     // Calculate from styles if available
     if (styles.length > 0) {
-      const totalSamples = styles.reduce((sum, s) => {
-        // Count samples based on prøvefaktor (if we have it from previous calculation)
-        const factor = row.prøvefaktor > 0 ? row.prøvefaktor : 1;
-        return sum + factor;
-      }, 0);
+      // Each style row represents 9 samples
+      const SAMPLES_PER_ROW = 9;
+      const totalSamples = styles.length * SAMPLES_PER_ROW;
       
       const inCollection = styles.filter(s => !s.out_of_collection);
       const outOfCollection = styles.filter(s => s.out_of_collection);
       
+      // Each style row = 9 samples, multiply price by 9
+      const SAMPLES_PER_ROW = 9;
       const totalPrice = styles.reduce((sum, s) => {
         const priceInDKK = convertToDKK(s.price_per_sample, row.currency || 'DKK', row.exchange_rate || DEFAULT_CURRENCY_RATES[row.currency || 'DKK']);
-        const factor = row.prøvefaktor > 0 ? row.prøvefaktor : 1;
-        return sum + (priceInDKK * factor);
+        return sum + (priceInDKK * SAMPLES_PER_ROW);
       }, 0);
       
       const unusedPrice = outOfCollection.reduce((sum, s) => {
         const priceInDKK = convertToDKK(s.price_per_sample, row.currency || 'DKK', row.exchange_rate || DEFAULT_CURRENCY_RATES[row.currency || 'DKK']);
-        const factor = row.prøvefaktor > 0 ? row.prøvefaktor : 1;
-        return sum + (priceInDKK * factor);
+        return sum + (priceInDKK * SAMPLES_PER_ROW);
       }, 0);
       
+      const SAMPLES_PER_ROW = 9;
       const avgPrice = styles.length > 0 
-        ? totalPrice / (styles.length * (row.prøvefaktor > 0 ? row.prøvefaktor : 1))
+        ? totalPrice / (styles.length * SAMPLES_PER_ROW)
         : 0;
       
+      // Prøvefaktor = total samples / styles in collection
       const prøvefaktor = inCollection.length > 0 
         ? totalSamples / inCollection.length 
         : (row.prøvefaktor || 0);
@@ -186,47 +384,68 @@ export default function Top10VendorsPage() {
     };
   };
 
-  // Add new collection
-  const addCollection = () => {
-    const newId = `collection-${Date.now()}`;
-    const newCollection: Collection = {
-      id: newId,
-      name: `Collection ${collections.length + 1}`,
-      season_id: null,
-      rows: []
-    };
-    setCollections([...collections, newCollection]);
-    setActiveTab(newId);
-    setEditingName(newId);
-    setNewName(newCollection.name);
-  };
 
   // Update collection season
-  const updateCollectionSeason = (collectionId: string, seasonId: string | null) => {
-    setCollections(collections.map(c => 
-      c.id === collectionId ? { ...c, season_id: seasonId } : c
-    ));
+  const updateCollectionSeason = async (collectionId: string, seasonId: string | null) => {
+    try {
+      const { error } = await supabase
+        .from('vendor_collections')
+        .update({ season_id: seasonId })
+        .eq('id', collectionId);
+      
+      if (error) throw error;
+      
+      setCollections(collections.map(c => 
+        c.id === collectionId ? { ...c, season_id: seasonId } : c
+      ));
+    } catch (error) {
+      console.error('Failed to update collection season:', error);
+    }
   };
 
   // Update collection name
-  const updateCollectionName = (id: string, name: string) => {
-    setCollections(collections.map(c => 
-      c.id === id ? { ...c, name: name.trim() || c.name } : c
-    ));
-    setEditingName(null);
+  const updateCollectionName = async (id: string, name: string) => {
+    const trimmedName = name.trim() || 'Unnamed';
+    try {
+      const { error } = await supabase
+        .from('vendor_collections')
+        .update({ name: trimmedName })
+        .eq('id', id);
+      
+      if (error) throw error;
+      
+      setCollections(collections.map(c => 
+        c.id === id ? { ...c, name: trimmedName } : c
+      ));
+      setEditingName(null);
+    } catch (error) {
+      console.error('Failed to update collection name:', error);
+    }
   };
 
   // Delete collection
-  const deleteCollection = (id: string) => {
+  const deleteCollection = async (id: string) => {
     if (collections.length <= 1) {
       alert('Cannot delete the last collection');
       return;
     }
     if (window.confirm('Are you sure you want to delete this collection?')) {
-      const newCollections = collections.filter(c => c.id !== id);
-      setCollections(newCollections);
-      if (activeTab === id) {
-        setActiveTab(newCollections[0]?.id || 'default');
+      try {
+        const { error } = await supabase
+          .from('vendor_collections')
+          .delete()
+          .eq('id', id);
+        
+        if (error) throw error;
+        
+        const newCollections = collections.filter(c => c.id !== id);
+        setCollections(newCollections);
+        if (activeTab === id) {
+          setActiveTab(newCollections[0]?.id || 'default');
+        }
+      } catch (error) {
+        console.error('Failed to delete collection:', error);
+        alert('Failed to delete collection');
       }
     }
   };
@@ -239,30 +458,74 @@ export default function Top10VendorsPage() {
   if (!currentCollection) return null;
 
   // Add new row
-  const addRow = () => {
-    const newRow: VendorRow = {
-      id: `row-${Date.now()}`,
-      leverandør: '',
-      antal_prøver: 0,
-      styles_i_koll: 0,
-      gns_pris_pr_prøve: 0,
-      total: 0,
-      total_ubrugte: 0,
-      diff: 0,
-      prøvefaktor: 0,
-      currency: 'DKK',
-      exchange_rate: 1,
-      styles: []
-    };
-    setCollections(collections.map(c => 
-      c.id === activeTab 
-        ? { ...c, rows: [...c.rows, newRow] }
-        : c
-    ));
+  const addRow = async () => {
+    const currentCollection = collections.find(c => c.id === activeTab);
+    if (!currentCollection) return;
+    
+    try {
+      const { data: newRow, error } = await supabase
+        .from('vendor_rows')
+        .insert({
+          collection_id: currentCollection.id,
+          leverandør: '',
+          antal_prøver: 0,
+          styles_i_koll: 0,
+          gns_pris_pr_prøve: 0,
+          total: 0,
+          total_ubrugte: 0,
+          diff: 0,
+          prøvefaktor: 0,
+          currency: 'DKK',
+          exchange_rate: 1,
+          sort_order: currentCollection.rows.length,
+        })
+        .select()
+        .single();
+      
+      if (error) throw error;
+      
+      const vendorRow: VendorRow = {
+        id: newRow.id,
+        leverandør: newRow.leverandør,
+        antal_prøver: newRow.antal_prøver,
+        styles_i_koll: newRow.styles_i_koll,
+        gns_pris_pr_prøve: newRow.gns_pris_pr_prøve,
+        total: newRow.total,
+        total_ubrugte: newRow.total_ubrugte,
+        diff: newRow.diff,
+        prøvefaktor: newRow.prøvefaktor,
+        currency: (newRow.currency as Currency) || 'DKK',
+        exchange_rate: newRow.exchange_rate || 1,
+        styles: [],
+      };
+      
+      setCollections(collections.map(c => 
+        c.id === activeTab 
+          ? { ...c, rows: [...c.rows, vendorRow] }
+          : c
+      ));
+    } catch (error) {
+      console.error('Failed to create vendor row:', error);
+      alert('Failed to create vendor');
+    }
   };
 
   // Update row field
-  const updateRow = (rowId: string, field: keyof VendorRow, value: string | number) => {
+  const updateRow = async (rowId: string, field: keyof VendorRow, value: string | number) => {
+    // Update in database
+    if (!rowId.startsWith('row-')) {
+      try {
+        const updateData: any = { [field]: value };
+        await supabase
+          .from('vendor_rows')
+          .update(updateData)
+          .eq('id', rowId);
+      } catch (error) {
+        console.error('Failed to update vendor row:', error);
+      }
+    }
+    
+    // Update local state
     setCollections(collections.map(c => 
       c.id === activeTab 
         ? {
@@ -280,12 +543,24 @@ export default function Top10VendorsPage() {
   };
 
   // Delete row
-  const deleteRow = (rowId: string) => {
-    setCollections(collections.map(c => 
-      c.id === activeTab 
-        ? { ...c, rows: c.rows.filter(r => r.id !== rowId) }
-        : c
-    ));
+  const deleteRow = async (rowId: string) => {
+    try {
+      const { error } = await supabase
+        .from('vendor_rows')
+        .delete()
+        .eq('id', rowId);
+      
+      if (error) throw error;
+      
+      setCollections(collections.map(c => 
+        c.id === activeTab 
+          ? { ...c, rows: c.rows.filter(r => r.id !== rowId) }
+          : c
+      ));
+    } catch (error) {
+      console.error('Failed to delete vendor row:', error);
+      alert('Failed to delete vendor');
+    }
   };
 
   // Get current vendor row
@@ -295,31 +570,67 @@ export default function Top10VendorsPage() {
   }, [openVendorSheet, currentCollection]);
 
   // Add style to vendor
-  const addStyle = (vendorId: string) => {
-    const newStyle: VendorStyle = {
-      id: `style-${Date.now()}`,
-      style_no: '',
-      price_per_sample: 0,
-      out_of_collection: false,
-    };
-    setCollections(collections.map(c => 
-      c.id === activeTab 
-        ? {
-            ...c,
-            rows: c.rows.map(r => {
-              if (r.id === vendorId) {
-                const updated = { ...r, styles: [...(r.styles || []), newStyle] };
-                return calculateRow(updated);
-              }
-              return r;
-            })
-          }
-        : c
-    ));
+  const addStyle = async (vendorId: string) => {
+    try {
+      const { data: newStyle, error } = await supabase
+        .from('vendor_styles')
+        .insert({
+          vendor_row_id: vendorId,
+          style_no: '',
+          original_input: null,
+          price_per_sample: 0,
+          out_of_collection: false,
+          sort_order: 0,
+        })
+        .select()
+        .single();
+      
+      if (error) throw error;
+      
+      const vendorStyle: VendorStyle = {
+        id: newStyle.id,
+        style_no: newStyle.style_no,
+        original_input: newStyle.original_input || undefined,
+        price_per_sample: newStyle.price_per_sample,
+        out_of_collection: newStyle.out_of_collection,
+      };
+      
+      setCollections(collections.map(c => 
+        c.id === activeTab 
+          ? {
+              ...c,
+              rows: c.rows.map(r => {
+                if (r.id === vendorId) {
+                  const updated = { ...r, styles: [...(r.styles || []), vendorStyle] };
+                  return calculateRow(updated);
+                }
+                return r;
+              })
+            }
+          : c
+      ));
+    } catch (error) {
+      console.error('Failed to create style:', error);
+      alert('Failed to add style');
+    }
   };
 
   // Update style
-  const updateStyle = (vendorId: string, styleId: string, field: keyof VendorStyle, value: string | number | boolean) => {
+  const updateStyle = async (vendorId: string, styleId: string, field: keyof VendorStyle, value: string | number | boolean) => {
+    // Update in database
+    if (!styleId.startsWith('style-')) {
+      try {
+        const updateData: any = { [field]: value };
+        await supabase
+          .from('vendor_styles')
+          .update(updateData)
+          .eq('id', styleId);
+      } catch (error) {
+        console.error('Failed to update style:', error);
+      }
+    }
+    
+    // Update local state
     setCollections(collections.map(c => 
       c.id === activeTab 
         ? {
@@ -342,24 +653,36 @@ export default function Top10VendorsPage() {
   };
 
   // Delete style
-  const deleteStyle = (vendorId: string, styleId: string) => {
-    setCollections(collections.map(c => 
-      c.id === activeTab 
-        ? {
-            ...c,
-            rows: c.rows.map(r => {
-              if (r.id === vendorId) {
-                const updated = {
-                  ...r,
-                  styles: (r.styles || []).filter(s => s.id !== styleId)
-                };
-                return calculateRow(updated);
-              }
-              return r;
-            })
-          }
-        : c
-    ));
+  const deleteStyle = async (vendorId: string, styleId: string) => {
+    try {
+      if (!styleId.startsWith('style-')) {
+        await supabase
+          .from('vendor_styles')
+          .delete()
+          .eq('id', styleId);
+      }
+      
+      setCollections(collections.map(c => 
+        c.id === activeTab 
+          ? {
+              ...c,
+              rows: c.rows.map(r => {
+                if (r.id === vendorId) {
+                  const updated = {
+                    ...r,
+                    styles: (r.styles || []).filter(s => s.id !== styleId)
+                  };
+                  return calculateRow(updated);
+                }
+                return r;
+              })
+            }
+          : c
+      ));
+    } catch (error) {
+      console.error('Failed to delete style:', error);
+      alert('Failed to delete style');
+    }
   };
 
   // Import styles from textarea (one per line) with season matching
@@ -427,38 +750,61 @@ export default function Top10VendorsPage() {
       }
     }
 
-    // Match lines to style_no
-    const newStyles: VendorStyle[] = lines.map(line => {
+    // Match lines to style_no and create styles in database
+    const createdStyles: VendorStyle[] = [];
+    
+    for (const line of lines) {
       const trimmed = line.trim();
       const key = trimmed.toLowerCase();
       const matchedStyleNo = styleMap.get(key) || trimmed; // Use matched style_no or original if no match
       
-      return {
-        id: `style-${Date.now()}-${Math.random()}`,
-        style_no: matchedStyleNo,
-        original_input: trimmed !== matchedStyleNo ? trimmed : undefined, // Store original if different from matched
-        price_per_sample: 0,
-        out_of_collection: false,
-      };
-    });
+      try {
+        const { data: newStyle, error } = await supabase
+          .from('vendor_styles')
+          .insert({
+            vendor_row_id: vendorId,
+            style_no: matchedStyleNo,
+            original_input: trimmed !== matchedStyleNo ? trimmed : null,
+            price_per_sample: 0,
+            out_of_collection: false,
+            sort_order: 0,
+          })
+          .select()
+          .single();
+        
+        if (error) throw error;
+        
+        createdStyles.push({
+          id: newStyle.id,
+          style_no: newStyle.style_no,
+          original_input: newStyle.original_input || undefined,
+          price_per_sample: newStyle.price_per_sample,
+          out_of_collection: newStyle.out_of_collection,
+        });
+      } catch (error) {
+        console.error('Failed to create style:', error);
+      }
+    }
 
-    setCollections(collections.map(c => 
-      c.id === activeTab 
-        ? {
-            ...c,
-            rows: c.rows.map(r => {
-              if (r.id === vendorId) {
-                const updated = {
-                  ...r,
-                  styles: [...(r.styles || []), ...newStyles]
-                };
-                return calculateRow(updated);
-              }
-              return r;
-            })
-          }
-        : c
-    ));
+    if (createdStyles.length > 0) {
+      setCollections(collections.map(c => 
+        c.id === activeTab 
+          ? {
+              ...c,
+              rows: c.rows.map(r => {
+                if (r.id === vendorId) {
+                  const updated = {
+                    ...r,
+                    styles: [...(r.styles || []), ...createdStyles]
+                  };
+                  return calculateRow(updated);
+                }
+                return r;
+              })
+            }
+          : c
+      ));
+    }
 
     // Clear the textarea
     setBulkImportText('');
@@ -883,9 +1229,9 @@ export default function Top10VendorsPage() {
                         const vendorCurrency = currentVendorRow.currency || 'DKK';
                         const vendorExchangeRate = currentVendorRow.exchange_rate || DEFAULT_CURRENCY_RATES[vendorCurrency];
                         const priceInDKK = convertToDKK(style.price_per_sample, vendorCurrency, vendorExchangeRate);
-                        const vendorCalculated = calculateRow(currentVendorRow);
-                        const factor = vendorCalculated.prøvefaktor > 0 ? vendorCalculated.prøvefaktor : 1;
-                        const totalPrice = priceInDKK * factor;
+                        // Each style row = 9 samples
+                        const SAMPLES_PER_ROW = 9;
+                        const totalPrice = priceInDKK * SAMPLES_PER_ROW;
                         
                         return (
                           <TableRow key={style.id} className="hover:bg-gray-50">
