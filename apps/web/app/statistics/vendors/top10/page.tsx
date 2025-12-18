@@ -485,10 +485,46 @@ export default function Top10VendorsPage() {
 
   // Get current collection
   const currentCollection = React.useMemo(() => {
-    return collections.find(c => c.id === activeTab) || null;
+    return collections.find(c => c.id === activeTab) || collections[0] || null;
   }, [collections, activeTab]);
 
-  if (!currentCollection) return null;
+  // Update activeTab if current collection doesn't exist
+  React.useEffect(() => {
+    if (!loading && collections.length > 0 && !collections.find(c => c.id === activeTab)) {
+      setActiveTab(collections[0].id);
+    }
+  }, [loading, collections, activeTab]);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="text-center">
+          <div className="animate-spin h-8 w-8 border-4 border-[#8FA894] border-t-transparent rounded-full mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading vendor statistics...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (collections.length === 0) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="text-center">
+          <p className="text-gray-600 mb-4">No collections found. Creating default collection...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!currentCollection) {
+    // Fallback: use first collection
+    const firstCollection = collections[0];
+    if (firstCollection) {
+      setActiveTab(firstCollection.id);
+      return null; // Will re-render with correct activeTab
+    }
+    return null;
+  }
 
   // Add new row
   const addRow = async () => {
