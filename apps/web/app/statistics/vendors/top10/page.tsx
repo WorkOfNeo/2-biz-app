@@ -641,7 +641,7 @@ export default function Top10VendorsPage() {
   // Save local row value on blur
   const saveLocalRowValue = (rowId: string, field: keyof VendorRow) => {
     const localValue = localRowValues[rowId]?.[field];
-    if (localValue !== undefined) {
+    if (localValue !== undefined && (typeof localValue === 'string' || typeof localValue === 'number')) {
       updateRow(rowId, field, localValue);
       // Clear local value after saving
       setLocalRowValues(prev => {
