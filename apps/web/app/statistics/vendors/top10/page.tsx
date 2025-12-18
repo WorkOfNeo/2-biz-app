@@ -226,7 +226,10 @@ export default function Top10VendorsPage() {
   };
 
   // Get current collection
-  const currentCollection = collections.find(c => c.id === activeTab);
+  const currentCollection = React.useMemo(() => {
+    return collections.find(c => c.id === activeTab) || null;
+  }, [collections, activeTab]);
+
   if (!currentCollection) return null;
 
   // Add new row
