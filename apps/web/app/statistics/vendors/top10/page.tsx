@@ -1300,7 +1300,7 @@ export default function Top10VendorsPage() {
                       <Input
                         type="number"
                         value={localRowValues[currentVendorRow.id]?.exchange_rate !== undefined 
-                          ? localRowValues[currentVendorRow.id].exchange_rate as number 
+                          ? (localRowValues[currentVendorRow.id]?.exchange_rate as number)
                           : (currentVendorRow.exchange_rate || DEFAULT_CURRENCY_RATES[currentVendorRow.currency || 'DKK'])}
                         onChange={(e) => updateLocalRowValue(currentVendorRow.id, 'exchange_rate', parseFloat(e.target.value) || DEFAULT_CURRENCY_RATES[currentVendorRow.currency || 'DKK'])}
                         onBlur={() => saveLocalRowValue(currentVendorRow.id, 'exchange_rate')}
