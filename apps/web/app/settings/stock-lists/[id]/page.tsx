@@ -230,10 +230,10 @@ export default function StockListDetailPage({ params }: { params: { id: string }
   // Remove style from list
   async function removeStyle(styleId: string) {
     try {
-      // Delete all colors for this style first
+      // Mark all colors for this style as deactivated (include: false) instead of deleting
       const { error: colorError } = await supabase
         .from('stock_list_colors')
-        .delete()
+        .update({ include: false })
         .eq('list_id', params.id)
         .eq('style_id', styleId);
       if (colorError) throw colorError;
@@ -248,7 +248,7 @@ export default function StockListDetailPage({ params }: { params: { id: string }
       
       await mutateListStyles();
       await mutateListColors();
-      flash('Style removed');
+      flash('Style removed (colors deactivated)');
     } catch (e: any) {
       flash(e.message || 'Failed to remove style', 'error');
     }
@@ -466,17 +466,50 @@ export default function StockListDetailPage({ params }: { params: { id: string }
     }
   }
 
-  // Group colors by style
+  // Group colors by style (only active colors for styles in list)
   const colorsByStyle = React.useMemo(() => {
     const map = new Map<string, ListColor[]>();
+    const styleIdsInList = new Set(listStyles?.map(ls => ls.style_id) ?? []);
     for (const lc of (listColors ?? [])) {
-      if (!map.has(lc.style_id)) {
-        map.set(lc.style_id, []);
+      // Only include colors for styles that are in the list and are active (include: true)
+      if (styleIdsInList.has(lc.style_id) && lc.include) {
+        if (!map.has(lc.style_id)) {
+          map.set(lc.style_id, []);
+        }
+        map.get(lc.style_id)!.push(lc);
       }
-      map.get(lc.style_id)!.push(lc);
     }
     return map;
-  }, [listColors]);
+  }, [listColors, listStyles]);
+
+  // Get deactivated colors (colors with include: false or from removed styles)
+  const deactivatedColors = React.useMemo(() => {
+    const styleIdsInList = new Set(listStyles?.map(ls => ls.style_id) ?? []);
+    return (listColors ?? []).filter(lc => 
+      !lc.include || !styleIdsInList.has(lc.style_id)
+    );
+  }, [listColors, listStyles]);
+
+  // Load style data for deactivated colors to show style info
+  const { data: allStylesMap } = useSWR(
+    deactivatedColors.length > 0 ? 'styles:map:for-deactivated' : null,
+    async () => {
+      const styleIds = Array.from(new Set(deactivatedColors.map(lc => lc.style_id)));
+      if (styleIds.length === 0) return new Map();
+      
+      const { data, error } = await supabase
+        .from('styles')
+        .select('id, style_no, style_name, supplier, image_url')
+        .in('id', styleIds);
+      if (error) throw error;
+      
+      const map = new Map<string, StyleRow>();
+      for (const s of (data ?? [])) {
+        map.set(s.id, s);
+      }
+      return map;
+    }
+  );
 
   if (!list) return <div className="p-4">Loading...</div>;
 
@@ -597,9 +630,10 @@ export default function StockListDetailPage({ params }: { params: { id: string }
                       <div className="text-xs text-gray-500 mb-2">Colors ({colors.length})</div>
                       <div className="flex flex-wrap gap-2">
                         {colors.map((lc) => (
-                          <div 
+                          <Badge 
                             key={lc.style_color_id}
-                            className="flex items-center gap-1 px-2 py-1 bg-gray-50 rounded text-xs border"
+                            variant="outline"
+                            className="flex items-center gap-1"
                           >
                             <span>{lc.color.color || 'Unknown'}</span>
                             <button
@@ -608,7 +642,7 @@ export default function StockListDetailPage({ params }: { params: { id: string }
                             >
                               <X className="h-3 w-3" />
                             </button>
-                          </div>
+                          </Badge>
                         ))}
                       </div>
                     </div>
@@ -617,7 +651,7 @@ export default function StockListDetailPage({ params }: { params: { id: string }
               );
             })}
             
-            {(listStyles ?? []).length === 0 && (
+            {(listStyles ?? []).length === 0 && deactivatedColors.length === 0 && (
               <div className="text-center py-8 text-gray-500">
                 No styles in this list yet
               </div>
@@ -625,6 +659,66 @@ export default function StockListDetailPage({ params }: { params: { id: string }
           </div>
         </CardContent>
       </Card>
+
+      {/* Deactivated Colors Section */}
+      {deactivatedColors.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base text-gray-500">Deactivated Colors</CardTitle>
+            <p className="text-xs text-gray-500 mt-1">
+              Colors from removed styles ({deactivatedColors.length})
+            </p>
+          </CardHeader>
+          <CardContent>
+            <div className="flex flex-wrap gap-2">
+              {deactivatedColors.map((lc) => {
+                const style = allStylesMap?.get(lc.style_id);
+                return (
+                  <Badge 
+                    key={lc.style_color_id}
+                    variant="outline"
+                    className="bg-gray-100 text-gray-600 border-gray-300 flex items-center gap-1"
+                  >
+                    {style && (
+                      <span className="text-xs font-mono mr-1">{style.style_no}:</span>
+                    )}
+                    <span>{lc.color.color || 'Unknown'}</span>
+                    <button
+                      onClick={async () => {
+                        try {
+                          // Reactivate the color
+                          const { error } = await supabase
+                            .from('stock_list_colors')
+                            .update({ include: true })
+                            .eq('list_id', params.id)
+                            .eq('style_color_id', lc.style_color_id);
+                          if (error) throw error;
+                          
+                          // If style is not in list, add it back
+                          const styleInList = listStyles?.some(ls => ls.style_id === lc.style_id);
+                          if (!styleInList && style) {
+                            await addStyle(lc.style_id);
+                          } else {
+                            await mutateListColors();
+                            await mutateListStyles();
+                          }
+                          flash('Color reactivated');
+                        } catch (e: any) {
+                          flash(e.message || 'Failed to reactivate color', 'error');
+                        }
+                      }}
+                      className="ml-1 hover:text-green-600"
+                      title="Reactivate"
+                    >
+                      <Plus className="h-3 w-3" />
+                    </button>
+                  </Badge>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Add Style Modal */}
       <Modal
