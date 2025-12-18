@@ -5,6 +5,16 @@ import { Button } from '../../../../components/ui/button';
 import { Input } from '../../../../components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../../components/ui/table';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../../components/ui/card';
+import { Sheet, SheetHeader, SheetTitle, SheetContent, SheetClose } from '../../../../components/ui/sheet';
+
+type Currency = 'DKK' | 'EUR' | 'USD';
+
+type VendorStyle = {
+  id: string;
+  style_no: string;
+  price_per_sample: number;
+  out_of_collection: boolean;
+};
 
 type VendorRow = {
   id: string;
@@ -16,6 +26,7 @@ type VendorRow = {
   total_ubrugte: number; // Total unused
   diff: number; // Difference (calculated: total - total_ubrugte)
   prøvefaktor: number; // Sample factor (calculated: antal_prøver / styles_i_koll)
+  styles: VendorStyle[]; // Styles for this vendor
 };
 
 type Collection = {
@@ -25,22 +36,47 @@ type Collection = {
 };
 
 const STORAGE_KEY = 'top10_vendors_collections';
+const CURRENCY_KEY = 'top10_vendors_currency';
+const CURRENCY_RATES: Record<Currency, number> = {
+  DKK: 1,
+  EUR: 7.45, // Approximate rate, can be updated
+  USD: 6.85, // Approximate rate, can be updated
+};
 
 export default function Top10VendorsPage() {
   const [collections, setCollections] = React.useState<Collection[]>(() => {
     try {
       const stored = localStorage.getItem(STORAGE_KEY);
       if (stored) {
-        return JSON.parse(stored);
+        const parsed = JSON.parse(stored);
+        // Ensure all rows have styles array
+        return parsed.map((c: Collection) => ({
+          ...c,
+          rows: c.rows.map((r: VendorRow) => ({
+            ...r,
+            styles: r.styles || [],
+          })),
+        }));
       }
     } catch {}
     // Default: one empty collection
     return [{ id: 'default', name: 'Collection 1', rows: [] }];
   });
 
+  const [currency, setCurrency] = React.useState<Currency>(() => {
+    try {
+      const stored = localStorage.getItem(CURRENCY_KEY);
+      if (stored && (stored === 'DKK' || stored === 'EUR' || stored === 'USD')) {
+        return stored as Currency;
+      }
+    } catch {}
+    return 'DKK';
+  });
+
   const [activeTab, setActiveTab] = React.useState<string>(collections[0]?.id || 'default');
   const [editingName, setEditingName] = React.useState<string | null>(null);
   const [newName, setNewName] = React.useState('');
+  const [openVendorSheet, setOpenVendorSheet] = React.useState<string | null>(null);
 
   // Persist to localStorage
   React.useEffect(() => {
@@ -51,8 +87,67 @@ export default function Top10VendorsPage() {
     }
   }, [collections]);
 
-  // Calculate derived fields for a row
+  React.useEffect(() => {
+    try {
+      localStorage.setItem(CURRENCY_KEY, currency);
+    } catch (e) {
+      console.error('Failed to save currency:', e);
+    }
+  }, [currency]);
+
+  // Convert price to DKK based on currency
+  const convertToDKK = (price: number): number => {
+    return price * CURRENCY_RATES[currency];
+  };
+
+  // Calculate derived fields for a row based on styles
   const calculateRow = (row: VendorRow): VendorRow => {
+    const styles = row.styles || [];
+    
+    // Calculate from styles if available
+    if (styles.length > 0) {
+      const totalSamples = styles.reduce((sum, s) => {
+        // Count samples based on prøvefaktor (if we have it from previous calculation)
+        const factor = row.prøvefaktor > 0 ? row.prøvefaktor : 1;
+        return sum + factor;
+      }, 0);
+      
+      const inCollection = styles.filter(s => !s.out_of_collection);
+      const outOfCollection = styles.filter(s => s.out_of_collection);
+      
+      const totalPrice = styles.reduce((sum, s) => {
+        const priceInDKK = convertToDKK(s.price_per_sample);
+        const factor = row.prøvefaktor > 0 ? row.prøvefaktor : 1;
+        return sum + (priceInDKK * factor);
+      }, 0);
+      
+      const unusedPrice = outOfCollection.reduce((sum, s) => {
+        const priceInDKK = convertToDKK(s.price_per_sample);
+        const factor = row.prøvefaktor > 0 ? row.prøvefaktor : 1;
+        return sum + (priceInDKK * factor);
+      }, 0);
+      
+      const avgPrice = styles.length > 0 
+        ? totalPrice / (styles.length * (row.prøvefaktor > 0 ? row.prøvefaktor : 1))
+        : 0;
+      
+      const prøvefaktor = inCollection.length > 0 
+        ? totalSamples / inCollection.length 
+        : (row.prøvefaktor || 0);
+      
+      return {
+        ...row,
+        antal_prøver: totalSamples,
+        styles_i_koll: inCollection.length,
+        gns_pris_pr_prøve: avgPrice,
+        total: totalPrice,
+        total_ubrugte: unusedPrice,
+        diff: totalPrice - unusedPrice,
+        prøvefaktor,
+      };
+    }
+    
+    // Fallback to manual calculation if no styles
     const total = (row.antal_prøver || 0) * (row.gns_pris_pr_prøve || 0);
     const diff = total - (row.total_ubrugte || 0);
     const prøvefaktor = (row.styles_i_koll || 0) > 0 
@@ -119,7 +214,8 @@ export default function Top10VendorsPage() {
       total: 0,
       total_ubrugte: 0,
       diff: 0,
-      prøvefaktor: 0
+      prøvefaktor: 0,
+      styles: []
     };
     setCollections(collections.map(c => 
       c.id === activeTab 
@@ -155,6 +251,81 @@ export default function Top10VendorsPage() {
     ));
   };
 
+  // Get current vendor row
+  const currentVendorRow = React.useMemo(() => {
+    if (!openVendorSheet) return null;
+    const collection = collections.find(c => c.id === activeTab);
+    return collection?.rows.find(r => r.id === openVendorSheet) || null;
+  }, [openVendorSheet, collections, activeTab]);
+
+  // Add style to vendor
+  const addStyle = (vendorId: string) => {
+    const newStyle: VendorStyle = {
+      id: `style-${Date.now()}`,
+      style_no: '',
+      price_per_sample: 0,
+      out_of_collection: false,
+    };
+    setCollections(collections.map(c => 
+      c.id === activeTab 
+        ? {
+            ...c,
+            rows: c.rows.map(r => {
+              if (r.id === vendorId) {
+                const updated = { ...r, styles: [...(r.styles || []), newStyle] };
+                return calculateRow(updated);
+              }
+              return r;
+            })
+          }
+        : c
+    ));
+  };
+
+  // Update style
+  const updateStyle = (vendorId: string, styleId: string, field: keyof VendorStyle, value: string | number | boolean) => {
+    setCollections(collections.map(c => 
+      c.id === activeTab 
+        ? {
+            ...c,
+            rows: c.rows.map(r => {
+              if (r.id === vendorId) {
+                const updated = {
+                  ...r,
+                  styles: (r.styles || []).map(s => 
+                    s.id === styleId ? { ...s, [field]: value } : s
+                  )
+                };
+                return calculateRow(updated);
+              }
+              return r;
+            })
+          }
+        : c
+    ));
+  };
+
+  // Delete style
+  const deleteStyle = (vendorId: string, styleId: string) => {
+    setCollections(collections.map(c => 
+      c.id === activeTab 
+        ? {
+            ...c,
+            rows: c.rows.map(r => {
+              if (r.id === vendorId) {
+                const updated = {
+                  ...r,
+                  styles: (r.styles || []).filter(s => s.id !== styleId)
+                };
+                return calculateRow(updated);
+              }
+              return r;
+            })
+          }
+        : c
+    ));
+  };
+
   // Format number for display
   const formatNumber = (num: number): string => {
     if (num === 0) return '0';
@@ -171,15 +342,29 @@ export default function Top10VendorsPage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <div className="text-xs text-gray-500">Statistics</div>
-          <h1 className="text-xl font-semibold">Top 10 Vendors</h1>
+      <div className="text-xs text-gray-500">Statistics</div>
+      <h1 className="text-xl font-semibold">Top 10 Vendors</h1>
         </div>
-        <Button 
-          onClick={addCollection}
-          className="bg-[#8FA894] hover:bg-[#C5D5CA]"
-        >
-          + Add New Collection
-        </Button>
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-gray-600">Currency:</label>
+            <select
+              value={currency}
+              onChange={(e) => setCurrency(e.target.value as Currency)}
+              className="text-xs border rounded px-2 py-1"
+            >
+              <option value="DKK">DKK</option>
+              <option value="EUR">EUR</option>
+              <option value="USD">USD</option>
+            </select>
+          </div>
+          <Button 
+            onClick={addCollection}
+            className="bg-[#8FA894] hover:bg-[#C5D5CA]"
+          >
+            + Add New Collection
+          </Button>
+        </div>
       </div>
 
       <Card className="border-[#C5D5CA]">
@@ -285,14 +470,34 @@ export default function Top10VendorsPage() {
                           {collection.rows.map((row) => {
                             const calculated = calculateRow(row);
                             return (
-                              <TableRow key={row.id} className="hover:bg-gray-50">
+                              <TableRow 
+                                key={row.id} 
+                                className="hover:bg-gray-50 cursor-pointer"
+                                onClick={() => setOpenVendorSheet(row.id)}
+                              >
                                 <TableCell>
-                                  <Input
-                                    value={row.leverandør}
-                                    onChange={(e) => updateRow(row.id, 'leverandør', e.target.value)}
-                                    placeholder="Supplier name"
-                                    className="w-full text-xs"
-                                  />
+                                  <div className="flex items-center gap-2">
+                                    <Input
+                                      value={row.leverandør}
+                                      onChange={(e) => {
+                                        e.stopPropagation();
+                                        updateRow(row.id, 'leverandør', e.target.value);
+                                      }}
+                                      onClick={(e) => e.stopPropagation()}
+                                      placeholder="Supplier name"
+                                      className="w-full text-xs"
+                                    />
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setOpenVendorSheet(row.id);
+                                      }}
+                                      className="text-[#8FA894] hover:text-[#C5D5CA] text-xs"
+                                      title="Open vendor details"
+                                    >
+                                      📋
+                                    </button>
+                                  </div>
                                 </TableCell>
                                 <TableCell>
                                   <Input
@@ -367,6 +572,147 @@ export default function Top10VendorsPage() {
           </Tabs>
         </CardContent>
       </Card>
+
+      {/* Vendor Details Sheet */}
+      <Sheet open={!!openVendorSheet} onOpenChange={(open) => !open && setOpenVendorSheet(null)}>
+        <SheetHeader>
+          <SheetTitle>
+            {currentVendorRow ? `Vendor: ${currentVendorRow.leverandør || 'Unnamed'}` : 'Vendor Details'}
+          </SheetTitle>
+          <SheetClose onClick={() => setOpenVendorSheet(null)} />
+        </SheetHeader>
+        <SheetContent>
+          {currentVendorRow && (
+            <div className="space-y-4">
+              <div className="text-sm text-gray-600">
+                Add styles for this vendor. Prices will be calculated based on the selected currency ({currency}) and prøvefaktor.
+              </div>
+
+              <div className="flex items-center justify-between">
+                <div className="text-sm font-medium">
+                  {currentVendorRow.styles?.length || 0} style{(currentVendorRow.styles?.length || 0) !== 1 ? 's' : ''}
+                </div>
+                <Button
+                  onClick={() => addStyle(currentVendorRow.id)}
+                  variant="outline"
+                  size="sm"
+                  className="border-[#8FA894] text-[#8FA894] hover:bg-[#8FA894]/10"
+                >
+                  + Add Style
+                </Button>
+              </div>
+
+              {currentVendorRow.styles && currentVendorRow.styles.length > 0 ? (
+                <div className="border rounded-lg overflow-hidden">
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="bg-[#F5F3F0]">
+                        <TableHead className="w-[200px]">Style No</TableHead>
+                        <TableHead className="text-right w-[150px]">Price per Sample ({currency})</TableHead>
+                        <TableHead className="text-center w-[150px]">Out of Collection</TableHead>
+                        <TableHead className="text-right w-[120px]">Price in DKK</TableHead>
+                        <TableHead className="w-[80px]"></TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {currentVendorRow.styles.map((style) => {
+                        const priceInDKK = convertToDKK(style.price_per_sample);
+                        const vendorCalculated = calculateRow(currentVendorRow);
+                        const factor = vendorCalculated.prøvefaktor > 0 ? vendorCalculated.prøvefaktor : 1;
+                        const totalPrice = priceInDKK * factor;
+                        
+                        return (
+                          <TableRow key={style.id} className="hover:bg-gray-50">
+                            <TableCell>
+                              <Input
+                                value={style.style_no}
+                                onChange={(e) => updateStyle(currentVendorRow.id, style.id, 'style_no', e.target.value)}
+                                placeholder="Style number"
+                                className="w-full text-xs"
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <Input
+                                type="number"
+                                value={style.price_per_sample || ''}
+                                onChange={(e) => updateStyle(currentVendorRow.id, style.id, 'price_per_sample', parseFloat(e.target.value) || 0)}
+                                className="w-full text-xs text-right"
+                                min="0"
+                                step="0.01"
+                              />
+                            </TableCell>
+                            <TableCell className="text-center">
+                              <input
+                                type="checkbox"
+                                checked={style.out_of_collection}
+                                onChange={(e) => updateStyle(currentVendorRow.id, style.id, 'out_of_collection', e.target.checked)}
+                                className="w-4 h-4"
+                              />
+                            </TableCell>
+                            <TableCell className="text-right text-gray-600">
+                              {formatCurrency(totalPrice)}
+                            </TableCell>
+                            <TableCell>
+                              <button
+                                onClick={() => deleteStyle(currentVendorRow.id, style.id)}
+                                className="text-red-500 hover:text-red-700 text-xs"
+                                title="Delete style"
+                              >
+                                ×
+                              </button>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
+              ) : (
+                <div className="text-center py-12 text-gray-500 border border-dashed rounded-lg">
+                  <p className="mb-2">No styles added yet</p>
+                  <Button
+                    onClick={() => addStyle(currentVendorRow.id)}
+                    variant="outline"
+                    size="sm"
+                  >
+                    Add your first style
+                  </Button>
+                </div>
+              )}
+
+              {/* Summary */}
+              {currentVendorRow.styles && currentVendorRow.styles.length > 0 && (() => {
+                const calculated = calculateRow(currentVendorRow);
+                return (
+                  <Card className="border-[#C5D5CA] bg-[#F5F3F0]">
+                    <CardHeader>
+                      <CardTitle className="text-sm">Summary</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-2 text-sm">
+                      <div className="flex justify-between">
+                        <span className="text-gray-600">Styles in Collection:</span>
+                        <span className="font-medium">{calculated.styles_i_koll}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-600">Total Unused:</span>
+                        <span className="font-medium text-red-600">{formatCurrency(calculated.total_ubrugte)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-600">Prøvefaktor:</span>
+                        <span className="font-medium">{calculated.prøvefaktor > 0 ? formatNumber(calculated.prøvefaktor) : '—'}</span>
+                      </div>
+                      <div className="flex justify-between pt-2 border-t">
+                        <span className="font-semibold">Total:</span>
+                        <span className="font-bold text-[#8FA894]">{formatCurrency(calculated.total)}</span>
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })()}
+            </div>
+          )}
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }
