@@ -72,6 +72,7 @@ export default function StockListPage() {
   const [stockFixProgress, setStockFixProgress] = React.useState<{ step: string; details?: string } | null>(null);
   const [scrapeProgress, setScrapeProgress] = React.useState<{ current: number; total: number } | null>(null);
   const [scrapeMessage, setScrapeMessage] = React.useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
+  const [autoScrapeEnabled, setAutoScrapeEnabled] = React.useState<boolean>(false);
   const { data, mutate: mutateStockData } = useSWR('style_stock:list', async () => {
     // First, get the total count
     const { count, error: countError } = await supabase
@@ -1136,8 +1137,8 @@ export default function StockListPage() {
                   mismatches: mismatchCount
                 });
                 
-                // If mismatches found, automatically enqueue scrape mismatches
-                if (mismatchCount > 0) {
+                // If mismatches found, automatically enqueue scrape mismatches (only if auto-scrape is enabled)
+                if (mismatchCount > 0 && autoScrapeEnabled) {
                   setStockFixProgress({ step: 'Mismatches found, enqueuing scrape...', details: `${mismatchCount} mismatches` });
                   
                   // Get style numbers for mismatches
@@ -1249,16 +1250,19 @@ export default function StockListPage() {
                     });
                   }
                 } else {
-                  // No mismatches, just show results
+                  // No mismatches or auto-scrape disabled, just show results
                   setRunningStockFix(false);
                   setStockFixProgress(null);
                   
                   if (mismatchCount === 0 && missingInCurrent === 0 && missingInPasted === 0) {
                     setStockFixMessage({ type: 'success', text: `SPY verification complete! All ${spyDataMap.size} styles match.` });
                   } else {
+                    const autoScrapeNote = !autoScrapeEnabled && mismatchCount > 0 
+                      ? ' Auto-scrape is disabled. Use the "Scrape Mismatches" button to manually scrape.' 
+                      : '';
                     setStockFixMessage({ 
                       type: 'info', 
-                      text: `SPY verification complete! Found ${mismatchCount} mismatch${mismatchCount !== 1 ? 'es' : ''}, ${missingInCurrent} missing in DB, ${missingInPasted} missing in SPY.` 
+                      text: `SPY verification complete! Found ${mismatchCount} mismatch${mismatchCount !== 1 ? 'es' : ''}, ${missingInCurrent} missing in DB, ${missingInPasted} missing in SPY.${autoScrapeNote}` 
                     });
                   }
                 }
@@ -2307,14 +2311,26 @@ PO7332, 2100"
                 Export to Excel
               </Button>
             )}
-            <Button 
-              onClick={runStockFixCheck}
-              variant="default"
-              disabled={runningStockFix || scrapingMismatches}
-              className="bg-blue-600 hover:bg-blue-700"
-            >
-              {runningStockFix ? 'Running...' : 'Run SPY Stock Verification'}
-            </Button>
+            <div className="flex items-center gap-3">
+              <label className="flex items-center gap-2 text-sm cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={autoScrapeEnabled}
+                  onChange={(e) => setAutoScrapeEnabled(e.target.checked)}
+                  disabled={runningStockFix || scrapingMismatches}
+                  className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                />
+                <span className="text-gray-700">Auto-scrape mismatches</span>
+              </label>
+              <Button 
+                onClick={runStockFixCheck}
+                variant="default"
+                disabled={runningStockFix || scrapingMismatches}
+                className="bg-blue-600 hover:bg-blue-700"
+              >
+                {runningStockFix ? 'Running...' : 'Run SPY Stock Verification'}
+              </Button>
+            </div>
             <Button 
               variant="outline" 
               onClick={() => {
