@@ -83,21 +83,3 @@ export async function POST(req: Request) {
   }
 }
 
-// GET single analysis by ID
-export async function getAnalysisById(id: string) {
-  const supabase = createRouteHandlerClient({ cookies });
-  
-  const { data, error } = await supabase
-    .from('call_off_analysis')
-    .select('*')
-    .eq('id', id)
-    .single();
-
-  if (error) {
-    throw new Error(error.message);
-  }
-
-  return data;
-}
-
-
