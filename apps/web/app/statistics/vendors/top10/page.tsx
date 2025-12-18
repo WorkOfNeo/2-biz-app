@@ -1120,10 +1120,14 @@ export default function Top10VendorsPage() {
                                 <TableCell>
                                   <div className="flex items-center gap-2">
                                     <Input
-                                      value={row.leverandør}
+                                      value={localRowValues[row.id]?.leverandør !== undefined ? localRowValues[row.id].leverandør as string : row.leverandør}
                                       onChange={(e) => {
                                         e.stopPropagation();
-                                        updateRow(row.id, 'leverandør', e.target.value);
+                                        updateLocalRowValue(row.id, 'leverandør', e.target.value);
+                                      }}
+                                      onBlur={(e) => {
+                                        e.stopPropagation();
+                                        saveLocalRowValue(row.id, 'leverandør');
                                       }}
                                       onClick={(e) => e.stopPropagation()}
                                       placeholder="Supplier name"
@@ -1144,31 +1148,55 @@ export default function Top10VendorsPage() {
                                 <TableCell>
                                   <Input
                                     type="number"
-                                    value={row.antal_prøver || ''}
-                                    onChange={(e) => updateRow(row.id, 'antal_prøver', parseFloat(e.target.value) || 0)}
+                                    value={localRowValues[row.id]?.antal_prøver !== undefined ? localRowValues[row.id].antal_prøver as number : (row.antal_prøver || '')}
+                                    onChange={(e) => {
+                                      e.stopPropagation();
+                                      updateLocalRowValue(row.id, 'antal_prøver', parseFloat(e.target.value) || 0);
+                                    }}
+                                    onBlur={(e) => {
+                                      e.stopPropagation();
+                                      saveLocalRowValue(row.id, 'antal_prøver');
+                                    }}
                                     className="w-full text-xs text-right"
                                     min="0"
                                     step="1"
+                                    onClick={(e) => e.stopPropagation()}
                                   />
                                 </TableCell>
                                 <TableCell>
                                   <Input
                                     type="number"
-                                    value={row.styles_i_koll || ''}
-                                    onChange={(e) => updateRow(row.id, 'styles_i_koll', parseFloat(e.target.value) || 0)}
+                                    value={localRowValues[row.id]?.styles_i_koll !== undefined ? localRowValues[row.id].styles_i_koll as number : (row.styles_i_koll || '')}
+                                    onChange={(e) => {
+                                      e.stopPropagation();
+                                      updateLocalRowValue(row.id, 'styles_i_koll', parseFloat(e.target.value) || 0);
+                                    }}
+                                    onBlur={(e) => {
+                                      e.stopPropagation();
+                                      saveLocalRowValue(row.id, 'styles_i_koll');
+                                    }}
                                     className="w-full text-xs text-right"
                                     min="0"
                                     step="1"
+                                    onClick={(e) => e.stopPropagation()}
                                   />
                                 </TableCell>
                                 <TableCell>
                                   <Input
                                     type="number"
-                                    value={row.gns_pris_pr_prøve || ''}
-                                    onChange={(e) => updateRow(row.id, 'gns_pris_pr_prøve', parseFloat(e.target.value) || 0)}
+                                    value={localRowValues[row.id]?.gns_pris_pr_prøve !== undefined ? localRowValues[row.id].gns_pris_pr_prøve as number : (row.gns_pris_pr_prøve || '')}
+                                    onChange={(e) => {
+                                      e.stopPropagation();
+                                      updateLocalRowValue(row.id, 'gns_pris_pr_prøve', parseFloat(e.target.value) || 0);
+                                    }}
+                                    onBlur={(e) => {
+                                      e.stopPropagation();
+                                      saveLocalRowValue(row.id, 'gns_pris_pr_prøve');
+                                    }}
                                     className="w-full text-xs text-right"
                                     min="0"
                                     step="0.01"
+                                    onClick={(e) => e.stopPropagation()}
                                   />
                                 </TableCell>
                                 <TableCell className="text-right font-medium text-[#8FA894]">
@@ -1177,11 +1205,19 @@ export default function Top10VendorsPage() {
                                 <TableCell>
                                   <Input
                                     type="number"
-                                    value={row.total_ubrugte || ''}
-                                    onChange={(e) => updateRow(row.id, 'total_ubrugte', parseFloat(e.target.value) || 0)}
+                                    value={localRowValues[row.id]?.total_ubrugte !== undefined ? localRowValues[row.id].total_ubrugte as number : (row.total_ubrugte || '')}
+                                    onChange={(e) => {
+                                      e.stopPropagation();
+                                      updateLocalRowValue(row.id, 'total_ubrugte', parseFloat(e.target.value) || 0);
+                                    }}
+                                    onBlur={(e) => {
+                                      e.stopPropagation();
+                                      saveLocalRowValue(row.id, 'total_ubrugte');
+                                    }}
                                     className="w-full text-xs text-right"
                                     min="0"
                                     step="0.01"
+                                    onClick={(e) => e.stopPropagation()}
                                   />
                                 </TableCell>
                                 <TableCell className={`text-right font-medium ${
@@ -1263,8 +1299,11 @@ export default function Top10VendorsPage() {
                       </label>
                       <Input
                         type="number"
-                        value={currentVendorRow.exchange_rate || DEFAULT_CURRENCY_RATES[currentVendorRow.currency || 'DKK']}
-                        onChange={(e) => updateRow(currentVendorRow.id, 'exchange_rate', parseFloat(e.target.value) || DEFAULT_CURRENCY_RATES[currentVendorRow.currency || 'DKK'])}
+                        value={localRowValues[currentVendorRow.id]?.exchange_rate !== undefined 
+                          ? localRowValues[currentVendorRow.id].exchange_rate as number 
+                          : (currentVendorRow.exchange_rate || DEFAULT_CURRENCY_RATES[currentVendorRow.currency || 'DKK'])}
+                        onChange={(e) => updateLocalRowValue(currentVendorRow.id, 'exchange_rate', parseFloat(e.target.value) || DEFAULT_CURRENCY_RATES[currentVendorRow.currency || 'DKK'])}
+                        onBlur={() => saveLocalRowValue(currentVendorRow.id, 'exchange_rate')}
                         className="w-full text-xs"
                         min="0"
                         step="0.0001"
