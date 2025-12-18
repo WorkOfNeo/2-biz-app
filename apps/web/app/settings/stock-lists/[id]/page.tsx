@@ -512,6 +512,175 @@ export default function StockListDetailPage({ params }: { params: { id: string }
     }
   );
 
+  // Export to Excel function
+  const exportToExcel = React.useCallback(async () => {
+    try {
+      if (!listStyles || listStyles.length === 0) {
+        flash('No styles in list to export', 'error');
+        return;
+      }
+
+      setLoading(true);
+
+      // Get style numbers and colors for the list
+      const styleNos = new Set<string>();
+      const styleColorMap = new Map<string, Set<string>>(); // style_no -> Set<color>
+      
+      for (const ls of listStyles) {
+        const style = ls.style;
+        styleNos.add(style.style_no);
+        
+        const colors = colorsByStyle.get(ls.style_id) ?? [];
+        if (!styleColorMap.has(style.style_no)) {
+          styleColorMap.set(style.style_no, new Set());
+        }
+        for (const lc of colors) {
+          if (lc.include) {
+            styleColorMap.get(style.style_no)!.add(lc.color.color);
+          }
+        }
+      }
+
+      if (styleNos.size === 0) {
+        flash('No styles to export', 'error');
+        setLoading(false);
+        return;
+      }
+
+      // Fetch stock data for these styles
+      const { data: stockData, error: stockError } = await supabase
+        .from('style_stock')
+        .select('style_no, color, sizes, section, row_label, values, scraped_at')
+        .in('style_no', Array.from(styleNos))
+        .eq('section', 'Stock')
+        .order('scraped_at', { ascending: false });
+
+      if (stockError) throw stockError;
+
+      // Process stock data: get latest per style/color
+      const stockByStyleColor = new Map<string, { sizes: string[]; values: number[]; scraped_at: string }>();
+      for (const row of (stockData ?? [])) {
+        const key = `${row.style_no}|${row.color}`;
+        
+        // Only include if color is in the list
+        if (!styleColorMap.get(row.style_no)?.has(row.color)) continue;
+        
+        // Get latest entry
+        const existing = stockByStyleColor.get(key);
+        if (!existing || new Date(row.scraped_at).getTime() > new Date(existing.scraped_at || 0).getTime()) {
+          const sizes = Array.isArray(row.sizes) ? row.sizes : JSON.parse(String(row.sizes || '[]'));
+          const values = Array.isArray(row.values) ? row.values : JSON.parse(String(row.values || '[]'));
+          stockByStyleColor.set(key, { sizes, values, scraped_at: row.scraped_at });
+        }
+      }
+
+      // Group by size arrays
+      const sizeArrayGroups = new Map<string, Array<{
+        styleNo: string;
+        styleName: string | null;
+        color: string;
+        sizes: string[];
+        values: number[];
+        total: number;
+      }>>();
+
+      for (const ls of listStyles) {
+        const style = ls.style;
+        const colors = colorsByStyle.get(ls.style_id) ?? [];
+        
+        for (const lc of colors) {
+          if (!lc.include) continue;
+          
+          const key = `${style.style_no}|${lc.color.color}`;
+          const stock = stockByStyleColor.get(key);
+          
+          if (stock) {
+            const sizes = stock.sizes;
+            const values = stock.values;
+            const total = values.reduce((sum, v) => sum + (Number(v) || 0), 0);
+            
+            // Create a key for the size array (normalize for grouping)
+            const sizeArrayKey = sizes.join('|');
+            
+            if (!sizeArrayGroups.has(sizeArrayKey)) {
+              sizeArrayGroups.set(sizeArrayKey, []);
+            }
+            
+            sizeArrayGroups.get(sizeArrayKey)!.push({
+              styleNo: style.style_no,
+              styleName: style.style_name,
+              color: lc.color.color,
+              sizes,
+              values,
+              total
+            });
+          }
+        }
+      }
+
+      if (sizeArrayGroups.size === 0) {
+        flash('No stock data found for styles in this list', 'error');
+        setLoading(false);
+        return;
+      }
+
+      // Create workbook
+      const workbook = XLSX.utils.book_new();
+
+      // Create a sheet for each size array
+      for (const [sizeArrayKey, items] of sizeArrayGroups.entries()) {
+        const sizes = items[0].sizes;
+        const sheetName = sizes.length > 0 
+          ? sizes.join('-').substring(0, 31) // Excel sheet name limit is 31 chars
+          : 'Default';
+        
+        // Create header row
+        const headers = ['STYLE NO', 'STYLE NAME', 'COLOR', ...sizes, 'TOTAL'];
+        const rows: any[][] = [headers];
+
+        // Add data rows
+        for (const item of items) {
+          const row = [
+            item.styleNo,
+            item.styleName || '',
+            item.color,
+            ...item.values.map(v => Number(v) || 0),
+            item.total
+          ];
+          rows.push(row);
+        }
+
+        // Create worksheet
+        const worksheet = XLSX.utils.aoa_to_sheet(rows);
+        
+        // Set column widths
+        const colWidths = [
+          { wch: 12 }, // STYLE NO
+          { wch: 30 }, // STYLE NAME
+          { wch: 15 }, // COLOR
+          ...sizes.map(() => ({ wch: 8 })), // Sizes
+          { wch: 10 } // TOTAL
+        ];
+        worksheet['!cols'] = colWidths;
+
+        // Add sheet to workbook
+        XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
+      }
+
+      // Generate filename
+      const filename = `stock-list-${list?.name || 'export'}-${new Date().toISOString().split('T')[0]}.xlsx`;
+      
+      // Write file
+      XLSX.writeFile(workbook, filename);
+      
+      flash(`Exported ${sizeArrayGroups.size} sheet(s) to ${filename}`);
+    } catch (e: any) {
+      flash(e.message || 'Failed to export to Excel', 'error');
+    } finally {
+      setLoading(false);
+    }
+  }, [listStyles, listColors, colorsByStyle, list, supabase, flash]);
+
   if (!list) return <div className="p-4">Loading...</div>;
 
   return (
