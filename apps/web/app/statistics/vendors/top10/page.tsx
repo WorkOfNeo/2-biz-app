@@ -280,11 +280,6 @@ export default function Top10VendorsPage() {
     ));
   };
 
-  // Get current collection
-  const currentCollection = React.useMemo(() => {
-    return collections.find(c => c.id === activeTab) || null;
-  }, [collections, activeTab]);
-
   // Get current vendor row
   const currentVendorRow = React.useMemo(() => {
     if (!openVendorSheet) return null;
