@@ -384,6 +384,40 @@ export default function Top10VendorsPage() {
   };
 
 
+  // Add new collection
+  const addCollection = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      const { data: newCollection, error } = await supabase
+        .from('vendor_collections')
+        .insert({
+          name: `Collection ${collections.length + 1}`,
+          season_id: null,
+          sort_order: collections.length,
+          created_by: user?.id || null,
+        })
+        .select()
+        .single();
+      
+      if (error) throw error;
+      
+      const collection: Collection = {
+        id: newCollection.id,
+        name: newCollection.name,
+        season_id: newCollection.season_id,
+        rows: [],
+      };
+      
+      setCollections([...collections, collection]);
+      setActiveTab(collection.id);
+      setEditingName(collection.id);
+      setNewName(collection.name);
+    } catch (error) {
+      console.error('Failed to create collection:', error);
+      alert('Failed to create collection');
+    }
+  };
+
   // Update collection season
   const updateCollectionSeason = async (collectionId: string, seasonId: string | null) => {
     try {
