@@ -201,6 +201,102 @@ export default function Top10VendorsPage() {
     loadCollections();
   }, []); // Only run on mount
 
+  // Poll scraping job progress
+  React.useEffect(() => {
+    if (!scrapingJobId) return;
+
+    const interval = setInterval(async () => {
+      try {
+        // Check job status
+        const { data: job, error: jobError } = await supabase
+          .from('jobs')
+          .select('status, error')
+          .eq('id', scrapingJobId)
+          .maybeSingle();
+
+        if (jobError) {
+          console.error('Error fetching job status:', jobError);
+          return;
+        }
+
+        if (!job) return;
+
+        // Fetch latest logs for progress
+        const { data: logs } = await supabase
+          .from('job_logs')
+          .select('msg, data, ts')
+          .eq('job_id', scrapingJobId)
+          .order('ts', { ascending: false })
+          .limit(20);
+
+        // Parse progress from logs
+        if (logs && logs.length > 0) {
+          for (const log of logs) {
+            // Check for initial log with total count
+            if (log.msg.includes('Found') && log.msg.includes('styles to scrape') && log.data?.total) {
+              const total = log.data.total || 0;
+              if (!scrapingProgress || scrapingProgress.total !== total) {
+                setScrapingProgress({ current: 0, total });
+                setScrapingStatus(`Starting to scrape ${total} styles...`);
+              }
+            }
+            // Check for style scraping progress
+            if (log.msg.includes('Scraping style:') && log.data) {
+              const current = log.data.current || 0;
+              const total = log.data.total || scrapingProgress?.total || 1;
+              const styleNo = log.data.style_no || '';
+              setScrapingProgress({ 
+                current, 
+                total,
+                currentStyle: styleNo 
+              });
+              setScrapingStatus(`Scraping: ${styleNo} (${current}/${total})`);
+            }
+            // Check for updated style
+            if (log.msg.includes('Updated') && log.msg.includes('with raw cost') && log.data) {
+              const current = log.data.current || (scrapingProgress?.current || 0) + 1;
+              const total = log.data.total || scrapingProgress?.total || 1;
+              const styleNo = log.data.style_no || '';
+              setScrapingProgress({ 
+                current, 
+                total,
+                currentStyle: styleNo 
+              });
+              setScrapingStatus(`Updated ${styleNo} (${current}/${total})`);
+            }
+            // Check for completion
+            if (log.msg === 'STEP:scrape_raw_costs_complete') {
+              setScrapingStatus('Scraping completed!');
+            }
+          }
+        }
+
+        // Check if job is done
+        if (job.status === 'succeeded') {
+          setScrapingStatus('Scraping completed successfully!');
+          setScrapingProgress(null);
+          // Reload collections to show updated prices
+          setTimeout(() => {
+            window.location.reload();
+          }, 2000);
+          setScrapingJobId(null);
+        } else if (job.status === 'failed') {
+          setScrapingStatus(`Scraping failed: ${job.error || 'Unknown error'}`);
+          setScrapingProgress(null);
+          setScrapingJobId(null);
+        } else if (job.status === 'cancelled') {
+          setScrapingStatus('Scraping cancelled');
+          setScrapingProgress(null);
+          setScrapingJobId(null);
+        }
+      } catch (error) {
+        console.error('Error polling job progress:', error);
+      }
+    }, 2000); // Poll every 2 seconds
+
+    return () => clearInterval(interval);
+  }, [scrapingJobId, scrapingProgress, supabase]);
+
   // Save collections to Supabase (debounced for field updates only)
   const saveTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
   const isSavingRef = React.useRef(false);

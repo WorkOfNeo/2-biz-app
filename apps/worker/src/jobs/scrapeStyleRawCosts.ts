@@ -164,7 +164,12 @@ export async function scrapeStyleRawCosts(ctx: Ctx) {
           throw new Error(`Failed to update style ${style.id}: ${updateError.message}`);
         }
 
-        await log(job.id, 'info', `Updated ${style.style_no} with raw cost: ${rawCost}`);
+        await log(job.id, 'info', `Updated ${style.style_no} with raw cost: ${rawCost}`, {
+          style_no: style.style_no,
+          raw_cost: rawCost,
+          current: i + 1,
+          total: styles.length
+        });
         
         results.push({
           style_id: style.id,
