@@ -167,7 +167,8 @@ export default function FullAnalysisModal({
       // Distribute target stock by historical pressure
       const totalHist = item.historical.reduce((a, b) => a + b, 0);
       if (totalHist === 0) return Math.ceil(item.targetStock / item.sizes.length);
-      return Math.ceil((item.historical[i] / totalHist) * item.targetStock);
+      const histValue = item.historical[i] ?? 0;
+      return Math.ceil((histValue / totalHist) * item.targetStock);
     });
     
     return item.sizes.map((_, i) => {
@@ -236,10 +237,14 @@ export default function FullAnalysisModal({
       });
 
       if (response.ok) {
-        setFeedback(prev => ({
-          ...prev,
-          [key]: { ...prev[key], saved: true }
-        }));
+        setFeedback(prev => {
+          const current = prev[key];
+          if (!current) return prev;
+          return {
+            ...prev,
+            [key]: { verdict: current.verdict, notes: current.notes, saved: true }
+          };
+        });
       }
     } catch (error) {
       console.error('Failed to save feedback:', error);
@@ -687,10 +692,14 @@ export default function FullAnalysisModal({
                                         type="text"
                                         placeholder="Add a note about this suggestion..."
                                         value={fb.notes}
-                                        onChange={(e) => setFeedback(prev => ({
-                                          ...prev,
-                                          [itemKey]: { ...prev[itemKey], notes: e.target.value, saved: false }
-                                        }))}
+                                        onChange={(e) => setFeedback(prev => {
+                                          const current = prev[itemKey];
+                                          if (!current) return prev;
+                                          return {
+                                            ...prev,
+                                            [itemKey]: { verdict: current.verdict, notes: e.target.value, saved: false }
+                                          };
+                                        })}
                                         className="flex-1 text-xs p-2 border rounded"
                                       />
                                       <Button
