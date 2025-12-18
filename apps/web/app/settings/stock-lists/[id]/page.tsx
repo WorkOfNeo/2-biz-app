@@ -301,6 +301,26 @@ export default function StockListDetailPage({ params }: { params: { id: string }
     }
   }
 
+  // Add inactive color to list
+  async function addInactiveColor(styleId: string, colorId: string, colorName: string) {
+    try {
+      const { error } = await supabase
+        .from('stock_list_colors')
+        .insert({
+          list_id: params.id,
+          style_id: styleId,
+          style_color_id: colorId,
+          include: true
+        });
+      if (error) throw error;
+      
+      await mutateListColors();
+      flash(`Color "${colorName}" added to list`);
+    } catch (e: any) {
+      flash(e.message || 'Failed to add color', 'error');
+    }
+  }
+
   // Remove all styles from list
   async function removeAllStyles() {
     if (!confirm(`Remove all ${listStyles?.length ?? 0} styles from ${list?.name}? This action cannot be undone.`)) return;
