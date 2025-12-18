@@ -21,6 +21,8 @@ export default function StyleDetailPage({ params }: { params: { styleNo: string 
   const router = useRouter();
   const styleNo = decodeURIComponent(params.styleNo);
   const [updatingColorId, setUpdatingColorId] = React.useState<string | null>(null);
+  const [scraping, setScraping] = React.useState<boolean>(false);
+  const [scrapeMessage, setScrapeMessage] = React.useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   const { data: meta, mutate: mutateMeta } = useSWR(['style:meta', styleNo], async () => {
     const { data, error } = await supabase
@@ -76,7 +78,7 @@ export default function StyleDetailPage({ params }: { params: { styleNo: string 
   }, { refreshInterval: 30000 });
 
   // Fetch stock data
-  const { data: stockData } = useSWR(['style:stock', styleNo], async () => {
+  const { data: stockData, mutate: mutateStockData } = useSWR(['style:stock', styleNo], async () => {
     const { data, error } = await supabase
       .from('style_stock')
       .select('style_no, color, sizes, section, row_label, values, scraped_at')
@@ -85,6 +87,88 @@ export default function StyleDetailPage({ params }: { params: { styleNo: string 
     if (error) throw new Error(error.message);
     return (data ?? []) as StockRow[];
   }, { refreshInterval: 30000 });
+
+  // Scrape this style
+  async function scrapeThisStyle() {
+    try {
+      setScraping(true);
+      setScrapeMessage(null);
+      
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        throw new Error('Not signed in');
+      }
+
+      // Enqueue scrape job for this style
+      const res = await fetch('/api/enqueue', {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json', 
+          Authorization: `Bearer ${session.access_token}` 
+        },
+        body: JSON.stringify({
+          type: 'update_style_stock',
+          payload: { 
+            styleNos: [styleNo],
+            requestedBy: session.user.email || 'style-detail-page'
+          }
+        })
+      });
+
+      if (!res.ok) {
+        const txt = await res.text().catch(() => '');
+        throw new Error(txt || `Failed (${res.status})`);
+      }
+
+      const { jobId } = await res.json();
+      setScrapeMessage({ type: 'success', text: `Scrape job enqueued (Job ID: ${jobId.slice(0, 8)}...)` });
+
+      // Poll for job completion
+      const pollInterval = setInterval(async () => {
+        try {
+          const { data: jobData, error: jobError } = await supabase
+            .from('jobs')
+            .select('status')
+            .eq('id', jobId)
+            .single();
+
+          if (jobError) {
+            console.error('Error checking job status:', jobError);
+            return;
+          }
+
+          if (jobData?.status === 'succeeded' || jobData?.status === 'failed' || jobData?.status === 'cancelled') {
+            clearInterval(pollInterval);
+            setScraping(false);
+            
+            if (jobData.status === 'succeeded') {
+              setScrapeMessage({ type: 'success', text: 'Stock data updated successfully!' });
+              // Refresh stock data
+              await mutateStockData();
+              // Clear message after 3 seconds
+              setTimeout(() => setScrapeMessage(null), 3000);
+            } else {
+              setScrapeMessage({ type: 'error', text: `Job ${jobData.status}. Check the Jobs page for details.` });
+            }
+          }
+        } catch (err) {
+          console.error('Error polling job status:', err);
+        }
+      }, 2000); // Poll every 2 seconds
+
+      // Stop polling after 5 minutes
+      setTimeout(() => {
+        clearInterval(pollInterval);
+        if (scraping) {
+          setScraping(false);
+          setScrapeMessage({ type: 'error', text: 'Scrape is taking longer than expected. Check the Jobs page for status.' });
+        }
+      }, 300000);
+    } catch (e: any) {
+      setScraping(false);
+      setScrapeMessage({ type: 'error', text: e?.message || 'Failed to enqueue scrape job' });
+    }
+  }
 
   async function onDelete() {
     if (!meta?.style_no) return;
@@ -198,16 +282,37 @@ export default function StyleDetailPage({ params }: { params: { styleNo: string 
             })()}
           </div>
         </div>
-        {has('admin') && (
+        <div className="flex items-center gap-2">
           <button
-            className="text-xs px-3 py-1.5 rounded bg-red-600 text-white hover:bg-red-700"
-            onClick={onDelete}
-            title="Permanently delete this style"
+            className="text-xs px-3 py-1.5 rounded bg-blue-600 text-white hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
+            onClick={scrapeThisStyle}
+            disabled={scraping}
+            title="Scrape stock data for this style"
           >
-            Permanently Delete
+            {scraping ? 'Scraping...' : 'Scrape Stock'}
           </button>
-        )}
+          {has('admin') && (
+            <button
+              className="text-xs px-3 py-1.5 rounded bg-red-600 text-white hover:bg-red-700"
+              onClick={onDelete}
+              title="Permanently delete this style"
+            >
+              Permanently Delete
+            </button>
+          )}
+        </div>
       </div>
+
+      {/* Scrape message */}
+      {scrapeMessage && (
+        <div className={`rounded border px-3 py-2 text-sm ${
+          scrapeMessage.type === 'success' 
+            ? 'bg-green-50 text-green-700 border-green-200' 
+            : 'bg-red-50 text-red-700 border-red-200'
+        }`}>
+          {scrapeMessage.text}
+        </div>
+      )}
 
       <div className="rounded-md border bg-white p-4 w-full overflow-hidden">
         {(colors ?? []).length === 0 ? (
