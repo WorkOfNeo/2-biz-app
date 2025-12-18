@@ -326,17 +326,17 @@ export default function Top10VendorsPage() {
   const calculateRow = (row: VendorRow): VendorRow => {
     const styles = row.styles || [];
     
+    // Each style row represents 9 samples
+    const SAMPLES_PER_ROW = 9;
+    
     // Calculate from styles if available
     if (styles.length > 0) {
-      // Each style row represents 9 samples
-      const SAMPLES_PER_ROW = 9;
       const totalSamples = styles.length * SAMPLES_PER_ROW;
       
       const inCollection = styles.filter(s => !s.out_of_collection);
       const outOfCollection = styles.filter(s => s.out_of_collection);
       
       // Each style row = 9 samples, multiply price by 9
-      const SAMPLES_PER_ROW = 9;
       const totalPrice = styles.reduce((sum, s) => {
         const priceInDKK = convertToDKK(s.price_per_sample, row.currency || 'DKK', row.exchange_rate || DEFAULT_CURRENCY_RATES[row.currency || 'DKK']);
         return sum + (priceInDKK * SAMPLES_PER_ROW);
@@ -347,7 +347,6 @@ export default function Top10VendorsPage() {
         return sum + (priceInDKK * SAMPLES_PER_ROW);
       }, 0);
       
-      const SAMPLES_PER_ROW = 9;
       const avgPrice = styles.length > 0 
         ? totalPrice / (styles.length * SAMPLES_PER_ROW)
         : 0;
@@ -1230,8 +1229,7 @@ export default function Top10VendorsPage() {
                         const vendorExchangeRate = currentVendorRow.exchange_rate || DEFAULT_CURRENCY_RATES[vendorCurrency];
                         const priceInDKK = convertToDKK(style.price_per_sample, vendorCurrency, vendorExchangeRate);
                         // Each style row = 9 samples
-                        const SAMPLES_PER_ROW = 9;
-                        const totalPrice = priceInDKK * SAMPLES_PER_ROW;
+                        const totalPrice = priceInDKK * 9;
                         
                         return (
                           <TableRow key={style.id} className="hover:bg-gray-50">
