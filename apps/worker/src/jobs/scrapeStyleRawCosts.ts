@@ -75,122 +75,253 @@ export async function scrapeStyleRawCosts(ctx: Ctx) {
         continue;
       }
 
-      try {
-        await log(job.id, 'info', `Scraping style: ${style.style_no}`, { 
-          style_no: style.style_no,
-          current: i + 1,
-          total: styles.length 
-        });
-        
-        // Navigate to style statistics page
-        // URL format: controller=Style\Statistics&action=List&Spy\Model\Style\Statistics\ListReportSearch[...]
-        // Backslashes need to be URL-encoded as %5C
-        const baseUrl = 'https://2-biz.spysystem.dk/?controller=Style%5CStatistics&action=List';
-        const searchParams = new URLSearchParams({
-          'Spy\\Model\\Style\\Statistics\\ListReportSearch[bForceSearch]': 'true',
-          'Spy\\Model\\Style\\Statistics\\ListReportSearch[strStyleNo]': style.style_no
-        });
-        const url = `${baseUrl}&${searchParams.toString()}`;
-        
-        await page.goto(url, { waitUntil: 'networkidle', timeout: 120_000 });
-        await log(job.id, 'info', `Loaded page for ${style.style_no}`);
-
-        // Wait for table to be present
-        await page.waitForSelector('.standardList table tbody tr', { timeout: 30_000 });
-
-        // Extract data from table
-        const tableData = await page.evaluate((targetStyleNo: string) => {
-          const rows = Array.from(document.querySelectorAll('.standardList table tbody tr')) as HTMLTableRowElement[];
+      let scrapeSuccess = false;
+      let lastScrapeError: string | null = null;
+      const maxRetries = 3;
+      
+      for (let attempt = 1; attempt <= maxRetries && !scrapeSuccess; attempt++) {
+        try {
+          await log(job.id, 'info', `Scraping style: ${style.style_no} (attempt ${attempt}/${maxRetries})`, { 
+            style_no: style.style_no,
+            current: i + 1,
+            total: styles.length,
+            attempt
+          });
           
-          for (const row of rows) {
-            const cells = Array.from(row.querySelectorAll('td')) as HTMLElement[];
-            if (cells.length < 5) continue;
-
-            // Style No is in column 1 (index 1)
-            const styleNoCell = cells[1];
-            const styleNoLink = styleNoCell?.querySelector('a') as HTMLAnchorElement | null;
-            const styleNo = (styleNoLink?.textContent || styleNoCell?.textContent || '').trim();
-
-            // Check if this row matches our target style
-            if (styleNo === targetStyleNo) {
-              // Raw Cost is in column 4 (index 4, data-column_no="4")
-              const rawCostCell = cells[4];
-              const rawCostText = (rawCostCell?.textContent || '').trim();
-              
-              return {
-                styleNo,
-                rawCostText
-              };
+          // Navigate to style statistics page
+          // URL format: controller=Style\Statistics&action=List&Spy\Model\Style\Statistics\ListReportSearch[...]
+          // Backslashes need to be URL-encoded as %5C
+          const baseUrl = 'https://2-biz.spysystem.dk/?controller=Style%5CStatistics&action=List';
+          const searchParams = new URLSearchParams({
+            'Spy\\Model\\Style\\Statistics\\ListReportSearch[bForceSearch]': 'true',
+            'Spy\\Model\\Style\\Statistics\\ListReportSearch[strStyleNo]': style.style_no
+          });
+          const url = `${baseUrl}&${searchParams.toString()}`;
+          
+          await log(job.id, 'info', `Navigating to URL for ${style.style_no}`, { url, attempt });
+          await page.goto(url, { waitUntil: 'networkidle', timeout: 120_000 });
+          
+          // Check page load status
+          const pageTitle = await page.title().catch(() => 'Unknown');
+          const pageUrl = page.url();
+          await log(job.id, 'info', `Page loaded for ${style.style_no}`, { 
+            pageTitle, 
+            pageUrl,
+            attempt 
+          });
+          
+          // Check for error messages on the page
+          const errorMessages = await page.evaluate(() => {
+            const errorSelectors = [
+              '.error',
+              '.alert-danger',
+              '[class*="error"]',
+              '[class*="Error"]'
+            ];
+            const messages: string[] = [];
+            for (const selector of errorSelectors) {
+              try {
+                const elements = document.querySelectorAll(selector);
+                elements.forEach(el => {
+                  const text = el.textContent?.trim();
+                  if (text && text.length < 200) messages.push(text);
+                });
+              } catch {}
             }
+            return messages;
+          }).catch(() => []);
+          
+          if (errorMessages.length > 0) {
+            await log(job.id, 'error', `Error messages found on page for ${style.style_no}`, {
+              errorMessages,
+              attempt
+            });
           }
           
-          return null;
-        }, style.style_no);
+          // Check if table exists at all
+          const tableExists = await page.evaluate(() => {
+            return !!document.querySelector('.standardList');
+          }).catch(() => false);
+          
+          await log(job.id, 'info', `Table existence check for ${style.style_no}`, {
+            tableExists,
+            attempt
+          });
+          
+          if (!tableExists) {
+            const pageContent = await page.evaluate(() => {
+              return {
+                bodyText: document.body.textContent?.substring(0, 500) || '',
+                hasTable: !!document.querySelector('table'),
+                hasStandardList: !!document.querySelector('.standardList')
+              };
+            }).catch(() => ({}));
+            
+            await log(job.id, 'error', `Table not found on page for ${style.style_no}`, {
+              pageUrl,
+              pageTitle,
+              pageContent,
+              attempt
+            });
+            
+            if (attempt < maxRetries) {
+              const delay = Math.min(2000 * attempt, 10000); // Exponential backoff, max 10s
+              await log(job.id, 'info', `Retrying in ${delay}ms...`, { attempt, delay });
+              await page.waitForTimeout(delay);
+              continue;
+            }
+          }
 
-        if (!tableData) {
-          await log(job.id, 'info', `Style ${style.style_no} not found in table`);
+          // Wait for table to be present with longer timeout
+          await log(job.id, 'info', `Waiting for table rows for ${style.style_no}`, { attempt });
+          try {
+            await page.waitForSelector('.standardList table tbody tr', { 
+              timeout: 60_000, // Increased from 30s to 60s
+              state: 'visible'
+            });
+            await log(job.id, 'info', `Table rows found for ${style.style_no}`, { attempt });
+          } catch (waitError: any) {
+            // Check what's actually on the page
+            const pageContent = await page.evaluate(() => {
+              return {
+                hasStandardList: !!document.querySelector('.standardList'),
+                hasTable: !!document.querySelector('table'),
+                hasTbody: !!document.querySelector('tbody'),
+                hasTr: !!document.querySelector('tr'),
+                bodyText: document.body.textContent?.substring(0, 500) || '',
+                htmlSnippet: document.body.innerHTML.substring(0, 1000) || ''
+              };
+            }).catch(() => ({}));
+            
+            await log(job.id, 'error', `Timeout waiting for table rows for ${style.style_no}`, {
+              waitError: waitError.message,
+              pageContent,
+              attempt
+            });
+            
+            if (attempt < maxRetries) {
+              const delay = Math.min(2000 * attempt, 10000);
+              await log(job.id, 'info', `Retrying in ${delay}ms after timeout...`, { attempt, delay });
+              await page.waitForTimeout(delay);
+              continue;
+            }
+            
+            throw waitError;
+          }
+
+          // Extract data from table
+          await log(job.id, 'info', `Extracting raw cost for ${style.style_no}`, { attempt });
+          const tableData = await page.evaluate((targetStyleNo: string) => {
+            const rows = Array.from(document.querySelectorAll('.standardList table tbody tr')) as HTMLTableRowElement[];
+            
+            for (const row of rows) {
+              const cells = Array.from(row.querySelectorAll('td')) as HTMLElement[];
+              if (cells.length < 5) continue;
+
+              // Style No is in column 1 (index 1)
+              const styleNoCell = cells[1];
+              const styleNoLink = styleNoCell?.querySelector('a') as HTMLAnchorElement | null;
+              const styleNo = (styleNoLink?.textContent || styleNoCell?.textContent || '').trim();
+
+              // Check if this row matches our target style
+              if (styleNo === targetStyleNo) {
+                // Raw Cost is in column 4 (index 4, data-column_no="4")
+                const rawCostCell = cells[4];
+                const rawCostText = (rawCostCell?.textContent || '').trim();
+                
+                return {
+                  styleNo,
+                  rawCostText
+                };
+              }
+            }
+            
+            return null;
+          }, style.style_no);
+          
+          await log(job.id, 'info', `Found ${tableData ? 1 : 0} matching rows for ${style.style_no}`, {
+            attempt,
+            hasData: !!tableData
+          });
+
+          if (!tableData) {
+            await log(job.id, 'info', `Style ${style.style_no} not found in table`, { attempt });
+            if (attempt < maxRetries) {
+              const delay = Math.min(2000 * attempt, 10000);
+              await log(job.id, 'info', `Retrying in ${delay}ms...`, { attempt, delay });
+              await page.waitForTimeout(delay);
+              continue;
+            }
+            throw new Error('Style not found in table after all retries');
+          }
+
+          // Parse the raw cost (remove currency, handle comma decimal)
+          const rawCost = parseEuNumber(tableData.rawCostText);
+          
+          if (rawCost === null) {
+            await log(job.id, 'info', `Could not parse raw cost for ${style.style_no}: ${tableData.rawCostText}`, { attempt });
+            throw new Error(`Could not parse raw cost: ${tableData.rawCostText}`);
+          }
+
+          // Update the vendor_style with the raw cost as price_per_sample
+          const { error: updateError } = await supabase
+            .from('vendor_styles')
+            .update({ price_per_sample: rawCost })
+            .eq('id', style.id);
+
+          if (updateError) {
+            throw new Error(`Failed to update style ${style.id}: ${updateError.message}`);
+          }
+
+          await log(job.id, 'info', `Successfully updated ${style.style_no} with raw cost: ${rawCost}`, {
+            style_no: style.style_no,
+            raw_cost: rawCost,
+            current: i + 1,
+            total: styles.length,
+            attempt
+          });
+          
           results.push({
             style_id: style.id,
             style_no: style.style_no,
-            raw_cost: null,
-            success: false,
-            error: 'Style not found in table'
+            raw_cost: rawCost,
+            success: true
           });
-          continue;
-        }
+          
+          scrapeSuccess = true;
 
-        // Parse the raw cost (remove currency, handle comma decimal)
-        const rawCost = parseEuNumber(tableData.rawCostText);
-        
-        if (rawCost === null) {
-          await log(job.id, 'info', `Could not parse raw cost for ${style.style_no}: ${tableData.rawCostText}`);
-          results.push({
-            style_id: style.id,
-            style_no: style.style_no,
-            raw_cost: null,
-            success: false,
-            error: `Could not parse raw cost: ${tableData.rawCostText}`
+        } catch (error: any) {
+          lastScrapeError = error.message;
+          await log(job.id, 'error', `Error on attempt ${attempt} for ${style.style_no}`, {
+            error: error.message,
+            stack: error.stack?.substring(0, 500),
+            attempt
           });
-          continue;
+          
+          if (attempt < maxRetries) {
+            const delay = Math.min(2000 * attempt, 10000);
+            await log(job.id, 'info', `Retrying in ${delay}ms after error...`, { attempt, delay });
+            await page.waitForTimeout(delay);
+          }
         }
-
-        // Update the vendor_style with the raw cost as price_per_sample
-        const { error: updateError } = await supabase
-          .from('vendor_styles')
-          .update({ price_per_sample: rawCost })
-          .eq('id', style.id);
-
-        if (updateError) {
-          throw new Error(`Failed to update style ${style.id}: ${updateError.message}`);
-        }
-
-        await log(job.id, 'info', `Updated ${style.style_no} with raw cost: ${rawCost}`, {
-          style_no: style.style_no,
-          raw_cost: rawCost,
-          current: i + 1,
-          total: styles.length
+      }
+      
+      // If all retries failed, add to results
+      if (!scrapeSuccess) {
+        await log(job.id, 'error', `Failed to scrape ${style.style_no} after ${maxRetries} attempts`, {
+          lastError: lastScrapeError
         });
-        
-        results.push({
-          style_id: style.id,
-          style_no: style.style_no,
-          raw_cost: rawCost,
-          success: true
-        });
-
-        // Small delay between requests to avoid overwhelming the server
-        await new Promise(resolve => setTimeout(resolve, 1000));
-
-      } catch (error: any) {
-        await log(job.id, 'error', `Error scraping ${style.style_no}: ${error.message}`);
         results.push({
           style_id: style.id,
           style_no: style.style_no,
           raw_cost: null,
           success: false,
-          error: error.message
+          error: lastScrapeError || 'All retry attempts failed'
         });
       }
+
+      // Small delay between requests to avoid overwhelming the server
+      await new Promise(resolve => setTimeout(resolve, 1000));
     }
 
     const successCount = results.filter(r => r.success).length;
