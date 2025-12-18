@@ -491,7 +491,10 @@ export default function Top10VendorsPage() {
   // Update activeTab if current collection doesn't exist
   React.useEffect(() => {
     if (!loading && collections.length > 0 && !collections.find(c => c.id === activeTab)) {
-      setActiveTab(collections[0].id);
+      const firstCollection = collections[0];
+      if (firstCollection) {
+        setActiveTab(firstCollection.id);
+      }
     }
   }, [loading, collections, activeTab]);
 
