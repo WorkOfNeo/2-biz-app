@@ -2208,6 +2208,9 @@ async function runJob(job: JobRow) {
       await saveResult(job.id, 'Topseller shallow snapshot', { headers: normalizedHeaders, rows: rowObjects });
       await log(job.id, 'info', 'STEP:complete');
     }
+
+    // If we reach here, the job type was not handled
+    throw new Error(`Unknown or unhandled job type: ${job.type}`);
   } finally {
     try { await page?.close(); } catch {}
     try { await context?.close(); } catch {}
