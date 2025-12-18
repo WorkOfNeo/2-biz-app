@@ -58,23 +58,50 @@ async function log(jobId: string, level: 'info' | 'error' | 'progress', msg: str
   await supabase.from('job_logs').insert({ job_id: jobId, level, msg, data: data ?? null });
 }
 
+let lastErrorLogTime = 0;
+const ERROR_LOG_THROTTLE_MS = 60_000; // Only log errors once per minute
+
 async function leaseNextJob(): Promise<Nullable<JobRow>> {
   const now = new Date();
   const leaseUntil = new Date(now.getTime() + 60_000);
-  const { data, error } = await supabase.rpc('lease_next_job', {
-    p_now: now.toISOString(),
-    p_lease_until: leaseUntil.toISOString(),
-    p_queue: JOB_QUEUE
-  });
-  if (error) {
-    // eslint-disable-next-line no-console
-    console.error('lease_next_job error', error);
+  try {
+    const { data, error } = await supabase.rpc('lease_next_job', {
+      p_now: now.toISOString(),
+      p_lease_until: leaseUntil.toISOString(),
+      p_queue: JOB_QUEUE
+    });
+    if (error) {
+      // Throttle error logging to avoid spam
+      const nowMs = Date.now();
+      if (nowMs - lastErrorLogTime > ERROR_LOG_THROTTLE_MS) {
+        lastErrorLogTime = nowMs;
+        // eslint-disable-next-line no-console
+        console.error('lease_next_job error', {
+          message: error.message,
+          details: error.details,
+          hint: error.hint,
+          code: error.code
+        });
+      }
+      return null;
+    }
+    const row = (data as any) ?? null;
+    // Treat null-id (nullable record) as no job available
+    if (!row || !row.id) return null;
+    return row as JobRow;
+  } catch (err: any) {
+    // Handle network errors (fetch failed, etc.)
+    const nowMs = Date.now();
+    if (nowMs - lastErrorLogTime > ERROR_LOG_THROTTLE_MS) {
+      lastErrorLogTime = nowMs;
+      // eslint-disable-next-line no-console
+      console.error('lease_next_job network error', {
+        message: err?.message || String(err),
+        name: err?.name
+      });
+    }
     return null;
   }
-  const row = (data as any) ?? null;
-  // Treat null-id (nullable record) as no job available
-  if (!row || !row.id) return null;
-  return row as JobRow;
 }
 
 async function updateJobHeartbeat(jobId: string) {
