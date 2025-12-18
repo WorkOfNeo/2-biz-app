@@ -56,11 +56,12 @@ export async function scrapeStyleRawCosts(ctx: Ctx) {
       return;
     }
 
-    await log(job.id, 'info', `Found ${styles.length} styles to scrape`);
+    await log(job.id, 'info', `Found ${styles.length} styles to scrape`, { total: styles.length });
 
     const results: Array<{ style_id: string; style_no: string; raw_cost: number | null; success: boolean; error?: string }> = [];
 
-    for (const style of styles) {
+    for (let i = 0; i < styles.length; i++) {
+      const style = styles[i];
       await ensureNotCancelled(job.id);
       
       if (!style.style_no) {
@@ -75,7 +76,11 @@ export async function scrapeStyleRawCosts(ctx: Ctx) {
       }
 
       try {
-        await log(job.id, 'info', `Scraping style: ${style.style_no}`);
+        await log(job.id, 'info', `Scraping style: ${style.style_no}`, { 
+          style_no: style.style_no,
+          current: i + 1,
+          total: styles.length 
+        });
         
         // Navigate to style statistics page
         // URL format: controller=Style\Statistics&action=List&Spy\Model\Style\Statistics\ListReportSearch[...]
