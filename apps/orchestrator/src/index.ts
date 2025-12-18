@@ -231,12 +231,13 @@ app.post('/enqueue', async (c) => {
     } catch {}
 
     const isStock = body.type === 'update_style_stock' || body.type === 'scrape_eans';
+    const isFast = body.type === 'scrape_purchase_orders' || body.type === 'check_purchase_orders' || body.type === 'scrape_style_raw_costs';
     const insertBody = {
       type: body.type,
       payload: body.payload as any,
       status: 'queued' as const,
       max_attempts: 3,
-      queue: isStock ? 'stock' : 'default',
+      queue: isStock ? 'stock' : (isFast ? 'fast' : 'default'),
       priority: isStock ? 200 : 100
     } as any;
     const { data, error } = await supabase.from('jobs').insert(insertBody).select('id, created_at').single();
