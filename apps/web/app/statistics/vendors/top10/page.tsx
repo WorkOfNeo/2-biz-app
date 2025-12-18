@@ -520,13 +520,14 @@ export default function Top10VendorsPage() {
   }
 
   if (!currentCollection) {
-    // Fallback: use first collection
-    const firstCollection = collections[0];
-    if (firstCollection) {
-      setActiveTab(firstCollection.id);
-      return null; // Will re-render with correct activeTab
-    }
-    return null;
+    // Fallback: use first collection - handle in useEffect to avoid hook order issues
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="text-center">
+          <p className="text-gray-600">Loading collection...</p>
+        </div>
+      </div>
+    );
   }
 
   // Add new row
