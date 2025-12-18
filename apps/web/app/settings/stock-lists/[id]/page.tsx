@@ -113,7 +113,7 @@ export default function StockListDetailPage({ params }: { params: { id: string }
   const { data: listColors, mutate: mutateListColors } = useSWR(`stock-list:${params.id}:colors`, async () => {
     const { data, error } = await supabase
       .from('stock_list_colors')
-      .select('style_color_id, style_id, include, style_colors!inner(id, color, style_id)')
+      .select('style_color_id, style_id, include, style_colors!inner(id, color, style_id, inactive, maybe_inactive)')
       .eq('list_id', params.id);
     if (error) throw error;
     // Transform the data to match ListColor type
@@ -124,6 +124,36 @@ export default function StockListDetailPage({ params }: { params: { id: string }
       color: item.style_colors
     })) as ListColor[];
   });
+
+  // Load all colors for styles in the list (including inactive ones not yet in the list)
+  const { data: allStyleColors } = useSWR(
+    listStyles && listStyles.length > 0 ? ['stock-list:all-colors', params.id, listStyles.map(ls => ls.style_id).join(',')] : null,
+    async () => {
+      if (!listStyles || listStyles.length === 0) return new Map<string, Array<{ id: string; color: string; inactive: boolean; maybe_inactive: boolean }>>();
+      
+      const styleIds = listStyles.map(ls => ls.style_id);
+      const { data, error } = await supabase
+        .from('style_colors')
+        .select('id, color, style_id, inactive, maybe_inactive')
+        .in('style_id', styleIds)
+        .order('color');
+      if (error) throw error;
+      
+      // Group by style_id
+      const map = new Map<string, Array<{ id: string; color: string; inactive: boolean; maybe_inactive: boolean }>>();
+      for (const c of (data ?? [])) {
+        const sid = c.style_id as string;
+        if (!map.has(sid)) map.set(sid, []);
+        map.get(sid)!.push({
+          id: c.id,
+          color: c.color,
+          inactive: c.inactive || false,
+          maybe_inactive: c.maybe_inactive || false
+        });
+      }
+      return map;
+    }
+  );
 
   // Load all styles for adding
   const { data: allStyles } = useSWR('styles:all:stocklist-detail', async () => {
@@ -483,6 +513,29 @@ export default function StockListDetailPage({ params }: { params: { id: string }
     return map;
   }, [listColors, listStyles]);
 
+  // Get inactive colors for styles in the list that are not yet added
+  const inactiveColorsByStyle = React.useMemo(() => {
+    const map = new Map<string, Array<{ id: string; color: string; inactive: boolean; maybe_inactive: boolean }>>();
+    if (!allStyleColors || !listStyles) return map;
+    
+    const styleIdsInList = new Set(listStyles.map(ls => ls.style_id));
+    const listColorIds = new Set((listColors ?? []).map(lc => lc.style_color_id));
+    
+    for (const [styleId, colors] of allStyleColors.entries()) {
+      if (!styleIdsInList.has(styleId)) continue;
+      
+      // Filter to only inactive colors that are not in the list
+      const inactiveColors = colors.filter(c => 
+        (c.inactive || c.maybe_inactive) && !listColorIds.has(c.id)
+      );
+      
+      if (inactiveColors.length > 0) {
+        map.set(styleId, inactiveColors);
+      }
+    }
+    return map;
+  }, [allStyleColors, listStyles, listColors]);
+
   // Get deactivated colors (colors with include: false or from removed styles)
   const deactivatedColors = React.useMemo(() => {
     const styleIdsInList = new Set(listStyles?.map(ls => ls.style_id) ?? []);
@@ -823,6 +876,41 @@ export default function StockListDetailPage({ params }: { params: { id: string }
                       </div>
                     </div>
                   )}
+                  
+                  {/* Show inactive colors that can be added */}
+                  {(() => {
+                    const inactiveColors = inactiveColorsByStyle.get(ls.style_id) || [];
+                    if (inactiveColors.length === 0) return null;
+                    
+                    return (
+                      <div className="mt-2 pt-2 border-t border-dashed">
+                        <div className="text-xs text-gray-500 mb-2">
+                          Inactive Colors ({inactiveColors.length})
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {inactiveColors.map((ic) => (
+                            <Badge 
+                              key={ic.id}
+                              className={`flex items-center gap-1 ${
+                                ic.inactive 
+                                  ? 'bg-red-50 text-red-700 border-red-300' 
+                                  : 'bg-yellow-50 text-yellow-700 border-yellow-300'
+                              }`}
+                            >
+                              <span>{ic.color}</span>
+                              <button
+                                onClick={() => addInactiveColor(ls.style_id, ic.id, ic.color)}
+                                className="ml-1 hover:text-green-600"
+                                title="Add to list"
+                              >
+                                <Plus className="h-3 w-3" />
+                              </button>
+                            </Badge>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
               );
             })}
