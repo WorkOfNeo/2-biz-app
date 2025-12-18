@@ -17,42 +17,54 @@ set search_path = public
 as $$
 declare
   v_now timestamptz := now();
+  v_rec record;
 begin
   -- Reset jobs that are 'running' but lease has expired (more than 5 minutes ago)
   -- This indicates the worker crashed or lost connection
-  update public.jobs
-  set 
-    status = 'queued',
-    lease_until = null,
-    error = null
-  where status = 'running'
-    and lease_until is not null
-    and lease_until < (v_now - interval '5 minutes')
-    and (p_queue is null or queue = p_queue)
-  returning 
-    id,
-    type,
-    status,
-    lease_until,
-    'queued'::text
-  into job_id, job_type, job_status, lease_until, reset_to_status;
+  for v_rec in
+    update public.jobs
+    set 
+      status = 'queued',
+      lease_until = null,
+      error = null
+    where status = 'running'
+      and lease_until is not null
+      and lease_until < (v_now - interval '5 minutes')
+      and (p_queue is null or queue = p_queue)
+    returning 
+      id,
+      type,
+      status,
+      lease_until
+  loop
+    job_id := v_rec.id;
+    job_type := v_rec.type;
+    job_status := v_rec.status;
+    lease_until := v_rec.lease_until;
+    reset_to_status := 'queued';
+    return next;
+  end loop;
   
-  return next;
-  
-  -- Also return jobs that are stuck in 'queued' with an old lease_until
+  -- Also reset jobs that are stuck in 'queued' with an old lease_until
   -- (shouldn't happen, but just in case)
-  for job_id, job_type, job_status, lease_until, reset_to_status in
-    select id, type, status, lease_until, 'queued'::text
-    from public.jobs
+  for v_rec in
+    update public.jobs
+    set lease_until = null
     where status = 'queued'
       and lease_until is not null
       and lease_until < (v_now - interval '5 minutes')
       and (p_queue is null or queue = p_queue)
+    returning 
+      id,
+      type,
+      status,
+      lease_until
   loop
-    update public.jobs
-    set lease_until = null
-    where id = job_id;
-    
+    job_id := v_rec.id;
+    job_type := v_rec.type;
+    job_status := v_rec.status;
+    lease_until := v_rec.lease_until;
+    reset_to_status := 'queued';
     return next;
   end loop;
   
