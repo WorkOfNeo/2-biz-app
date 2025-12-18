@@ -629,7 +629,9 @@ export default function StockListDetailPage({ params }: { params: { id: string }
 
       // Create a sheet for each size array
       for (const [sizeArrayKey, items] of sizeArrayGroups.entries()) {
-        const sizes = items[0].sizes;
+        if (items.length === 0) continue; // Skip empty groups
+        
+        const sizes = items[0]?.sizes || [];
         const sheetName = sizes.length > 0 
           ? sizes.join('-').substring(0, 31) // Excel sheet name limit is 31 chars
           : 'Default';
