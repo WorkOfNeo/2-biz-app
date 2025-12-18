@@ -28,7 +28,9 @@ type VendorRow = {
   total: number; // Total (calculated: antal_prøver * gns_pris_pr_prøve)
   total_ubrugte: number; // Total unused
   diff: number; // Difference (calculated: total - total_ubrugte)
-  prøvefaktor: number; // Sample factor (calculated: antal_prøver / styles_i_koll)
+  prøvefaktor: number; // Sample factor (calculated: antal_prøver / styles_i_koll, or manually set)
+  currency: Currency; // Currency for this vendor
+  exchange_rate: number; // Exchange rate for currency conversion to DKK
   styles: VendorStyle[]; // Styles for this vendor
 };
 
@@ -41,10 +43,10 @@ type Collection = {
 
 const STORAGE_KEY = 'top10_vendors_collections';
 const CURRENCY_KEY = 'top10_vendors_currency';
-const CURRENCY_RATES: Record<Currency, number> = {
+const DEFAULT_CURRENCY_RATES: Record<Currency, number> = {
   DKK: 1,
-  EUR: 7.45, // Approximate rate, can be updated
-  USD: 6.85, // Approximate rate, can be updated
+  EUR: 7.45, // Default rate, can be updated per vendor
+  USD: 6.85, // Default rate, can be updated per vendor
 };
 
 export default function Top10VendorsPage() {
@@ -55,13 +57,15 @@ export default function Top10VendorsPage() {
       const stored = localStorage.getItem(STORAGE_KEY);
       if (stored) {
         const parsed = JSON.parse(stored);
-        // Ensure all rows have styles array and season_id
+        // Ensure all rows have styles array, season_id, currency, and exchange_rate
         return parsed.map((c: Collection) => ({
           ...c,
           season_id: c.season_id || null,
           rows: c.rows.map((r: VendorRow) => ({
             ...r,
             styles: r.styles || [],
+            currency: r.currency || 'DKK',
+            exchange_rate: r.exchange_rate || DEFAULT_CURRENCY_RATES[r.currency || 'DKK'],
           })),
         }));
       }
@@ -114,9 +118,10 @@ export default function Top10VendorsPage() {
     }
   }, [currency]);
 
-  // Convert price to DKK based on currency
-  const convertToDKK = (price: number): number => {
-    return price * CURRENCY_RATES[currency];
+  // Convert price to DKK based on vendor's currency and exchange rate
+  const convertToDKK = (price: number, vendorCurrency: Currency, vendorExchangeRate: number): number => {
+    if (vendorCurrency === 'DKK') return price;
+    return price * vendorExchangeRate;
   };
 
   // Calculate derived fields for a row based on styles
@@ -135,13 +140,13 @@ export default function Top10VendorsPage() {
       const outOfCollection = styles.filter(s => s.out_of_collection);
       
       const totalPrice = styles.reduce((sum, s) => {
-        const priceInDKK = convertToDKK(s.price_per_sample);
+        const priceInDKK = convertToDKK(s.price_per_sample, row.currency || 'DKK', row.exchange_rate || DEFAULT_CURRENCY_RATES[row.currency || 'DKK']);
         const factor = row.prøvefaktor > 0 ? row.prøvefaktor : 1;
         return sum + (priceInDKK * factor);
       }, 0);
       
       const unusedPrice = outOfCollection.reduce((sum, s) => {
-        const priceInDKK = convertToDKK(s.price_per_sample);
+        const priceInDKK = convertToDKK(s.price_per_sample, row.currency || 'DKK', row.exchange_rate || DEFAULT_CURRENCY_RATES[row.currency || 'DKK']);
         const factor = row.prøvefaktor > 0 ? row.prøvefaktor : 1;
         return sum + (priceInDKK * factor);
       }, 0);
@@ -245,6 +250,8 @@ export default function Top10VendorsPage() {
       total_ubrugte: 0,
       diff: 0,
       prøvefaktor: 0,
+      currency: 'DKK',
+      exchange_rate: 1,
       styles: []
     };
     setCollections(collections.map(c => 
@@ -737,8 +744,72 @@ export default function Top10VendorsPage() {
         <SheetContent>
           {currentVendorRow && (
             <div className="space-y-4">
+              {/* Currency and Prøvefaktor Settings */}
+              <Card className="border-[#C5D5CA] bg-[#F5F3F0]">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm">Vendor Settings</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="grid grid-cols-3 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 mb-1">Currency</label>
+                      <select
+                        value={currentVendorRow.currency || 'DKK'}
+                        onChange={(e) => {
+                          const newCurrency = e.target.value as Currency;
+                          updateRow(currentVendorRow.id, 'currency', newCurrency);
+                          // Update exchange rate to default if not set
+                          if (!currentVendorRow.exchange_rate || currentVendorRow.exchange_rate === 1) {
+                            updateRow(currentVendorRow.id, 'exchange_rate', DEFAULT_CURRENCY_RATES[newCurrency]);
+                          }
+                        }}
+                        className="w-full text-xs border rounded px-2 py-1"
+                      >
+                        <option value="DKK">DKK</option>
+                        <option value="EUR">EUR</option>
+                        <option value="USD">USD</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 mb-1">
+                        Exchange Rate (to DKK)
+                      </label>
+                      <Input
+                        type="number"
+                        value={currentVendorRow.exchange_rate || DEFAULT_CURRENCY_RATES[currentVendorRow.currency || 'DKK']}
+                        onChange={(e) => updateRow(currentVendorRow.id, 'exchange_rate', parseFloat(e.target.value) || DEFAULT_CURRENCY_RATES[currentVendorRow.currency || 'DKK'])}
+                        className="w-full text-xs"
+                        min="0"
+                        step="0.0001"
+                        placeholder="1.0"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 mb-1">Prøvefaktor</label>
+                      <Input
+                        type="number"
+                        value={currentVendorRow.prøvefaktor || ''}
+                        onChange={(e) => {
+                          const newFactor = parseFloat(e.target.value) || 0;
+                          updateRow(currentVendorRow.id, 'prøvefaktor', newFactor);
+                        }}
+                        className="w-full text-xs"
+                        min="0"
+                        step="0.01"
+                        placeholder="Auto"
+                      />
+                      <div className="text-[10px] text-gray-500 mt-1">
+                        {currentVendorRow.styles?.length ? 
+                          `Auto: ${((currentVendorRow.antal_prøver || 0) / (currentVendorRow.styles_i_koll || 1)).toFixed(2)}` : 
+                          'Set manually or auto-calculated'}
+                      </div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
               <div className="text-sm text-gray-600">
-                Add styles for this vendor. Prices will be calculated based on the selected currency ({currency}) and prøvefaktor.
+                Add styles for this vendor. Prices will be calculated based on the selected currency ({currentVendorRow.currency || 'DKK'}) and prøvefaktor.
               </div>
 
               {/* Bulk Import Textarea */}
@@ -801,7 +872,7 @@ export default function Top10VendorsPage() {
                       <TableRow className="bg-[#F5F3F0]">
                         <TableHead className="w-[250px]">Style Name/Input</TableHead>
                         <TableHead className="w-[200px]">Connected Style No</TableHead>
-                        <TableHead className="text-right w-[150px]">Price per Sample ({currency})</TableHead>
+                        <TableHead className="text-right w-[150px]">Price per Sample ({currentVendorRow.currency || 'DKK'})</TableHead>
                         <TableHead className="text-center w-[150px]">Out of Collection</TableHead>
                         <TableHead className="text-right w-[120px]">Price in DKK</TableHead>
                         <TableHead className="w-[80px]"></TableHead>
@@ -809,7 +880,9 @@ export default function Top10VendorsPage() {
                     </TableHeader>
                     <TableBody>
                       {currentVendorRow.styles.map((style) => {
-                        const priceInDKK = convertToDKK(style.price_per_sample);
+                        const vendorCurrency = currentVendorRow.currency || 'DKK';
+                        const vendorExchangeRate = currentVendorRow.exchange_rate || DEFAULT_CURRENCY_RATES[vendorCurrency];
+                        const priceInDKK = convertToDKK(style.price_per_sample, vendorCurrency, vendorExchangeRate);
                         const vendorCalculated = calculateRow(currentVendorRow);
                         const factor = vendorCalculated.prøvefaktor > 0 ? vendorCalculated.prøvefaktor : 1;
                         const totalPrice = priceInDKK * factor;
@@ -862,7 +935,7 @@ export default function Top10VendorsPage() {
                               />
                             </TableCell>
                             <TableCell className="text-right text-gray-600">
-                              {formatCurrency(totalPrice)}
+                              {formatCurrency(totalPrice, 'DKK')}
                             </TableCell>
                             <TableCell>
                               <button
