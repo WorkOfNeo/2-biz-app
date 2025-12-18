@@ -1120,7 +1120,7 @@ export default function Top10VendorsPage() {
                                 <TableCell>
                                   <div className="flex items-center gap-2">
                                     <Input
-                                      value={localRowValues[row.id]?.leverandør !== undefined ? localRowValues[row.id].leverandør as string : row.leverandør}
+                                      value={localRowValues[row.id]?.leverandør !== undefined ? (localRowValues[row.id]?.leverandør as string) : row.leverandør}
                                       onChange={(e) => {
                                         e.stopPropagation();
                                         updateLocalRowValue(row.id, 'leverandør', e.target.value);
@@ -1148,7 +1148,7 @@ export default function Top10VendorsPage() {
                                 <TableCell>
                                   <Input
                                     type="number"
-                                    value={localRowValues[row.id]?.antal_prøver !== undefined ? localRowValues[row.id].antal_prøver as number : (row.antal_prøver || '')}
+                                    value={localRowValues[row.id]?.antal_prøver !== undefined ? (localRowValues[row.id]?.antal_prøver as number) : (row.antal_prøver || '')}
                                     onChange={(e) => {
                                       e.stopPropagation();
                                       updateLocalRowValue(row.id, 'antal_prøver', parseFloat(e.target.value) || 0);
@@ -1166,7 +1166,7 @@ export default function Top10VendorsPage() {
                                 <TableCell>
                                   <Input
                                     type="number"
-                                    value={localRowValues[row.id]?.styles_i_koll !== undefined ? localRowValues[row.id].styles_i_koll as number : (row.styles_i_koll || '')}
+                                    value={localRowValues[row.id]?.styles_i_koll !== undefined ? (localRowValues[row.id]?.styles_i_koll as number) : (row.styles_i_koll || '')}
                                     onChange={(e) => {
                                       e.stopPropagation();
                                       updateLocalRowValue(row.id, 'styles_i_koll', parseFloat(e.target.value) || 0);
@@ -1184,7 +1184,7 @@ export default function Top10VendorsPage() {
                                 <TableCell>
                                   <Input
                                     type="number"
-                                    value={localRowValues[row.id]?.gns_pris_pr_prøve !== undefined ? localRowValues[row.id].gns_pris_pr_prøve as number : (row.gns_pris_pr_prøve || '')}
+                                    value={localRowValues[row.id]?.gns_pris_pr_prøve !== undefined ? (localRowValues[row.id]?.gns_pris_pr_prøve as number) : (row.gns_pris_pr_prøve || '')}
                                     onChange={(e) => {
                                       e.stopPropagation();
                                       updateLocalRowValue(row.id, 'gns_pris_pr_prøve', parseFloat(e.target.value) || 0);
@@ -1205,7 +1205,7 @@ export default function Top10VendorsPage() {
                                 <TableCell>
                                   <Input
                                     type="number"
-                                    value={localRowValues[row.id]?.total_ubrugte !== undefined ? localRowValues[row.id].total_ubrugte as number : (row.total_ubrugte || '')}
+                                    value={localRowValues[row.id]?.total_ubrugte !== undefined ? (localRowValues[row.id]?.total_ubrugte as number) : (row.total_ubrugte || '')}
                                     onChange={(e) => {
                                       e.stopPropagation();
                                       updateLocalRowValue(row.id, 'total_ubrugte', parseFloat(e.target.value) || 0);
