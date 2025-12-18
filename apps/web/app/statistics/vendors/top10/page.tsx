@@ -1315,7 +1315,7 @@ export default function Top10VendorsPage() {
                       <Input
                         type="number"
                         value={localRowValues[currentVendorRow.id]?.prøvefaktor !== undefined 
-                          ? localRowValues[currentVendorRow.id].prøvefaktor as number 
+                          ? (localRowValues[currentVendorRow.id]?.prøvefaktor as number)
                           : (currentVendorRow.prøvefaktor || '')}
                         onChange={(e) => {
                           const newFactor = parseFloat(e.target.value) || 0;
