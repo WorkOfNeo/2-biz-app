@@ -808,7 +808,6 @@ export default function StockListDetailPage({ params }: { params: { id: string }
                         {colors.map((lc) => (
                           <Badge 
                             key={lc.style_color_id}
-                            variant="outline"
                             className="flex items-center gap-1"
                           >
                             <span>{lc.color.color || 'Unknown'}</span>
@@ -852,7 +851,6 @@ export default function StockListDetailPage({ params }: { params: { id: string }
                 return (
                   <Badge 
                     key={lc.style_color_id}
-                    variant="outline"
                     className="bg-gray-100 text-gray-600 border-gray-300 flex items-center gap-1"
                   >
                     {style && (
