@@ -66,7 +66,7 @@ export default function AnalysisDetailPage({ params }: { params: { id: string } 
 
   const { data: analysis, isLoading, error } = useSWR<SavedAnalysis>(
     `/api/call-off/save/${params.id}`,
-    async (url) => {
+    async (url: string) => {
       const res = await fetch(url);
       if (!res.ok) throw new Error('Failed to fetch analysis');
       const json = await res.json();
