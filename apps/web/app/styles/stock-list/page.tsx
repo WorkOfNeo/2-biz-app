@@ -1244,7 +1244,7 @@ export default function StockListPage() {
       setStockFixProgress(null);
       setStockFixMessage({ type: 'error', text: `Failed to verify SPY stock: ${err.message}` });
     }
-  }, [supabase, groupedByStyle, styleMetaByNo, runningStockFix, styleInactiveMap]);
+  }, [supabase, groupedByStyle, styleMetaByNo, runningStockFix, styleInactiveMap, data]);
 
 
   // Export Checker results to Excel
