@@ -472,8 +472,8 @@ export default function Top10VendorsPage() {
   };
 
   // Format currency
-  const formatCurrency = (num: number): string => {
-    return formatNumber(num) + ' DKK';
+  const formatCurrency = (num: number, currency: Currency = 'DKK'): string => {
+    return formatNumber(num) + ' ' + currency;
   };
 
   return (
