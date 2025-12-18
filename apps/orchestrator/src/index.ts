@@ -140,7 +140,7 @@ async function verifySupabaseJWT(authorization?: string): Promise<JWTPayload | n
 }
 
 const enqueueSchema = z.object({
-  type: z.enum(['scrape_statistics','scrape_styles','update_style_stock','export_overview','scrape_customers','deep_scrape_styles','scrape_top_styles','export_top_styles','scrape_purchase_orders','fix_invoices','scrape_eans','export_stock_list','check_purchase_orders']),
+  type: z.enum(['scrape_statistics','scrape_styles','update_style_stock','export_overview','scrape_customers','deep_scrape_styles','scrape_top_styles','export_top_styles','scrape_purchase_orders','fix_invoices','scrape_eans','export_stock_list','check_purchase_orders','scrape_style_raw_costs']),
   payload: z.record(z.any())
 });
 
@@ -231,13 +231,12 @@ app.post('/enqueue', async (c) => {
     } catch {}
 
     const isStock = body.type === 'update_style_stock' || body.type === 'scrape_eans';
-    const isFast = body.type === 'scrape_purchase_orders' || body.type === 'check_purchase_orders' || body.type === 'scrape_style_raw_costs';
     const insertBody = {
       type: body.type,
       payload: body.payload as any,
       status: 'queued' as const,
       max_attempts: 3,
-      queue: isStock ? 'stock' : (isFast ? 'fast' : 'default'),
+      queue: isStock ? 'stock' : 'default',
       priority: isStock ? 200 : 100
     } as any;
     const { data, error } = await supabase.from('jobs').insert(insertBody).select('id, created_at').single();
