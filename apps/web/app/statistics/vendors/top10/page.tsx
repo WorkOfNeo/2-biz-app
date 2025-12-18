@@ -1448,7 +1448,7 @@ export default function Top10VendorsPage() {
                               <Input
                                 type="number"
                                 value={localStyleValues[`${currentVendorRow.id}-${style.id}`]?.price_per_sample !== undefined 
-                                  ? localStyleValues[`${currentVendorRow.id}-${style.id}`].price_per_sample as number 
+                                  ? (localStyleValues[`${currentVendorRow.id}-${style.id}`]?.price_per_sample as number)
                                   : (style.price_per_sample || '')}
                                 onChange={(e) => updateLocalStyleValue(currentVendorRow.id, style.id, 'price_per_sample', parseFloat(e.target.value) || 0)}
                                 onBlur={() => saveLocalStyleValue(currentVendorRow.id, style.id, 'price_per_sample')}
