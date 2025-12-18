@@ -230,12 +230,22 @@ export default function StockListDetailPage({ params }: { params: { id: string }
   // Remove style from list
   async function removeStyle(styleId: string) {
     try {
-      const { error } = await supabase
+      // Delete all colors for this style first
+      const { error: colorError } = await supabase
+        .from('stock_list_colors')
+        .delete()
+        .eq('list_id', params.id)
+        .eq('style_id', styleId);
+      if (colorError) throw colorError;
+      
+      // Then delete the style entry
+      const { error: styleError } = await supabase
         .from('stock_list_styles')
         .delete()
         .eq('list_id', params.id)
         .eq('style_id', styleId);
-      if (error) throw error;
+      if (styleError) throw styleError;
+      
       await mutateListStyles();
       await mutateListColors();
       flash('Style removed');
