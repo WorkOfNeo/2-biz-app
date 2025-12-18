@@ -636,7 +636,8 @@ export default function StockListDetailPage({ params }: { params: { id: string }
           ? sizes.join('-').substring(0, 31) // Excel sheet name limit is 31 chars
           : 'Default';
         
-        // Create header row
+        // Create header row - sizes are already the labels (e.g., "34", "S", "S/M", "M", "M/L", "36")
+        // Format: STYLE NO, STYLE NAME, COLOR, [SIZE LABELS], TOTAL
         const headers = ['STYLE NO', 'STYLE NAME', 'COLOR', ...sizes, 'TOTAL'];
         const rows: any[][] = [headers];
 
