@@ -77,6 +77,7 @@ export default function Top10VendorsPage() {
   const [editingName, setEditingName] = React.useState<string | null>(null);
   const [newName, setNewName] = React.useState('');
   const [openVendorSheet, setOpenVendorSheet] = React.useState<string | null>(null);
+  const [bulkImportText, setBulkImportText] = React.useState('');
 
   // Persist to localStorage
   React.useEffect(() => {
@@ -324,6 +325,44 @@ export default function Top10VendorsPage() {
           }
         : c
     ));
+  };
+
+  // Import styles from textarea (one per line)
+  const importStylesFromText = (vendorId: string, text: string) => {
+    const lines = text
+      .split('\n')
+      .map(line => line.trim())
+      .filter(line => line.length > 0);
+    
+    if (lines.length === 0) return;
+
+    const newStyles: VendorStyle[] = lines.map(line => ({
+      id: `style-${Date.now()}-${Math.random()}`,
+      style_no: line,
+      price_per_sample: 0,
+      out_of_collection: false,
+    }));
+
+    setCollections(collections.map(c => 
+      c.id === activeTab 
+        ? {
+            ...c,
+            rows: c.rows.map(r => {
+              if (r.id === vendorId) {
+                const updated = {
+                  ...r,
+                  styles: [...(r.styles || []), ...newStyles]
+                };
+                return calculateRow(updated);
+              }
+              return r;
+            })
+          }
+        : c
+    ));
+
+    // Clear the textarea
+    setBulkImportText('');
   };
 
   // Format number for display
@@ -574,7 +613,12 @@ export default function Top10VendorsPage() {
       </Card>
 
       {/* Vendor Details Sheet */}
-      <Sheet open={!!openVendorSheet} onOpenChange={(open) => !open && setOpenVendorSheet(null)}>
+      <Sheet open={!!openVendorSheet} onOpenChange={(open) => {
+        if (!open) {
+          setOpenVendorSheet(null);
+          setBulkImportText(''); // Clear textarea when closing
+        }
+      }}>
         <SheetHeader>
           <SheetTitle>
             {currentVendorRow ? `Vendor: ${currentVendorRow.leverandør || 'Unnamed'}` : 'Vendor Details'}
@@ -587,6 +631,35 @@ export default function Top10VendorsPage() {
               <div className="text-sm text-gray-600">
                 Add styles for this vendor. Prices will be calculated based on the selected currency ({currency}) and prøvefaktor.
               </div>
+
+              {/* Bulk Import Textarea */}
+              <Card className="border-[#C5D5CA] bg-[#F5F3F0]">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm">Bulk Import Styles</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  <textarea
+                    value={bulkImportText}
+                    onChange={(e) => setBulkImportText(e.target.value)}
+                    placeholder="Paste style numbers here, one per line (e.g., from Excel)&#10;STYLE-001&#10;STYLE-002&#10;STYLE-003"
+                    className="w-full min-h-[100px] p-2 text-xs border rounded-md resize-y font-mono"
+                  />
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-gray-500">
+                      {bulkImportText.split('\n').filter(l => l.trim()).length} style{bulkImportText.split('\n').filter(l => l.trim()).length !== 1 ? 's' : ''} detected
+                    </span>
+                    <Button
+                      onClick={() => importStylesFromText(currentVendorRow.id, bulkImportText)}
+                      disabled={!bulkImportText.trim()}
+                      variant="outline"
+                      size="sm"
+                      className="border-[#8FA894] text-[#8FA894] hover:bg-[#8FA894]/10"
+                    >
+                      Import Styles
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
 
               <div className="flex items-center justify-between">
                 <div className="text-sm font-medium">
