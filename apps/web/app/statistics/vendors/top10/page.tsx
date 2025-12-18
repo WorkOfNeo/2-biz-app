@@ -179,7 +179,7 @@ export default function Top10VendorsPage() {
         
         const loadedCollections = Array.from(collectionsMap.values());
         setCollections(loadedCollections);
-        if (loadedCollections.length > 0 && !activeTab) {
+        if (loadedCollections.length > 0 && !activeTab && loadedCollections[0]) {
           setActiveTab(loadedCollections[0].id);
         }
       } catch (error) {
