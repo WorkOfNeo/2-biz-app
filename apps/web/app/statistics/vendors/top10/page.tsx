@@ -13,7 +13,8 @@ type Currency = 'DKK' | 'EUR' | 'USD';
 
 type VendorStyle = {
   id: string;
-  style_no: string;
+  style_no: string; // Matched style_no from database
+  original_input?: string; // Original input (style name or number)
   price_per_sample: number;
   out_of_collection: boolean;
 };
@@ -428,6 +429,7 @@ export default function Top10VendorsPage() {
       return {
         id: `style-${Date.now()}-${Math.random()}`,
         style_no: matchedStyleNo,
+        original_input: trimmed !== matchedStyleNo ? trimmed : undefined, // Store original if different from matched
         price_per_sample: 0,
         out_of_collection: false,
       };
@@ -797,7 +799,8 @@ export default function Top10VendorsPage() {
                   <Table>
                     <TableHeader>
                       <TableRow className="bg-[#F5F3F0]">
-                        <TableHead className="w-[200px]">Style No</TableHead>
+                        <TableHead className="w-[250px]">Style Name/Input</TableHead>
+                        <TableHead className="w-[200px]">Connected Style No</TableHead>
                         <TableHead className="text-right w-[150px]">Price per Sample ({currency})</TableHead>
                         <TableHead className="text-center w-[150px]">Out of Collection</TableHead>
                         <TableHead className="text-right w-[120px]">Price in DKK</TableHead>
@@ -815,11 +818,30 @@ export default function Top10VendorsPage() {
                           <TableRow key={style.id} className="hover:bg-gray-50">
                             <TableCell>
                               <Input
-                                value={style.style_no}
-                                onChange={(e) => updateStyle(currentVendorRow.id, style.id, 'style_no', e.target.value)}
-                                placeholder="Style number"
+                                value={style.original_input || style.style_no}
+                                onChange={(e) => {
+                                  // Update both original_input and style_no
+                                  updateStyle(currentVendorRow.id, style.id, 'original_input', e.target.value);
+                                  updateStyle(currentVendorRow.id, style.id, 'style_no', e.target.value);
+                                }}
+                                placeholder="Style name or number"
                                 className="w-full text-xs"
                               />
+                              {style.original_input && style.original_input !== style.style_no && (
+                                <div className="text-[10px] text-gray-400 mt-1">
+                                  Original: {style.original_input}
+                                </div>
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              <div className="text-xs font-medium text-[#8FA894] py-2 px-2 bg-[#F5F3F0] rounded">
+                                {style.style_no || '—'}
+                              </div>
+                              {style.original_input && style.original_input !== style.style_no && (
+                                <div className="text-[10px] text-gray-500 mt-1">
+                                  Matched from DB
+                                </div>
+                              )}
                             </TableCell>
                             <TableCell>
                               <Input

@@ -37,7 +37,7 @@ export function Sheet({ open, onOpenChange, children, side = 'right', className 
       <div 
         className={cn(
           'absolute bg-white shadow-xl',
-          side === 'left' || side === 'right' ? 'w-full max-w-md' : 'h-full max-h-[80vh]',
+          side === 'left' || side === 'right' ? 'w-[70vw]' : 'h-full max-h-[80vh]',
           sideClasses[side],
           className
         )}
