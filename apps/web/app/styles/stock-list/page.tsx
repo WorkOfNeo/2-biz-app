@@ -888,22 +888,59 @@ export default function StockListPage() {
           // Update progress based on job status
           setStockFixProgress({ step: 'Scraping SPY stock data...' });
           
-          if (jobData.status === 'succeeded' || jobData.status === 'failed' || jobData.status === 'cancelled') {
+            if (jobData.status === 'succeeded' || jobData.status === 'failed' || jobData.status === 'cancelled') {
             clearInterval(pollInterval);
             
             if (jobData.status === 'succeeded') {
               // Fetch the job results
-              const { data: resultsData } = await supabase
+              const { data: resultsData, error: resultsError } = await supabase
                 .from('job_results')
-                .select('data')
+                .select('data, summary')
                 .eq('job_id', jobId)
                 .order('created_at', { ascending: false })
                 .limit(1)
                 .maybeSingle();
               
+              console.log('SPY Verification - Job Results:', {
+                hasResultsData: !!resultsData,
+                resultsError,
+                summary: resultsData?.summary,
+                dataKeys: resultsData?.data ? Object.keys(resultsData.data) : []
+              });
+              
+              if (resultsError) {
+                console.error('Error fetching job results:', resultsError);
+                setRunningStockFix(false);
+                setStockFixProgress(null);
+                setStockFixMessage({ type: 'error', text: `Failed to fetch results: ${resultsError.message}` });
+                return;
+              }
+              
               if (resultsData?.data) {
                 const resultData = resultsData.data as any;
                 const spyStyles = resultData.details || [];
+                
+                console.log('SPY Verification - Parsed Data:', {
+                  hasDetails: !!resultData.details,
+                  detailsLength: spyStyles.length,
+                  detailsType: Array.isArray(spyStyles),
+                  sampleDetail: spyStyles[0],
+                  resultDataKeys: Object.keys(resultData)
+                });
+                
+                if (!Array.isArray(spyStyles) || spyStyles.length === 0) {
+                  console.error('SPY Verification - Invalid or empty details:', {
+                    details: resultData.details,
+                    resultData
+                  });
+                  setRunningStockFix(false);
+                  setStockFixProgress(null);
+                  setStockFixMessage({ 
+                    type: 'error', 
+                    text: `No SPY data found in results. Check job logs for details.` 
+                  });
+                  return;
+                }
                 
                 setStockFixProgress({ step: 'Comparing with local stock...', details: `${spyStyles.length} styles from SPY` });
                 
@@ -1014,8 +1051,22 @@ export default function StockListPage() {
                   missingInCurrent,
                   missingInPasted,
                   matches,
-                  sampleDifferences: differences.slice(0, 5)
+                  sampleDifferences: differences.slice(0, 5),
+                  sampleSpyStyles: Array.from(spyDataMap.entries()).slice(0, 5),
+                  sampleCurrentData: Array.from(currentData.entries()).slice(0, 5)
                 });
+                
+                // Ensure we have results to display
+                if (differences.length === 0 && spyDataMap.size === 0) {
+                  console.warn('SPY Verification - No data to display');
+                  setRunningStockFix(false);
+                  setStockFixProgress(null);
+                  setStockFixMessage({ 
+                    type: 'error', 
+                    text: 'No data found in SPY verification results. Please check job logs.' 
+                  });
+                  return;
+                }
                 
                 setCheckerResults({
                   mode: 'spy',
@@ -1026,6 +1077,14 @@ export default function StockListPage() {
                   missingInCurrent,
                   missingInPasted,
                   matches
+                });
+                
+                console.log('SPY Verification - Results set:', {
+                  mode: 'spy',
+                  pastedCount: spyDataMap.size,
+                  currentCount: currentData.size,
+                  differencesCount: differences.length,
+                  mismatches: mismatchCount
                 });
                 
                 // If mismatches found, automatically enqueue scrape mismatches
