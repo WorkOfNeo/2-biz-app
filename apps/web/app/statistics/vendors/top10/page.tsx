@@ -6,6 +6,8 @@ import { Input } from '../../../../components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../../components/ui/table';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../../components/ui/card';
 import { Sheet, SheetHeader, SheetTitle, SheetContent, SheetClose } from '../../../../components/ui/sheet';
+import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
+import useSWR from 'swr';
 
 type Currency = 'DKK' | 'EUR' | 'USD';
 
@@ -32,6 +34,7 @@ type VendorRow = {
 type Collection = {
   id: string;
   name: string;
+  season_id: string | null; // Connected season from DB
   rows: VendorRow[];
 };
 
@@ -44,14 +47,17 @@ const CURRENCY_RATES: Record<Currency, number> = {
 };
 
 export default function Top10VendorsPage() {
+  const supabase = createClientComponentClient();
+  
   const [collections, setCollections] = React.useState<Collection[]>(() => {
     try {
       const stored = localStorage.getItem(STORAGE_KEY);
       if (stored) {
         const parsed = JSON.parse(stored);
-        // Ensure all rows have styles array
+        // Ensure all rows have styles array and season_id
         return parsed.map((c: Collection) => ({
           ...c,
+          season_id: c.season_id || null,
           rows: c.rows.map((r: VendorRow) => ({
             ...r,
             styles: r.styles || [],
@@ -60,8 +66,19 @@ export default function Top10VendorsPage() {
       }
     } catch {}
     // Default: one empty collection
-    return [{ id: 'default', name: 'Collection 1', rows: [] }];
+    return [{ id: 'default', name: 'Collection 1', season_id: null, rows: [] }];
   });
+
+  // Load seasons from database
+  const { data: seasons } = useSWR('seasons:list:top10', async () => {
+    const { data, error } = await supabase
+      .from('seasons')
+      .select('id, name, year')
+      .order('year', { ascending: false })
+      .order('name', { ascending: true });
+    if (error) throw new Error(error.message);
+    return (data ?? []) as Array<{ id: string; name: string; year: number | null }>;
+  }, { refreshInterval: 0 });
 
   const [currency, setCurrency] = React.useState<Currency>(() => {
     try {
@@ -169,12 +186,20 @@ export default function Top10VendorsPage() {
     const newCollection: Collection = {
       id: newId,
       name: `Collection ${collections.length + 1}`,
+      season_id: null,
       rows: []
     };
     setCollections([...collections, newCollection]);
     setActiveTab(newId);
     setEditingName(newId);
     setNewName(newCollection.name);
+  };
+
+  // Update collection season
+  const updateCollectionSeason = (collectionId: string, seasonId: string | null) => {
+    setCollections(collections.map(c => 
+      c.id === collectionId ? { ...c, season_id: seasonId } : c
+    ));
   };
 
   // Update collection name
@@ -252,12 +277,16 @@ export default function Top10VendorsPage() {
     ));
   };
 
+  // Get current collection
+  const currentCollection = React.useMemo(() => {
+    return collections.find(c => c.id === activeTab) || null;
+  }, [collections, activeTab]);
+
   // Get current vendor row
   const currentVendorRow = React.useMemo(() => {
     if (!openVendorSheet) return null;
-    const collection = collections.find(c => c.id === activeTab);
-    return collection?.rows.find(r => r.id === openVendorSheet) || null;
-  }, [openVendorSheet, collections, activeTab]);
+    return currentCollection?.rows.find(r => r.id === openVendorSheet) || null;
+  }, [openVendorSheet, currentCollection]);
 
   // Add style to vendor
   const addStyle = (vendorId: string) => {
@@ -327,8 +356,8 @@ export default function Top10VendorsPage() {
     ));
   };
 
-  // Import styles from textarea (one per line)
-  const importStylesFromText = (vendorId: string, text: string) => {
+  // Import styles from textarea (one per line) with season matching
+  const importStylesFromText = async (vendorId: string, text: string) => {
     const lines = text
       .split('\n')
       .map(line => line.trim())
@@ -336,12 +365,75 @@ export default function Top10VendorsPage() {
     
     if (lines.length === 0) return;
 
-    const newStyles: VendorStyle[] = lines.map(line => ({
-      id: `style-${Date.now()}-${Math.random()}`,
-      style_no: line,
-      price_per_sample: 0,
-      out_of_collection: false,
-    }));
+    const currentCollection = collections.find(c => c.id === activeTab);
+    const seasonId = currentCollection?.season_id;
+
+    let styleMap: Map<string, string> = new Map(); // style_name -> style_no
+
+    // If season is selected, fetch styles from database and match by name
+    if (seasonId && seasons) {
+      try {
+        // Query top_styles for this season to get style_name -> style_no mapping
+        const { data: topStyles, error: topStylesError } = await supabase
+          .from('top_styles')
+          .select('style_no, style_name')
+          .eq('season_id', seasonId);
+        
+        if (!topStylesError && topStyles) {
+          // Create map of style_name -> style_no (case-insensitive)
+          for (const ts of topStyles) {
+            if (ts.style_name) {
+              const key = ts.style_name.toLowerCase().trim();
+              if (!styleMap.has(key)) {
+                styleMap.set(key, ts.style_no || '');
+              }
+            }
+            // Also map style_no to itself
+            if (ts.style_no) {
+              const key = ts.style_no.toLowerCase().trim();
+              styleMap.set(key, ts.style_no);
+            }
+          }
+        }
+
+        // Also query styles table for additional matches
+        const { data: allStyles, error: stylesError } = await supabase
+          .from('styles')
+          .select('style_no, style_name')
+          .limit(10000);
+        
+        if (!stylesError && allStyles) {
+          for (const s of allStyles) {
+            if (s.style_name) {
+              const key = s.style_name.toLowerCase().trim();
+              if (!styleMap.has(key)) {
+                styleMap.set(key, s.style_no || '');
+              }
+            }
+            if (s.style_no) {
+              const key = s.style_no.toLowerCase().trim();
+              styleMap.set(key, s.style_no);
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Error fetching styles for matching:', error);
+      }
+    }
+
+    // Match lines to style_no
+    const newStyles: VendorStyle[] = lines.map(line => {
+      const trimmed = line.trim();
+      const key = trimmed.toLowerCase();
+      const matchedStyleNo = styleMap.get(key) || trimmed; // Use matched style_no or original if no match
+      
+      return {
+        id: `style-${Date.now()}-${Math.random()}`,
+        style_no: matchedStyleNo,
+        price_per_sample: 0,
+        out_of_collection: false,
+      };
+    });
 
     setCollections(collections.map(c => 
       c.id === activeTab 
@@ -465,8 +557,25 @@ export default function Top10VendorsPage() {
               <TabsContent key={collection.id} value={collection.id} className="p-4">
                 <div className="space-y-4">
                   <div className="flex items-center justify-between">
-                    <div className="text-sm text-gray-600">
-                      {collection.rows.length} vendor{collection.rows.length !== 1 ? 's' : ''}
+                    <div className="flex items-center gap-4">
+                      <div className="text-sm text-gray-600">
+                        {collection.rows.length} vendor{collection.rows.length !== 1 ? 's' : ''}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <label className="text-xs text-gray-600">Season:</label>
+                        <select
+                          value={collection.season_id || ''}
+                          onChange={(e) => updateCollectionSeason(collection.id, e.target.value || null)}
+                          className="text-xs border rounded px-2 py-1 min-w-[200px]"
+                        >
+                          <option value="">No season selected</option>
+                          {seasons?.map((season) => (
+                            <option key={season.id} value={season.id}>
+                              {season.name} {season.year ? `(${season.year})` : ''}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
                     </div>
                     <Button 
                       onClick={addRow}
@@ -638,10 +747,20 @@ export default function Top10VendorsPage() {
                   <CardTitle className="text-sm">Bulk Import Styles</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-2">
+                  {currentCollection?.season_id ? (
+                    <div className="text-xs text-gray-600 mb-2">
+                      Season: {seasons?.find(s => s.id === currentCollection.season_id)?.name || 'Unknown'} - 
+                      Style names will be automatically matched to style_no from this season
+                    </div>
+                  ) : (
+                    <div className="text-xs text-amber-600 mb-2">
+                      ⚠️ No season selected. Select a season in the collection tab to enable automatic style name matching.
+                    </div>
+                  )}
                   <textarea
                     value={bulkImportText}
                     onChange={(e) => setBulkImportText(e.target.value)}
-                    placeholder="Paste style numbers here, one per line (e.g., from Excel)&#10;STYLE-001&#10;STYLE-002&#10;STYLE-003"
+                    placeholder="Paste style names or numbers here, one per line (e.g., from Excel)&#10;STYLE-001&#10;STYLE-002&#10;STYLE-003"
                     className="w-full min-h-[100px] p-2 text-xs border rounded-md resize-y font-mono"
                   />
                   <div className="flex items-center justify-between">
