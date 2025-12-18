@@ -143,8 +143,9 @@ export default function StyleDetailPage({ params }: { params: { styleNo: string 
             
             if (jobData.status === 'succeeded') {
               setScrapeMessage({ type: 'success', text: 'Stock data updated successfully!' });
-              // Refresh stock data
+              // Refresh stock data and colors (colors are created during stock scraping)
               await mutateStockData();
+              await mutateColors();
               // Clear message after 3 seconds
               setTimeout(() => setScrapeMessage(null), 3000);
             } else {
