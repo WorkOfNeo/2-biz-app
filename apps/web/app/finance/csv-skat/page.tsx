@@ -79,7 +79,8 @@ export default function CsvSkatPage() {
 				if (!Number.isFinite(linjenr)) continue;
 				const land = String(r[idx.landekode] ?? '').trim();
 				const momsRaw = String(r[idx.moms] ?? '').trim();
-				const moms = momsRaw ? momsRaw.replace(/[A-Za-z]/g, '') : null; // strip letters
+				// For NL countries, preserve letters in VAT numbers; for others, strip letters
+				const moms = momsRaw ? (land.toUpperCase() === 'NL' ? momsRaw : momsRaw.replace(/[A-Za-z]/g, '')) : null;
 				const val = toNumberDK(r[idx.vaerdi]);
 				const rapport = r[idx.rapportnr] ?? null;
 				const trans = r[idx.trans] ?? null;
@@ -108,10 +109,12 @@ export default function CsvSkatPage() {
 		// - Exclude rows missing Debitors momsregistreringsnr (after stripping letters)
 		const filtered = src.filter((r) => {
 			const land = String(r.landekode || '').trim();
-			const moms = String(r.momsnr || '').replace(/[A-Za-z]/g, '').trim();
+			// For NL countries, preserve letters in VAT numbers; for others, strip letters
+			const moms = String(r.momsnr || '').trim();
+			const momsCleaned = land.toUpperCase() === 'NL' ? moms : moms.replace(/[A-Za-z]/g, '');
 			if (!land) return false;
 			if (land.toUpperCase() === 'NO') return false;
-			if (!moms) return false;
+			if (!momsCleaned) return false;
 			return true;
 		});
 		// Keep incoming order; we'll compute Linjenr sequentially starting at 1
@@ -122,13 +125,17 @@ export default function CsvSkatPage() {
 		for (const r of filtered) {
 			seq += 1; // calculated Linjenr (no relation to file's Linjenr)
 			sum += r.vaerdi || 0;
+			// For NL countries, preserve letters in VAT numbers; for others, strip letters
+			const momsOutput = r.landekode?.toUpperCase() === 'NL' 
+				? (r.momsnr || '') 
+				: (r.momsnr || '').replace(/[A-Za-z]/g, '');
 			out.push([
 				2,                           // col1
 				seq,                         // col2 (calculated Linjenr starting from 1)
 				dateStrParam,                // col3 YYYY-MM-DD
 				27492185,                    // col4
 				r.landekode || '',           // col5
-				(r.momsnr || '').replace(/[A-Za-z]/g, ''), // col6 strip letters
+				momsOutput,                  // col6 (preserve letters for NL, strip for others)
 				Number.isFinite(r.vaerdi) ? r.vaerdi : 0, // col7
 				0,                           // col8
 				0,                           // col9
