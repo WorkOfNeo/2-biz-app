@@ -567,6 +567,116 @@ export async function exportSuppleringer(ctx: Ctx) {
       React.createElement(Text, { style: styles.small, key: 'month' }, formatMonthName(yearMonth)),
     ];
 
+    // Calculate grand totals across ALL salespersons
+    const grandTotals = {
+      current: { telefon: { stk: 0, beløb: 0 }, b2bShop: { stk: 0, beløb: 0 }, credittedStk: 0, credittedBeløb: 0, samletStk: 0, samletBeløb: 0 },
+      previousYear: { telefon: { stk: 0, beløb: 0 }, b2bShop: { stk: 0, beløb: 0 }, credittedStk: 0, credittedBeløb: 0, samletStk: 0, samletBeløb: 0 },
+    };
+    let hasPreviousYearData = false;
+
+    for (const stat of currentData) {
+      grandTotals.current.telefon.stk += stat.telefon_stk || 0;
+      grandTotals.current.telefon.beløb += stat.telefon_beløb || 0;
+      grandTotals.current.b2bShop.stk += stat.b2b_stk || 0;
+      grandTotals.current.b2bShop.beløb += stat.b2b_beløb || 0;
+      grandTotals.current.credittedStk += -(stat.krediteret_stk || 0);
+      grandTotals.current.credittedBeløb += -(stat.krediteret_beløb || 0);
+      grandTotals.current.samletStk += (stat.telefon_stk || 0) + (stat.b2b_stk || 0) - (stat.krediteret_stk || 0);
+      grandTotals.current.samletBeløb += (stat.telefon_beløb || 0) + (stat.b2b_beløb || 0) - (stat.krediteret_beløb || 0);
+    }
+
+    for (const prev of prevData || []) {
+      hasPreviousYearData = true;
+      grandTotals.previousYear.telefon.stk += prev.telefon_stk || 0;
+      grandTotals.previousYear.telefon.beløb += prev.telefon_beløb || 0;
+      grandTotals.previousYear.b2bShop.stk += prev.b2b_stk || 0;
+      grandTotals.previousYear.b2bShop.beløb += prev.b2b_beløb || 0;
+      grandTotals.previousYear.credittedStk += -(prev.krediteret_stk || 0);
+      grandTotals.previousYear.credittedBeløb += -(prev.krediteret_beløb || 0);
+      grandTotals.previousYear.samletStk += (prev.telefon_stk || 0) + (prev.b2b_stk || 0) - (prev.krediteret_stk || 0);
+      grandTotals.previousYear.samletBeløb += (prev.telefon_beløb || 0) + (prev.b2b_beløb || 0) - (prev.krediteret_beløb || 0);
+    }
+
+    const grandDevelopment = hasPreviousYearData ? {
+      telefon: { stk: grandTotals.current.telefon.stk - grandTotals.previousYear.telefon.stk, beløb: grandTotals.current.telefon.beløb - grandTotals.previousYear.telefon.beløb },
+      b2bShop: { stk: grandTotals.current.b2bShop.stk - grandTotals.previousYear.b2bShop.stk, beløb: grandTotals.current.b2bShop.beløb - grandTotals.previousYear.b2bShop.beløb },
+      credittedStk: grandTotals.current.credittedStk - grandTotals.previousYear.credittedStk,
+      credittedBeløb: grandTotals.current.credittedBeløb - grandTotals.previousYear.credittedBeløb,
+      samletStk: grandTotals.current.samletStk - grandTotals.previousYear.samletStk,
+      samletBeløb: grandTotals.current.samletBeløb - grandTotals.previousYear.samletBeløb,
+    } : null;
+
+    // Add GRAND TOTALS section at the top
+    fullPageElements.push(
+      React.createElement(Text, { style: [styles.h2, { marginTop: 12, fontSize: 14, fontWeight: 700 }], key: 'grand-title' }, 'SAMLET (Alle Sælgere)')
+    );
+
+    // Grand totals: Previous Year
+    if (hasPreviousYearData) {
+      fullPageElements.push(
+        React.createElement(View, { wrap: false, style: styles.tableContainer, key: 'grand-prev-section' },
+          React.createElement(Text, { style: [styles.h2, { marginTop: 8, fontSize: 11 }] }, `${parseInt(year, 10) - 1} (Sidste år)`),
+          React.createElement(View, { style: styles.tableHeader }, fullPageHeader),
+          React.createElement(View, { style: styles.row },
+            Cell(String(grandTotals.previousYear.telefon.stk), '12.5%', 'left'),
+            Cell(formatPrice(grandTotals.previousYear.telefon.beløb), '12.5%', 'right'),
+            Cell(String(grandTotals.previousYear.b2bShop.stk), '12.5%', 'left'),
+            Cell(formatPrice(grandTotals.previousYear.b2bShop.beløb), '12.5%', 'right'),
+            Cell(String(grandTotals.previousYear.credittedStk), '12.5%', 'left', styles.red),
+            Cell(formatPrice(grandTotals.previousYear.credittedBeløb), '12.5%', 'right', styles.red),
+            Cell(String(grandTotals.previousYear.samletStk), '12.5%', 'left', styles.bold),
+            Cell(formatPrice(grandTotals.previousYear.samletBeløb), '12.5%', 'right', styles.bold)
+          )
+        )
+      );
+    }
+
+    // Grand totals: Current Month
+    fullPageElements.push(
+      React.createElement(View, { wrap: false, style: styles.tableContainer, key: 'grand-current-section' },
+        React.createElement(Text, { style: [styles.h2, { marginTop: 8, fontSize: 11 }] }, formatMonthName(yearMonth)),
+        React.createElement(View, { style: styles.tableHeader }, fullPageHeader),
+        React.createElement(View, { style: styles.row },
+          Cell(String(grandTotals.current.telefon.stk), '12.5%', 'left'),
+          Cell(formatPrice(grandTotals.current.telefon.beløb), '12.5%', 'right'),
+          Cell(String(grandTotals.current.b2bShop.stk), '12.5%', 'left'),
+          Cell(formatPrice(grandTotals.current.b2bShop.beløb), '12.5%', 'right'),
+          Cell(String(grandTotals.current.credittedStk), '12.5%', 'left', styles.red),
+          Cell(formatPrice(grandTotals.current.credittedBeløb), '12.5%', 'right', styles.red),
+          Cell(String(grandTotals.current.samletStk), '12.5%', 'left', styles.bold),
+          Cell(formatPrice(grandTotals.current.samletBeløb), '12.5%', 'right', styles.bold)
+        )
+      )
+    );
+
+    // Grand totals: Development
+    if (grandDevelopment) {
+      fullPageElements.push(
+        React.createElement(View, { wrap: false, style: styles.tableContainer, key: 'grand-dev-section' },
+          React.createElement(Text, { style: [styles.h2, { marginTop: 8, fontSize: 11 }] }, 'Samlet Udvikling'),
+          React.createElement(View, { style: styles.tableHeader }, fullPageHeader),
+          React.createElement(View, { style: styles.row },
+            Cell((grandDevelopment.telefon.stk >= 0 ? '+' : '') + String(grandDevelopment.telefon.stk), '12.5%', 'left', grandDevelopment.telefon.stk >= 0 ? styles.green : styles.red),
+            Cell((grandDevelopment.telefon.beløb >= 0 ? '+' : '') + formatPrice(grandDevelopment.telefon.beløb), '12.5%', 'right', grandDevelopment.telefon.beløb >= 0 ? styles.green : styles.red),
+            Cell((grandDevelopment.b2bShop.stk >= 0 ? '+' : '') + String(grandDevelopment.b2bShop.stk), '12.5%', 'left', grandDevelopment.b2bShop.stk >= 0 ? styles.green : styles.red),
+            Cell((grandDevelopment.b2bShop.beløb >= 0 ? '+' : '') + formatPrice(grandDevelopment.b2bShop.beløb), '12.5%', 'right', grandDevelopment.b2bShop.beløb >= 0 ? styles.green : styles.red),
+            Cell(String(grandDevelopment.credittedStk), '12.5%', 'left', styles.red),
+            Cell(formatPrice(grandDevelopment.credittedBeløb), '12.5%', 'right', styles.red),
+            Cell((grandDevelopment.samletStk >= 0 ? '+' : '') + String(grandDevelopment.samletStk), '12.5%', 'left', [styles.bold, grandDevelopment.samletStk >= 0 ? styles.green : styles.red]),
+            Cell((grandDevelopment.samletBeløb >= 0 ? '+' : '') + formatPrice(grandDevelopment.samletBeløb), '12.5%', 'right', [styles.bold, grandDevelopment.samletBeløb >= 0 ? styles.green : styles.red])
+          )
+        )
+      );
+    }
+
+    // Separator before individual salesperson sections
+    fullPageElements.push(
+      React.createElement(View, { style: { marginTop: 24, marginBottom: 8, borderTop: 2, borderColor: '#1d4ed8' }, key: 'separator' })
+    );
+    fullPageElements.push(
+      React.createElement(Text, { style: [styles.h2, { fontSize: 14, fontWeight: 700 }], key: 'individual-title' }, 'Pr. Sælger')
+    );
+
     // Loop through all salespersons and create a section for each with Prev/Current/Difference
     for (const salespersonId of allSalespersonIds) {
       // Find aggregated data for this salesperson by ID
