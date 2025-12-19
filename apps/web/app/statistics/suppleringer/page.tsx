@@ -1,6 +1,7 @@
 'use client';
 import { useMemo, useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
+import useSWR from 'swr';
 import { Loader2, Save, Download, History, FileText, Trash2 } from 'lucide-react';
 import { supabase } from '../../../lib/supabaseClient';
 import Link from 'next/link';
@@ -101,6 +102,27 @@ export default function SuppliersPage() {
   const [viewMode, setViewMode] = useState<'upload' | 'saved'>('upload');
   const [exporting, setExporting] = useState(false);
   const [deleting, setDeleting] = useState(false);
+
+  // Fetch salespersons with sort_index to maintain consistent ordering
+  const { data: salespersons } = useSWR('suppleringer:salespersons', async () => {
+    const { data, error } = await supabase
+      .from('salespersons')
+      .select('id, name, sort_index')
+      .order('sort_index', { ascending: true });
+    if (error) throw error;
+    return (data ?? []) as Array<{ id: string; name: string; sort_index: number | null }>;
+  });
+
+  // Create a map for quick sort_index lookup by salesperson_id
+  const salespersonSortIndex = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const sp of salespersons ?? []) {
+      map.set(sp.id, sp.sort_index ?? 999);
+      // Also map by name (lowercase) for uploaded data matching
+      map.set(sp.name.toLowerCase(), sp.sort_index ?? 999);
+    }
+    return map;
+  }, [salespersons]);
 
   // Convert Excel column letter to 0-based array index
   // E.g., 'A' -> 0, 'B' -> 1, 'Z' -> 25, 'AA' -> 26, 'AN' -> 39
@@ -388,11 +410,17 @@ export default function SuppliersPage() {
       });
     }
 
-    // Sort by salesperson name
-    summaries.sort((a, b) => a.salesPerson.localeCompare(b.salesPerson));
+    // Sort by salesperson sort_index (same order as general statistics page)
+    summaries.sort((a, b) => {
+      const indexA = salespersonSortIndex.get(a.salesPerson.toLowerCase()) ?? 999;
+      const indexB = salespersonSortIndex.get(b.salesPerson.toLowerCase()) ?? 999;
+      if (indexA !== indexB) return indexA - indexB;
+      // Fallback to alphabetical if same index
+      return a.salesPerson.localeCompare(b.salesPerson);
+    });
 
     return summaries;
-  }, [parsedRows]);
+  }, [parsedRows, salespersonSortIndex]);
 
   // Get customer groups for selected salesperson (works for both upload and saved views)
   const customerGroups = useMemo(() => {
@@ -978,6 +1006,20 @@ export default function SuppliersPage() {
       };
     });
     
+    // Sort by salesperson sort_index (same order as general statistics page)
+    result.sort((a, b) => {
+      // Use salesperson_id for lookup first, then fallback to name
+      const indexA = (a.salespersonId && salespersonSortIndex.get(a.salespersonId)) 
+        ?? salespersonSortIndex.get(a.salesPerson.toLowerCase()) 
+        ?? 999;
+      const indexB = (b.salespersonId && salespersonSortIndex.get(b.salespersonId)) 
+        ?? salespersonSortIndex.get(b.salesPerson.toLowerCase()) 
+        ?? 999;
+      if (indexA !== indexB) return indexA - indexB;
+      // Fallback to alphabetical if same index
+      return a.salesPerson.localeCompare(b.salesPerson);
+    });
+    
     // DEBUG: Log resulting summaries
     console.log('[savedSummaries] Result:', result.map(s => ({
       salesPerson: s.salesPerson,
@@ -985,7 +1027,7 @@ export default function SuppliersPage() {
     })));
     
     return result;
-  }, [savedData, previousYearData]);
+  }, [savedData, previousYearData, salespersonSortIndex]);
 
   // Aggregated summary across all salespersons
   const aggregatedSummary = useMemo(() => {
