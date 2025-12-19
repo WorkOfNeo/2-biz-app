@@ -1008,6 +1008,29 @@ export default function SuppliersPage() {
         </div>
       </div>
 
+      {/* File Requirements Info */}
+      <div className="rounded-md border p-4 bg-blue-50 border-blue-200">
+        <h3 className="text-sm font-semibold text-blue-900 mb-2">Fil Krav:</h3>
+        <div className="text-xs text-blue-800 space-y-1">
+          <p className="font-medium mb-1">Filen skal være en Excel fil (.xlsx, .xls) eller CSV fil med følgende kolonner:</p>
+          <ul className="list-disc list-inside space-y-0.5 ml-2">
+            <li><strong>Kolonne B:</strong> Ordre type (kun rækker med "STOCK" behandles)</li>
+            <li><strong>Kolonne C:</strong> Kanal ("Telefon", "B2B Shop", eller "Sales Staff")</li>
+            <li><strong>Kolonne E:</strong> Kundenavn (påkrævet)</li>
+            <li><strong>Kolonne G:</strong> Konto nummer (påkrævet)</li>
+            <li><strong>Kolonne U:</strong> Sælger navn (påkrævet)</li>
+            <li><strong>Kolonne AN:</strong> Antal bestilt</li>
+            <li><strong>Kolonne AO:</strong> Antal leveret</li>
+            <li><strong>Kolonne AW:</strong> Salgspris i basisvaluta total (i øre/cents)</li>
+            <li><strong>Kolonne BO:</strong> Dato</li>
+          </ul>
+          <p className="mt-2 pt-2 border-t border-blue-300">
+            <strong>Vigtigt:</strong> Filen skal have en header-række, og kun rækker med ordre type "STOCK" vil blive behandlet. 
+            Rækker uden kundenavn, konto nummer eller sælger navn vil blive sprunget over.
+          </p>
+        </div>
+      </div>
+
       {/* File Upload with Drag and Drop */}
       <div
         className={`rounded-md border-2 border-dashed p-6 text-center transition ${
