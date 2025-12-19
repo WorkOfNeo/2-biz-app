@@ -180,13 +180,33 @@ export default function Top10VendorsPage() {
           stylesMap.set(s.vendor_row_id, arr);
         }
         
-        // Debug: log styles distribution
-        console.log('[loadCollections] Styles per vendor:', 
-          Array.from(stylesMap.entries()).map(([vendorId, styles]) => ({
-            vendorId: vendorId.substring(0, 8),
-            stylesLoaded: styles.length,
-          }))
-        );
+        // Debug: log styles distribution and find mismatches
+        const stylesPerVendor = Array.from(stylesMap.entries()).map(([vendorId, styles]) => ({
+          vendorId: vendorId.substring(0, 8),
+          stylesLoaded: styles.length,
+        }));
+        console.log('[loadCollections] Styles per vendor:', stylesPerVendor);
+        
+        // Check for vendors with stored values but no loaded styles
+        const vendorMismatches = (rowsData || []).filter(r => {
+          const loadedStyles = stylesMap.get(r.id)?.length || 0;
+          const storedAntalPrøver = r.antal_prøver || 0;
+          return storedAntalPrøver > 0 && loadedStyles === 0;
+        }).map(r => ({
+          vendorId: r.id.substring(0, 8),
+          leverandør: r.leverandør,
+          storedAntalPrøver: r.antal_prøver,
+          loadedStyles: 0,
+          ISSUE: 'Stored antal_prøver > 0 but no styles loaded!'
+        }));
+        
+        if (vendorMismatches.length > 0) {
+          console.warn('[loadCollections] ⚠️ MISMATCH FOUND - vendors with stored values but no styles:', vendorMismatches);
+        }
+        
+        // Also log all vendor row IDs vs which ones have styles
+        console.log('[loadCollections] All row IDs:', (rowsData || []).map(r => r.id));
+        console.log('[loadCollections] Vendor IDs with styles:', Array.from(stylesMap.keys()));
         
         for (const r of (rowsData || [])) {
           const collection = collectionsMap.get(r.collection_id);
@@ -1441,7 +1461,18 @@ export default function Top10VendorsPage() {
                                   </div>
                                 </TableCell>
                                 <TableCell className="text-right">
-                                  {calculated.antal_prøver}
+                                  <div className="flex items-center justify-end gap-1">
+                                    {/* Show warning if stored antal_prøver differs from actual loaded styles */}
+                                    {row.antal_prøver > 0 && (row.styles?.length || 0) === 0 && (
+                                      <span 
+                                        className="text-amber-500 cursor-help" 
+                                        title={`⚠️ Stored: ${row.antal_prøver}, Loaded: ${row.styles?.length || 0} - Styles may not be loading correctly`}
+                                      >
+                                        ⚠️
+                                      </span>
+                                    )}
+                                    {calculated.antal_prøver}
+                                  </div>
                                 </TableCell>
                                 <TableCell className="text-right">
                                   {calculated.styles_i_koll}
