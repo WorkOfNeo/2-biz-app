@@ -605,14 +605,17 @@ export default function Top10VendorsPage() {
       };
     }
     
-    // Fallback to manual calculation if no styles
-    const total = (row.antal_prøver || 0) * (row.gns_pris_pr_prøve || 0) * multiplier;
-    const diff = total - (row.total_ubrugte || 0);
-    
+    // No styles loaded - show zeros (don't use stale stored values)
+    // This fixes the issue where stored antal_prøver shows values but styles don't exist
     return {
       ...row,
-      total,
-      diff,
+      antal_prøver: 0,
+      styles_i_koll: 0,
+      gns_pris_pr_prøve: 0,
+      total: 0,
+      total_ubrugte: 0,
+      diff: 0,
+      prøvefaktor: 0,
     };
   };
 
