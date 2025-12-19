@@ -397,20 +397,53 @@ export default function SuppliersPage() {
   const customerGroups = useMemo(() => {
     if (!selectedSalesperson) return [];
     
+    // DEBUG: Log selection state
+    console.log('[customerGroups] Selected:', {
+      selectedSalesperson,
+      selectedSalespersonId,
+      viewMode,
+      savedRowsCount: savedRows?.length || 0,
+    });
+    
+    // DEBUG: Log first few saved rows to see their structure
+    if (viewMode === 'saved' && savedRows && savedRows.length > 0) {
+      console.log('[customerGroups] Sample saved rows (first 5):', savedRows.slice(0, 5).map(r => ({
+        salesPerson: r.salesPerson,
+        salespersonId: r.salespersonId,
+        customerName: r.customerName,
+      })));
+      
+      // DEBUG: Log unique salesperson IDs in saved rows
+      const uniqueIds = new Set(savedRows.map(r => r.salespersonId));
+      const uniqueNames = new Set(savedRows.map(r => r.salesPerson));
+      console.log('[customerGroups] Unique salesperson IDs in savedRows:', Array.from(uniqueIds));
+      console.log('[customerGroups] Unique salesperson names in savedRows:', Array.from(uniqueNames));
+    }
+    
     // Use saved rows if in saved view, otherwise use parsed rows
     // In saved mode, filter by salesperson_id (more reliable) with fallback to name
     const rowsToUse = viewMode === 'saved' && savedRows 
       ? savedRows.filter(row => {
           // Match by ID first if available, otherwise fall back to name
           if (selectedSalespersonId && row.salespersonId) {
-            return row.salespersonId === selectedSalespersonId;
+            const match = row.salespersonId === selectedSalespersonId;
+            return match;
           }
-          return row.salesPerson === selectedSalesperson;
+          const match = row.salesPerson === selectedSalesperson;
+          return match;
         })
       : (() => {
           const summary = salespersonSummaries.find(s => s.salesPerson === selectedSalesperson);
           return summary?.rows || [];
         })();
+
+    // DEBUG: Log filtered results
+    console.log('[customerGroups] Filtered rows count:', rowsToUse.length);
+    if (rowsToUse.length === 0 && viewMode === 'saved' && savedRows && savedRows.length > 0) {
+      console.warn('[customerGroups] WARNING: No rows matched! Check if IDs/names match.');
+      console.log('[customerGroups] Looking for ID:', selectedSalespersonId);
+      console.log('[customerGroups] Looking for name:', selectedSalesperson);
+    }
 
     if (rowsToUse.length === 0) return [];
 
@@ -440,6 +473,8 @@ export default function SuppliersPage() {
 
     // Sort by customer name
     groups.sort((a, b) => a.customerName.localeCompare(b.customerName));
+
+    console.log('[customerGroups] Final customer groups count:', groups.length);
 
     return groups;
   }, [selectedSalesperson, selectedSalespersonId, salespersonSummaries, viewMode, savedRows]);
@@ -720,6 +755,13 @@ export default function SuppliersPage() {
         return;
       }
 
+      // DEBUG: Log loaded supp_statistic data
+      console.log('[loadFromSupabase] supp_statistic data loaded:', data.length, 'records');
+      console.log('[loadFromSupabase] supp_statistic salesperson IDs:', data.map((s: any) => ({
+        name: s.salesperson_name,
+        id: s.salesperson_id,
+      })));
+
       setSavedData(data as SavedStatistic[]);
       setViewMode('saved');
 
@@ -729,6 +771,20 @@ export default function SuppliersPage() {
         .select('*, salesperson_id')
         .eq('year_month', month)
         .order('salesperson_name, customer_name');
+
+      // DEBUG: Log loaded rows data
+      console.log('[loadFromSupabase] supp_statistic_rows loaded:', rowsData?.length || 0, 'rows');
+      if (rowsData && rowsData.length > 0) {
+        const uniqueRowIds = new Set(rowsData.map((r: any) => r.salesperson_id));
+        const uniqueRowNames = new Set(rowsData.map((r: any) => r.salesperson_name));
+        console.log('[loadFromSupabase] Unique salesperson_id in rows:', Array.from(uniqueRowIds));
+        console.log('[loadFromSupabase] Unique salesperson_name in rows:', Array.from(uniqueRowNames));
+        console.log('[loadFromSupabase] Sample rows (first 3):', rowsData.slice(0, 3).map((r: any) => ({
+          salesperson_id: r.salesperson_id,
+          salesperson_name: r.salesperson_name,
+          customer_name: r.customer_name,
+        })));
+      }
 
       if (!rowsError && rowsData) {
         // Convert saved rows to ParsedRow format (include salesperson_id)
@@ -809,6 +865,13 @@ export default function SuppliersPage() {
   const savedSummaries = useMemo(() => {
     if (!savedData) return [];
     
+    // DEBUG: Log savedData
+    console.log('[savedSummaries] Building summaries from savedData:', savedData.length, 'records');
+    console.log('[savedSummaries] savedData salesperson_ids:', savedData.map(s => ({
+      name: s.salesperson_name,
+      id: s.salesperson_id,
+    })));
+    
     // Use salesperson_id for matching previous year data (more reliable than name)
     const prevYearMapById = new Map<string, SavedStatistic>();
     const prevYearMapByName = new Map<string, SavedStatistic>();
@@ -821,7 +884,7 @@ export default function SuppliersPage() {
       }
     }
     
-    return savedData.map((stat) => {
+    const result = savedData.map((stat) => {
       // Match by ID first, fallback to name
       const prev = (stat.salesperson_id && prevYearMapById.get(stat.salesperson_id)) 
         || prevYearMapByName.get(stat.salesperson_name);
@@ -861,6 +924,14 @@ export default function SuppliersPage() {
         } : null,
       };
     });
+    
+    // DEBUG: Log resulting summaries
+    console.log('[savedSummaries] Result:', result.map(s => ({
+      salesPerson: s.salesPerson,
+      salespersonId: s.salespersonId,
+    })));
+    
+    return result;
   }, [savedData, previousYearData]);
 
   // Aggregated summary across all salespersons
@@ -1174,9 +1245,20 @@ export default function SuppliersPage() {
                 className="bg-gray-50 p-3 cursor-pointer hover:bg-gray-100"
                 onClick={() => {
                   const isSelected = selectedSalesperson === summary.salesPerson;
-                  setSelectedSalesperson(isSelected ? null : summary.salesPerson);
+                  const newName = isSelected ? null : summary.salesPerson;
+                  const newId = isSelected ? null : ((summary as any).salespersonId || null);
+                  
+                  // DEBUG: Log selection
+                  console.log('[onClick] Selecting salesperson:', {
+                    name: newName,
+                    id: newId,
+                    summaryHasId: !!(summary as any).salespersonId,
+                    fullSummary: summary,
+                  });
+                  
+                  setSelectedSalesperson(newName);
                   // Also set salespersonId for reliable row matching in saved mode
-                  setSelectedSalespersonId(isSelected ? null : ((summary as any).salespersonId || null));
+                  setSelectedSalespersonId(newId);
                 }}
               >
                 <div className="flex items-center justify-between">
