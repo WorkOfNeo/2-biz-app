@@ -1244,59 +1244,14 @@ export default function Top10VendorsPage() {
                                     </button>
                                   </div>
                                 </TableCell>
-                                <TableCell>
-                                  <Input
-                                    type="number"
-                                    value={localRowValues[row.id]?.antal_prøver !== undefined ? (localRowValues[row.id]?.antal_prøver as number) : (row.antal_prøver || '')}
-                                    onChange={(e) => {
-                                      e.stopPropagation();
-                                      updateLocalRowValue(row.id, 'antal_prøver', parseFloat(e.target.value) || 0);
-                                    }}
-                                    onBlur={(e) => {
-                                      e.stopPropagation();
-                                      saveLocalRowValue(row.id, 'antal_prøver');
-                                    }}
-                                    className="w-full text-xs text-right"
-                                    min="0"
-                                    step="1"
-                                    onClick={(e) => e.stopPropagation()}
-                                  />
+                                <TableCell className="text-right">
+                                  {calculated.antal_prøver}
                                 </TableCell>
-                                <TableCell>
-                                  <Input
-                                    type="number"
-                                    value={localRowValues[row.id]?.styles_i_koll !== undefined ? (localRowValues[row.id]?.styles_i_koll as number) : (row.styles_i_koll || '')}
-                                    onChange={(e) => {
-                                      e.stopPropagation();
-                                      updateLocalRowValue(row.id, 'styles_i_koll', parseFloat(e.target.value) || 0);
-                                    }}
-                                    onBlur={(e) => {
-                                      e.stopPropagation();
-                                      saveLocalRowValue(row.id, 'styles_i_koll');
-                                    }}
-                                    className="w-full text-xs text-right"
-                                    min="0"
-                                    step="1"
-                                    onClick={(e) => e.stopPropagation()}
-                                  />
+                                <TableCell className="text-right">
+                                  {calculated.styles_i_koll}
                                 </TableCell>
-                                <TableCell>
-                                  <Input
-                                    type="number"
-                                    value={localRowValues[row.id]?.gns_pris_pr_prøve !== undefined ? (localRowValues[row.id]?.gns_pris_pr_prøve as number) : (row.gns_pris_pr_prøve || '')}
-                                    onChange={(e) => {
-                                      e.stopPropagation();
-                                      updateLocalRowValue(row.id, 'gns_pris_pr_prøve', parseFloat(e.target.value) || 0);
-                                    }}
-                                    onBlur={(e) => {
-                                      e.stopPropagation();
-                                      saveLocalRowValue(row.id, 'gns_pris_pr_prøve');
-                                    }}
-                                    className="w-full text-xs text-right"
-                                    min="0"
-                                    step="0.01"
-                                    onClick={(e) => e.stopPropagation()}
-                                  />
+                                <TableCell className="text-right">
+                                  {formatCurrency(calculated.gns_pris_pr_prøve)}
                                 </TableCell>
                                 <TableCell className="text-right font-medium text-[#8FA894]">
                                   {formatCurrency(calculated.total)}
