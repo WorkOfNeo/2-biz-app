@@ -437,28 +437,25 @@ export default function Top10VendorsPage() {
       const inCollection = styles.filter(s => !s.out_of_collection);
       const outOfCollection = styles.filter(s => s.out_of_collection);
       
-      // Sum up price_per_sample for each style, converted to DKK
+      // Prøvefaktor: use manual value if set, otherwise default to 9
+      const prøvefaktor = row.prøvefaktor && row.prøvefaktor > 0 ? row.prøvefaktor : 9;
+      
+      // Sum up price_per_sample for each style, converted to DKK and multiplied by prøvefaktor
       const totalPrice = styles.reduce((sum, s) => {
         const priceInDKK = convertToDKK(s.price_per_sample || 0, row.currency || 'DKK', row.exchange_rate || DEFAULT_CURRENCY_RATES[row.currency || 'DKK']);
-        return sum + priceInDKK;
+        return sum + (priceInDKK * prøvefaktor);
       }, 0);
       
       // Sum up price for styles IN collection (usable)
       const usablePrice = inCollection.reduce((sum, s) => {
         const priceInDKK = convertToDKK(s.price_per_sample || 0, row.currency || 'DKK', row.exchange_rate || DEFAULT_CURRENCY_RATES[row.currency || 'DKK']);
-        return sum + priceInDKK;
+        return sum + (priceInDKK * prøvefaktor);
       }, 0);
       
-      // Average price per sample (in DKK)
+      // Average price per sample (in DKK, multiplied by prøvefaktor)
       const avgPrice = styles.length > 0 
         ? totalPrice / styles.length
         : 0;
-      
-      // Prøvefaktor: use manual value if set, otherwise calculate from samples
-      const manualPrøvefaktor = row.prøvefaktor && row.prøvefaktor > 0 ? row.prøvefaktor : null;
-      const prøvefaktor = manualPrøvefaktor || (inCollection.length > 0 
-        ? totalSamples / inCollection.length 
-        : 0);
       
       return {
         ...row,
@@ -473,12 +470,9 @@ export default function Top10VendorsPage() {
     }
     
     // Fallback to manual calculation if no styles
-    const total = (row.antal_prøver || 0) * (row.gns_pris_pr_prøve || 0);
+    const prøvefaktor = row.prøvefaktor && row.prøvefaktor > 0 ? row.prøvefaktor : 9;
+    const total = (row.antal_prøver || 0) * (row.gns_pris_pr_prøve || 0) * prøvefaktor;
     const diff = total - (row.total_ubrugte || 0);
-    const manualPrøvefaktor = row.prøvefaktor && row.prøvefaktor > 0 ? row.prøvefaktor : null;
-    const prøvefaktor = manualPrøvefaktor || ((row.styles_i_koll || 0) > 0 
-      ? (row.antal_prøver || 0) / (row.styles_i_koll || 1) 
-      : 0);
     
     return {
       ...row,
@@ -1350,7 +1344,7 @@ export default function Top10VendorsPage() {
                       />
                     </div>
                     <div>
-                      <label className="block text-xs font-medium text-gray-700 mb-1">Prøvefaktor (Manual Override)</label>
+                      <label className="block text-xs font-medium text-gray-700 mb-1">Prøvefaktor (default: 9)</label>
                       <Input
                         type="number"
                         value={localRowValues[currentVendorRow.id]?.prøvefaktor !== undefined 
@@ -1363,13 +1357,11 @@ export default function Top10VendorsPage() {
                         onBlur={() => saveLocalRowValue(currentVendorRow.id, 'prøvefaktor')}
                         className="w-full text-xs"
                         min="0"
-                        step="0.01"
-                        placeholder="Auto"
+                        step="1"
+                        placeholder="9"
                       />
                       <div className="text-[10px] text-gray-500 mt-1">
-                        {currentVendorRow.styles?.length ? 
-                          `Auto-calculated: ${((currentVendorRow.antal_prøver || 0) / (currentVendorRow.styles_i_koll || 1)).toFixed(2)} (1 sample per style row)` : 
-                          'Set manually or auto-calculated'}
+                        Price multiplier for all styles. Leave empty for default (9).
                       </div>
                     </div>
                   </div>
@@ -1535,9 +1527,10 @@ export default function Top10VendorsPage() {
                       {currentVendorRow.styles.map((style) => {
                         const vendorCurrency = currentVendorRow.currency || 'DKK';
                         const vendorExchangeRate = currentVendorRow.exchange_rate || DEFAULT_CURRENCY_RATES[vendorCurrency];
-                        const priceInDKK = convertToDKK(style.price_per_sample, vendorCurrency, vendorExchangeRate);
-                        // Price per style row (not multiplied)
-                        const totalPrice = priceInDKK;
+                        const priceInDKK = convertToDKK(style.price_per_sample || 0, vendorCurrency, vendorExchangeRate);
+                        // Price multiplied by prøvefaktor (default 9)
+                        const multiplier = currentVendorRow.prøvefaktor > 0 ? currentVendorRow.prøvefaktor : 9;
+                        const totalPrice = priceInDKK * multiplier;
                         
                         return (
                           <TableRow key={style.id} className="hover:bg-gray-50">
