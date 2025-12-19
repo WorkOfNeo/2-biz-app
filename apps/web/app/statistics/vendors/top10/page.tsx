@@ -134,15 +134,25 @@ export default function Top10VendorsPage() {
         
         if (rowsError) throw rowsError;
         
-        // Load styles for all vendor rows
+        // Load styles for all vendor rows (with increased limit - default is 1000)
         const rowIds = (rowsData || []).map(r => r.id);
-        const { data: stylesData, error: stylesError } = await supabase
+        const { data: stylesData, error: stylesError, count: stylesCount } = await supabase
           .from('vendor_styles')
-          .select('*')
+          .select('*', { count: 'exact' })
           .in('vendor_row_id', rowIds.length > 0 ? rowIds : ['00000000-0000-0000-0000-000000000000'])
-          .order('sort_order', { ascending: true });
+          .order('sort_order', { ascending: true })
+          .limit(10000); // Increase limit from default 1000
         
         if (stylesError) throw stylesError;
+        
+        // Debug logging
+        console.log('[loadCollections] Loaded data:', {
+          collections: collectionsData?.length,
+          rows: rowsData?.length,
+          styles: stylesData?.length,
+          stylesCount,
+          rowIds: rowIds.slice(0, 5), // First 5 row IDs
+        });
         
         // Build collections structure
         const collectionsMap = new Map<string, Collection>();
@@ -169,6 +179,14 @@ export default function Top10VendorsPage() {
           });
           stylesMap.set(s.vendor_row_id, arr);
         }
+        
+        // Debug: log styles distribution
+        console.log('[loadCollections] Styles per vendor:', 
+          Array.from(stylesMap.entries()).map(([vendorId, styles]) => ({
+            vendorId: vendorId.substring(0, 8),
+            stylesLoaded: styles.length,
+          }))
+        );
         
         for (const r of (rowsData || [])) {
           const collection = collectionsMap.get(r.collection_id);
@@ -706,7 +724,25 @@ export default function Top10VendorsPage() {
   // Get current vendor row (must be before conditional returns)
   const currentVendorRow = React.useMemo(() => {
     if (!openVendorSheet) return null;
-    return currentCollection?.rows.find(r => r.id === openVendorSheet) || null;
+    const row = currentCollection?.rows.find(r => r.id === openVendorSheet) || null;
+    
+    // Debug logging when sheet opens
+    if (row) {
+      console.log('[VendorSheet] Opening vendor:', {
+        vendorId: row.id.substring(0, 8),
+        leverandør: row.leverandør,
+        storedAntalPrøver: row.antal_prøver,
+        storedStylesIKoll: row.styles_i_koll,
+        actualStylesLength: row.styles?.length || 0,
+        styles: row.styles?.map(s => ({ 
+          id: s.id.substring(0, 8), 
+          style_no: s.style_no,
+          price: s.price_per_sample 
+        })),
+      });
+    }
+    
+    return row;
   }, [openVendorSheet, currentCollection]);
 
   // Update activeTab if current collection doesn't exist
@@ -1554,6 +1590,38 @@ export default function Top10VendorsPage() {
                       </div>
                       <div className="text-[10px] text-gray-500 mt-1">
                         Set at collection level. Multiplies all prices.
+                      </div>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3 pt-2">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 mb-1">Prøvefaktor (Vendor Override)</label>
+                      <Input
+                        type="number"
+                        value={localRowValues[currentVendorRow.id]?.prøvefaktor !== undefined 
+                          ? (localRowValues[currentVendorRow.id]?.prøvefaktor as number)
+                          : (currentVendorRow.prøvefaktor || '')}
+                        onChange={(e) => updateLocalRowValue(currentVendorRow.id, 'prøvefaktor', parseFloat(e.target.value) || 0)}
+                        onBlur={() => saveLocalRowValue(currentVendorRow.id, 'prøvefaktor')}
+                        className="w-full text-xs"
+                        min="0"
+                        step="0.1"
+                        placeholder="Auto"
+                      />
+                      <div className="text-[10px] text-gray-500 mt-1">
+                        Ratio of styles. Leave empty for auto-calculation.
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 mb-1">Calculated Prøvefaktor</label>
+                      <div className="px-3 py-2 bg-gray-100 rounded text-xs font-medium">
+                        {(() => {
+                          const calc = calculateRow(currentVendorRow, currentCollection?.antal_prøver || 9);
+                          return calc.prøvefaktor > 0 ? calc.prøvefaktor.toFixed(2) : '—';
+                        })()}
+                      </div>
+                      <div className="text-[10px] text-gray-500 mt-1">
+                        {currentVendorRow.styles?.length || 0} styles / {currentVendorRow.styles?.filter(s => !s.out_of_collection).length || 0} in collection
                       </div>
                     </div>
                   </div>
