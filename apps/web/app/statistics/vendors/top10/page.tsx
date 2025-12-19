@@ -437,17 +437,19 @@ export default function Top10VendorsPage() {
       const inCollection = styles.filter(s => !s.out_of_collection);
       const outOfCollection = styles.filter(s => s.out_of_collection);
       
-      // Sum up price_per_sample for each style (not multiplied by samples per row)
+      // Sum up price_per_sample for each style, converted to DKK
       const totalPrice = styles.reduce((sum, s) => {
-        const priceInDKK = convertToDKK(s.price_per_sample, row.currency || 'DKK', row.exchange_rate || DEFAULT_CURRENCY_RATES[row.currency || 'DKK']);
+        const priceInDKK = convertToDKK(s.price_per_sample || 0, row.currency || 'DKK', row.exchange_rate || DEFAULT_CURRENCY_RATES[row.currency || 'DKK']);
         return sum + priceInDKK;
       }, 0);
       
-      const unusedPrice = outOfCollection.reduce((sum, s) => {
-        const priceInDKK = convertToDKK(s.price_per_sample, row.currency || 'DKK', row.exchange_rate || DEFAULT_CURRENCY_RATES[row.currency || 'DKK']);
+      // Sum up price for styles IN collection (usable)
+      const usablePrice = inCollection.reduce((sum, s) => {
+        const priceInDKK = convertToDKK(s.price_per_sample || 0, row.currency || 'DKK', row.exchange_rate || DEFAULT_CURRENCY_RATES[row.currency || 'DKK']);
         return sum + priceInDKK;
       }, 0);
       
+      // Average price per sample (in DKK)
       const avgPrice = styles.length > 0 
         ? totalPrice / styles.length
         : 0;
@@ -464,8 +466,8 @@ export default function Top10VendorsPage() {
         styles_i_koll: inCollection.length,
         gns_pris_pr_prøve: avgPrice,
         total: totalPrice,
-        total_ubrugte: unusedPrice,
-        diff: totalPrice - unusedPrice,
+        total_ubrugte: outOfCollection.length, // COUNT of out-of-collection styles
+        diff: usablePrice, // Total price of usable (in-collection) styles
         prøvefaktor,
       };
     }
@@ -1198,9 +1200,9 @@ export default function Top10VendorsPage() {
                             <TableHead className="text-right w-[120px]">Antal prøver</TableHead>
                             <TableHead className="text-right w-[120px]">Styles i koll.</TableHead>
                             <TableHead className="text-right w-[150px]">Gns. pris pr prøve (DKK)</TableHead>
-                            <TableHead className="text-right w-[120px]">Total</TableHead>
-                            <TableHead className="text-right w-[120px]">Total ubrugte</TableHead>
-                            <TableHead className="text-right w-[120px]">Diff</TableHead>
+                            <TableHead className="text-right w-[120px]">Total (DKK)</TableHead>
+                            <TableHead className="text-right w-[100px]">Ubrugte</TableHead>
+                            <TableHead className="text-right w-[120px]">Brugbar (DKK)</TableHead>
                             <TableHead className="text-right w-[120px]">Prøvefaktor</TableHead>
                             <TableHead className="w-[80px]"></TableHead>
                           </TableRow>
@@ -1299,27 +1301,12 @@ export default function Top10VendorsPage() {
                                 <TableCell className="text-right font-medium text-[#8FA894]">
                                   {formatCurrency(calculated.total)}
                                 </TableCell>
-                                <TableCell>
-                                  <Input
-                                    type="number"
-                                    value={localRowValues[row.id]?.total_ubrugte !== undefined ? (localRowValues[row.id]?.total_ubrugte as number) : (row.total_ubrugte || '')}
-                                    onChange={(e) => {
-                                      e.stopPropagation();
-                                      updateLocalRowValue(row.id, 'total_ubrugte', parseFloat(e.target.value) || 0);
-                                    }}
-                                    onBlur={(e) => {
-                                      e.stopPropagation();
-                                      saveLocalRowValue(row.id, 'total_ubrugte');
-                                    }}
-                                    className="w-full text-xs text-right"
-                                    min="0"
-                                    step="0.01"
-                                    onClick={(e) => e.stopPropagation()}
-                                  />
-                                </TableCell>
                                 <TableCell className={`text-right font-medium ${
-                                  calculated.diff >= 0 ? 'text-green-600' : 'text-red-600'
+                                  calculated.total_ubrugte > 0 ? 'text-red-600' : 'text-gray-500'
                                 }`}>
+                                  {calculated.total_ubrugte}
+                                </TableCell>
+                                <TableCell className="text-right font-medium text-green-600">
                                   {formatCurrency(calculated.diff)}
                                 </TableCell>
                                 <TableCell className="text-right text-gray-600">
@@ -1688,20 +1675,28 @@ export default function Top10VendorsPage() {
                     </CardHeader>
                     <CardContent className="space-y-2 text-sm">
                       <div className="flex justify-between">
+                        <span className="text-gray-600">Antal prøver:</span>
+                        <span className="font-medium">{calculated.antal_prøver}</span>
+                      </div>
+                      <div className="flex justify-between">
                         <span className="text-gray-600">Styles in Collection:</span>
                         <span className="font-medium">{calculated.styles_i_koll}</span>
                       </div>
                       <div className="flex justify-between">
-                        <span className="text-gray-600">Total Unused:</span>
-                        <span className="font-medium text-red-600">{formatCurrency(calculated.total_ubrugte)}</span>
+                        <span className="text-gray-600">Ubrugte (out of collection):</span>
+                        <span className={`font-medium ${calculated.total_ubrugte > 0 ? 'text-red-600' : 'text-gray-500'}`}>{calculated.total_ubrugte}</span>
                       </div>
                       <div className="flex justify-between">
                         <span className="text-gray-600">Prøvefaktor:</span>
                         <span className="font-medium">{calculated.prøvefaktor > 0 ? formatNumber(calculated.prøvefaktor) : '—'}</span>
                       </div>
                       <div className="flex justify-between pt-2 border-t">
-                        <span className="font-semibold">Total:</span>
+                        <span className="font-semibold">Total (DKK):</span>
                         <span className="font-bold text-[#8FA894]">{formatCurrency(calculated.total)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="font-semibold">Brugbar (DKK):</span>
+                        <span className="font-bold text-green-600">{formatCurrency(calculated.diff)}</span>
                       </div>
                     </CardContent>
                   </Card>
