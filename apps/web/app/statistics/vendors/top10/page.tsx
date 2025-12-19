@@ -38,6 +38,7 @@ type Collection = {
   id: string;
   name: string;
   season_id: string | null; // Connected season from DB
+  antal_prøver: number; // Sample size for the entire collection (default 9)
   rows: VendorRow[];
 };
 
@@ -112,6 +113,7 @@ export default function Top10VendorsPage() {
             id: newCollection.id,
             name: newCollection.name,
             season_id: newCollection.season_id,
+            antal_prøver: newCollection.antal_prøver ?? 9,
             rows: [],
           }]);
           setActiveTab(newCollection.id);
@@ -146,6 +148,7 @@ export default function Top10VendorsPage() {
             id: c.id,
             name: c.name,
             season_id: c.season_id,
+            antal_prøver: c.antal_prøver ?? 9,
             rows: [],
           });
         }
@@ -192,7 +195,7 @@ export default function Top10VendorsPage() {
       } catch (error) {
         console.error('Failed to load collections:', error);
         // Fallback to default
-        setCollections([{ id: 'default', name: 'Collection 1', season_id: null, rows: [] }]);
+        setCollections([{ id: 'default', name: 'Collection 1', season_id: null, antal_prøver: 9, rows: [] }]);
       } finally {
         setLoading(false);
       }
@@ -426,40 +429,44 @@ export default function Top10VendorsPage() {
   };
 
   // Calculate derived fields for a row based on styles
-  const calculateRow = (row: VendorRow): VendorRow => {
+  // collectionAntalPrøver: the sample size multiplier from the collection (default 9)
+  const calculateRow = (row: VendorRow, collectionAntalPrøver: number = 9): VendorRow => {
     const styles = row.styles || [];
+    const multiplier = collectionAntalPrøver > 0 ? collectionAntalPrøver : 9;
     
     // Calculate from styles if available
     if (styles.length > 0) {
-      // antal_prøver = number of style rows (counted once per row, not aggregated)
-      const totalSamples = styles.length;
+      // Style count (number of style rows)
+      const styleCount = styles.length;
       
       const inCollection = styles.filter(s => !s.out_of_collection);
       const outOfCollection = styles.filter(s => s.out_of_collection);
       
-      // Prøvefaktor: use manual value if set, otherwise default to 9
-      const prøvefaktor = row.prøvefaktor && row.prøvefaktor > 0 ? row.prøvefaktor : 9;
-      
-      // Sum up price_per_sample for each style, converted to DKK and multiplied by prøvefaktor
+      // Sum up price_per_sample for each style, converted to DKK and multiplied by antal_prøver
       const totalPrice = styles.reduce((sum, s) => {
         const priceInDKK = convertToDKK(s.price_per_sample || 0, row.currency || 'DKK', row.exchange_rate || DEFAULT_CURRENCY_RATES[row.currency || 'DKK']);
-        return sum + (priceInDKK * prøvefaktor);
+        return sum + (priceInDKK * multiplier);
       }, 0);
       
       // Sum up price for styles IN collection (usable)
       const usablePrice = inCollection.reduce((sum, s) => {
         const priceInDKK = convertToDKK(s.price_per_sample || 0, row.currency || 'DKK', row.exchange_rate || DEFAULT_CURRENCY_RATES[row.currency || 'DKK']);
-        return sum + (priceInDKK * prøvefaktor);
+        return sum + (priceInDKK * multiplier);
       }, 0);
       
-      // Average price per sample (in DKK, multiplied by prøvefaktor)
+      // Average price per sample (in DKK, multiplied by antal_prøver)
       const avgPrice = styles.length > 0 
         ? totalPrice / styles.length
         : 0;
       
+      // Prøvefaktor: ratio of styles to in-collection styles
+      const prøvefaktor = inCollection.length > 0 
+        ? styleCount / inCollection.length 
+        : 0;
+      
       return {
         ...row,
-        antal_prøver: totalSamples,
+        antal_prøver: styleCount, // Count of style rows for this vendor
         styles_i_koll: inCollection.length,
         gns_pris_pr_prøve: avgPrice,
         total: totalPrice,
@@ -470,15 +477,13 @@ export default function Top10VendorsPage() {
     }
     
     // Fallback to manual calculation if no styles
-    const prøvefaktor = row.prøvefaktor && row.prøvefaktor > 0 ? row.prøvefaktor : 9;
-    const total = (row.antal_prøver || 0) * (row.gns_pris_pr_prøve || 0) * prøvefaktor;
+    const total = (row.antal_prøver || 0) * (row.gns_pris_pr_prøve || 0) * multiplier;
     const diff = total - (row.total_ubrugte || 0);
     
     return {
       ...row,
       total,
       diff,
-      prøvefaktor
     };
   };
 
@@ -504,6 +509,7 @@ export default function Top10VendorsPage() {
         id: newCollection.id,
         name: newCollection.name,
         season_id: newCollection.season_id,
+        antal_prøver: newCollection.antal_prøver ?? 9,
         rows: [],
       };
       
@@ -532,6 +538,25 @@ export default function Top10VendorsPage() {
       ));
     } catch (error) {
       console.error('Failed to update collection season:', error);
+    }
+  };
+
+  // Update collection antal_prøver (sample size multiplier)
+  const updateCollectionAntalPrøver = async (collectionId: string, antalPrøver: number) => {
+    try {
+      const value = antalPrøver > 0 ? antalPrøver : 9;
+      const { error } = await supabase
+        .from('vendor_collections')
+        .update({ antal_prøver: value })
+        .eq('id', collectionId);
+      
+      if (error) throw error;
+      
+      setCollections(collections.map(c => 
+        c.id === collectionId ? { ...c, antal_prøver: value } : c
+      ));
+    } catch (error) {
+      console.error('Failed to update collection antal_prøver:', error);
     }
   };
 
@@ -704,6 +729,8 @@ export default function Top10VendorsPage() {
     }
     
     // Update local state
+    const currentCollection = collections.find(c => c.id === activeTab);
+    const collectionMultiplier = currentCollection?.antal_prøver ?? 9;
     setCollections(collections.map(c => 
       c.id === activeTab 
         ? {
@@ -711,7 +738,7 @@ export default function Top10VendorsPage() {
             rows: c.rows.map(r => {
               if (r.id === rowId) {
                 const updated = { ...r, [field]: value };
-                return calculateRow(updated);
+                return calculateRow(updated, collectionMultiplier);
               }
               return r;
             })
@@ -797,6 +824,8 @@ export default function Top10VendorsPage() {
         out_of_collection: newStyle.out_of_collection,
       };
       
+      const currentCollection = collections.find(c => c.id === activeTab);
+      const collectionMultiplier = currentCollection?.antal_prøver ?? 9;
       setCollections(collections.map(c => 
         c.id === activeTab 
           ? {
@@ -804,7 +833,7 @@ export default function Top10VendorsPage() {
               rows: c.rows.map(r => {
                 if (r.id === vendorId) {
                   const updated = { ...r, styles: [...(r.styles || []), vendorStyle] };
-                  return calculateRow(updated);
+                  return calculateRow(updated, collectionMultiplier);
                 }
                 return r;
               })
@@ -833,6 +862,8 @@ export default function Top10VendorsPage() {
     }
     
     // Update local state
+    const currentCollection = collections.find(c => c.id === activeTab);
+    const collectionMultiplier = currentCollection?.antal_prøver ?? 9;
     setCollections(collections.map(c => 
       c.id === activeTab 
         ? {
@@ -845,7 +876,7 @@ export default function Top10VendorsPage() {
                     s.id === styleId ? { ...s, [field]: value } : s
                   )
                 };
-                return calculateRow(updated);
+                return calculateRow(updated, collectionMultiplier);
               }
               return r;
             })
@@ -896,6 +927,8 @@ export default function Top10VendorsPage() {
           .eq('id', styleId);
       }
       
+      const currentCollection = collections.find(c => c.id === activeTab);
+      const collectionMultiplier = currentCollection?.antal_prøver ?? 9;
       setCollections(collections.map(c => 
         c.id === activeTab 
           ? {
@@ -906,7 +939,7 @@ export default function Top10VendorsPage() {
                     ...r,
                     styles: (r.styles || []).filter(s => s.id !== styleId)
                   };
-                  return calculateRow(updated);
+                  return calculateRow(updated, collectionMultiplier);
                 }
                 return r;
               })
@@ -1021,6 +1054,8 @@ export default function Top10VendorsPage() {
     }
 
     if (createdStyles.length > 0) {
+      const currentCollection = collections.find(c => c.id === activeTab);
+      const collectionMultiplier = currentCollection?.antal_prøver ?? 9;
       setCollections(collections.map(c => 
         c.id === activeTab 
           ? {
@@ -1031,7 +1066,7 @@ export default function Top10VendorsPage() {
                     ...r,
                     styles: [...(r.styles || []), ...createdStyles]
                   };
-                  return calculateRow(updated);
+                  return calculateRow(updated, collectionMultiplier);
                 }
                 return r;
               })
@@ -1163,6 +1198,17 @@ export default function Top10VendorsPage() {
                           ))}
                         </select>
                       </div>
+                      <div className="flex items-center gap-2">
+                        <label className="text-xs text-gray-600">Antal prøver:</label>
+                        <Input
+                          type="number"
+                          value={collection.antal_prøver || 9}
+                          onChange={(e) => updateCollectionAntalPrøver(collection.id, parseFloat(e.target.value) || 9)}
+                          className="w-20 text-xs text-center"
+                          min="1"
+                          step="1"
+                        />
+                      </div>
                     </div>
                     <Button 
                       onClick={addRow}
@@ -1203,7 +1249,7 @@ export default function Top10VendorsPage() {
                         </TableHeader>
                         <TableBody>
                           {collection.rows.map((row) => {
-                            const calculated = calculateRow(row);
+                            const calculated = calculateRow(row, collection.antal_prøver);
                             return (
                               <TableRow 
                                 key={row.id} 
@@ -1344,24 +1390,12 @@ export default function Top10VendorsPage() {
                       />
                     </div>
                     <div>
-                      <label className="block text-xs font-medium text-gray-700 mb-1">Prøvefaktor (default: 9)</label>
-                      <Input
-                        type="number"
-                        value={localRowValues[currentVendorRow.id]?.prøvefaktor !== undefined 
-                          ? (localRowValues[currentVendorRow.id]?.prøvefaktor as number)
-                          : (currentVendorRow.prøvefaktor || '')}
-                        onChange={(e) => {
-                          const newFactor = parseFloat(e.target.value) || 0;
-                          updateLocalRowValue(currentVendorRow.id, 'prøvefaktor', newFactor);
-                        }}
-                        onBlur={() => saveLocalRowValue(currentVendorRow.id, 'prøvefaktor')}
-                        className="w-full text-xs"
-                        min="0"
-                        step="1"
-                        placeholder="9"
-                      />
+                      <label className="block text-xs font-medium text-gray-700 mb-1">Antal prøver (Collection)</label>
+                      <div className="px-3 py-2 bg-gray-100 rounded text-xs font-medium">
+                        {currentCollection?.antal_prøver || 9}
+                      </div>
                       <div className="text-[10px] text-gray-500 mt-1">
-                        Price multiplier for all styles. Leave empty for default (9).
+                        Set at collection level. Multiplies all prices.
                       </div>
                     </div>
                   </div>
@@ -1528,9 +1562,9 @@ export default function Top10VendorsPage() {
                         const vendorCurrency = currentVendorRow.currency || 'DKK';
                         const vendorExchangeRate = currentVendorRow.exchange_rate || DEFAULT_CURRENCY_RATES[vendorCurrency];
                         const priceInDKK = convertToDKK(style.price_per_sample || 0, vendorCurrency, vendorExchangeRate);
-                        // Price multiplied by prøvefaktor (default 9)
-                        const multiplier = currentVendorRow.prøvefaktor > 0 ? currentVendorRow.prøvefaktor : 9;
-                        const totalPrice = priceInDKK * multiplier;
+                        // Price multiplied by collection's antal_prøver (default 9)
+                        const collectionMultiplier = currentCollection?.antal_prøver ?? 9;
+                        const totalPrice = priceInDKK * collectionMultiplier;
                         
                         return (
                           <TableRow key={style.id} className="hover:bg-gray-50">
@@ -1615,7 +1649,8 @@ export default function Top10VendorsPage() {
 
               {/* Summary */}
               {currentVendorRow.styles && currentVendorRow.styles.length > 0 && (() => {
-                const calculated = calculateRow(currentVendorRow);
+                const collectionMultiplier = currentCollection?.antal_prøver ?? 9;
+                const calculated = calculateRow(currentVendorRow, collectionMultiplier);
                 return (
                   <Card className="border-[#C5D5CA] bg-[#F5F3F0]">
                     <CardHeader>
