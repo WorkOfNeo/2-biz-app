@@ -1502,6 +1502,8 @@ async function runJob(job: JobRow) {
       return;
     }
 
+    // Handle scrape_statistics job type (deep or shallow mode)
+    if (job.type === 'scrape_statistics') {
     if (deep) {
       // Deep scrape: Topseller list -> iterate salesperson detail pages -> upsert to DB
       // Determine seasonId: prefer payload, else read selected from Spy dropdown
@@ -2208,6 +2210,8 @@ async function runJob(job: JobRow) {
       await saveResult(job.id, 'Topseller shallow snapshot', { headers: normalizedHeaders, rows: rowObjects });
       await log(job.id, 'info', 'STEP:complete');
     }
+      return; // scrape_statistics handled successfully
+    }
 
     // If we reach here, the job type was not handled
     throw new Error(`Unknown or unhandled job type: ${job.type}`);
@@ -2223,7 +2227,7 @@ const IDLE_SLEEP_MAX_MS = Math.max(IDLE_SLEEP_MS, Number(process.env.IDLE_SLEEP_
 
 async function mainLoop() {
   // eslint-disable-next-line no-console
-  console.log('[worker] started v2.3 - fixed column indices for salesperson and priority', new Date().toISOString());
+  console.log('[worker] started v2.4 - fixed scrape_statistics missing return statement', new Date().toISOString());
   try {
     const u = new URL(SUPABASE_URL);
     // eslint-disable-next-line no-console
@@ -2277,4 +2281,5 @@ mainLoop().catch((e) => {
 // redeploy bump 2025-11-18T2
 // redeploy bump 2025-12-01 - customer scrape with detailed logging
 // redeploy bump 2025-12-01T2 - extensive step-by-step debugging logs
+// redeploy bump 2025-12-19 - fix scrape_statistics infinite retry loop (missing return)
 
