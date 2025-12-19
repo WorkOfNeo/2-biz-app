@@ -766,29 +766,55 @@ export default function SuppliersPage() {
       setViewMode('saved');
 
       // Load individual rows for current month (include salesperson_id)
-      const { data: rowsData, error: rowsError } = await supabase
-        .from('supp_statistic_rows')
-        .select('*, salesperson_id')
-        .eq('year_month', month)
-        .order('salesperson_name, customer_name');
+      // Supabase has a default limit of 1000 rows, so we need to paginate to get all rows
+      const PAGE_SIZE = 1000;
+      let allRowsData: any[] = [];
+      let page = 0;
+      let hasMore = true;
+      
+      while (hasMore) {
+        const from = page * PAGE_SIZE;
+        const to = from + PAGE_SIZE - 1;
+        
+        const { data: pageData, error: pageError } = await supabase
+          .from('supp_statistic_rows')
+          .select('*, salesperson_id')
+          .eq('year_month', month)
+          .order('salesperson_name, customer_name')
+          .range(from, to);
+        
+        if (pageError) {
+          console.error('[loadFromSupabase] Error fetching rows page:', pageError);
+          break;
+        }
+        
+        if (pageData && pageData.length > 0) {
+          allRowsData = [...allRowsData, ...pageData];
+          console.log(`[loadFromSupabase] Fetched page ${page + 1}: ${pageData.length} rows (total: ${allRowsData.length})`);
+          hasMore = pageData.length === PAGE_SIZE; // More pages if we got a full page
+          page++;
+        } else {
+          hasMore = false;
+        }
+      }
 
       // DEBUG: Log loaded rows data
-      console.log('[loadFromSupabase] supp_statistic_rows loaded:', rowsData?.length || 0, 'rows');
-      if (rowsData && rowsData.length > 0) {
-        const uniqueRowIds = new Set(rowsData.map((r: any) => r.salesperson_id));
-        const uniqueRowNames = new Set(rowsData.map((r: any) => r.salesperson_name));
+      console.log('[loadFromSupabase] supp_statistic_rows loaded:', allRowsData.length, 'rows (all pages)');
+      if (allRowsData.length > 0) {
+        const uniqueRowIds = new Set(allRowsData.map((r: any) => r.salesperson_id));
+        const uniqueRowNames = new Set(allRowsData.map((r: any) => r.salesperson_name));
         console.log('[loadFromSupabase] Unique salesperson_id in rows:', Array.from(uniqueRowIds));
         console.log('[loadFromSupabase] Unique salesperson_name in rows:', Array.from(uniqueRowNames));
-        console.log('[loadFromSupabase] Sample rows (first 3):', rowsData.slice(0, 3).map((r: any) => ({
+        console.log('[loadFromSupabase] Sample rows (first 3):', allRowsData.slice(0, 3).map((r: any) => ({
           salesperson_id: r.salesperson_id,
           salesperson_name: r.salesperson_name,
           customer_name: r.customer_name,
         })));
       }
 
-      if (!rowsError && rowsData) {
+      if (allRowsData.length > 0) {
         // Convert saved rows to ParsedRow format (include salesperson_id)
-        const convertedRows: ParsedRow[] = rowsData.map((row: any) => ({
+        const convertedRows: ParsedRow[] = allRowsData.map((row: any) => ({
           orderType: row.order_type,
           channel: row.channel,
           customerName: row.customer_name,
@@ -829,14 +855,40 @@ export default function SuppliersPage() {
       }
 
       // Load individual rows for previous year (include salesperson_id)
-      const { data: prevRowsData, error: prevRowsError } = await supabase
-        .from('supp_statistic_rows')
-        .select('*, salesperson_id')
-        .eq('year_month', prevYearMonth)
-        .order('salesperson_name, customer_name');
+      // Also paginate to get all rows
+      let allPrevRowsData: any[] = [];
+      let prevPage = 0;
+      let prevHasMore = true;
+      
+      while (prevHasMore) {
+        const from = prevPage * PAGE_SIZE;
+        const to = from + PAGE_SIZE - 1;
+        
+        const { data: prevPageData, error: prevPageError } = await supabase
+          .from('supp_statistic_rows')
+          .select('*, salesperson_id')
+          .eq('year_month', prevYearMonth)
+          .order('salesperson_name, customer_name')
+          .range(from, to);
+        
+        if (prevPageError) {
+          console.error('[loadFromSupabase] Error fetching prev year rows page:', prevPageError);
+          break;
+        }
+        
+        if (prevPageData && prevPageData.length > 0) {
+          allPrevRowsData = [...allPrevRowsData, ...prevPageData];
+          prevHasMore = prevPageData.length === PAGE_SIZE;
+          prevPage++;
+        } else {
+          prevHasMore = false;
+        }
+      }
+      
+      console.log('[loadFromSupabase] Previous year rows loaded:', allPrevRowsData.length, 'rows');
 
-      if (!prevRowsError && prevRowsData) {
-        const convertedPrevRows: ParsedRow[] = prevRowsData.map((row: any) => ({
+      if (allPrevRowsData.length > 0) {
+        const convertedPrevRows: ParsedRow[] = allPrevRowsData.map((row: any) => ({
           orderType: row.order_type,
           channel: row.channel,
           customerName: row.customer_name,
