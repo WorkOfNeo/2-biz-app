@@ -114,15 +114,41 @@ export async function exportSuppleringer(ctx: Ctx) {
     }
 
     // Load individual rows for customer details (include salesperson_id)
-    const { data: currentRows } = await supabase
-      .from('supp_statistic_rows')
-      .select('*, salesperson_id')
-      .eq('year_month', yearMonth)
-      .order('salesperson_id, customer_name');
+    // Supabase has a default limit of 1000 rows, so we need to paginate to get all rows
+    const PAGE_SIZE = 1000;
+    let currentRows: any[] = [];
+    let page = 0;
+    let hasMore = true;
+    
+    while (hasMore) {
+      const from = page * PAGE_SIZE;
+      const to = from + PAGE_SIZE - 1;
+      
+      const { data: pageData, error: pageError } = await supabase
+        .from('supp_statistic_rows')
+        .select('*, salesperson_id')
+        .eq('year_month', yearMonth)
+        .order('salesperson_id, customer_name')
+        .range(from, to);
+      
+      if (pageError) {
+        await log(job.id, 'error', 'STEP:export_suppleringer_rows_page_error', { page, error: pageError.message });
+        break;
+      }
+      
+      if (pageData && pageData.length > 0) {
+        currentRows = [...currentRows, ...pageData];
+        hasMore = pageData.length === PAGE_SIZE;
+        page++;
+      } else {
+        hasMore = false;
+      }
+    }
 
     await log(job.id, 'info', 'STEP:export_suppleringer_rows_loaded', { 
-      rowCount: currentRows ? currentRows.length : 0,
-      salespersonCount: currentData.length
+      rowCount: currentRows.length,
+      salespersonCount: currentData.length,
+      pagesFetched: page
     });
 
     // Get ALL unique salesperson IDs from rows (bulletproof - get from DB directly)
