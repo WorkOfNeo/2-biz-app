@@ -138,43 +138,40 @@ export async function scrapeStyleRawCosts(ctx: Ctx) {
             });
           }
           
-          // Check if table exists at all
-          const tableExists = await page.evaluate(() => {
-            return !!document.querySelector('.standardList');
-          }).catch(() => false);
+          // Check if table with data rows exists
+          const tableStatus = await page.evaluate(() => {
+            const standardList = document.querySelector('.standardList');
+            const dataRows = document.querySelectorAll('.standardList table tbody tr');
+            const searchButton = document.querySelector('button[name="search"]') as HTMLButtonElement | null;
+            return {
+              hasStandardList: !!standardList,
+              dataRowCount: dataRows.length,
+              hasSearchButton: !!searchButton
+            };
+          }).catch(() => ({ hasStandardList: false, dataRowCount: 0, hasSearchButton: false }));
           
-          await log(job.id, 'info', `Table existence check for ${style.style_no}`, {
-            tableExists,
+          await log(job.id, 'info', `Table status check for ${style.style_no}`, {
+            ...tableStatus,
             attempt
           });
           
-          if (!tableExists) {
-            const pageContent = await page.evaluate(() => {
-              return {
-                bodyText: document.body.textContent?.substring(0, 500) || '',
-                hasTable: !!document.querySelector('table'),
-                hasStandardList: !!document.querySelector('.standardList')
-              };
-            }).catch(() => ({}));
-            
-            await log(job.id, 'error', `Table not found on page for ${style.style_no}`, {
-              pageUrl,
-              pageTitle,
-              pageContent,
-              attempt
-            });
-            
-            if (attempt < maxRetries) {
-              const delay = Math.min(2000 * attempt, 10000); // Exponential backoff, max 10s
-              await log(job.id, 'info', `Retrying in ${delay}ms...`, { attempt, delay });
-              await page.waitForTimeout(delay);
-              continue;
+          // If no data rows but search button exists, click it to trigger search
+          if (tableStatus.dataRowCount === 0 && tableStatus.hasSearchButton) {
+            await log(job.id, 'info', `No data rows found, clicking Search button for ${style.style_no}`, { attempt });
+            try {
+              await page.click('button[name="search"]');
+              // Wait for network to settle after clicking search
+              await page.waitForLoadState('networkidle', { timeout: 60_000 });
+              await log(job.id, 'info', `Search button clicked, waiting for data for ${style.style_no}`, { attempt });
+            } catch (clickError: any) {
+              await log(job.id, 'error', `Failed to click search button for ${style.style_no}`, {
+                error: clickError.message,
+                attempt
+              });
             }
           }
 
-          // Wait for table to be present with longer timeout
-          // Use 'attached' instead of 'visible' - the table rows exist in DOM but may not pass
-          // Playwright's visibility checks due to CSS styling
+          // Wait for table data rows to appear
           await log(job.id, 'info', `Waiting for table rows for ${style.style_no}`, { attempt });
           try {
             await page.waitForSelector('.standardList table tbody tr', { 
