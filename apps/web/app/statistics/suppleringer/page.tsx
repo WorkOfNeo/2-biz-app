@@ -412,8 +412,8 @@ export default function SuppliersPage() {
 
     // Sort by salesperson sort_index (same order as general statistics page)
     summaries.sort((a, b) => {
-      const indexA = salespersonSortIndex.get(a.salesPerson.toLowerCase()) ?? 999;
-      const indexB = salespersonSortIndex.get(b.salesPerson.toLowerCase()) ?? 999;
+      const indexA: number = salespersonSortIndex.get(a.salesPerson.toLowerCase()) ?? 999;
+      const indexB: number = salespersonSortIndex.get(b.salesPerson.toLowerCase()) ?? 999;
       if (indexA !== indexB) return indexA - indexB;
       // Fallback to alphabetical if same index
       return a.salesPerson.localeCompare(b.salesPerson);
@@ -943,10 +943,10 @@ export default function SuppliersPage() {
     // Sort by salesperson sort_index (same order as general statistics page)
     result.sort((a, b) => {
       // Use salesperson_id for lookup first, then fallback to name
-      const indexA = (a.salespersonId && salespersonSortIndex.get(a.salespersonId)) 
+      const indexA: number = (a.salespersonId ? salespersonSortIndex.get(a.salespersonId) : undefined) 
         ?? salespersonSortIndex.get(a.salesPerson.toLowerCase()) 
         ?? 999;
-      const indexB = (b.salespersonId && salespersonSortIndex.get(b.salespersonId)) 
+      const indexB: number = (b.salespersonId ? salespersonSortIndex.get(b.salespersonId) : undefined) 
         ?? salespersonSortIndex.get(b.salesPerson.toLowerCase()) 
         ?? 999;
       if (indexA !== indexB) return indexA - indexB;
