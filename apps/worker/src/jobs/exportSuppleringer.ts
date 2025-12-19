@@ -213,10 +213,11 @@ export async function exportSuppleringer(ctx: Ctx) {
     });
 
     const styles = StyleSheet.create({
-      page: { padding: 16, fontSize: 9, color: '#0f172a' },
+      page: { paddingTop: 24, paddingBottom: 24, paddingLeft: 120, paddingRight: 120, fontSize: 9, color: '#0f172a' },
       h1: { fontSize: 16, marginBottom: 4, fontWeight: 700 },
       h2: { fontSize: 12, marginBottom: 3, fontWeight: 600 },
       small: { fontSize: 8, color: '#64748b', marginBottom: 4 },
+      tableContainer: { marginBottom: 8 }, // Container for tables to prevent page breaks
       tableHeader: { flexDirection: 'row', backgroundColor: '#1d4ed8', color: '#ffffff', borderBottom: 0.5, borderColor: '#bfdbfe' },
       headerCell: { padding: 6, fontSize: 9, fontWeight: 700 },
       row: { flexDirection: 'row', borderBottom: 0.5, borderColor: '#e2e8f0' },
@@ -336,60 +337,60 @@ export async function exportSuppleringer(ctx: Ctx) {
         React.createElement(Text, { style: styles.small, key: 'month' }, formatMonthName(yearMonth)),
       ];
 
-      // Current month section
+      // Current month section (wrapped to prevent page break)
       summaryPageElements.push(
-        React.createElement(Text, { style: [styles.h2, { marginTop: 8 }], key: 'current-header' }, formatMonthName(yearMonth))
-      );
-      summaryPageElements.push(React.createElement(View, { style: styles.tableHeader, key: 'current-header-row' }, summaryHeader));
-      summaryPageElements.push(
-        React.createElement(View, { style: styles.row, key: 'current-row' },
-          Cell(String(current.telefon.stk), '12.5%', 'left'),
-          Cell(formatPrice(current.telefon.beløb), '12.5%', 'right'),
-          Cell(String(current.b2bShop.stk), '12.5%', 'left'),
-          Cell(formatPrice(current.b2bShop.beløb), '12.5%', 'right'),
-          Cell(String(current.credittedStk), '12.5%', 'left', styles.red),
-          Cell(formatPrice(current.credittedBeløb), '12.5%', 'right', styles.red),
-          Cell(String(current.samletStk), '12.5%', 'left', styles.bold),
-          Cell(formatPrice(current.samletBeløb), '12.5%', 'right', styles.bold)
+        React.createElement(View, { wrap: false, style: styles.tableContainer, key: 'current-section' },
+          React.createElement(Text, { style: [styles.h2, { marginTop: 8 }] }, formatMonthName(yearMonth)),
+          React.createElement(View, { style: styles.tableHeader }, summaryHeader),
+          React.createElement(View, { style: styles.row },
+            Cell(String(current.telefon.stk), '12.5%', 'left'),
+            Cell(formatPrice(current.telefon.beløb), '12.5%', 'right'),
+            Cell(String(current.b2bShop.stk), '12.5%', 'left'),
+            Cell(formatPrice(current.b2bShop.beløb), '12.5%', 'right'),
+            Cell(String(current.credittedStk), '12.5%', 'left', styles.red),
+            Cell(formatPrice(current.credittedBeløb), '12.5%', 'right', styles.red),
+            Cell(String(current.samletStk), '12.5%', 'left', styles.bold),
+            Cell(formatPrice(current.samletBeløb), '12.5%', 'right', styles.bold)
+          )
         )
       );
 
-      // Previous year section (if available)
+      // Previous year section (if available, wrapped to prevent page break)
       if (previousYear && year) {
         summaryPageElements.push(
-          React.createElement(Text, { style: [styles.h2, { marginTop: 12 }], key: 'prev-header' }, `${parseInt(year, 10) - 1} (Sidste år)`)
-        );
-        summaryPageElements.push(React.createElement(View, { style: styles.tableHeader, key: 'prev-header-row' }, summaryHeader));
-        summaryPageElements.push(
-          React.createElement(View, { style: styles.row, key: 'prev-row' },
-            Cell(String(previousYear.telefon.stk), '12.5%', 'left'),
-            Cell(formatPrice(previousYear.telefon.beløb), '12.5%', 'right'),
-            Cell(String(previousYear.b2bShop.stk), '12.5%', 'left'),
-            Cell(formatPrice(previousYear.b2bShop.beløb), '12.5%', 'right'),
-            Cell(String(previousYear.credittedStk), '12.5%', 'left', styles.red),
-            Cell(formatPrice(previousYear.credittedBeløb), '12.5%', 'right', styles.red),
-            Cell(String(previousYear.samletStk), '12.5%', 'left'),
-            Cell(formatPrice(previousYear.samletBeløb), '12.5%', 'right')
+          React.createElement(View, { wrap: false, style: styles.tableContainer, key: 'prev-section' },
+            React.createElement(Text, { style: [styles.h2, { marginTop: 12 }] }, `${parseInt(year, 10) - 1} (Sidste år)`),
+            React.createElement(View, { style: styles.tableHeader }, summaryHeader),
+            React.createElement(View, { style: styles.row },
+              Cell(String(previousYear.telefon.stk), '12.5%', 'left'),
+              Cell(formatPrice(previousYear.telefon.beløb), '12.5%', 'right'),
+              Cell(String(previousYear.b2bShop.stk), '12.5%', 'left'),
+              Cell(formatPrice(previousYear.b2bShop.beløb), '12.5%', 'right'),
+              Cell(String(previousYear.credittedStk), '12.5%', 'left', styles.red),
+              Cell(formatPrice(previousYear.credittedBeløb), '12.5%', 'right', styles.red),
+              Cell(String(previousYear.samletStk), '12.5%', 'left'),
+              Cell(formatPrice(previousYear.samletBeløb), '12.5%', 'right')
+            )
           )
         );
       }
 
-      // Development section (if available)
+      // Development section (if available, wrapped to prevent page break)
       if (development) {
         summaryPageElements.push(
-          React.createElement(Text, { style: [styles.h2, { marginTop: 12 }], key: 'dev-header' }, 'Samlet Udvikling')
-        );
-        summaryPageElements.push(React.createElement(View, { style: styles.tableHeader, key: 'dev-header-row' }, summaryHeader));
-        summaryPageElements.push(
-          React.createElement(View, { style: styles.row, key: 'dev-row' },
-            Cell((development.telefon.stk >= 0 ? '+' : '') + String(development.telefon.stk), '12.5%', 'left', development.telefon.stk >= 0 ? styles.green : styles.red),
-            Cell((development.telefon.beløb >= 0 ? '+' : '') + formatPrice(development.telefon.beløb), '12.5%', 'right', development.telefon.beløb >= 0 ? styles.green : styles.red),
-            Cell((development.b2bShop.stk >= 0 ? '+' : '') + String(development.b2bShop.stk), '12.5%', 'left', development.b2bShop.stk >= 0 ? styles.green : styles.red),
-            Cell((development.b2bShop.beløb >= 0 ? '+' : '') + formatPrice(development.b2bShop.beløb), '12.5%', 'right', development.b2bShop.beløb >= 0 ? styles.green : styles.red),
-            Cell(String(development.credittedStk), '12.5%', 'left', styles.red),
-            Cell(formatPrice(development.credittedBeløb), '12.5%', 'right', styles.red),
-            Cell((development.samletStk >= 0 ? '+' : '') + String(development.samletStk), '12.5%', 'left', [styles.bold, development.samletStk >= 0 ? styles.green : styles.red]),
-            Cell((development.samletBeløb >= 0 ? '+' : '') + formatPrice(development.samletBeløb), '12.5%', 'right', [styles.bold, development.samletBeløb >= 0 ? styles.green : styles.red])
+          React.createElement(View, { wrap: false, style: styles.tableContainer, key: 'dev-section' },
+            React.createElement(Text, { style: [styles.h2, { marginTop: 12 }] }, 'Samlet Udvikling'),
+            React.createElement(View, { style: styles.tableHeader }, summaryHeader),
+            React.createElement(View, { style: styles.row },
+              Cell((development.telefon.stk >= 0 ? '+' : '') + String(development.telefon.stk), '12.5%', 'left', development.telefon.stk >= 0 ? styles.green : styles.red),
+              Cell((development.telefon.beløb >= 0 ? '+' : '') + formatPrice(development.telefon.beløb), '12.5%', 'right', development.telefon.beløb >= 0 ? styles.green : styles.red),
+              Cell((development.b2bShop.stk >= 0 ? '+' : '') + String(development.b2bShop.stk), '12.5%', 'left', development.b2bShop.stk >= 0 ? styles.green : styles.red),
+              Cell((development.b2bShop.beløb >= 0 ? '+' : '') + formatPrice(development.b2bShop.beløb), '12.5%', 'right', development.b2bShop.beløb >= 0 ? styles.green : styles.red),
+              Cell(String(development.credittedStk), '12.5%', 'left', styles.red),
+              Cell(formatPrice(development.credittedBeløb), '12.5%', 'right', styles.red),
+              Cell((development.samletStk >= 0 ? '+' : '') + String(development.samletStk), '12.5%', 'left', [styles.bold, development.samletStk >= 0 ? styles.green : styles.red]),
+              Cell((development.samletBeløb >= 0 ? '+' : '') + formatPrice(development.samletBeløb), '12.5%', 'right', [styles.bold, development.samletBeløb >= 0 ? styles.green : styles.red])
+            )
           )
         );
       }
@@ -510,8 +511,13 @@ export async function exportSuppleringer(ctx: Ctx) {
         React.createElement(Text, { style: styles.h1 }, `Suppleringer · ${salespersonName}`),
         React.createElement(Text, { style: styles.h2 }, 'Kunder'),
         React.createElement(Text, { style: styles.small }, formatMonthName(yearMonth)),
-        customerHeader,
-        ...customerBodyRows
+        // Wrap header with first row to prevent orphaned header
+        React.createElement(View, { wrap: false },
+          customerHeader,
+          customerBodyRows[0] || null
+        ),
+        // Rest of rows flow naturally (each row won't break mid-row due to View structure)
+        ...customerBodyRows.slice(1)
       );
 
       const customerDoc = React.createElement(Document, null, customerPage);
@@ -619,60 +625,60 @@ export async function exportSuppleringer(ctx: Ctx) {
         samletBeløb: ((aggregatedData.telefon_beløb || 0) + (aggregatedData.b2b_beløb || 0) - (aggregatedData.krediteret_beløb || 0)) - ((prev.telefon_beløb || 0) + (prev.b2b_beløb || 0) - (prev.krediteret_beløb || 0)),
       } : null;
 
-      // Previous Year subsection
+      // Previous Year subsection (wrapped to prevent page break)
       if (previousYear) {
         fullPageElements.push(
-          React.createElement(Text, { style: [styles.h2, { marginTop: 8, fontSize: 11 }], key: `prev-header-${salespersonName}` }, `${parseInt(year, 10) - 1} (Sidste år)`)
-        );
-        fullPageElements.push(React.createElement(View, { style: styles.tableHeader, key: `prev-header-row-${salespersonName}` }, fullPageHeader));
-        fullPageElements.push(
-          React.createElement(View, { style: styles.row, key: `prev-row-${salespersonName}` },
-            Cell(String(previousYear.telefon.stk), '12.5%', 'left'),
-            Cell(formatPrice(previousYear.telefon.beløb), '12.5%', 'right'),
-            Cell(String(previousYear.b2bShop.stk), '12.5%', 'left'),
-            Cell(formatPrice(previousYear.b2bShop.beløb), '12.5%', 'right'),
-            Cell(String(previousYear.credittedStk), '12.5%', 'left', styles.red),
-            Cell(formatPrice(previousYear.credittedBeløb), '12.5%', 'right', styles.red),
-            Cell(String(previousYear.samletStk), '12.5%', 'left'),
-            Cell(formatPrice(previousYear.samletBeløb), '12.5%', 'right')
+          React.createElement(View, { wrap: false, style: styles.tableContainer, key: `prev-section-${salespersonName}` },
+            React.createElement(Text, { style: [styles.h2, { marginTop: 8, fontSize: 11 }] }, `${parseInt(year, 10) - 1} (Sidste år)`),
+            React.createElement(View, { style: styles.tableHeader }, fullPageHeader),
+            React.createElement(View, { style: styles.row },
+              Cell(String(previousYear.telefon.stk), '12.5%', 'left'),
+              Cell(formatPrice(previousYear.telefon.beløb), '12.5%', 'right'),
+              Cell(String(previousYear.b2bShop.stk), '12.5%', 'left'),
+              Cell(formatPrice(previousYear.b2bShop.beløb), '12.5%', 'right'),
+              Cell(String(previousYear.credittedStk), '12.5%', 'left', styles.red),
+              Cell(formatPrice(previousYear.credittedBeløb), '12.5%', 'right', styles.red),
+              Cell(String(previousYear.samletStk), '12.5%', 'left'),
+              Cell(formatPrice(previousYear.samletBeløb), '12.5%', 'right')
+            )
           )
         );
       }
 
-      // Current Month subsection
+      // Current Month subsection (wrapped to prevent page break)
       fullPageElements.push(
-        React.createElement(Text, { style: [styles.h2, { marginTop: 8, fontSize: 11 }], key: `current-header-${salespersonName}` }, formatMonthName(yearMonth))
-      );
-      fullPageElements.push(React.createElement(View, { style: styles.tableHeader, key: `current-header-row-${salespersonName}` }, fullPageHeader));
-      fullPageElements.push(
-        React.createElement(View, { style: styles.row, key: `current-row-${salespersonName}` },
-          Cell(String(current.telefon.stk), '12.5%', 'left'),
-          Cell(formatPrice(current.telefon.beløb), '12.5%', 'right'),
-          Cell(String(current.b2bShop.stk), '12.5%', 'left'),
-          Cell(formatPrice(current.b2bShop.beløb), '12.5%', 'right'),
-          Cell(String(current.credittedStk), '12.5%', 'left', styles.red),
-          Cell(formatPrice(current.credittedBeløb), '12.5%', 'right', styles.red),
-          Cell(String(current.samletStk), '12.5%', 'left', styles.bold),
-          Cell(formatPrice(current.samletBeløb), '12.5%', 'right', styles.bold)
+        React.createElement(View, { wrap: false, style: styles.tableContainer, key: `current-section-${salespersonName}` },
+          React.createElement(Text, { style: [styles.h2, { marginTop: 8, fontSize: 11 }] }, formatMonthName(yearMonth)),
+          React.createElement(View, { style: styles.tableHeader }, fullPageHeader),
+          React.createElement(View, { style: styles.row },
+            Cell(String(current.telefon.stk), '12.5%', 'left'),
+            Cell(formatPrice(current.telefon.beløb), '12.5%', 'right'),
+            Cell(String(current.b2bShop.stk), '12.5%', 'left'),
+            Cell(formatPrice(current.b2bShop.beløb), '12.5%', 'right'),
+            Cell(String(current.credittedStk), '12.5%', 'left', styles.red),
+            Cell(formatPrice(current.credittedBeløb), '12.5%', 'right', styles.red),
+            Cell(String(current.samletStk), '12.5%', 'left', styles.bold),
+            Cell(formatPrice(current.samletBeløb), '12.5%', 'right', styles.bold)
+          )
         )
       );
 
-      // Development/Difference subsection
+      // Development/Difference subsection (wrapped to prevent page break)
       if (development) {
         fullPageElements.push(
-          React.createElement(Text, { style: [styles.h2, { marginTop: 8, fontSize: 11 }], key: `dev-header-${salespersonName}` }, 'Udvikling')
-        );
-        fullPageElements.push(React.createElement(View, { style: styles.tableHeader, key: `dev-header-row-${salespersonName}` }, fullPageHeader));
-        fullPageElements.push(
-          React.createElement(View, { style: styles.row, key: `dev-row-${salespersonName}` },
-            Cell((development.telefon.stk >= 0 ? '+' : '') + String(development.telefon.stk), '12.5%', 'left', development.telefon.stk >= 0 ? styles.green : styles.red),
-            Cell((development.telefon.beløb >= 0 ? '+' : '') + formatPrice(development.telefon.beløb), '12.5%', 'right', development.telefon.beløb >= 0 ? styles.green : styles.red),
-            Cell((development.b2bShop.stk >= 0 ? '+' : '') + String(development.b2bShop.stk), '12.5%', 'left', development.b2bShop.stk >= 0 ? styles.green : styles.red),
-            Cell((development.b2bShop.beløb >= 0 ? '+' : '') + formatPrice(development.b2bShop.beløb), '12.5%', 'right', development.b2bShop.beløb >= 0 ? styles.green : styles.red),
-            Cell(String(development.credittedStk), '12.5%', 'left', styles.red),
-            Cell(formatPrice(development.credittedBeløb), '12.5%', 'right', styles.red),
-            Cell((development.samletStk >= 0 ? '+' : '') + String(development.samletStk), '12.5%', 'left', [styles.bold, development.samletStk >= 0 ? styles.green : styles.red]),
-            Cell((development.samletBeløb >= 0 ? '+' : '') + formatPrice(development.samletBeløb), '12.5%', 'right', [styles.bold, development.samletBeløb >= 0 ? styles.green : styles.red])
+          React.createElement(View, { wrap: false, style: styles.tableContainer, key: `dev-section-${salespersonName}` },
+            React.createElement(Text, { style: [styles.h2, { marginTop: 8, fontSize: 11 }] }, 'Udvikling'),
+            React.createElement(View, { style: styles.tableHeader }, fullPageHeader),
+            React.createElement(View, { style: styles.row },
+              Cell((development.telefon.stk >= 0 ? '+' : '') + String(development.telefon.stk), '12.5%', 'left', development.telefon.stk >= 0 ? styles.green : styles.red),
+              Cell((development.telefon.beløb >= 0 ? '+' : '') + formatPrice(development.telefon.beløb), '12.5%', 'right', development.telefon.beløb >= 0 ? styles.green : styles.red),
+              Cell((development.b2bShop.stk >= 0 ? '+' : '') + String(development.b2bShop.stk), '12.5%', 'left', development.b2bShop.stk >= 0 ? styles.green : styles.red),
+              Cell((development.b2bShop.beløb >= 0 ? '+' : '') + formatPrice(development.b2bShop.beløb), '12.5%', 'right', development.b2bShop.beløb >= 0 ? styles.green : styles.red),
+              Cell(String(development.credittedStk), '12.5%', 'left', styles.red),
+              Cell(formatPrice(development.credittedBeløb), '12.5%', 'right', styles.red),
+              Cell((development.samletStk >= 0 ? '+' : '') + String(development.samletStk), '12.5%', 'left', [styles.bold, development.samletStk >= 0 ? styles.green : styles.red]),
+              Cell((development.samletBeløb >= 0 ? '+' : '') + formatPrice(development.samletBeløb), '12.5%', 'right', [styles.bold, development.samletBeløb >= 0 ? styles.green : styles.red])
+            )
           )
         );
       }
