@@ -173,11 +173,13 @@ export async function scrapeStyleRawCosts(ctx: Ctx) {
           }
 
           // Wait for table to be present with longer timeout
+          // Use 'attached' instead of 'visible' - the table rows exist in DOM but may not pass
+          // Playwright's visibility checks due to CSS styling
           await log(job.id, 'info', `Waiting for table rows for ${style.style_no}`, { attempt });
           try {
             await page.waitForSelector('.standardList table tbody tr', { 
-              timeout: 60_000, // Increased from 30s to 60s
-              state: 'visible'
+              timeout: 60_000,
+              state: 'attached' as any
             });
             await log(job.id, 'info', `Table rows found for ${style.style_no}`, { attempt });
           } catch (waitError: any) {
