@@ -1,7 +1,7 @@
 'use client';
 import { useMemo, useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
-import { Loader2, Save, Download, History, FileText } from 'lucide-react';
+import { Loader2, Save, Download, History, FileText, Trash2 } from 'lucide-react';
 import { supabase } from '../../../lib/supabaseClient';
 import Link from 'next/link';
 
@@ -100,6 +100,7 @@ export default function SuppliersPage() {
   const [previousYearRows, setPreviousYearRows] = useState<ParsedRow[] | null>(null);
   const [viewMode, setViewMode] = useState<'upload' | 'saved'>('upload');
   const [exporting, setExporting] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   // Convert Excel column letter to 0-based array index
   // E.g., 'A' -> 0, 'B' -> 1, 'Z' -> 25, 'AA' -> 26, 'AN' -> 39
@@ -1113,6 +1114,76 @@ export default function SuppliersPage() {
     }
   }
 
+  // Delete data for the selected month (current year only)
+  async function deleteMonthData() {
+    if (!selectedMonth) {
+      alert('Ingen måned valgt');
+      return;
+    }
+    
+    const monthName = formatMonthName(selectedMonth);
+    const confirmed = window.confirm(
+      `Er du sikker på at du vil slette alle data for ${monthName}?\n\n` +
+      `Dette vil slette:\n` +
+      `• Alle aggregerede statistikker for ${monthName}\n` +
+      `• Alle individuelle rækker for ${monthName}\n\n` +
+      `Data for andre år (f.eks. ${parseInt(selectedMonth.split('-')[0] || '2024', 10) - 1}) vil IKKE blive slettet.\n\n` +
+      `Denne handling kan ikke fortrydes!`
+    );
+    
+    if (!confirmed) return;
+    
+    setDeleting(true);
+    try {
+      // Delete from supp_statistic_rows first (child records)
+      const { error: rowsError } = await supabase
+        .from('supp_statistic_rows')
+        .delete()
+        .eq('year_month', selectedMonth);
+      
+      if (rowsError) {
+        throw new Error(`Fejl ved sletning af rækker: ${rowsError.message}`);
+      }
+      
+      // Delete from supp_statistic (parent records)
+      const { error: statError } = await supabase
+        .from('supp_statistic')
+        .delete()
+        .eq('year_month', selectedMonth);
+      
+      if (statError) {
+        throw new Error(`Fejl ved sletning af statistik: ${statError.message}`);
+      }
+      
+      alert(`Data for ${monthName} er blevet slettet.`);
+      
+      // Refresh saved months list
+      const { data: monthsData } = await supabase
+        .from('supp_statistic')
+        .select('year_month')
+        .order('year_month', { ascending: false });
+      
+      const uniqueMonths = Array.from(new Set((monthsData || []).map((r: any) => r.year_month))).sort().reverse();
+      setSavedMonths(uniqueMonths as string[]);
+      
+      // Reset view to upload mode
+      setViewMode('upload');
+      setSelectedMonth(null);
+      setSavedData(null);
+      setSavedRows(null);
+      setPreviousYearData(null);
+      setPreviousYearRows(null);
+      setSelectedSalesperson(null);
+      setSelectedSalespersonId(null);
+      
+    } catch (err: any) {
+      alert(`Fejl ved sletning: ${err.message}`);
+      console.error('Delete error:', err);
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   return (
     <div className="space-y-4">
       <div className="text-xs text-gray-500">Statistics</div>
@@ -1128,6 +1199,18 @@ export default function SuppliersPage() {
             >
               <FileText className="h-4 w-4" />
               {exporting ? 'Eksporterer...' : 'Eksporter til PDF'}
+            </button>
+          )}
+          {/* Delete Month Button - Only show when viewing saved data */}
+          {viewMode === 'saved' && selectedMonth && (
+            <button
+              onClick={deleteMonthData}
+              disabled={deleting}
+              className="flex items-center gap-2 px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+              title={`Slet data for ${formatMonthName(selectedMonth)}`}
+            >
+              <Trash2 className="h-4 w-4" />
+              {deleting ? 'Sletter...' : `Slet ${formatMonthName(selectedMonth)}`}
             </button>
           )}
           {/* Historical Data Button */}
