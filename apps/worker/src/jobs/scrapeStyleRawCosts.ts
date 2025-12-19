@@ -29,6 +29,32 @@ function parseEuNumber(raw: string | null | undefined): number | null {
   return Number(m[0]);
 }
 
+// Parse "X (Y)" format (e.g., "620 (0)" -> { main: 620, sub: 0 })
+// Also handles simple numbers like "30" -> { main: 30, sub: 0 }
+function parsePoFormat(raw: string | null | undefined): { main: number; sub: number } {
+  const s = String(raw || '').trim();
+  if (!s) return { main: 0, sub: 0 };
+  
+  // Match format "X (Y)" - handles EU number format with dots as thousands separators
+  const match = s.match(/^([\d.,]+)\s*\(([\d.,]+)\)$/);
+  if (match) {
+    // Parse EU format numbers (1.234 -> 1234, 1,5 -> 1.5)
+    const parseNum = (n: string) => {
+      const normalized = n.replace(/\./g, '').replace(',', '.');
+      return parseInt(normalized, 10) || 0;
+    };
+    return {
+      main: parseNum(match[1]),
+      sub: parseNum(match[2])
+    };
+  }
+  
+  // Simple number format
+  const simple = s.replace(/\./g, '').replace(',', '.');
+  const num = parseInt(simple, 10) || 0;
+  return { main: num, sub: 0 };
+}
+
 export async function scrapeStyleRawCosts(ctx: Ctx) {
   const { job, page, log, saveResult, setJobFailedOrRequeue, setJobSucceeded, ensureNotCancelled, supabase, SPY_BASE_URL } = ctx;
   
@@ -58,7 +84,7 @@ export async function scrapeStyleRawCosts(ctx: Ctx) {
 
     await log(job.id, 'info', `Found ${styles.length} styles to scrape`, { total: styles.length });
 
-    const results: Array<{ style_id: string; style_no: string; raw_cost: number | null; success: boolean; error?: string }> = [];
+    const results: Array<{ style_id: string; style_no: string; raw_cost: number | null; out_of_collection?: boolean; success: boolean; error?: string }> = [];
 
     for (let i = 0; i < styles.length; i++) {
       const style = styles[i];
@@ -217,7 +243,7 @@ export async function scrapeStyleRawCosts(ctx: Ctx) {
             
             for (const row of rows) {
               const cells = Array.from(row.querySelectorAll('td')) as HTMLElement[];
-              if (cells.length < 5) continue;
+              if (cells.length < 13) continue;
 
               // Style No is in column 1 (index 1)
               const styleNoCell = cells[1];
@@ -226,15 +252,28 @@ export async function scrapeStyleRawCosts(ctx: Ctx) {
 
               // Check if this row matches our target style
               if (styleNo === targetStyleNo) {
-                // Raw Cost is in cells[3] (the 4th cell, 0-indexed)
-                // Header has data-column_no="4" but actual cell index is 3
+                // Column indices based on actual table structure:
                 // cells[0]=image, cells[1]=StyleNo, cells[2]=StyleName, cells[3]=RawCost, cells[4]=Invoiced
+                // cells[5]=Landed, cells[6]=spacer, cells[7]=WSP/RRP, cells[8]=Received
+                // cells[9]=PO(Shipped), cells[10]=Sold(Del.), cells[11]=Avail(PO), cells[12]=Stock
                 const rawCostCell = cells[3];
                 const rawCostText = (rawCostCell?.textContent || '').trim();
                 
+                // Extract PO (Shipped) - format: "620 (0)" or "0 (0)"
+                const poShippedText = (cells[9]?.textContent || '').trim();
+                
+                // Extract Sold (Del.) - format: "1199 (694)" or "0 (0)"
+                const soldDelText = (cells[10]?.textContent || '').trim();
+                
+                // Extract Stock - format: "30" or "0"
+                const stockText = (cells[12]?.textContent || '').trim();
+                
                 return {
                   styleNo,
-                  rawCostText
+                  rawCostText,
+                  poShippedText,
+                  soldDelText,
+                  stockText
                 };
               }
             }
@@ -266,19 +305,45 @@ export async function scrapeStyleRawCosts(ctx: Ctx) {
             throw new Error(`Could not parse raw cost: ${tableData.rawCostText}`);
           }
 
-          // Update the vendor_style with the raw cost as price_per_sample
+          // Parse PO, Sold, and Stock to determine if out of collection
+          const poShipped = parsePoFormat(tableData.poShippedText);
+          const soldDel = parsePoFormat(tableData.soldDelText);
+          const stock = parsePoFormat(tableData.stockText);
+          
+          // Style is "out of collection" if:
+          // - PO (Shipped) is 0 (0) - both main and sub are 0
+          // - Sold (Del.) is 0 (0) or empty - both main and sub are 0
+          // - Stock is 0 or empty
+          const isOutOfCollection = 
+            poShipped.main === 0 && poShipped.sub === 0 &&
+            soldDel.main === 0 && soldDel.sub === 0 &&
+            stock.main === 0;
+          
+          await log(job.id, 'info', `Parsed statistics for ${style.style_no}`, {
+            poShipped: tableData.poShippedText,
+            soldDel: tableData.soldDelText,
+            stock: tableData.stockText,
+            isOutOfCollection,
+            attempt
+          });
+
+          // Update the vendor_style with raw cost and out_of_collection status
           const { error: updateError } = await supabase
             .from('vendor_styles')
-            .update({ price_per_sample: rawCost })
+            .update({ 
+              price_per_sample: rawCost,
+              out_of_collection: isOutOfCollection
+            })
             .eq('id', style.id);
 
           if (updateError) {
             throw new Error(`Failed to update style ${style.id}: ${updateError.message}`);
           }
 
-          await log(job.id, 'info', `Successfully updated ${style.style_no} with raw cost: ${rawCost}`, {
+          await log(job.id, 'info', `Successfully updated ${style.style_no}`, {
             style_no: style.style_no,
             raw_cost: rawCost,
+            out_of_collection: isOutOfCollection,
             current: i + 1,
             total: styles.length,
             attempt
@@ -288,6 +353,7 @@ export async function scrapeStyleRawCosts(ctx: Ctx) {
             style_id: style.id,
             style_no: style.style_no,
             raw_cost: rawCost,
+            out_of_collection: isOutOfCollection,
             success: true
           });
           
