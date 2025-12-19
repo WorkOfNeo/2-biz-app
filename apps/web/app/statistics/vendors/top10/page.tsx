@@ -429,29 +429,27 @@ export default function Top10VendorsPage() {
   const calculateRow = (row: VendorRow): VendorRow => {
     const styles = row.styles || [];
     
-    // Each style row represents 9 samples
-    const SAMPLES_PER_ROW = 9;
-    
     // Calculate from styles if available
     if (styles.length > 0) {
-      const totalSamples = styles.length * SAMPLES_PER_ROW;
+      // antal_prøver = number of style rows (counted once per row, not aggregated)
+      const totalSamples = styles.length;
       
       const inCollection = styles.filter(s => !s.out_of_collection);
       const outOfCollection = styles.filter(s => s.out_of_collection);
       
-      // Always multiply price by 9 (samples per row)
+      // Sum up price_per_sample for each style (not multiplied by samples per row)
       const totalPrice = styles.reduce((sum, s) => {
         const priceInDKK = convertToDKK(s.price_per_sample, row.currency || 'DKK', row.exchange_rate || DEFAULT_CURRENCY_RATES[row.currency || 'DKK']);
-        return sum + (priceInDKK * SAMPLES_PER_ROW);
+        return sum + priceInDKK;
       }, 0);
       
       const unusedPrice = outOfCollection.reduce((sum, s) => {
         const priceInDKK = convertToDKK(s.price_per_sample, row.currency || 'DKK', row.exchange_rate || DEFAULT_CURRENCY_RATES[row.currency || 'DKK']);
-        return sum + (priceInDKK * SAMPLES_PER_ROW);
+        return sum + priceInDKK;
       }, 0);
       
       const avgPrice = styles.length > 0 
-        ? totalPrice / (styles.length * SAMPLES_PER_ROW)
+        ? totalPrice / styles.length
         : 0;
       
       // Prøvefaktor: use manual value if set, otherwise calculate from samples
@@ -1428,7 +1426,7 @@ export default function Top10VendorsPage() {
                       />
                       <div className="text-[10px] text-gray-500 mt-1">
                         {currentVendorRow.styles?.length ? 
-                          `Auto-calculated: ${((currentVendorRow.antal_prøver || 0) / (currentVendorRow.styles_i_koll || 1)).toFixed(2)} (9 samples per style row)` : 
+                          `Auto-calculated: ${((currentVendorRow.antal_prøver || 0) / (currentVendorRow.styles_i_koll || 1)).toFixed(2)} (1 sample per style row)` : 
                           'Set manually or auto-calculated'}
                       </div>
                     </div>
@@ -1596,8 +1594,8 @@ export default function Top10VendorsPage() {
                         const vendorCurrency = currentVendorRow.currency || 'DKK';
                         const vendorExchangeRate = currentVendorRow.exchange_rate || DEFAULT_CURRENCY_RATES[vendorCurrency];
                         const priceInDKK = convertToDKK(style.price_per_sample, vendorCurrency, vendorExchangeRate);
-                        // Each style row = 9 samples
-                        const totalPrice = priceInDKK * 9;
+                        // Price per style row (not multiplied)
+                        const totalPrice = priceInDKK;
                         
                         return (
                           <TableRow key={style.id} className="hover:bg-gray-50">

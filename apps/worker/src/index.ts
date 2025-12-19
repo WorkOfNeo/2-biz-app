@@ -2227,7 +2227,7 @@ const IDLE_SLEEP_MAX_MS = Math.max(IDLE_SLEEP_MS, Number(process.env.IDLE_SLEEP_
 
 async function mainLoop() {
   // eslint-disable-next-line no-console
-  console.log('[worker] started v2.7 - fix selector: table.standardList tbody tr', new Date().toISOString());
+  console.log('[worker] started v2.8 - fix Raw Cost column index (cells[3] not cells[4])', new Date().toISOString());
   try {
     const u = new URL(SUPABASE_URL);
     // eslint-disable-next-line no-console

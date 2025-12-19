@@ -226,8 +226,10 @@ export async function scrapeStyleRawCosts(ctx: Ctx) {
 
               // Check if this row matches our target style
               if (styleNo === targetStyleNo) {
-                // Raw Cost is in column 4 (index 4, data-column_no="4")
-                const rawCostCell = cells[4];
+                // Raw Cost is in cells[3] (the 4th cell, 0-indexed)
+                // Header has data-column_no="4" but actual cell index is 3
+                // cells[0]=image, cells[1]=StyleNo, cells[2]=StyleName, cells[3]=RawCost, cells[4]=Invoiced
+                const rawCostCell = cells[3];
                 const rawCostText = (rawCostCell?.textContent || '').trim();
                 
                 return {
