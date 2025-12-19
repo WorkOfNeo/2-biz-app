@@ -37,7 +37,7 @@ function parsePoFormat(raw: string | null | undefined): { main: number; sub: num
   
   // Match format "X (Y)" - handles EU number format with dots as thousands separators
   const match = s.match(/^([\d.,]+)\s*\(([\d.,]+)\)$/);
-  if (match) {
+  if (match && match[1] && match[2]) {
     // Parse EU format numbers (1.234 -> 1234, 1,5 -> 1.5)
     const parseNum = (n: string) => {
       const normalized = n.replace(/\./g, '').replace(',', '.');
