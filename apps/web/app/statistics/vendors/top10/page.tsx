@@ -78,6 +78,10 @@ export default function Top10VendorsPage() {
   const [scrapingProgress, setScrapingProgress] = React.useState<{ current: number; total: number; currentStyle?: string } | null>(null);
   const [scrapingStatus, setScrapingStatus] = React.useState<string>('');
   
+  // Batch scraping state (for all vendors)
+  const [batchScrapingJobs, setBatchScrapingJobs] = React.useState<Array<{ vendorId: string; jobId: string; status: 'pending' | 'running' | 'completed' | 'failed' }>>([]);
+  const [isBatchScraping, setIsBatchScraping] = React.useState(false);
+  
   // Local state for input values to avoid saving on every keystroke
   const [localRowValues, setLocalRowValues] = React.useState<Record<string, Partial<VendorRow>>>({});
   const [localStyleValues, setLocalStyleValues] = React.useState<Record<string, Partial<VendorStyle>>>({});
@@ -299,6 +303,90 @@ export default function Top10VendorsPage() {
 
     return () => clearInterval(interval);
   }, [scrapingJobId, scrapingProgress, supabase]);
+
+  // Start batch scraping for all vendors in a collection
+  const startBatchScraping = async (collectionId: string) => {
+    const collection = collections.find(c => c.id === collectionId);
+    if (!collection) return;
+    
+    const vendorsWithStyles = collection.rows.filter(r => r.styles && r.styles.length > 0);
+    if (vendorsWithStyles.length === 0) {
+      alert('No vendors with styles to scrape.');
+      return;
+    }
+    
+    const totalStyles = vendorsWithStyles.reduce((sum, v) => sum + (v.styles?.length || 0), 0);
+    if (!window.confirm(`Scrape Raw Costs for ${vendorsWithStyles.length} vendor(s) with ${totalStyles} total style(s)?`)) {
+      return;
+    }
+    
+    setIsBatchScraping(true);
+    const jobs: Array<{ vendorId: string; jobId: string; status: 'pending' | 'running' | 'completed' | 'failed' }> = [];
+    
+    // Start jobs sequentially to avoid overwhelming the worker
+    for (const vendor of vendorsWithStyles) {
+      try {
+        const res = await fetch('/api/enqueue', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type: 'scrape_style_raw_costs',
+            payload: { vendor_row_id: vendor.id }
+          })
+        });
+        if (!res.ok) throw new Error('Failed to start job');
+        const { jobId } = await res.json();
+        jobs.push({ vendorId: vendor.id, jobId, status: 'pending' });
+      } catch (error: any) {
+        console.error(`Failed to start job for vendor ${vendor.leverandør}:`, error);
+        jobs.push({ vendorId: vendor.id, jobId: '', status: 'failed' });
+      }
+    }
+    
+    setBatchScrapingJobs(jobs);
+  };
+
+  // Poll batch scraping progress
+  React.useEffect(() => {
+    if (!isBatchScraping || batchScrapingJobs.length === 0) return;
+    
+    const interval = setInterval(async () => {
+      const jobIds = batchScrapingJobs.filter(j => j.jobId && j.status !== 'completed' && j.status !== 'failed').map(j => j.jobId);
+      if (jobIds.length === 0) {
+        setIsBatchScraping(false);
+        return;
+      }
+      
+      try {
+        const { data: jobsData } = await supabase
+          .from('jobs')
+          .select('id, status')
+          .in('id', jobIds);
+        
+        if (jobsData) {
+          setBatchScrapingJobs(prev => prev.map(job => {
+            const dbJob = jobsData.find(j => j.id === job.jobId);
+            if (dbJob) {
+              if (dbJob.status === 'completed') return { ...job, status: 'completed' };
+              if (dbJob.status === 'failed') return { ...job, status: 'failed' };
+              if (dbJob.status === 'running') return { ...job, status: 'running' };
+            }
+            return job;
+          }));
+        }
+        
+        // Check if all done
+        const allDone = batchScrapingJobs.every(j => j.status === 'completed' || j.status === 'failed');
+        if (allDone) {
+          setIsBatchScraping(false);
+        }
+      } catch (error) {
+        console.error('Error polling batch jobs:', error);
+      }
+    }, 3000);
+    
+    return () => clearInterval(interval);
+  }, [isBatchScraping, batchScrapingJobs, supabase]);
 
   // Save collections to Supabase (debounced for field updates only)
   const saveTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
@@ -1210,14 +1298,34 @@ export default function Top10VendorsPage() {
                         />
                       </div>
                     </div>
-                    <Button 
-                      onClick={addRow}
-                      variant="outline"
-                      size="sm"
-                      className="border-[#8FA894] text-[#8FA894] hover:bg-[#8FA894]/10"
-                    >
-                      + Add Vendor
-                    </Button>
+                    <div className="flex items-center gap-2">
+                      {isBatchScraping ? (
+                        <div className="flex items-center gap-2 text-xs text-[#8FA894]">
+                          <span className="animate-spin">⏳</span>
+                          <span>
+                            Scraping: {batchScrapingJobs.filter(j => j.status === 'completed').length}/{batchScrapingJobs.length} done
+                          </span>
+                        </div>
+                      ) : (
+                        <Button 
+                          onClick={() => startBatchScraping(collection.id)}
+                          variant="outline"
+                          size="sm"
+                          className="border-orange-400 text-orange-600 hover:bg-orange-50"
+                          disabled={collection.rows.filter(r => r.styles && r.styles.length > 0).length === 0}
+                        >
+                          🔍 Scrape All
+                        </Button>
+                      )}
+                      <Button 
+                        onClick={addRow}
+                        variant="outline"
+                        size="sm"
+                        className="border-[#8FA894] text-[#8FA894] hover:bg-[#8FA894]/10"
+                      >
+                        + Add Vendor
+                      </Button>
+                    </div>
                   </div>
 
                   {collection.rows.length === 0 ? (
