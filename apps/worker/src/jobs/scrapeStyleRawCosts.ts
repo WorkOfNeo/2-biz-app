@@ -139,16 +139,17 @@ export async function scrapeStyleRawCosts(ctx: Ctx) {
           }
           
           // Check if table with data rows exists
+          // Note: table.standardList means the table element has class="standardList"
           const tableStatus = await page.evaluate(() => {
-            const standardList = document.querySelector('.standardList');
-            const dataRows = document.querySelectorAll('.standardList table tbody tr');
+            const standardListTable = document.querySelector('table.standardList');
+            const dataRows = document.querySelectorAll('table.standardList tbody tr');
             const searchButton = document.querySelector('button[name="search"]') as HTMLButtonElement | null;
             return {
-              hasStandardList: !!standardList,
+              hasStandardListTable: !!standardListTable,
               dataRowCount: dataRows.length,
               hasSearchButton: !!searchButton
             };
-          }).catch(() => ({ hasStandardList: false, dataRowCount: 0, hasSearchButton: false }));
+          }).catch(() => ({ hasStandardListTable: false, dataRowCount: 0, hasSearchButton: false }));
           
           await log(job.id, 'info', `Table status check for ${style.style_no}`, {
             ...tableStatus,
@@ -172,9 +173,10 @@ export async function scrapeStyleRawCosts(ctx: Ctx) {
           }
 
           // Wait for table data rows to appear
+          // Selector: table.standardList means the <table> element has class="standardList"
           await log(job.id, 'info', `Waiting for table rows for ${style.style_no}`, { attempt });
           try {
-            await page.waitForSelector('.standardList table tbody tr', { 
+            await page.waitForSelector('table.standardList tbody tr', { 
               timeout: 60_000,
               state: 'attached' as any
             });
@@ -183,10 +185,10 @@ export async function scrapeStyleRawCosts(ctx: Ctx) {
             // Check what's actually on the page
             const pageContent = await page.evaluate(() => {
               return {
-                hasStandardList: !!document.querySelector('.standardList'),
-                hasTable: !!document.querySelector('table'),
-                hasTbody: !!document.querySelector('tbody'),
-                hasTr: !!document.querySelector('tr'),
+                hasStandardListTable: !!document.querySelector('table.standardList'),
+                hasTbodyInStandardList: !!document.querySelector('table.standardList tbody'),
+                hasTrInStandardList: !!document.querySelector('table.standardList tbody tr'),
+                tbodyRowCount: document.querySelectorAll('table.standardList tbody tr').length,
                 bodyText: document.body.textContent?.substring(0, 500) || '',
                 htmlSnippet: document.body.innerHTML.substring(0, 1000) || ''
               };
@@ -211,7 +213,7 @@ export async function scrapeStyleRawCosts(ctx: Ctx) {
           // Extract data from table
           await log(job.id, 'info', `Extracting raw cost for ${style.style_no}`, { attempt });
           const tableData = await page.evaluate((targetStyleNo: string) => {
-            const rows = Array.from(document.querySelectorAll('.standardList table tbody tr')) as HTMLTableRowElement[];
+            const rows = Array.from(document.querySelectorAll('table.standardList tbody tr')) as HTMLTableRowElement[];
             
             for (const row of rows) {
               const cells = Array.from(row.querySelectorAll('td')) as HTMLElement[];
