@@ -11,6 +11,7 @@ type ParsedRow = {
   customerName: string;
   accountNo: string;
   salesPerson: string;
+  salespersonId?: string | null; // UUID from DB, used for matching in saved mode
   qtyOrdered: number;
   qtyDelivered: number;
   price: number; // in cents
@@ -68,6 +69,7 @@ type SavedStatistic = {
   id: string;
   year_month: string;
   salesperson_name: string;
+  salesperson_id: string | null; // UUID for reliable matching
   total_leveret: number;
   telefon_stk: number;
   telefon_beløb: number;
@@ -83,6 +85,7 @@ export default function SuppliersPage() {
   const [file, setFile] = useState<File | null>(null);
   const [parsedRows, setParsedRows] = useState<ParsedRow[]>([]);
   const [selectedSalesperson, setSelectedSalesperson] = useState<string | null>(null);
+  const [selectedSalespersonId, setSelectedSalespersonId] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [progress, setProgress] = useState<{ step: string; current: number; total: number } | null>(null);
@@ -283,6 +286,7 @@ export default function SuppliersPage() {
       setParsedRows(rows);
       setFile(selectedFile);
       setSelectedSalesperson(null);
+      setSelectedSalespersonId(null);
       
       // Allow time for aggregation to complete
       await new Promise(resolve => setTimeout(resolve, 100));
@@ -394,8 +398,15 @@ export default function SuppliersPage() {
     if (!selectedSalesperson) return [];
     
     // Use saved rows if in saved view, otherwise use parsed rows
+    // In saved mode, filter by salesperson_id (more reliable) with fallback to name
     const rowsToUse = viewMode === 'saved' && savedRows 
-      ? savedRows.filter(row => row.salesPerson === selectedSalesperson)
+      ? savedRows.filter(row => {
+          // Match by ID first if available, otherwise fall back to name
+          if (selectedSalespersonId && row.salespersonId) {
+            return row.salespersonId === selectedSalespersonId;
+          }
+          return row.salesPerson === selectedSalesperson;
+        })
       : (() => {
           const summary = salespersonSummaries.find(s => s.salesPerson === selectedSalesperson);
           return summary?.rows || [];
@@ -431,7 +442,7 @@ export default function SuppliersPage() {
     groups.sort((a, b) => a.customerName.localeCompare(b.customerName));
 
     return groups;
-  }, [selectedSalesperson, salespersonSummaries, viewMode, savedRows]);
+  }, [selectedSalesperson, selectedSalespersonId, salespersonSummaries, viewMode, savedRows]);
 
   // Format price from cents to currency (e.g., 50730 -> 507.30)
   function formatPrice(cents: number): string {
@@ -694,10 +705,10 @@ export default function SuppliersPage() {
     setLoading(true);
     setSelectedMonth(month);
     try {
-      // Load current month data
+      // Load current month data (include salesperson_id for reliable matching)
       const { data, error } = await supabase
         .from('supp_statistic')
-        .select('*')
+        .select('*, salesperson_id')
         .eq('year_month', month)
         .order('salesperson_name');
 
@@ -712,21 +723,22 @@ export default function SuppliersPage() {
       setSavedData(data as SavedStatistic[]);
       setViewMode('saved');
 
-      // Load individual rows for current month
+      // Load individual rows for current month (include salesperson_id)
       const { data: rowsData, error: rowsError } = await supabase
         .from('supp_statistic_rows')
-        .select('*')
+        .select('*, salesperson_id')
         .eq('year_month', month)
         .order('salesperson_name, customer_name');
 
       if (!rowsError && rowsData) {
-        // Convert saved rows to ParsedRow format
+        // Convert saved rows to ParsedRow format (include salesperson_id)
         const convertedRows: ParsedRow[] = rowsData.map((row: any) => ({
           orderType: row.order_type,
           channel: row.channel,
           customerName: row.customer_name,
           accountNo: row.account_no,
           salesPerson: row.salesperson_name,
+          salespersonId: row.salesperson_id || null,
           qtyOrdered: Number(row.qty_ordered || 0),
           qtyDelivered: Number(row.qty_delivered || 0),
           price: Number(row.price || 0),
@@ -750,7 +762,7 @@ export default function SuppliersPage() {
       
       const { data: prevData, error: prevError } = await supabase
         .from('supp_statistic')
-        .select('*')
+        .select('*, salesperson_id')
         .eq('year_month', prevYearMonth)
         .order('salesperson_name');
 
@@ -760,10 +772,10 @@ export default function SuppliersPage() {
         setPreviousYearData(null);
       }
 
-      // Load individual rows for previous year
+      // Load individual rows for previous year (include salesperson_id)
       const { data: prevRowsData, error: prevRowsError } = await supabase
         .from('supp_statistic_rows')
-        .select('*')
+        .select('*, salesperson_id')
         .eq('year_month', prevYearMonth)
         .order('salesperson_name, customer_name');
 
@@ -774,6 +786,7 @@ export default function SuppliersPage() {
           customerName: row.customer_name,
           accountNo: row.account_no,
           salesPerson: row.salesperson_name,
+          salespersonId: row.salesperson_id || null,
           qtyOrdered: Number(row.qty_ordered || 0),
           qtyDelivered: Number(row.qty_delivered || 0),
           price: Number(row.price || 0),
@@ -796,17 +809,25 @@ export default function SuppliersPage() {
   const savedSummaries = useMemo(() => {
     if (!savedData) return [];
     
-    const prevYearMap = new Map<string, SavedStatistic>();
+    // Use salesperson_id for matching previous year data (more reliable than name)
+    const prevYearMapById = new Map<string, SavedStatistic>();
+    const prevYearMapByName = new Map<string, SavedStatistic>();
     if (previousYearData) {
       for (const prev of previousYearData) {
-        prevYearMap.set(prev.salesperson_name, prev);
+        if (prev.salesperson_id) {
+          prevYearMapById.set(prev.salesperson_id, prev);
+        }
+        prevYearMapByName.set(prev.salesperson_name, prev);
       }
     }
     
     return savedData.map((stat) => {
-      const prev = prevYearMap.get(stat.salesperson_name);
+      // Match by ID first, fallback to name
+      const prev = (stat.salesperson_id && prevYearMapById.get(stat.salesperson_id)) 
+        || prevYearMapByName.get(stat.salesperson_name);
       return {
         salesPerson: stat.salesperson_name,
+        salespersonId: stat.salesperson_id, // Include ID for row matching
         totalDeliveredQty: stat.total_leveret,
         byChannel: {
           telefon: { stk: stat.telefon_stk, beløb: stat.telefon_beløb },
@@ -1148,13 +1169,14 @@ export default function SuppliersPage() {
             </div>
           )}
           {(viewMode === 'upload' ? salespersonSummaries : savedSummaries).map((summary) => (
-            <div key={summary.salesPerson} className="rounded-md border overflow-hidden">
+            <div key={(summary as any).salespersonId || summary.salesPerson} className="rounded-md border overflow-hidden">
               <div
                 className="bg-gray-50 p-3 cursor-pointer hover:bg-gray-100"
                 onClick={() => {
-                  setSelectedSalesperson(
-                    selectedSalesperson === summary.salesPerson ? null : summary.salesPerson
-                  );
+                  const isSelected = selectedSalesperson === summary.salesPerson;
+                  setSelectedSalesperson(isSelected ? null : summary.salesPerson);
+                  // Also set salespersonId for reliable row matching in saved mode
+                  setSelectedSalespersonId(isSelected ? null : ((summary as any).salespersonId || null));
                 }}
               >
                 <div className="flex items-center justify-between">
