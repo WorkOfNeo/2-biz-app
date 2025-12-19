@@ -86,11 +86,10 @@ export default function Top10VendorsPage() {
   const [localRowValues, setLocalRowValues] = React.useState<Record<string, Partial<VendorRow>>>({});
   const [localStyleValues, setLocalStyleValues] = React.useState<Record<string, Partial<VendorStyle>>>({});
 
-  // Load collections from Supabase
-  React.useEffect(() => {
-    async function loadCollections() {
+  // Load/Refresh collections from Supabase
+  const loadCollections = React.useCallback(async (showLoading = true) => {
       try {
-        setLoading(true);
+        if (showLoading) setLoading(true);
         // Load collections
         const { data: collectionsData, error: collectionsError } = await supabase
           .from('vendor_collections')
@@ -201,12 +200,14 @@ export default function Top10VendorsPage() {
         // Fallback to default
         setCollections([{ id: 'default', name: 'Collection 1', season_id: null, antal_prøver: 9, rows: [] }]);
       } finally {
-        setLoading(false);
+        if (showLoading) setLoading(false);
       }
-    }
-    
+  }, [supabase, activeTab]);
+
+  // Initial load
+  React.useEffect(() => {
     loadCollections();
-  }, []); // Only run on mount
+  }, [loadCollections]);
 
   // Poll scraping job progress
   React.useEffect(() => {
@@ -280,13 +281,12 @@ export default function Top10VendorsPage() {
 
         // Check if job is done
         if (job.status === 'succeeded') {
-          setScrapingStatus('Scraping completed successfully!');
+          setScrapingStatus('Scraping completed! Refreshing...');
           setScrapingProgress(null);
-          // Reload collections to show updated prices
-          setTimeout(() => {
-            window.location.reload();
-          }, 2000);
           setScrapingJobId(null);
+          // Refresh data without full page reload
+          await loadCollections(false);
+          setScrapingStatus('Scraping completed!');
         } else if (job.status === 'failed') {
           setScrapingStatus(`Scraping failed: ${job.error || 'Unknown error'}`);
           setScrapingProgress(null);
@@ -302,7 +302,7 @@ export default function Top10VendorsPage() {
     }, 2000); // Poll every 2 seconds
 
     return () => clearInterval(interval);
-  }, [scrapingJobId, scrapingProgress, supabase]);
+  }, [scrapingJobId, scrapingProgress, supabase, loadCollections]);
 
   // Start batch scraping for all vendors in a collection
   const startBatchScraping = async (collectionId: string) => {
@@ -364,21 +364,24 @@ export default function Top10VendorsPage() {
           .in('id', jobIds);
         
         if (jobsData) {
-          setBatchScrapingJobs(prev => prev.map(job => {
+          const updatedJobs = batchScrapingJobs.map(job => {
             const dbJob = jobsData.find(j => j.id === job.jobId);
             if (dbJob) {
-              if (dbJob.status === 'completed') return { ...job, status: 'completed' };
-              if (dbJob.status === 'failed') return { ...job, status: 'failed' };
-              if (dbJob.status === 'running') return { ...job, status: 'running' };
+              if (dbJob.status === 'succeeded') return { ...job, status: 'completed' as const };
+              if (dbJob.status === 'failed') return { ...job, status: 'failed' as const };
+              if (dbJob.status === 'running') return { ...job, status: 'running' as const };
             }
             return job;
-          }));
-        }
-        
-        // Check if all done
-        const allDone = batchScrapingJobs.every(j => j.status === 'completed' || j.status === 'failed');
-        if (allDone) {
-          setIsBatchScraping(false);
+          });
+          setBatchScrapingJobs(updatedJobs);
+          
+          // Check if all done
+          const allDone = updatedJobs.every(j => j.status === 'completed' || j.status === 'failed');
+          if (allDone) {
+            setIsBatchScraping(false);
+            // Refresh data
+            await loadCollections(false);
+          }
         }
       } catch (error) {
         console.error('Error polling batch jobs:', error);
@@ -386,7 +389,7 @@ export default function Top10VendorsPage() {
     }, 3000);
     
     return () => clearInterval(interval);
-  }, [isBatchScraping, batchScrapingJobs, supabase]);
+  }, [isBatchScraping, batchScrapingJobs, supabase, loadCollections]);
 
   // Save collections to Supabase (debounced for field updates only)
   const saveTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
@@ -1299,6 +1302,15 @@ export default function Top10VendorsPage() {
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
+                      <Button
+                        onClick={() => loadCollections(false)}
+                        variant="ghost"
+                        size="sm"
+                        className="text-gray-500 hover:text-gray-700"
+                        title="Refresh data"
+                      >
+                        🔄
+                      </Button>
                       {isBatchScraping ? (
                         <div className="flex items-center gap-2 text-xs text-[#8FA894]">
                           <span className="animate-spin">⏳</span>
@@ -1427,6 +1439,44 @@ export default function Top10VendorsPage() {
                               </TableRow>
                             );
                           })}
+                          {/* Totals Row */}
+                          {collection.rows.length > 0 && (() => {
+                            const totals = collection.rows.reduce((acc, row) => {
+                              const calc = calculateRow(row, collection.antal_prøver);
+                              return {
+                                antal_prøver: acc.antal_prøver + (calc.antal_prøver || 0),
+                                styles_i_koll: acc.styles_i_koll + (calc.styles_i_koll || 0),
+                                total: acc.total + (calc.total || 0),
+                                total_ubrugte: acc.total_ubrugte + (calc.total_ubrugte || 0),
+                                diff: acc.diff + (calc.diff || 0),
+                              };
+                            }, { antal_prøver: 0, styles_i_koll: 0, total: 0, total_ubrugte: 0, diff: 0 });
+                            
+                            const avgPrøvefaktor = totals.styles_i_koll > 0 
+                              ? totals.antal_prøver / totals.styles_i_koll 
+                              : 0;
+                            const avgPrice = totals.antal_prøver > 0
+                              ? totals.total / totals.antal_prøver
+                              : 0;
+                            
+                            return (
+                              <TableRow className="bg-[#F5F3F0] font-semibold border-t-2 border-[#8FA894]">
+                                <TableCell>Totals</TableCell>
+                                <TableCell className="text-right">{totals.antal_prøver}</TableCell>
+                                <TableCell className="text-right">{totals.styles_i_koll}</TableCell>
+                                <TableCell className="text-right">{formatCurrency(avgPrice)}</TableCell>
+                                <TableCell className="text-right text-[#8FA894]">{formatCurrency(totals.total)}</TableCell>
+                                <TableCell className={`text-right ${totals.total_ubrugte > 0 ? 'text-red-600' : 'text-gray-500'}`}>
+                                  {totals.total_ubrugte}
+                                </TableCell>
+                                <TableCell className="text-right text-green-600">{formatCurrency(totals.diff)}</TableCell>
+                                <TableCell className="text-right text-gray-600">
+                                  {avgPrøvefaktor > 0 ? formatNumber(avgPrøvefaktor) : '—'}
+                                </TableCell>
+                                <TableCell></TableCell>
+                              </TableRow>
+                            );
+                          })()}
                         </TableBody>
                       </Table>
                     </div>
