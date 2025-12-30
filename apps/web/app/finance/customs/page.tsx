@@ -403,9 +403,19 @@ export default function CustomsPage() {
             <CardTitle className="text-sm">Currency Exchange Rates</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <p className="text-xs text-gray-600">
-              Enter exchange rates for each currency-month combination. DKK is locked at 1.0.
-            </p>
+            <div className="flex items-center justify-between">
+              <p className="text-xs text-gray-600">
+                Enter exchange rates for each currency-month combination. DKK is locked at 1.0.
+              </p>
+              <a
+                href="https://tarif.skat.dk/arctictariff-public-web/#!/taric/duty/exchangerates"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs font-medium text-blue-600 hover:text-blue-800 hover:underline"
+              >
+                VALUTAKURS →
+              </a>
+            </div>
             {Object.entries(combosByMonth)
               .sort(([a], [b]) => a.localeCompare(b))
               .map(([yearMonth, combos]) => (
