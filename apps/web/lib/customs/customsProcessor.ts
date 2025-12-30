@@ -137,12 +137,12 @@ export function parseDate(val: any): { date: string; day: string; month: string;
     const str = String(val).trim();
     // Try YYYY-MM-DD format
     const isoMatch = str.match(/^(\d{4})-(\d{2})-(\d{2})/);
-    if (isoMatch) {
+    if (isoMatch && isoMatch[1] && isoMatch[2] && isoMatch[3]) {
       dateStr = `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
     } else {
       // Try DD-MM-YYYY or DD/MM/YYYY
       const euMatch = str.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/);
-      if (euMatch) {
+      if (euMatch && euMatch[1] && euMatch[2] && euMatch[3]) {
         dateStr = `${euMatch[3]}-${euMatch[2].padStart(2, '0')}-${euMatch[1].padStart(2, '0')}`;
       } else {
         // Fallback: try parsing as number (Excel serial)
@@ -200,7 +200,7 @@ export function normalizeRows(data: any[][], sections: RawSection[]): Normalized
 
     // Check if this is a section marker row
     if (sectionStartRows.has(i)) {
-      currentSection = sections[sectionIdx];
+      currentSection = sections[sectionIdx] ?? null;
       sectionIdx++;
       headerTemplate = null;
       continue;
