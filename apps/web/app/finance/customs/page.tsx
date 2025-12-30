@@ -223,7 +223,7 @@ export default function CustomsPage() {
     XLSX.utils.book_append_sheet(wb, wsAllTx, 'All Transactions');
 
     const bytes: Uint8Array = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
-    return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+    return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
   }
 
   async function createSingleSheetWorkbook(
@@ -237,7 +237,7 @@ export default function CustomsPage() {
     await applyNumberFormatting(XLSX, ws, numericCols, data.length - 1);
     XLSX.utils.book_append_sheet(wb, ws, sheetName);
     const bytes: Uint8Array = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
-    return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+    return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
   }
 
   async function downloadZip() {
