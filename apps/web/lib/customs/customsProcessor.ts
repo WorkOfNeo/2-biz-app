@@ -210,17 +210,36 @@ export function normalizeRows(data: any[][], sections: RawSection[]): Normalized
     if (!currentSection) continue;
 
     // Skip the column header row (first row after section marker typically contains headers)
-    // We detect this by checking if column 0 looks like a header ("Varenr" or similar)
+    // We detect this by checking if column 0 or column 13 looks like a header
     const col0 = toString(row[0]).toLowerCase();
-    if (col0 === 'varenr' || col0 === 'varenummer' || col0 === 'item number') {
+    const col13 = toString(row[13]).toLowerCase();
+    
+    // List of header keywords to skip
+    const headerKeywords = [
+      'varenr', 'varenummer', 'item number', 'item', 'varenavn', 
+      'pris', 'valuta', 'toldtariff', 'oprindelsesland',
+      'antal', 'quantity', 'dato', 'date', 'reference', 'ind/ud',
+      'gammel', 'ny', 'eksport'
+    ];
+    
+    const isHeaderRow = headerKeywords.some(keyword => 
+      col0.includes(keyword) || col13.includes(keyword)
+    );
+    
+    if (isHeaderRow) {
       continue;
     }
 
     // Check if this is a transaction row (has Antal in column 13)
     const antalRaw = row[13];
     if (antalRaw == null || antalRaw === '') continue;
+    
+    // Skip if Antal is not a valid number (could be text)
+    const antalStr = toString(antalRaw);
     const antal = toNumber(antalRaw);
-    if (antal === 0 && toString(antalRaw) === '') continue;
+    if (!Number.isFinite(antal) || (antal === 0 && !/^[0-9\s.,\-]+$/.test(antalStr))) {
+      continue;
+    }
 
     // Determine if this is the first data row of the section (has columns 0-7 populated)
     const hasHeader = row[0] != null && toString(row[0]) !== '';
