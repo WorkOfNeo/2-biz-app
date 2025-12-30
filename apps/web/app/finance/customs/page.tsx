@@ -195,7 +195,7 @@ export default function CustomsPage() {
     }
   }
 
-  async function createProcessedWorkbook(): Promise<Uint8Array> {
+  async function createProcessedWorkbook(): Promise<ArrayBuffer> {
     const XLSX = await import('xlsx');
     const wb = XLSX.utils.book_new();
 
@@ -222,20 +222,22 @@ export default function CustomsPage() {
     await applyNumberFormatting(XLSX, wsAllTx, PROCESSED_NUMERIC_COLS, calculatedRows.length);
     XLSX.utils.book_append_sheet(wb, wsAllTx, 'All Transactions');
 
-    return XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+    const bytes: Uint8Array = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+    return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
   }
 
   async function createSingleSheetWorkbook(
     sheetName: string,
     data: any[][],
     numericCols: number[]
-  ): Promise<Uint8Array> {
+  ): Promise<ArrayBuffer> {
     const XLSX = await import('xlsx');
     const wb = XLSX.utils.book_new();
     const ws = XLSX.utils.aoa_to_sheet(data);
     await applyNumberFormatting(XLSX, ws, numericCols, data.length - 1);
     XLSX.utils.book_append_sheet(wb, ws, sheetName);
-    return XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+    const bytes: Uint8Array = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+    return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
   }
 
   async function downloadZip() {
