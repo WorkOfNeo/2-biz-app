@@ -195,7 +195,7 @@ export default function CustomsPage() {
     }
   }
 
-  async function createProcessedWorkbook(): Promise<ArrayBuffer> {
+  async function createProcessedWorkbook(): Promise<Blob> {
     const XLSX = await import('xlsx');
     const wb = XLSX.utils.book_new();
 
@@ -222,22 +222,26 @@ export default function CustomsPage() {
     await applyNumberFormatting(XLSX, wsAllTx, PROCESSED_NUMERIC_COLS, calculatedRows.length);
     XLSX.utils.book_append_sheet(wb, wsAllTx, 'All Transactions');
 
-    const bytes: Uint8Array = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
-    return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+    const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+    return new Blob([wbout], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    });
   }
 
   async function createSingleSheetWorkbook(
     sheetName: string,
     data: any[][],
     numericCols: number[]
-  ): Promise<ArrayBuffer> {
+  ): Promise<Blob> {
     const XLSX = await import('xlsx');
     const wb = XLSX.utils.book_new();
     const ws = XLSX.utils.aoa_to_sheet(data);
     await applyNumberFormatting(XLSX, ws, numericCols, data.length - 1);
     XLSX.utils.book_append_sheet(wb, ws, sheetName);
-    const bytes: Uint8Array = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
-    return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+    const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+    return new Blob([wbout], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    });
   }
 
   async function downloadZip() {
@@ -278,10 +282,7 @@ export default function CustomsPage() {
         [...PROCESSED_COLUMNS],
         ...calculatedRows.map((r) => rowToProcessedArray(r)),
       ];
-      const bytes = await createSingleSheetWorkbook('Processed Data', data, PROCESSED_NUMERIC_COLS);
-      const blob = new Blob([bytes], {
-        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      });
+      const blob = await createSingleSheetWorkbook('Processed Data', data, PROCESSED_NUMERIC_COLS);
       saveAs(blob, 'Processed_Data.xlsx');
     } catch (e: any) {
       alert(e?.message || 'Failed to export');
@@ -295,12 +296,8 @@ export default function CustomsPage() {
       setBusy(true);
       const { default: saveAs } = await import('file-saver');
 
-      const data = [...SUMMARY_COLUMNS].map((c) => c);
       const dataArr = [[...SUMMARY_COLUMNS], ...summaryData.map((r) => summaryRowToArray(r))];
-      const bytes = await createSingleSheetWorkbook('Summary', dataArr, SUMMARY_NUMERIC_COLS);
-      const blob = new Blob([bytes], {
-        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      });
+      const blob = await createSingleSheetWorkbook('Summary', dataArr, SUMMARY_NUMERIC_COLS);
       saveAs(blob, 'Summary.xlsx');
     } catch (e: any) {
       alert(e?.message || 'Failed to export');
@@ -318,14 +315,11 @@ export default function CustomsPage() {
         [...PROCESSED_COLUMNS],
         ...calculatedRows.map((r) => rowToProcessedArray(r)),
       ];
-      const bytes = await createSingleSheetWorkbook(
+      const blob = await createSingleSheetWorkbook(
         'All Transactions',
         data,
         PROCESSED_NUMERIC_COLS
       );
-      const blob = new Blob([bytes], {
-        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      });
       saveAs(blob, 'All_Transactions.xlsx');
     } catch (e: any) {
       alert(e?.message || 'Failed to export');
