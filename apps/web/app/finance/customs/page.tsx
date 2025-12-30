@@ -340,10 +340,11 @@ export default function CustomsPage() {
   const combosByMonth = React.useMemo(() => {
     const grouped: Record<string, CurrencyMonthCombo[]> = {};
     for (const combo of currencyCombos) {
-      if (!grouped[combo.yearMonth]) {
-        grouped[combo.yearMonth] = [];
+      const key = combo.yearMonth;
+      if (!grouped[key]) {
+        grouped[key] = [];
       }
-      grouped[combo.yearMonth].push(combo);
+      grouped[key]!.push(combo);
     }
     return grouped;
   }, [currencyCombos]);
