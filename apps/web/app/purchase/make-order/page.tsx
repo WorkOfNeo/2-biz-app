@@ -523,8 +523,8 @@ function SupplierReviewCard({
               Skip supplier
             </Button>
             <Button onClick={handleApprove} className="bg-[#8FA894] hover:bg-[#8FA894]/90">
-              {isLast ? 'Complete & Create POs' : 'Approve & Next'}
-              </Button>
+              {isLast ? 'Review Orders →' : 'Approve & Next'}
+            </Button>
             </div>
           </div>
         </CardContent>
@@ -687,7 +687,13 @@ export default function PurchaseMakeOrderPage() {
         throw new Error(data.error || 'Failed to load comparison');
       }
       
-      setComparisonData(data.comparison);
+      // Merge comparison with customer/salesrep analysis
+      setComparisonData({
+        ...data.comparison,
+        customerAnalysis: data.customerAnalysis,
+        customerComparison: data.customerComparison,
+        salesRepAnalysis: data.salesRepAnalysis,
+      });
     } catch (err: any) {
       setComparisonError(err.message);
     } finally {
@@ -894,10 +900,10 @@ export default function PurchaseMakeOrderPage() {
     if (currentSupplierIdx < (aiOutput?.suppliers.length || 0) - 1) {
       setCurrentSupplierIdx(prev => prev + 1);
     } else {
-      // All suppliers reviewed, commit
-      handleCommit([...committedSuppliers, data]);
+      // All suppliers reviewed - go to review step (step 3.5)
+      setStep(3.5);
     }
-  }, [currentSupplierIdx, aiOutput, committedSuppliers]);
+  }, [currentSupplierIdx, aiOutput]);
 
   const handleSupplierSkip = useCallback(() => {
     const supplier = aiOutput?.suppliers[currentSupplierIdx];
@@ -915,9 +921,10 @@ export default function PurchaseMakeOrderPage() {
     if (currentSupplierIdx < (aiOutput?.suppliers.length || 0) - 1) {
       setCurrentSupplierIdx(prev => prev + 1);
     } else {
-      handleCommit([...committedSuppliers, skipData]);
+      // All suppliers reviewed - go to review step (step 3.5)
+      setStep(3.5);
     }
-  }, [currentSupplierIdx, aiOutput, committedSuppliers]);
+  }, [currentSupplierIdx, aiOutput]);
 
   const handleCommit = useCallback(async (suppliers: SupplierCommitData[]) => {
     setIsCommitting(true);
@@ -1414,11 +1421,19 @@ export default function PurchaseMakeOrderPage() {
                         <div className="text-xs text-slate-500">Last Year Total</div>
                                 </div>
                       <div className="bg-white rounded-md p-3">
-                        <div className={`text-lg font-semibold ${comparisonData.overall.gapToTarget.qty > 0 ? 'text-red-500' : 'text-green-500'}`}>
-                          {comparisonData.overall.gapToTarget.qtyPercent}
-                                        </div>
-                        <div className="text-xs text-slate-500">vs Target</div>
-                                </div>
+                        <div className={`text-lg font-semibold ${
+                          comparisonData.overall.lastSeasonTotal.qty > 0 
+                            ? (comparisonData.overall.currentSeason.qty / comparisonData.overall.lastSeasonTotal.qty * 100) >= 100 
+                              ? 'text-green-600' 
+                              : 'text-amber-600'
+                            : 'text-slate-600'
+                        }`}>
+                          {comparisonData.overall.lastSeasonTotal.qty > 0 
+                            ? Math.round((comparisonData.overall.currentSeason.qty / comparisonData.overall.lastSeasonTotal.qty) * 100) + '%'
+                            : 'N/A'}
+                        </div>
+                        <div className="text-xs text-slate-500">Index vs Last Year</div>
+                      </div>
                       <div className="bg-white rounded-md p-3">
                         <div className="text-lg font-semibold text-[#B8A8D8]">
                           {comparisonData.overall.weeksCovered}
@@ -1797,6 +1812,116 @@ export default function PurchaseMakeOrderPage() {
       </div>
           )}
         </div>
+      )}
+
+      {/* Step 3.5: Review Before Creating POs */}
+      {step === 3.5 && (
+        <Card>
+          <CardHeader className="bg-[#B8A8D8]/20">
+            <CardTitle className="flex items-center gap-2">
+              <span className="text-2xl">📋</span>
+              Review Orders Before Creating
+            </CardTitle>
+            <CardDescription>
+              Review your selections before creating draft purchase orders
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4 p-6">
+            {/* Summary Stats */}
+            <div className="grid grid-cols-3 gap-4 text-center">
+              <div className="bg-green-50 border border-green-200 rounded-md p-4">
+                <div className="text-2xl font-semibold text-green-700">
+                  {committedSuppliers.filter(s => s.verdict !== 'skipped').length}
+                </div>
+                <div className="text-xs text-green-600">Suppliers to Order</div>
+              </div>
+              <div className="bg-slate-50 border border-slate-200 rounded-md p-4">
+                <div className="text-2xl font-semibold text-slate-600">
+                  {committedSuppliers.filter(s => s.verdict === 'skipped').length}
+                </div>
+                <div className="text-xs text-slate-500">Skipped</div>
+              </div>
+              <div className="bg-purple-50 border border-purple-200 rounded-md p-4">
+                <div className="text-2xl font-semibold text-purple-700">
+                  {committedSuppliers.reduce((sum, s) => 
+                    sum + s.lines.reduce((lSum, l) => lSum + (l.adjusted_qty ?? l.suggested_qty), 0), 0
+                  ).toLocaleString()}
+                </div>
+                <div className="text-xs text-purple-600">Total Units</div>
+              </div>
+            </div>
+
+            {/* Size distribution info */}
+            <div className="bg-blue-50 border border-blue-200 rounded-md p-3 text-sm text-blue-800">
+              <span className="font-medium">📐 Size Distribution:</span> Quantities will be automatically distributed across sizes 
+              (S-XXL, 34-46, etc.) based on historical sales patterns when POs are created.
+            </div>
+
+            {/* Orders to be created */}
+            <div className="border rounded-md overflow-hidden">
+              <div className="bg-slate-50 px-4 py-2 font-medium text-sm border-b">
+                Draft POs to Create
+              </div>
+              <table className="w-full text-sm">
+                <thead className="bg-slate-50">
+                  <tr>
+                    <th className="text-left p-3 font-medium">Supplier</th>
+                    <th className="text-right p-3 font-medium">Styles</th>
+                    <th className="text-right p-3 font-medium">Total Qty</th>
+                    <th className="text-center p-3 font-medium">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {committedSuppliers.map((s, idx) => {
+                    const totalQty = s.lines.reduce((sum, l) => sum + (l.adjusted_qty ?? l.suggested_qty), 0);
+                    return (
+                      <tr key={idx} className="border-t">
+                        <td className="p-3 font-medium">{s.supplier_name}</td>
+                        <td className="p-3 text-right">{s.lines.length}</td>
+                        <td className="p-3 text-right">{totalQty.toLocaleString()}</td>
+                        <td className="p-3 text-center">
+                          <Badge className={
+                            s.verdict === 'skipped' ? 'bg-slate-100 text-slate-600' :
+                            s.verdict === 'approved' ? 'bg-green-100 text-green-700' :
+                            'bg-amber-100 text-amber-700'
+                          }>
+                            {s.verdict || 'approved'}
+                          </Badge>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {commitError && (
+              <div className="bg-red-50 border border-red-200 text-red-700 rounded-md p-3 text-sm">
+                {commitError}
+              </div>
+            )}
+
+            <div className="flex justify-between pt-4">
+              <Button 
+                variant="outline" 
+                onClick={() => {
+                  setStep(3);
+                  setCurrentSupplierIdx(0);
+                  setCommittedSuppliers([]);
+                }}
+              >
+                ← Back to Review
+              </Button>
+              <Button
+                onClick={() => handleCommit(committedSuppliers)}
+                disabled={isCommitting || committedSuppliers.filter(s => s.verdict !== 'skipped').length === 0}
+                className="bg-[#8FA894] hover:bg-[#8FA894]/90"
+              >
+                {isCommitting ? 'Creating...' : `Create ${committedSuppliers.filter(s => s.verdict !== 'skipped').length} Draft POs`}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
       )}
 
       {/* Step 4: Summary */}
