@@ -1477,6 +1477,103 @@ export default function PurchaseMakeOrderPage() {
               </div>
             )}
 
+            {/* Customer Analysis - from comparison API */}
+            {comparisonData && (comparisonData as any).customerAnalysis && (
+              <div className="bg-[#C5D5CA]/30 border border-[#C5D5CA] rounded-md p-4">
+                <div className="font-medium text-sm mb-3">👥 Customer Performance vs Last Year</div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-center mb-4">
+                  <div className="bg-white rounded-md p-3">
+                    <div className="text-lg font-semibold text-[#8FA894]">
+                      {(comparisonData as any).customerAnalysis.visited}
+                    </div>
+                    <div className="text-xs text-slate-500">Visited</div>
+                  </div>
+                  <div className="bg-white rounded-md p-3">
+                    <div className="text-lg font-semibold text-slate-600">
+                      {(comparisonData as any).customerAnalysis.shouldVisit}
+                    </div>
+                    <div className="text-xs text-slate-500">Should Visit</div>
+                  </div>
+                  <div className="bg-white rounded-md p-3">
+                    <div className={`text-lg font-semibold ${(comparisonData as any).customerAnalysis.visitRate >= 80 ? 'text-green-600' : (comparisonData as any).customerAnalysis.visitRate >= 50 ? 'text-amber-600' : 'text-red-600'}`}>
+                      {(comparisonData as any).customerAnalysis.visitRate}%
+                    </div>
+                    <div className="text-xs text-slate-500">Visit Rate</div>
+                  </div>
+                  <div className="bg-white rounded-md p-3">
+                    <div className="text-lg font-semibold text-amber-600">
+                      {(comparisonData as any).customerAnalysis.notVisited}
+                    </div>
+                    <div className="text-xs text-slate-500">Not Visited Yet</div>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs text-slate-600">
+                  <div>
+                    <span className="font-medium">Remaining Potential:</span>{' '}
+                    {(comparisonData as any).customerAnalysis.notVisitedPotential.qty.toLocaleString()} pcs
+                  </div>
+                  <div>
+                    <span className="font-medium text-red-600">Lost (Nulled):</span>{' '}
+                    {(comparisonData as any).customerAnalysis.lostFromNulled.qty.toLocaleString()} pcs
+                  </div>
+                  <div>
+                    <span className="font-medium text-red-600">Lost (Closed):</span>{' '}
+                    {(comparisonData as any).customerAnalysis.lostFromClosed.qty.toLocaleString()} pcs
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Sales Rep Analysis - from comparison API */}
+            {comparisonData && (comparisonData as any).salesRepAnalysis?.length > 0 && (
+              <div className="bg-[#B8A8D8]/20 border border-[#B8A8D8] rounded-md p-4">
+                <div className="font-medium text-sm mb-3">👔 Sales Rep Performance</div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="text-left text-slate-500 border-b">
+                        <th className="pb-2">Sales Rep</th>
+                        <th className="pb-2 text-right">This Year</th>
+                        <th className="pb-2 text-right">Last Year</th>
+                        <th className="pb-2 text-right">Index</th>
+                        <th className="pb-2 text-center">Visited</th>
+                        <th className="pb-2">Top 3 Styles</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(comparisonData as any).salesRepAnalysis.map((rep: any, i: number) => (
+                        <tr key={i} className="border-b border-slate-100">
+                          <td className="py-2 font-medium">{rep.salesRep}</td>
+                          <td className="py-2 text-right">{rep.thisYearQty.toLocaleString()}</td>
+                          <td className="py-2 text-right text-slate-500">{rep.lastYearQty.toLocaleString()}</td>
+                          <td className="py-2 text-right">
+                            {rep.indexQty !== null ? (
+                              <span className={rep.indexQty >= 100 ? 'text-green-600' : rep.indexQty >= 75 ? 'text-amber-600' : 'text-red-600'}>
+                                {rep.indexQty}%
+                              </span>
+                            ) : '-'}
+                          </td>
+                          <td className="py-2 text-center">
+                            <span className={rep.visitRate >= 80 ? 'text-green-600' : rep.visitRate >= 50 ? 'text-amber-600' : 'text-red-600'}>
+                              {rep.customersVisited}/{rep.customersShouldVisit}
+                            </span>
+                            <span className="text-slate-400 ml-1">({rep.visitRate}%)</span>
+                          </td>
+                          <td className="py-2">
+                            {rep.topStyles.slice(0, 3).map((s: any, j: number) => (
+                              <span key={j} className="inline-block bg-slate-100 rounded px-1 mr-1 mb-1" title={`${s.style_no} ${s.color}: ${s.qty} pcs`}>
+                                {s.style_name || s.style_no}
+                              </span>
+                            ))}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
             <div className="bg-[#F5F3F0] rounded-md p-4">
               <div className="flex items-start gap-3">
                 <div className="text-xl">🤖</div>

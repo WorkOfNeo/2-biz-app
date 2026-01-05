@@ -211,6 +211,309 @@ export async function POST(req: Request) {
       }
     }
 
+    // =========================================================================
+    // CUSTOMER-LEVEL COMPARISON (last year vs this year)
+    // =========================================================================
+    let customerComparison: Array<{
+      customerRef: string;
+      customerDisplay: string;
+      salesRep: string | null;
+      country: string | null;
+      lastYearQty: number;
+      lastYearAmount: number;
+      thisYearQty: number;
+      thisYearAmount: number;
+      indexQty: number | null;
+      indexAmount: number | null;
+      status: 'visited' | 'not_visited' | 'new';
+      isNulled: boolean;
+      isPermanentlyClosed: boolean;
+    }> = [];
+
+    // Aggregate current year by customer
+    const thisYearByCustomer: Record<string, {
+      display: string;
+      salesRep: string | null;
+      country: string | null;
+      qty: number;
+      amount: number;
+    }> = {};
+    
+    for (const row of rows) {
+      const ref = row.customer_ref;
+      if (!thisYearByCustomer[ref]) {
+        thisYearByCustomer[ref] = {
+          display: row.customer_display || ref,
+          salesRep: row.sales_rep || null,
+          country: row.country || null,
+          qty: 0,
+          amount: 0,
+        };
+      }
+      thisYearByCustomer[ref].qty += Number(row.qty) || 0;
+      thisYearByCustomer[ref].amount += Number(row.net_amount) || 0;
+    }
+
+    // Fetch last year's sales_stats with customer info
+    let lastYearByCustomer: Record<string, {
+      customerId: string;
+      customerName: string | null;
+      salespersonName: string | null;
+      qty: number;
+      amount: number;
+      isNulled: boolean;
+      isPermanentlyClosed: boolean;
+    }> = {};
+
+    if (comparisonSeasonId) {
+      // Fetch sales_stats with salesperson info
+      const { data: lastYearStats } = await supabase
+        .from('sales_stats')
+        .select(`
+          account_no,
+          customer_name,
+          salesperson_name,
+          qty,
+          price
+        `)
+        .eq('season_id', comparisonSeasonId);
+
+      // Fetch customer status (nulled, permanently_closed)
+      const { data: customers } = await supabase
+        .from('customers')
+        .select('customer_id, nulled, permanently_closed');
+      
+      const customerStatusMap = new Map(
+        (customers || []).map(c => [c.customer_id, { nulled: c.nulled, closed: c.permanently_closed }])
+      );
+
+      for (const row of (lastYearStats || [])) {
+        const accNo = row.account_no;
+        const status = customerStatusMap.get(accNo) || { nulled: false, closed: false };
+        
+        if (!lastYearByCustomer[accNo]) {
+          lastYearByCustomer[accNo] = {
+            customerId: accNo,
+            customerName: row.customer_name,
+            salespersonName: row.salesperson_name,
+            qty: 0,
+            amount: 0,
+            isNulled: status.nulled || false,
+            isPermanentlyClosed: status.closed || false,
+          };
+        }
+        lastYearByCustomer[accNo].qty += Number(row.qty) || 0;
+        lastYearByCustomer[accNo].amount += Number(row.price) || 0;
+      }
+
+      console.log('[Compare API] Last year customers:', Object.keys(lastYearByCustomer).length);
+    }
+
+    // Build customer comparison
+    const allCustomerRefs = new Set([
+      ...Object.keys(thisYearByCustomer),
+      ...Object.keys(lastYearByCustomer),
+    ]);
+
+    for (const ref of allCustomerRefs) {
+      const thisYear = thisYearByCustomer[ref];
+      const lastYear = lastYearByCustomer[ref];
+      
+      const lastYearQty = lastYear?.qty || 0;
+      const lastYearAmount = lastYear?.amount || 0;
+      const thisYearQty = thisYear?.qty || 0;
+      const thisYearAmount = thisYear?.amount || 0;
+      
+      let status: 'visited' | 'not_visited' | 'new' = 'new';
+      if (lastYear && thisYear) {
+        status = 'visited';
+      } else if (lastYear && !thisYear) {
+        status = 'not_visited';
+      } else {
+        status = 'new';
+      }
+
+      customerComparison.push({
+        customerRef: ref,
+        customerDisplay: thisYear?.display || lastYear?.customerName || ref,
+        salesRep: thisYear?.salesRep || lastYear?.salespersonName || null,
+        country: thisYear?.country || null,
+        lastYearQty,
+        lastYearAmount: Math.round(lastYearAmount),
+        thisYearQty,
+        thisYearAmount: Math.round(thisYearAmount),
+        indexQty: lastYearQty > 0 ? Math.round((thisYearQty / lastYearQty) * 100) : null,
+        indexAmount: lastYearAmount > 0 ? Math.round((thisYearAmount / lastYearAmount) * 100) : null,
+        status,
+        isNulled: lastYear?.isNulled || false,
+        isPermanentlyClosed: lastYear?.isPermanentlyClosed || false,
+      });
+    }
+
+    // Sort by last year qty descending
+    customerComparison.sort((a, b) => b.lastYearQty - a.lastYearQty);
+
+    // Customer summary stats
+    const customersFromLastYear = customerComparison.filter(c => c.lastYearQty > 0);
+    const customersVisited = customerComparison.filter(c => c.status === 'visited');
+    const customersNotVisited = customerComparison.filter(c => c.status === 'not_visited');
+    const customersNulled = customerComparison.filter(c => c.isNulled);
+    const customersClosed = customerComparison.filter(c => c.isPermanentlyClosed);
+    const customersNew = customerComparison.filter(c => c.status === 'new');
+    
+    // Should visit = last year customers - nulled - closed
+    const customersShouldVisit = customersFromLastYear.filter(
+      c => !c.isNulled && !c.isPermanentlyClosed
+    );
+
+    const customerAnalysis = {
+      totalLastYear: customersFromLastYear.length,
+      visited: customersVisited.length,
+      notVisited: customersNotVisited.length,
+      nulled: customersNulled.length,
+      permanentlyClosed: customersClosed.length,
+      newThisYear: customersNew.length,
+      shouldVisit: customersShouldVisit.length,
+      visitRate: customersShouldVisit.length > 0 
+        ? Math.round((customersVisited.length / customersShouldVisit.length) * 100) 
+        : 0,
+      // Potential from not visited (excluding nulled/closed)
+      notVisitedPotential: {
+        qty: customersNotVisited
+          .filter(c => !c.isNulled && !c.isPermanentlyClosed)
+          .reduce((sum, c) => sum + c.lastYearQty, 0),
+        amount: customersNotVisited
+          .filter(c => !c.isNulled && !c.isPermanentlyClosed)
+          .reduce((sum, c) => sum + c.lastYearAmount, 0),
+      },
+      // Lost from nulled/closed
+      lostFromNulled: {
+        qty: customersNulled.reduce((sum, c) => sum + c.lastYearQty, 0),
+        amount: customersNulled.reduce((sum, c) => sum + c.lastYearAmount, 0),
+      },
+      lostFromClosed: {
+        qty: customersClosed.reduce((sum, c) => sum + c.lastYearQty, 0),
+        amount: customersClosed.reduce((sum, c) => sum + c.lastYearAmount, 0),
+      },
+    };
+
+    console.log('[Compare API] Customer analysis:', customerAnalysis);
+
+    // =========================================================================
+    // SALES REP ANALYSIS
+    // =========================================================================
+    type SalesRepAnalysis = {
+      salesRep: string;
+      thisYearQty: number;
+      thisYearAmount: number;
+      lastYearQty: number;
+      lastYearAmount: number;
+      indexQty: number | null;
+      customersVisited: number;
+      customersShouldVisit: number;
+      customersNotVisited: number;
+      visitRate: number;
+      topStyles: Array<{ style_no: string; style_name: string; color: string; qty: number }>;
+    };
+
+    // Group customers by sales rep
+    const salesRepCustomers: Record<string, {
+      thisYear: Set<string>;
+      lastYear: Set<string>;
+      lastYearExcluded: Set<string>; // nulled or closed
+    }> = {};
+
+    // Group sales by sales rep
+    const salesRepSales: Record<string, {
+      thisYearQty: number;
+      thisYearAmount: number;
+      lastYearQty: number;
+      lastYearAmount: number;
+      styles: Map<string, number>; // style|color -> qty
+    }> = {};
+
+    // Aggregate this year by sales rep
+    for (const row of rows) {
+      const rep = row.sales_rep || 'Unknown';
+      if (!salesRepCustomers[rep]) {
+        salesRepCustomers[rep] = { thisYear: new Set(), lastYear: new Set(), lastYearExcluded: new Set() };
+      }
+      if (!salesRepSales[rep]) {
+        salesRepSales[rep] = { thisYearQty: 0, thisYearAmount: 0, lastYearQty: 0, lastYearAmount: 0, styles: new Map() };
+      }
+      
+      salesRepCustomers[rep].thisYear.add(row.customer_ref);
+      salesRepSales[rep].thisYearQty += Number(row.qty) || 0;
+      salesRepSales[rep].thisYearAmount += Number(row.net_amount) || 0;
+      
+      const styleKey = `${row.style_no}|${row.color}`;
+      salesRepSales[rep].styles.set(styleKey, (salesRepSales[rep].styles.get(styleKey) || 0) + (Number(row.qty) || 0));
+    }
+
+    // Add last year data by sales rep (from sales_stats)
+    for (const [accNo, data] of Object.entries(lastYearByCustomer)) {
+      const rep = data.salespersonName || 'Unknown';
+      if (!salesRepCustomers[rep]) {
+        salesRepCustomers[rep] = { thisYear: new Set(), lastYear: new Set(), lastYearExcluded: new Set() };
+      }
+      if (!salesRepSales[rep]) {
+        salesRepSales[rep] = { thisYearQty: 0, thisYearAmount: 0, lastYearQty: 0, lastYearAmount: 0, styles: new Map() };
+      }
+      
+      salesRepCustomers[rep].lastYear.add(accNo);
+      if (data.isNulled || data.isPermanentlyClosed) {
+        salesRepCustomers[rep].lastYearExcluded.add(accNo);
+      }
+      salesRepSales[rep].lastYearQty += data.qty;
+      salesRepSales[rep].lastYearAmount += data.amount;
+    }
+
+    // Build sales rep analysis array
+    const salesRepAnalysis: SalesRepAnalysis[] = [];
+    
+    for (const rep of Object.keys(salesRepSales)) {
+      const customers = salesRepCustomers[rep] || { thisYear: new Set(), lastYear: new Set(), lastYearExcluded: new Set() };
+      const sales = salesRepSales[rep]!;
+      
+      // Customers they should visit = last year - excluded
+      const shouldVisit = [...customers.lastYear].filter(c => !customers.lastYearExcluded.has(c));
+      const visited = [...customers.thisYear].filter(c => customers.lastYear.has(c));
+      const notVisited = shouldVisit.filter(c => !customers.thisYear.has(c));
+      
+      // Top 3 styles
+      const topStyles = [...sales.styles.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 3)
+        .map(([key, qty]) => {
+          const [style_no, color] = key.split('|');
+          return {
+            style_no: style_no || '',
+            style_name: getStyleName(style_no || ''),
+            color: color || '',
+            qty,
+          };
+        });
+      
+      salesRepAnalysis.push({
+        salesRep: rep,
+        thisYearQty: sales.thisYearQty,
+        thisYearAmount: Math.round(sales.thisYearAmount),
+        lastYearQty: sales.lastYearQty,
+        lastYearAmount: Math.round(sales.lastYearAmount),
+        indexQty: sales.lastYearQty > 0 ? Math.round((sales.thisYearQty / sales.lastYearQty) * 100) : null,
+        customersVisited: visited.length,
+        customersShouldVisit: shouldVisit.length,
+        customersNotVisited: notVisited.length,
+        visitRate: shouldVisit.length > 0 ? Math.round((visited.length / shouldVisit.length) * 100) : 0,
+        topStyles,
+      });
+    }
+
+    // Sort by last year qty descending
+    salesRepAnalysis.sort((a, b) => b.lastYearQty - a.lastYearQty);
+
+    console.log('[Compare API] Sales rep analysis:', salesRepAnalysis.length, 'reps');
+
     // Build weekly breakdown from CSV dates
     const weeklyData: Record<string, { qty: number; amount: number }> = {};
     for (const row of rows) {
@@ -467,6 +770,10 @@ export async function POST(req: Request) {
     return NextResponse.json({
       success: true,
       comparison: result,
+      // Enhanced analysis
+      customerAnalysis,
+      customerComparison: customerComparison.slice(0, 50), // Top 50 customers
+      salesRepAnalysis,
       importId,
       seasonId,
       comparisonSeasonId,
