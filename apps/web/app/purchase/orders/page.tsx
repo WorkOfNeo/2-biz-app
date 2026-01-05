@@ -19,8 +19,7 @@ export default function PurchaseOrdersPage() {
   const supabase = createClientComponentClient();
   const [rows, setRows] = useState<PoRow[]>([]);
   const [loading, setLoading] = useState(false);
-  const [enqueuing, setEnqueuing] = useState(false);
-  const [checking, setChecking] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [itemsByPo, setItemsByPo] = useState<Record<string, Array<{ style_no: string | null; style_name: string | null; color: string | null; qty: number | null; style_link: string | null }>>>({});
 
@@ -46,8 +45,8 @@ export default function PurchaseOrdersPage() {
     return () => clearInterval(id);
   }, []);
 
-  async function runScrape() {
-    setEnqueuing(true);
+  async function syncPOs() {
+    setSyncing(true);
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) throw new Error('Not signed in');
@@ -57,26 +56,9 @@ export default function PurchaseOrdersPage() {
         body: JSON.stringify({ type: 'scrape_purchase_orders', payload: { requestedBy: session.user.email } })
       });
       // eslint-disable-next-line no-console
-      console.log('[purchase/orders] enqueue', res.status);
+      console.log('[purchase/orders] sync POs enqueue', res.status);
     } finally {
-      setEnqueuing(false);
-    }
-  }
-
-  async function checkOrders() {
-    setChecking(true);
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) throw new Error('Not signed in');
-      const res = await fetch('/api/enqueue', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
-        body: JSON.stringify({ type: 'check_purchase_orders', payload: { requestedBy: session.user.email } })
-      });
-      // eslint-disable-next-line no-console
-      console.log('[purchase/orders] check orders enqueue', res.status);
-    } finally {
-      setChecking(false);
+      setSyncing(false);
     }
   }
 
@@ -109,15 +91,10 @@ export default function PurchaseOrdersPage() {
         <h1 className="text-xl font-semibold">Purchase Orders</h1>
         <div className="flex items-center gap-2">
           <button
-            className={"text-xs px-3 py-1.5 border rounded bg-slate-900 text-white hover:bg-slate-800 " + (enqueuing ? 'opacity-60 cursor-not-allowed' : '')}
-            onClick={runScrape}
-            disabled={enqueuing}
-          >Run Scrape</button>
-          <button
-            className={"text-xs px-3 py-1.5 border rounded bg-slate-700 text-white hover:bg-slate-600 " + (checking ? 'opacity-60 cursor-not-allowed' : '')}
-            onClick={checkOrders}
-            disabled={checking}
-          >Check Orders</button>
+            className={"text-xs px-3 py-1.5 border rounded bg-slate-900 text-white hover:bg-slate-800 " + (syncing ? 'opacity-60 cursor-not-allowed' : '')}
+            onClick={syncPOs}
+            disabled={syncing}
+          >Sync PO's</button>
         </div>
       </div>
 

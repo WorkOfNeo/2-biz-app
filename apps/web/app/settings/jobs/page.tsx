@@ -20,6 +20,10 @@ const JOB_DESCRIPTIONS: Record<string, string> = {
     'Scrape Customers: Imports customers from SPY (company, city, country, salesperson). Updates optional fields like phone, priority and links when available.',
   scrape_statistics:
     'Scrape Statistics: Deep mode processes per-salesperson totals and invoices for a season; Per-size snapshot captures size-level statistics used in dashboards.',
+  scrape_purchase_orders:
+    'Sync PO\'s: Scrapes purchase orders from SPY list page. Marks POs no longer in the list as Delivered. Automatically triggers Check PO Details afterwards.',
+  check_purchase_orders:
+    'Check PO Details: Visits each Running PO detail page to extract ETD/ETA dates and line items. Triggered automatically after Sync PO\'s.',
   export_overview:
     'Export Overview: Generates React-PDF exports (General per salesperson and combined ZIP), uploads to Supabase Storage and records entries in exports.',
   scrape_top_styles:
@@ -558,6 +562,7 @@ export default function JobsOverviewPage() {
                 { type: 'update_style_stock', label: 'Update Style Stock', actions: [{ label: 'Run (Selected)', payload: {} }, { label: 'Run (All)', payload: { mode: 'all' } }] },
                 { type: 'scrape_customers', label: 'Scrape Customers', actions: [{ label: 'Run', payload: {} }] },
                 { type: 'scrape_statistics', label: 'Scrape Statistics', actions: [{ label: 'Run Deep', payload: { toggles: { deep: true } } }, { label: 'Per-size Snapshot', payload: { kind: 'per_size' } }] },
+                { type: 'scrape_purchase_orders', label: 'Sync PO\'s', actions: [{ label: 'Run', payload: {} }] },
                 { type: 'scrape_top_styles', label: 'Scrape Top 10 Styles', actions: [{ label: 'Run', payload: {} }] },
                 { type: 'scrape_eans', label: 'Scrape EANs', actions: [{ label: 'Run', payload: {} }] },
                 { type: 'fix_invoices', label: 'Fix Invoices', actions: [{ label: 'Dry run', payload: { dryRun: true } }, { label: 'Apply', payload: { dryRun: false } }] }

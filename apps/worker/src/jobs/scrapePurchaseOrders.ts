@@ -152,6 +152,26 @@ export async function scrapePurchaseOrders(ctx: Ctx) {
 
     await saveResult(job.id, 'purchase_orders_saved', { count: upserts.length });
     await log(job.id, 'info', 'STEP:po_saved', { count: upserts.length });
+
+    // Automatically enqueue check_purchase_orders to fetch ETD/ETA details
+    try {
+      const { error: enqueueError } = await supabase
+        .from('jobs')
+        .insert({
+          type: 'check_purchase_orders',
+          payload: { requestedBy: 'auto_after_scrape', triggeredBy: job.id },
+          status: 'queued',
+          max_attempts: 3
+        });
+      if (enqueueError) {
+        await log(job.id, 'error', 'STEP:po_auto_enqueue_check_error', { error: enqueueError.message });
+      } else {
+        await log(job.id, 'info', 'STEP:po_auto_enqueued_check', { message: 'check_purchase_orders enqueued automatically' });
+      }
+    } catch (enqErr: any) {
+      await log(job.id, 'error', 'STEP:po_auto_enqueue_check_error', { error: enqErr?.message || String(enqErr) });
+    }
+
     await setJobSucceeded(job.id);
   } catch (e: any) {
     await log(job.id, 'error', 'STEP:po_error', { error: e?.message || String(e) });
