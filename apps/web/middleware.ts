@@ -75,6 +75,9 @@ export async function middleware(req: NextRequest) {
     // Root (/) is free-for-all landing; show greeting instead of redirecting
     if (pathname === '/') return res;
 
+    // Purchase dashboard is accessible to all authenticated users
+    if (pathname === '/purchase/dashboard') return res;
+
     if (pathname.startsWith('/admin') && !roles.has('admin')) {
       return NextResponse.redirect(new URL('/', req.url));
     }

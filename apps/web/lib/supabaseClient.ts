@@ -83,6 +83,8 @@ export function useRoleAccess() {
   function can(path: string): boolean {
     // Admins always allowed when explicitly set in roles
     if ((roles as any as Set<string>).has('admin')) return true;
+    // Purchase dashboard is accessible to all authenticated users
+    if (path === '/purchase/dashboard') return true;
     // Default deny if no mapping for current roles
     if (allowedSet.size === 0) return false;
     // Exact match or parent-allow (e.g., '/settings' allows '/settings/seasons')

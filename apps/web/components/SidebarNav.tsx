@@ -145,6 +145,7 @@ export function SidebarNav() {
     can('/styles/movements') ? <NavLink key="sm" href="/styles/movements" label="Movements" /> : null,
   ].filter(Boolean) as any[];
   const purchaseLinks = [
+    can('/purchase/dashboard') ? <NavLink key="pd" href="/purchase/dashboard" label="Dashboard" /> : null,
     can('/purchase/orders') ? <NavLink key="po" href="/purchase/orders" label="Purchase Orders" /> : null,
     can('/purchase/make-order') ? <NavLink key="pmo" href="/purchase/make-order" label="Make order" /> : null,
     can('/purchase/app-pos') ? <NavLink key="pap" href="/purchase/app-pos" label="App PO's" /> : null,
