@@ -117,11 +117,14 @@ export default function PurchaseDashboardPage() {
     return { weekDates: dates, weekKeys: keys, today: formatMMDD(now) };
   }, []);
 
-  // Group POs by weekday column
+  // Group POs by weekday column, then by supplier
   const { columns, outsideWeek } = useMemo(() => {
-    const cols: PoRow[][] = Array.from({ length: 7 }, () => []);
+    type SupplierGroup = { supplier: string; pos: PoRow[] };
+    const cols: SupplierGroup[][] = Array.from({ length: 7 }, () => []);
     const outside: PoRow[] = [];
 
+    // First pass: group by day
+    const dayPOs: PoRow[][] = Array.from({ length: 7 }, () => []);
     for (const po of rows) {
       const normalized = normalizeEta(po.eta);
       if (!normalized) {
@@ -130,10 +133,26 @@ export default function PurchaseDashboardPage() {
       }
       const idx = weekKeys.indexOf(normalized);
       if (idx >= 0) {
-        cols[idx]!.push(po);
+        dayPOs[idx]!.push(po);
       } else {
         outside.push(po);
       }
+    }
+
+    // Second pass: group each day's POs by supplier
+    for (let i = 0; i < 7; i++) {
+      const supplierMap = new Map<string, PoRow[]>();
+      for (const po of dayPOs[i]!) {
+        const key = po.supplier || 'Unknown';
+        if (!supplierMap.has(key)) {
+          supplierMap.set(key, []);
+        }
+        supplierMap.get(key)!.push(po);
+      }
+      // Convert to array and sort by supplier name
+      cols[i] = Array.from(supplierMap.entries())
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .map(([supplier, pos]) => ({ supplier, pos }));
     }
 
     return { columns: cols, outsideWeek: outside };
@@ -158,7 +177,7 @@ export default function PurchaseDashboardPage() {
         {WEEKDAYS.map((day, idx) => {
           const isWeekend = idx >= 5;
           const isToday = weekKeys[idx] === today;
-          const columnPOs = columns[idx] ?? [];
+          const columnGroups = columns[idx] ?? [];
 
           return (
             <div
@@ -181,47 +200,54 @@ export default function PurchaseDashboardPage() {
               </div>
 
               {/* Column Content */}
-              <div className={`flex-1 p-2 space-y-2 overflow-y-auto ${isWeekend ? 'opacity-60' : ''}`}>
-                {columnPOs.length === 0 && (
+              <div className={`flex-1 p-2 space-y-3 overflow-y-auto ${isWeekend ? 'opacity-60' : ''}`}>
+                {columnGroups.length === 0 && (
                   <div className="text-xs text-slate-400 text-center py-4">No POs</div>
                 )}
-                {columnPOs.map((po) => (
-                  <Card key={po.po_no} className="shadow-sm hover:shadow-md transition-shadow">
-                    <CardContent className="p-3 space-y-1">
-                      <div className="font-semibold text-sm">
-                        {po.po_link ? (
-                          <a
-                            href={po.po_link}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="text-blue-600 hover:underline"
-                          >
-                            {po.po_no}
-                          </a>
-                        ) : (
-                          po.po_no
-                        )}
-                      </div>
-                      {po.supplier && (
-                        <div className="text-xs text-slate-600">{po.supplier}</div>
-                      )}
-                      <div className="flex items-center gap-2 text-xs text-slate-500">
-                        {po.status && (
-                          <span
-                            className={`
-                              px-1.5 py-0.5 rounded text-xs
-                              ${po.status === 'Shipped' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}
-                            `}
-                          >
-                            {po.status}
-                          </span>
-                        )}
-                        {po.ordered !== null && (
-                          <span>{po.ordered} pcs</span>
-                        )}
-                      </div>
-                    </CardContent>
-                  </Card>
+                {columnGroups.map((group) => (
+                  <div key={group.supplier} className="space-y-1.5">
+                    {/* Supplier Header */}
+                    <div className="px-2 py-1 bg-slate-100 rounded text-xs font-semibold text-slate-700 sticky top-0">
+                      {group.supplier}
+                      <span className="ml-1 font-normal text-slate-500">({group.pos.length})</span>
+                    </div>
+                    {/* PO Cards for this supplier */}
+                    {group.pos.map((po) => (
+                      <Card key={po.po_no} className="shadow-sm hover:shadow-md transition-shadow">
+                        <CardContent className="p-2.5 space-y-1">
+                          <div className="font-semibold text-sm">
+                            {po.po_link ? (
+                              <a
+                                href={po.po_link}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-blue-600 hover:underline"
+                              >
+                                {po.po_no}
+                              </a>
+                            ) : (
+                              po.po_no
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2 text-xs text-slate-500">
+                            {po.status && (
+                              <span
+                                className={`
+                                  px-1.5 py-0.5 rounded text-xs
+                                  ${po.status === 'Shipped' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}
+                                `}
+                              >
+                                {po.status}
+                              </span>
+                            )}
+                            {po.ordered !== null && (
+                              <span>{po.ordered} pcs</span>
+                            )}
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
                 ))}
               </div>
             </div>
