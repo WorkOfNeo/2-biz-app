@@ -1,6 +1,7 @@
 {
   "crons": [
     { "path": "/api/cron/update-stock-all", "schedule": "0 0 * * *" },
+    { "path": "/api/cron/scrape-purchase-orders", "schedule": "0 6 * * *" },
     { "path": "/api/cron/scrape-statistics-deep", "schedule": "0 8 * * *" },
     { "path": "/api/cron/scrape-statistics-deep", "schedule": "0 12 * * *" },
     { "path": "/api/cron/scrape-statistics-deep", "schedule": "0 15 * * *" },

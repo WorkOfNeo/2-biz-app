@@ -123,6 +123,33 @@ export async function scrapePurchaseOrders(ctx: Ctx) {
       if (error) throw error;
     }
 
+    // Mark POs not in the scraped list as 'Delivered' (if they were Running/Shipped before)
+    const scrapedPoNos = upserts.map((u: any) => u.po_no);
+    if (scrapedPoNos.length > 0) {
+      // Find POs in DB that are Running or Shipped but NOT in the scraped list
+      const { data: existingPos } = await supabase
+        .from('purchase_orders')
+        .select('po_no')
+        .in('status', ['Running', 'Shipped'])
+        .limit(1000);
+      
+      const existingPoNos = ((existingPos ?? []) as any[]).map((r) => r.po_no as string);
+      const missingPoNos = existingPoNos.filter((poNo) => !scrapedPoNos.includes(poNo));
+      
+      if (missingPoNos.length > 0) {
+        const { error: updateError } = await supabase
+          .from('purchase_orders')
+          .update({ status: 'Delivered' })
+          .in('po_no', missingPoNos as any);
+        
+        if (updateError) {
+          await log(job.id, 'error', 'STEP:po_mark_delivered_error', { error: updateError.message });
+        } else {
+          await log(job.id, 'info', 'STEP:po_marked_delivered', { count: missingPoNos.length, po_nos: missingPoNos.slice(0, 10) });
+        }
+      }
+    }
+
     await saveResult(job.id, 'purchase_orders_saved', { count: upserts.length });
     await log(job.id, 'info', 'STEP:po_saved', { count: upserts.length });
     await setJobSucceeded(job.id);

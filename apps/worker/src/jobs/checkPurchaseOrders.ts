@@ -68,8 +68,32 @@ export async function checkPurchaseOrders(ctx: Ctx) {
         }).catch(() => '');
         if (/#NOOS_CALL_OFF_ORDER/i.test(val || '')) category = 'NOOS CALL OFF';
       } catch {}
-      if (category) {
-        try { await supabase.from('purchase_orders').update({ category }).eq('po_no', t.po_no); } catch {}
+
+      // Extract ETD and ETA from input fields
+      let etd: string | null = null;
+      let eta: string | null = null;
+      try {
+        etd = await page.$eval('input[name="POrder[strETD]"]', (el) => {
+          return (el as HTMLInputElement).value || null;
+        }).catch(() => null);
+      } catch {}
+      try {
+        eta = await page.$eval('input[name="POrder[strETA]"]', (el) => {
+          return (el as HTMLInputElement).value || null;
+        }).catch(() => null);
+      } catch {}
+
+      // Update PO with category, etd, eta
+      const updateData: Record<string, any> = {};
+      if (category) updateData.category = category;
+      if (etd) updateData.etd = etd;
+      if (eta) updateData.eta = eta;
+      
+      if (Object.keys(updateData).length > 0) {
+        try { 
+          await supabase.from('purchase_orders').update(updateData).eq('po_no', t.po_no); 
+          await log(job.id, 'info', 'STEP:check_po_updated_dates', { po_no: t.po_no, etd, eta });
+        } catch {}
       }
       // Parse items table
       try {
