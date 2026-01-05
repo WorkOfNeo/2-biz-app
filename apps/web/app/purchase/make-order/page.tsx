@@ -313,7 +313,19 @@ function parseCSV(text: string): CSVRow[] {
       console.log(`  net_amount: ${mapped.net_amount}`);
     }
     
-    if (!mapped.style_no) skippedNoStyle++;
+    if (!mapped.style_no) {
+      skippedNoStyle++;
+      // Log first skipped row to understand why
+      if (skippedNoStyle === 1) {
+        console.log('[CSV Parser] First row skipped (no style_no):', JSON.stringify({
+          style_no: row.style_no,
+          style_name: row.style_name,
+          order_type: row.order_type,
+          customer_name: row.customer_name?.substring(0, 30),
+          raw_blocked: row.blocked,
+        }));
+      }
+    }
     if (!mapped.color) skippedNoColor++;
     
     if (mapped.style_no && mapped.color) {
@@ -325,7 +337,10 @@ function parseCSV(text: string): CSVRow[] {
   const totalQtyParsed = rawRows.reduce((sum, row) => sum + (row.qty || 0), 0);
   const totalAmountParsed = rawRows.reduce((sum, row) => sum + (row.net_amount || 0), 0);
   
-  console.log(`[CSV Parser] Rows parsed: ${rawRows.length} valid, skipped ${skippedNoStyle} (no style_no), ${skippedNoColor} (no color)`);
+  // Calculate overlap - rows missing BOTH style and color vs just one
+  const skippedBoth = skippedNoStyle + skippedNoColor - (lines.length - 1 - rawRows.length);
+  console.log(`[CSV Parser] Rows parsed: ${rawRows.length} valid out of ${lines.length - 1} data rows`);
+  console.log(`[CSV Parser] Skipped breakdown: ${skippedNoStyle} missing style_no, ${skippedNoColor} missing color`);
   console.log(`[CSV Parser] Total qty from valid rows: ${totalQtyParsed}`);
   console.log(`[CSV Parser] Total amount from valid rows: ${totalAmountParsed.toFixed(2)}`);
   
