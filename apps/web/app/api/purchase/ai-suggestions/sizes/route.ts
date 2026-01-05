@@ -57,8 +57,9 @@ export async function POST(req: Request) {
         .order('scraped_at', { ascending: false })
         .limit(1);
 
-      if (stockData && stockData.length > 0 && stockData[0].sizes) {
-        sizes = stockData[0].sizes || [];
+      const firstStockRow = stockData?.[0];
+      if (firstStockRow && firstStockRow.sizes) {
+        sizes = firstStockRow.sizes || [];
         
         // Try to get historical sales distribution
         const { data: historicalData } = await supabase
