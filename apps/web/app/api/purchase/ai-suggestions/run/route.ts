@@ -911,7 +911,8 @@ export async function POST(req: Request) {
                 if (totalSold > 0) {
                   const sizeQuantities: SizeQtyMap = {};
                   for (const size of sizeData.sizes) {
-                    const ratio = sizeData.sizeQty[size] / totalSold;
+                    const sizeQty = sizeData.sizeQty[size] || 0;
+                    const ratio = sizeQty / totalSold;
                     sizeQuantities[size] = Math.round(line.suggested_qty * ratio);
                   }
                   // Adjust for rounding errors
