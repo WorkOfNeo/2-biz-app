@@ -113,6 +113,50 @@ export async function POST(req: Request) {
     const stylesNotInDb = uniqueStyleNos.filter(sn => !dbStyleMap.has(sn));
     const stylesWithSupplierInDb = (dbStyles || []).filter(s => s.supplier).length;
 
+    // 4b. Get unique suppliers from styles and check which exist in suppliers table
+    const suppliersFromStyles = [...new Set(
+      (dbStyles || [])
+        .map(s => s.supplier)
+        .filter(Boolean)
+    )] as string[];
+    
+    console.log('[Preview API] Suppliers found in styles:', suppliersFromStyles);
+    
+    // Fetch existing suppliers from suppliers table
+    const { data: existingSuppliers } = await supabase
+      .from('suppliers')
+      .select('id, name, external_name');
+    
+    const existingSupplierNames = new Set(
+      (existingSuppliers || []).flatMap(s => [
+        s.name?.toLowerCase(),
+        s.external_name?.toLowerCase(),
+      ].filter(Boolean))
+    );
+    
+    // Find suppliers that need to be created
+    const newSuppliers = suppliersFromStyles.filter(
+      s => !existingSupplierNames.has(s.toLowerCase())
+    );
+    
+    console.log('[Preview API] Existing suppliers in DB:', existingSuppliers?.length || 0);
+    console.log('[Preview API] New suppliers to create:', newSuppliers);
+    
+    // Build supplier stats for new suppliers
+    const newSupplierStats = newSuppliers.map(supplierName => {
+      const stylesForSupplier = (dbStyles || []).filter(s => s.supplier === supplierName);
+      const salesForSupplier = rows.filter(r => {
+        const dbStyle = dbStyleMap.get(r.style_no);
+        return dbStyle?.supplier === supplierName;
+      });
+      return {
+        name: supplierName,
+        styleCount: stylesForSupplier.length,
+        salesQty: salesForSupplier.reduce((sum, r) => sum + (Number(r.qty) || 0), 0),
+        salesAmount: Math.round(salesForSupplier.reduce((sum, r) => sum + (Number(r.net_amount) || 0), 0)),
+      };
+    }).sort((a, b) => b.salesQty - a.salesQty);
+
     // 5. Check comparison season data
     let comparisonSeasonData = null;
     if (comparisonSeasonId) {
@@ -240,6 +284,12 @@ export async function POST(req: Request) {
         uniqueCustomers: uniqueCustomers.size,
         totalQty,
         totalAmount: Math.round(totalAmount),
+      },
+      // New suppliers detected (need to be created in suppliers table)
+      newSuppliers: {
+        count: newSuppliers.length,
+        suppliers: newSupplierStats,
+        existingSuppliersCount: existingSuppliers?.length || 0,
       },
       stylesCoverage: {
         total: uniqueStyleNos.length,

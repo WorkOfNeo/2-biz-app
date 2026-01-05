@@ -565,6 +565,10 @@ export default function PurchaseMakeOrderPage() {
   const [isLoadingPreview, setIsLoadingPreview] = useState(false);
   const [previewError, setPreviewError] = useState<string>('');
   
+  // Supplier creation from preview
+  const [isCreatingSuppliers, setIsCreatingSuppliers] = useState(false);
+  const [createdSuppliers, setCreatedSuppliers] = useState<string[]>([]);
+  
   // Analysis background (for transparency)
   const [analysisBackground, setAnalysisBackground] = useState<{
     promptKey: string;
@@ -723,6 +727,74 @@ export default function PurchaseMakeOrderPage() {
       setIsLoadingPreview(false);
     }
   }, [importId, selectedSeasonId, comparisonSeasonId]);
+
+  // Create a single supplier
+  const handleCreateSingleSupplier = useCallback(async (supplierName: string) => {
+    setIsCreatingSuppliers(true);
+    try {
+      const res = await fetch('/api/suppliers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: supplierName,
+          active: true,
+        }),
+      });
+      
+      const data = await res.json();
+      
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to create supplier');
+      }
+      
+      setCreatedSuppliers(prev => [...prev, supplierName]);
+      
+      // Refresh preview to update the new suppliers list
+      loadPreview();
+    } catch (err: any) {
+      setPreviewError(`Failed to create supplier: ${err.message}`);
+    } finally {
+      setIsCreatingSuppliers(false);
+    }
+  }, [loadPreview]);
+
+  // Create all new suppliers at once
+  const handleCreateAllNewSuppliers = useCallback(async () => {
+    if (!previewData?.newSuppliers?.suppliers) return;
+    
+    setIsCreatingSuppliers(true);
+    const suppliersToCreate = previewData.newSuppliers.suppliers
+      .filter((s: any) => !createdSuppliers.includes(s.name))
+      .map((s: any) => s.name);
+    
+    try {
+      let created = 0;
+      for (const supplierName of suppliersToCreate) {
+        const res = await fetch('/api/suppliers', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: supplierName,
+            active: true,
+          }),
+        });
+        
+        if (res.ok) {
+          setCreatedSuppliers(prev => [...prev, supplierName]);
+          created++;
+        }
+      }
+      
+      console.log(`Created ${created} of ${suppliersToCreate.length} suppliers`);
+      
+      // Refresh preview to update the new suppliers list
+      loadPreview();
+    } catch (err: any) {
+      setPreviewError(`Failed to create suppliers: ${err.message}`);
+    } finally {
+      setIsCreatingSuppliers(false);
+    }
+  }, [previewData, createdSuppliers, loadPreview]);
 
   const handleRunAI = useCallback(async () => {
     if (!importId) return;
@@ -1127,6 +1199,64 @@ export default function PurchaseMakeOrderPage() {
                         <li key={i}>• {w}</li>
                       ))}
                     </ul>
+                  </div>
+                )}
+
+                {/* New Suppliers Detected */}
+                {previewData.newSuppliers?.count > 0 && (
+                  <div className="bg-purple-50 border border-purple-300 rounded-md p-4">
+                    <div className="flex items-start justify-between mb-3">
+                      <div>
+                        <div className="font-medium text-purple-800">
+                          🆕 New Suppliers Detected ({previewData.newSuppliers.count})
+                        </div>
+                        <p className="text-sm text-purple-600 mt-1">
+                          These suppliers are in your styles but not in the suppliers table. Create them for MOQ and lead time tracking.
+                        </p>
+                      </div>
+                      <Button
+                        size="sm"
+                        onClick={handleCreateAllNewSuppliers}
+                        disabled={isCreatingSuppliers}
+                        className="bg-purple-600 hover:bg-purple-700 text-white"
+                      >
+                        {isCreatingSuppliers ? 'Creating...' : `Create All (${previewData.newSuppliers.count})`}
+                      </Button>
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="text-left text-xs text-purple-500 border-b border-purple-200">
+                            <th className="pb-2">Supplier Name</th>
+                            <th className="pb-2 text-right">Styles</th>
+                            <th className="pb-2 text-right">Sales Qty</th>
+                            <th className="pb-2 text-right">Sales Amount</th>
+                            <th className="pb-2 text-center">Action</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {previewData.newSuppliers.suppliers.map((s: any, i: number) => (
+                            <tr key={i} className="border-b border-purple-100">
+                              <td className="py-2 font-medium text-purple-900">{s.name}</td>
+                              <td className="py-2 text-right">{s.styleCount}</td>
+                              <td className="py-2 text-right">{s.salesQty.toLocaleString()}</td>
+                              <td className="py-2 text-right">{s.salesAmount.toLocaleString()}</td>
+                              <td className="py-2 text-center">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => handleCreateSingleSupplier(s.name)}
+                                  disabled={isCreatingSuppliers || createdSuppliers.includes(s.name)}
+                                  className="text-xs border-purple-300 text-purple-700 hover:bg-purple-100"
+                                >
+                                  {createdSuppliers.includes(s.name) ? '✓ Created' : 'Create'}
+                                </Button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
                 )}
 
