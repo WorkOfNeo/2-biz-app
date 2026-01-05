@@ -181,6 +181,19 @@ export default function PurchaseDashboardPage() {
     return { columns: cols, outsideWeek: outside };
   }, [filteredRows, weekKeys]);
 
+  // Calculate total pieces for this week (sum of ordered from all POs in the week)
+  const totalPiecesThisWeek = useMemo(() => {
+    let total = 0;
+    for (const col of columns) {
+      for (const group of col) {
+        for (const po of group.pos) {
+          total += po.ordered ?? 0;
+        }
+      }
+    }
+    return total;
+  }, [columns]);
+
   // Days to display (5 or 7 based on showWeekends)
   const displayDays = showWeekends ? WEEKDAYS : WEEKDAYS.slice(0, 5);
 
@@ -190,6 +203,14 @@ export default function PurchaseDashboardPage() {
         <div>
           <div className="text-xs text-slate-500">Purchase</div>
           <h1 className="text-2xl font-semibold">Dashboard</h1>
+          <div className="mt-1 flex items-center gap-2">
+            <span className="text-sm text-slate-600">
+              Total this week:
+            </span>
+            <span className="text-lg font-semibold text-slate-800">
+              {totalPiecesThisWeek.toLocaleString()} pcs
+            </span>
+          </div>
         </div>
         
         {/* Week Navigation & Controls */}
