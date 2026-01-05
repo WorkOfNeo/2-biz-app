@@ -85,6 +85,7 @@ export default function PurchaseDashboardPage() {
   const supabase = createClientComponentClient();
   const [rows, setRows] = useState<PoRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [selectedSupplier, setSelectedSupplier] = useState<string | null>(null);
 
   async function fetchRows() {
     setLoading(true);
@@ -117,6 +118,21 @@ export default function PurchaseDashboardPage() {
     return { weekDates: dates, weekKeys: keys, today: formatMMDD(now) };
   }, []);
 
+  // Get unique suppliers sorted alphabetically
+  const suppliers = useMemo(() => {
+    const set = new Set<string>();
+    for (const po of rows) {
+      set.add(po.supplier || 'Unknown');
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [rows]);
+
+  // Filter rows by selected supplier
+  const filteredRows = useMemo(() => {
+    if (!selectedSupplier) return rows;
+    return rows.filter((po) => (po.supplier || 'Unknown') === selectedSupplier);
+  }, [rows, selectedSupplier]);
+
   // Group POs by weekday column, then by supplier
   const { columns, outsideWeek } = useMemo(() => {
     type SupplierGroup = { supplier: string; pos: PoRow[] };
@@ -125,7 +141,7 @@ export default function PurchaseDashboardPage() {
 
     // First pass: group by day
     const dayPOs: PoRow[][] = Array.from({ length: 7 }, () => []);
-    for (const po of rows) {
+    for (const po of filteredRows) {
       const normalized = normalizeEta(po.eta);
       if (!normalized) {
         outside.push(po);
@@ -156,7 +172,7 @@ export default function PurchaseDashboardPage() {
     }
 
     return { columns: cols, outsideWeek: outside };
-  }, [rows, weekKeys]);
+  }, [filteredRows, weekKeys]);
 
   return (
     <div className="p-4 space-y-4 max-w-full">
@@ -170,6 +186,44 @@ export default function PurchaseDashboardPage() {
 
       {loading && rows.length === 0 && (
         <div className="text-center py-8 text-slate-500">Loading...</div>
+      )}
+
+      {/* Supplier Filter Tabs */}
+      {suppliers.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-slate-500 mr-1">Filter by supplier:</span>
+          <button
+            onClick={() => setSelectedSupplier(null)}
+            className={`
+              px-3 py-1.5 text-xs rounded-full border transition-colors
+              ${selectedSupplier === null
+                ? 'bg-slate-800 text-white border-slate-800'
+                : 'bg-white text-slate-600 border-slate-300 hover:border-slate-400 hover:bg-slate-50'
+              }
+            `}
+          >
+            All ({rows.length})
+          </button>
+          {suppliers.map((supplier) => {
+            const count = rows.filter((po) => (po.supplier || 'Unknown') === supplier).length;
+            const isActive = selectedSupplier === supplier;
+            return (
+              <button
+                key={supplier}
+                onClick={() => setSelectedSupplier(supplier)}
+                className={`
+                  px-3 py-1.5 text-xs rounded-full border transition-colors
+                  ${isActive
+                    ? 'bg-slate-800 text-white border-slate-800'
+                    : 'bg-white text-slate-600 border-slate-300 hover:border-slate-400 hover:bg-slate-50'
+                  }
+                `}
+              >
+                {supplier} ({count})
+              </button>
+            );
+          })}
+        </div>
       )}
 
       {/* Kanban Board */}
