@@ -35,3 +35,7 @@ WHERE created_at > now() - interval '7 days'
 GROUP BY type, queue, status
 ORDER BY latest DESC;
 
+
+
+
+

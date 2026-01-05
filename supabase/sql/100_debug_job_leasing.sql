@@ -88,3 +88,7 @@ grant execute on function public.test_lease_fast_job() to authenticated;
 -- SELECT * FROM public.debug_fast_queue_jobs();  -- See all fast queue jobs and why they're not leasable
 -- SELECT * FROM public.test_lease_fast_job();    -- Try to lease a fast job (will actually lease it!)
 
+
+
+
+

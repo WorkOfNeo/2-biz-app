@@ -32,3 +32,7 @@ BEGIN
   
   RAISE NOTICE 'Vendor rows with stale data have been reset. Current count of rows without styles: %', affected_count;
 END $$;
+
+
+
+

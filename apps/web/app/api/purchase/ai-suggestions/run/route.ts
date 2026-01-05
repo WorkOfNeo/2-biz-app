@@ -120,6 +120,77 @@ export async function POST(req: Request) {
       seasonInfo = season;
     }
 
+    // Fetch ALL styles linked to the selected season (including those with no sales)
+    let seasonStyles: Array<{
+      style_no: string;
+      style_name: string | null;
+      color: string;
+      supplier: string | null;
+    }> = [];
+    let noSalesStyles: Array<{
+      style_no: string;
+      style_name: string | null;
+      color: string;
+      supplier: string | null;
+    }> = [];
+
+    if (seasonId) {
+      try {
+        // Get style_colors for this season via style_color_seasons
+        const { data: seasonStyleColors, error: sscError } = await supabase
+          .from('style_color_seasons')
+          .select(`
+            style_color_id,
+            style_colors!inner (
+              id,
+              color,
+              style_id,
+              styles!inner (
+                style_no,
+                style_name,
+                supplier
+              )
+            )
+          `)
+          .eq('season_id', seasonId);
+
+        if (sscError) {
+          console.warn('[AI Suggestions] Could not fetch season styles:', sscError);
+        } else if (seasonStyleColors) {
+          // Flatten the nested structure
+          for (const row of seasonStyleColors) {
+            const sc = row.style_colors as any;
+            if (sc && sc.styles) {
+              seasonStyles.push({
+                style_no: sc.styles.style_no,
+                style_name: sc.styles.style_name,
+                color: sc.color,
+                supplier: sc.styles.supplier,
+              });
+            }
+          }
+
+          console.log('[AI Suggestions] Found', seasonStyles.length, 'style/colors for season');
+
+          // Build a set of style/color keys that have sales in the CSV
+          const salesKeys = new Set<string>();
+          for (const row of (salesSummary || [])) {
+            salesKeys.add(`${row.style_no}|${row.color}`.toLowerCase());
+          }
+
+          // Find styles with NO sales
+          noSalesStyles = seasonStyles.filter(s => {
+            const key = `${s.style_no}|${s.color}`.toLowerCase();
+            return !salesKeys.has(key);
+          });
+
+          console.log('[AI Suggestions]', noSalesStyles.length, 'style/colors have no sales yet');
+        }
+      } catch (e) {
+        console.warn('[AI Suggestions] Error fetching season styles:', e);
+      }
+    }
+
     // Build aggregated input for AI (grouped by supplier)
     const salesBySupplier: Record<string, any[]> = {};
     for (const row of (salesSummary || [])) {
@@ -357,7 +428,35 @@ export async function POST(req: Request) {
         totalQty: importData.total_qty,
         totalAmount: importData.total_amount,
       },
+      seasonAssortment: {
+        totalStyleColors: seasonStyles.length,
+        withSales: seasonStyles.length - noSalesStyles.length,
+        noSalesYet: noSalesStyles.length,
+      },
     }, null, 2);
+
+    // Build no-sales styles summary (grouped by supplier, limited)
+    const noSalesBySupplier: Record<string, Array<{ style_no: string; color: string; style_name: string | null }>> = {};
+    for (const s of noSalesStyles) {
+      const supplier = s.supplier || 'Unknown';
+      if (!noSalesBySupplier[supplier]) {
+        noSalesBySupplier[supplier] = [];
+      }
+      // Limit to first 20 per supplier to control tokens
+      if (noSalesBySupplier[supplier].length < 20) {
+        noSalesBySupplier[supplier].push({
+          style_no: s.style_no,
+          color: s.color,
+          style_name: s.style_name,
+        });
+      }
+    }
+    const noSalesStylesStr = noSalesStyles.length > 0
+      ? JSON.stringify({
+          summary: `${noSalesStyles.length} style/colors from this season have no sales yet`,
+          bySupplier: noSalesBySupplier,
+        }, null, 2)
+      : 'All season styles have sales in the uploaded data.';
 
     // Build suppliers string (master data)
     const suppliersStr = JSON.stringify(
@@ -424,6 +523,7 @@ export async function POST(req: Request) {
       context: contextStr,
       suppliers: suppliersStr,
       sales_by_supplier: salesBySupplierStr,
+      no_sales_styles: noSalesStylesStr,
       customer_analysis: customerAnalysisStr,
       yoy_analysis: yoyAnalysisStr,
       feedback: feedbackStr,
@@ -446,6 +546,11 @@ export async function POST(req: Request) {
         topNPerSupplier,
       },
       suppliersSent: Object.keys(limitedSalesBySupplier),
+      seasonAssortment: {
+        totalStyleColors: seasonStyles.length,
+        withSales: seasonStyles.length - noSalesStyles.length,
+        noSalesYet: noSalesStyles.length,
+      },
       yoyAnalysis: yoyAnalysis || null,
     };
 
@@ -592,6 +697,12 @@ export async function POST(req: Request) {
       purchaseRunId: purchaseRun?.id,
       suggestions: aiOutput,
       yoyAnalysis: yoyAnalysis || null,
+      seasonAssortment: {
+        totalStyleColors: seasonStyles.length,
+        withSales: seasonStyles.length - noSalesStyles.length,
+        noSalesYet: noSalesStyles.length,
+        noSalesStylesBySupplier: noSalesBySupplier,
+      },
       stats: {
         durationMs,
         tokensUsed: usage?.total_tokens || 0,

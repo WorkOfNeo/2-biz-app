@@ -34,6 +34,9 @@ const DEFAULT_PROMPTS: Record<PromptKey, Omit<PromptConfig, 'key'>> = {
 ## Sales Summary by Supplier
 {{sales_by_supplier}}
 
+## Season Styles with No Sales Yet
+{{no_sales_styles}}
+
 ## Customer Coverage Analysis
 {{customer_analysis}}
 
@@ -44,10 +47,12 @@ const DEFAULT_PROMPTS: Record<PromptKey, Omit<PromptConfig, 'key'>> = {
 {{feedback}}
 
 ## Instructions
-Consider the YoY analysis when making recommendations:
+Consider ALL available data when making recommendations:
 - If aggregated index is below 100%, be more conservative with order quantities
 - Factor in nulled customers (lost potential) when projecting total demand
 - Consider remaining potential from customers not yet visited
+- Flag styles with NO SALES YET - these may need attention (new styles, slow starters, or potential duds)
+- For no-sales styles: recommend small initial orders or skip if season is too far along
 1. For each supplier, recommend which styles/colors to order and in what quantities.
 2. Consider MOQ (minimum order quantity) and lead times.
 3. Factor in sales velocity, customer coverage, and year-over-year indices.

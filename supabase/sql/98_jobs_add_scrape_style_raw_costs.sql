@@ -31,3 +31,7 @@ alter table public.jobs
     'scrape_style_raw_costs'
   ));
 
+
+
+
+
