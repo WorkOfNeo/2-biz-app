@@ -265,37 +265,60 @@ export async function POST(req: Request) {
       isPermanentlyClosed: boolean;
     }> = {};
 
+    // Fetch salespersons for ID -> name mapping
+    const { data: salespersonsData } = await supabase
+      .from('salespersons')
+      .select('id, name');
+    
+    const salespersonById = new Map<string, string>(
+      (salespersonsData || []).map(sp => [sp.id, sp.name])
+    );
+    const salespersonByName = new Map<string, string>(
+      (salespersonsData || []).map(sp => [sp.name.toLowerCase(), sp.name])
+    );
+    
+    console.log('[Compare API] Loaded', salespersonById.size, 'salespersons from DB');
+
+    // Fetch customers with their salesperson assignment
+    const { data: customersWithSalesperson } = await supabase
+      .from('customers')
+      .select('customer_id, salesperson_id, nulled, permanently_closed');
+    
+    const customerToSalesperson = new Map<string, string | null>(
+      (customersWithSalesperson || []).map(c => [c.customer_id, c.salesperson_id])
+    );
+    const customerStatusMap = new Map(
+      (customersWithSalesperson || []).map(c => [c.customer_id, { nulled: c.nulled, closed: c.permanently_closed }])
+    );
+    
+    console.log('[Compare API] Loaded', customerToSalesperson.size, 'customers with salesperson links');
+
     if (comparisonSeasonId) {
-      // Fetch sales_stats with salesperson info
+      // Fetch sales_stats with salesperson_id
       const { data: lastYearStats } = await supabase
         .from('sales_stats')
         .select(`
           account_no,
           customer_name,
-          salesperson_name,
+          salesperson_id,
           qty,
           price
         `)
         .eq('season_id', comparisonSeasonId);
 
-      // Fetch customer status (nulled, permanently_closed)
-      const { data: customers } = await supabase
-        .from('customers')
-        .select('customer_id, nulled, permanently_closed');
-      
-      const customerStatusMap = new Map(
-        (customers || []).map(c => [c.customer_id, { nulled: c.nulled, closed: c.permanently_closed }])
-      );
-
       for (const row of (lastYearStats || [])) {
         const accNo = row.account_no;
         const status = customerStatusMap.get(accNo) || { nulled: false, closed: false };
+        
+        // Get salesperson name from ID
+        const spId = row.salesperson_id || customerToSalesperson.get(accNo);
+        const salespersonName = spId ? salespersonById.get(spId) || null : null;
         
         if (!lastYearByCustomer[accNo]) {
           lastYearByCustomer[accNo] = {
             customerId: accNo,
             customerName: row.customer_name,
-            salespersonName: row.salesperson_name,
+            salespersonName: salespersonName,
             qty: 0,
             amount: 0,
             isNulled: status.nulled || false,
@@ -432,22 +455,25 @@ export async function POST(req: Request) {
       styles: Map<string, number>; // style|color -> qty
     }> = {};
 
-    // Aggregate this year by sales rep
+    // Aggregate this year by sales rep (normalize CSV names to DB salesperson names)
     for (const row of rows) {
-      const rep = row.sales_rep || 'Unknown';
-      if (!salesRepCustomers[rep]) {
-        salesRepCustomers[rep] = { thisYear: new Set(), lastYear: new Set(), lastYearExcluded: new Set() };
+      // Try to match CSV sales_rep name to a DB salesperson (case-insensitive)
+      const rawRep = row.sales_rep || '';
+      const normalizedRep = salespersonByName.get(rawRep.toLowerCase()) || rawRep || 'Unknown';
+      
+      if (!salesRepCustomers[normalizedRep]) {
+        salesRepCustomers[normalizedRep] = { thisYear: new Set(), lastYear: new Set(), lastYearExcluded: new Set() };
       }
-      if (!salesRepSales[rep]) {
-        salesRepSales[rep] = { thisYearQty: 0, thisYearAmount: 0, lastYearQty: 0, lastYearAmount: 0, styles: new Map() };
+      if (!salesRepSales[normalizedRep]) {
+        salesRepSales[normalizedRep] = { thisYearQty: 0, thisYearAmount: 0, lastYearQty: 0, lastYearAmount: 0, styles: new Map() };
       }
       
-      salesRepCustomers[rep].thisYear.add(row.customer_ref);
-      salesRepSales[rep].thisYearQty += Number(row.qty) || 0;
-      salesRepSales[rep].thisYearAmount += Number(row.net_amount) || 0;
+      salesRepCustomers[normalizedRep].thisYear.add(row.customer_ref);
+      salesRepSales[normalizedRep].thisYearQty += Number(row.qty) || 0;
+      salesRepSales[normalizedRep].thisYearAmount += Number(row.net_amount) || 0;
       
       const styleKey = `${row.style_no}|${row.color}`;
-      salesRepSales[rep].styles.set(styleKey, (salesRepSales[rep].styles.get(styleKey) || 0) + (Number(row.qty) || 0));
+      salesRepSales[normalizedRep].styles.set(styleKey, (salesRepSales[normalizedRep].styles.get(styleKey) || 0) + (Number(row.qty) || 0));
     }
 
     // Add last year data by sales rep (from sales_stats)
@@ -637,10 +663,11 @@ export async function POST(req: Request) {
       })
       .sort((a, b) => b.qty - a.qty);
 
-    // By Sales Rep aggregation
+    // By Sales Rep aggregation (normalize CSV names to DB salesperson names)
     const repAgg: Record<string, { qty: number; amount: number; customers: Set<string>; styles: Map<string, number> }> = {};
     for (const row of rows) {
-      const rep = row.sales_rep || 'Unknown';
+      const rawRep = row.sales_rep || '';
+      const rep = salespersonByName.get(rawRep.toLowerCase()) || rawRep || 'Unknown';
       if (!repAgg[rep]) {
         repAgg[rep] = { qty: 0, amount: 0, customers: new Set(), styles: new Map() };
       }
