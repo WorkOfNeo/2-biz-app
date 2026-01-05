@@ -147,8 +147,9 @@ export function SidebarNav() {
   const purchaseLinks = [
     can('/purchase/dashboard') ? <NavLink key="pd" href="/purchase/dashboard" label="Dashboard" /> : null,
     can('/purchase/orders') ? <NavLink key="po" href="/purchase/orders" label="Purchase Orders" /> : null,
-    can('/purchase/make-order') ? <NavLink key="pmo" href="/purchase/make-order" label="Make order" /> : null,
+    can('/purchase/make-order') ? <NavLink key="pmo" href="/purchase/make-order" label="AI Suggestions" /> : null,
     can('/purchase/app-pos') ? <NavLink key="pap" href="/purchase/app-pos" label="App PO's" /> : null,
+    can('/purchase/suppliers') ? <NavLink key="psup" href="/purchase/suppliers" label="Suppliers" /> : null,
     can('/purchase/po-calculator') ? <NavLink key="poc" href="/purchase/po-calculator" label="PO Calculator" /> : null,
     can('/purchase/style-statistics') ? <NavLink key="pss" href="/purchase/style-statistics" label="Style Statistics" /> : null,
   ].filter(Boolean) as any[];
