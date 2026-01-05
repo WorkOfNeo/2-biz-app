@@ -279,10 +279,10 @@ export async function POST(req: Request) {
     
     console.log('[Compare API] Loaded', salespersonById.size, 'salespersons from DB');
 
-    // Fetch customers with their salesperson assignment
+    // Fetch customers with their salesperson assignment AND company name
     const { data: customersWithSalesperson } = await supabase
       .from('customers')
-      .select('customer_id, salesperson_id, nulled, permanently_closed');
+      .select('customer_id, company, salesperson_id, nulled, permanently_closed');
     
     const customerToSalesperson = new Map<string, string | null>(
       (customersWithSalesperson || []).map(c => [c.customer_id, c.salesperson_id])
@@ -291,7 +291,17 @@ export async function POST(req: Request) {
       (customersWithSalesperson || []).map(c => [c.customer_id, { nulled: c.nulled, closed: c.permanently_closed }])
     );
     
+    // Build lookup: company name (lowercased) -> customer_id
+    // This allows matching CSV customer_display to our customers table
+    const companyToCustomerId = new Map<string, string>();
+    for (const c of (customersWithSalesperson || [])) {
+      if (c.company && c.customer_id) {
+        companyToCustomerId.set(c.company.toLowerCase().trim(), c.customer_id);
+      }
+    }
+    
     console.log('[Compare API] Loaded', customerToSalesperson.size, 'customers with salesperson links');
+    console.log('[Compare API] Built company name lookup for', companyToCustomerId.size, 'customers');
 
     if (comparisonSeasonId) {
       // Fetch sales_stats with salesperson_id
@@ -456,6 +466,7 @@ export async function POST(req: Request) {
     }> = {};
 
     // Aggregate this year by sales rep (normalize CSV names to DB salesperson names)
+    // Also resolve customer_display to customer_id for proper matching with last year
     for (const row of rows) {
       // Try to match CSV sales_rep name to a DB salesperson (case-insensitive)
       const rawRep = row.sales_rep || '';
@@ -468,7 +479,11 @@ export async function POST(req: Request) {
         salesRepSales[normalizedRep] = { thisYearQty: 0, thisYearAmount: 0, lastYearQty: 0, lastYearAmount: 0, styles: new Map() };
       }
       
-      salesRepCustomers[normalizedRep].thisYear.add(row.customer_ref);
+      // Resolve CSV customer_display to our DB customer_id for matching
+      const customerDisplay = row.customer_display || '';
+      const customerId = companyToCustomerId.get(customerDisplay.toLowerCase().trim()) || row.customer_ref;
+      
+      salesRepCustomers[normalizedRep].thisYear.add(customerId);
       salesRepSales[normalizedRep].thisYearQty += Number(row.qty) || 0;
       salesRepSales[normalizedRep].thisYearAmount += Number(row.net_amount) || 0;
       
@@ -539,6 +554,16 @@ export async function POST(req: Request) {
     salesRepAnalysis.sort((a, b) => b.lastYearQty - a.lastYearQty);
 
     console.log('[Compare API] Sales rep analysis:', salesRepAnalysis.length, 'reps');
+    
+    // Debug: Show visit matching for first few reps
+    for (const rep of salesRepAnalysis.slice(0, 3)) {
+      const customers = salesRepCustomers[rep.salesRep];
+      if (customers) {
+        const thisYearSample = [...customers.thisYear].slice(0, 3);
+        const lastYearSample = [...customers.lastYear].slice(0, 3);
+        console.log(`[Compare API] ${rep.salesRep}: thisYear=${customers.thisYear.size} samples:[${thisYearSample.join(',')}], lastYear=${customers.lastYear.size} samples:[${lastYearSample.join(',')}], visited=${rep.customersVisited}/${rep.customersShouldVisit}`);
+      }
+    }
 
     // Build weekly breakdown from CSV dates
     const weeklyData: Record<string, { qty: number; amount: number }> = {};
@@ -673,7 +698,11 @@ export async function POST(req: Request) {
       }
       repAgg[rep].qty += Number(row.qty) || 0;
       repAgg[rep].amount += Number(row.net_amount) || 0;
-      repAgg[rep].customers.add(row.customer_ref);
+      
+      // Resolve customer_display to customer_id for consistent counting
+      const customerDisplay = row.customer_display || '';
+      const customerId = companyToCustomerId.get(customerDisplay.toLowerCase().trim()) || row.customer_ref;
+      repAgg[rep].customers.add(customerId);
 
       const styleKey = `${row.style_no}|${row.color}`;
       const currentStyleQty = repAgg[rep].styles.get(styleKey) || 0;
