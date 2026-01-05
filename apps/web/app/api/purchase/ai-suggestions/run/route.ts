@@ -902,12 +902,17 @@ export async function POST(req: Request) {
             if (line.style_no && imageUrlMap[line.style_no]) {
               (line as any).image_url = imageUrlMap[line.style_no];
             }
-            // Add size info
+            // Add size info and sales data
             if (sizeData) {
               (line as any).available_sizes = sizeData.sizes;
+              // Add actual sales data per size
+              (line as any).sold_sizes = sizeData.sizeQty;
+              // Calculate total sold
+              const totalSold = Object.values(sizeData.sizeQty).reduce((sum: number, v) => sum + (v as number), 0);
+              (line as any).total_sold = totalSold;
+              
               // If AI didn't provide size_quantities, calculate from suggested_qty proportionally
               if (!(line as any).size_quantities && sizeData.sizes.length > 0) {
-                const totalSold = Object.values(sizeData.sizeQty).reduce((sum: number, v) => sum + (v as number), 0);
                 if (totalSold > 0) {
                   const sizeQuantities: SizeQtyMap = {};
                   for (const size of sizeData.sizes) {

@@ -70,10 +70,12 @@ type SupplierSuggestion = {
     color: string;
     image_url?: string;
     suggested_qty: number;
+    total_sold?: number; // Total units sold from sales data
     reasoning: string;
     priority: 'high' | 'medium' | 'low';
     available_sizes?: string[]; // Available sizes from sales data
-    size_quantities?: SizeQuantities; // Quantity per size
+    size_quantities?: SizeQuantities; // Suggested quantity per size
+    sold_sizes?: SizeQuantities; // Actual sales per size from CSV
   }>;
   moq_status: 'met' | 'under' | 'n/a';
   notes?: string;
@@ -397,6 +399,29 @@ function ProgressSteps({ currentStep, steps }: { currentStep: number; steps: str
 // Size quantity adjustment type
 type SizeAdjustments = Record<string, Record<string, number>>; // lineKey -> size -> qty
 
+// Standard size ordering
+const SIZE_ORDER: Record<string, number> = {
+  // Letter sizes
+  'XXS': 1, 'XS': 2, 'S': 3, 'M': 4, 'L': 5, 'XL': 6, 'XXL': 7, 'XXXL': 8, '3XL': 8, '4XL': 9,
+  // Combined sizes
+  'S/M': 10, 'M/L': 11, 'L/XL': 12, 'XL/XXL': 13,
+  // Numeric sizes (pants/jeans)
+  '28': 20, '29': 21, '30': 22, '31': 23, '32': 24, '33': 25, '34': 26, '35': 27, '36': 28, 
+  '38': 29, '40': 30, '42': 31, '44': 32, '46': 33, '48': 34, '50': 35, '52': 36, '54': 37,
+  // One size
+  'ONE SIZE': 100, 'OS': 100, 'O/S': 100,
+};
+
+function sortSizes(sizes: string[]): string[] {
+  return [...sizes].sort((a, b) => {
+    const orderA = SIZE_ORDER[a.toUpperCase()] ?? 50;
+    const orderB = SIZE_ORDER[b.toUpperCase()] ?? 50;
+    if (orderA !== orderB) return orderA - orderB;
+    // Fallback to alphabetical
+    return a.localeCompare(b);
+  });
+}
+
 function SupplierReviewCard({
   supplier,
   onApprove,
@@ -545,8 +570,9 @@ function SupplierReviewCard({
                 <th className="text-left p-3 font-medium w-10"></th>
                 <th className="text-left p-3 font-medium">Style</th>
                 <th className="text-left p-3 font-medium">Color</th>
+                <th className="text-right p-3 font-medium text-slate-400">Sold</th>
                 <th className="text-right p-3 font-medium">Suggested</th>
-                <th className="text-right p-3 font-medium w-24">Total Qty</th>
+                <th className="text-right p-3 font-medium w-24">Order Qty</th>
                 <th className="text-center p-3 font-medium w-20">Priority</th>
               </tr>
             </thead>
@@ -557,7 +583,9 @@ function SupplierReviewCard({
                 const hasSizes = (line.available_sizes && line.available_sizes.length > 0) || 
                                  (line.size_quantities && Object.keys(line.size_quantities).length > 0);
                 const isExpanded = expandedLines.has(key);
-                const sizes: string[] = line.available_sizes || (line.size_quantities ? Object.keys(line.size_quantities) : []);
+                const rawSizes: string[] = line.available_sizes || (line.size_quantities ? Object.keys(line.size_quantities) : []);
+                const sizes = sortSizes(rawSizes);
+                const totalSold = line.total_sold ?? (line.sold_sizes ? Object.values(line.sold_sizes).reduce((s, v) => s + v, 0) : 0);
                 
                 return (
                   <React.Fragment key={idx}>
@@ -590,6 +618,7 @@ function SupplierReviewCard({
                         </div>
                       </td>
                       <td className="p-3">{line.color}</td>
+                      <td className="p-3 text-right text-slate-400">{totalSold > 0 ? totalSold.toLocaleString() : '-'}</td>
                       <td className="p-3 text-right text-slate-500">{line.suggested_qty}</td>
                       <td className="p-3">
                         <Input
@@ -610,24 +639,29 @@ function SupplierReviewCard({
                         </Badge>
                       </td>
                     </tr>
-                    {/* Size breakdown row */}
+                    {/* Size breakdown row - horizontal layout with label on top */}
                     {isExpanded && hasSizes && (
-                      <tr className="bg-slate-50/50">
-                        <td colSpan={6} className="px-4 py-2">
-                          <div className="flex flex-wrap gap-2 items-center">
-                            <span className="text-xs text-slate-500 mr-2">Sizes:</span>
-                            {sizes.map(size => (
-                              <div key={size} className="flex items-center gap-1 bg-white rounded border px-2 py-1">
-                                <span className="text-xs font-medium w-8 text-center">{size}</span>
-                                <Input
-                                  type="number"
-                                  min={0}
-                                  value={getSizeQty(line, size)}
-                                  onChange={e => handleSizeQtyChange(key, size, e.target.value)}
-                                  className="w-14 text-right h-6 text-xs"
-                                />
-                              </div>
-                            ))}
+                      <tr className="bg-[#F5F3F0]/50">
+                        <td colSpan={7} className="px-4 py-3">
+                          <div className="flex gap-1 items-end overflow-x-auto pb-1">
+                            {sizes.map(size => {
+                              const soldQty = line.sold_sizes?.[size] ?? 0;
+                              return (
+                                <div key={size} className="flex flex-col items-center min-w-[52px]">
+                                  <span className="text-[10px] font-semibold text-slate-600 mb-1">{size}</span>
+                                  <Input
+                                    type="number"
+                                    min={0}
+                                    value={getSizeQty(line, size)}
+                                    onChange={e => handleSizeQtyChange(key, size, e.target.value)}
+                                    className="w-12 text-center h-7 text-xs px-1"
+                                  />
+                                  <span className="text-[9px] text-slate-400 mt-0.5">
+                                    {soldQty > 0 ? `(${soldQty})` : '-'}
+                                  </span>
+                                </div>
+                              );
+                            })}
                           </div>
                         </td>
                       </tr>
