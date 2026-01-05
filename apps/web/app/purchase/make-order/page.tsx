@@ -118,6 +118,47 @@ type CreatedPO = {
   error?: string;
 };
 
+// Proper CSV line parser that handles quoted fields with delimiters inside
+function parseCSVLine(line: string, delimiter: string): string[] {
+  const result: string[] = [];
+  let current = '';
+  let inQuotes = false;
+  let i = 0;
+  
+  while (i < line.length) {
+    const char = line[i];
+    
+    if (char === '"') {
+      if (inQuotes && line[i + 1] === '"') {
+        // Escaped quote ("") inside quoted field
+        current += '"';
+        i += 2;
+        continue;
+      }
+      // Toggle quote state
+      inQuotes = !inQuotes;
+      i++;
+      continue;
+    }
+    
+    if (char === delimiter && !inQuotes) {
+      // End of field
+      result.push(current.trim());
+      current = '';
+      i++;
+      continue;
+    }
+    
+    current += char;
+    i++;
+  }
+  
+  // Add the last field
+  result.push(current.trim());
+  
+  return result;
+}
+
 // CSV Parser - handles size-level rows and aggregates to customer/style/color
 function parseCSV(text: string): CSVRow[] {
   console.log('═══════════════════════════════════════════════════════════');
@@ -142,7 +183,8 @@ function parseCSV(text: string): CSVRow[] {
     : semicolonCount > commaCount ? ';' : ',';
   console.log(`[CSV Parser] Detected delimiter: "${delimiter === '\t' ? 'TAB' : delimiter}" (commas:${commaCount}, semicolons:${semicolonCount}, tabs:${tabCount})`);
   
-  const rawHeaders = headerLine.split(delimiter).map(h => h.trim());
+  // Use proper CSV parser for headers too (in case headers have quotes)
+  const rawHeaders = parseCSVLine(headerLine, delimiter);
   console.log('[CSV Parser] Raw headers (before normalization):', rawHeaders);
   
   const headers = rawHeaders.map(h => h.toLowerCase().replace(/[^a-z0-9_ ]/g, '_').replace(/\s+/g, '_'));
@@ -205,10 +247,19 @@ function parseCSV(text: string): CSVRow[] {
     return cleaned.trim();
   };
   
+  let mismatchedFieldCount = 0;
+  
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i]!;
-    const rawValues = line.split(delimiter);
+    // Use proper CSV parser that handles quoted fields with delimiters inside
+    const rawValues = parseCSVLine(line, delimiter);
     const values = rawValues.map(cleanExcelValue);
+    
+    // Warn if field count doesn't match header count
+    if (values.length !== headers.length && mismatchedFieldCount < 3) {
+      console.log(`[CSV Parser] Row ${i} field count mismatch: expected ${headers.length}, got ${values.length}`);
+      mismatchedFieldCount++;
+    }
     
     const row: any = {};
     headers.forEach((h, idx) => {
