@@ -123,6 +123,62 @@ export async function POST(req: Request) {
       console.error('[AI Suggestions] Failed to fetch suppliers:', suppliersError);
     }
 
+    // Build supplier name lookup (case-insensitive)
+    const knownSupplierNames = new Set<string>();
+    const supplierByLowerName = new Map<string, any>();
+    for (const s of (suppliers || [])) {
+      knownSupplierNames.add(s.name.toLowerCase());
+      supplierByLowerName.set(s.name.toLowerCase(), s);
+      // Also check external_name for matching
+      if (s.external_name) {
+        knownSupplierNames.add(s.external_name.toLowerCase());
+        supplierByLowerName.set(s.external_name.toLowerCase(), s);
+      }
+    }
+
+    // Find all unique suppliers from sales data
+    const suppliersFromSales = new Set<string>();
+    for (const row of (salesSummary || [])) {
+      if (row.supplier) {
+        suppliersFromSales.add(row.supplier);
+      }
+    }
+
+    // Detect unlinked suppliers (in sales data but not in suppliers table)
+    const unlinkedSuppliers: Array<{ name: string; styleCount: number; totalQty: number }> = [];
+    const supplierStats: Record<string, { styleCount: number; totalQty: number }> = {};
+    
+    for (const row of (salesSummary || [])) {
+      const supplierName = row.supplier || 'Unknown';
+      if (!supplierStats[supplierName]) {
+        supplierStats[supplierName] = { styleCount: 0, totalQty: 0 };
+      }
+      supplierStats[supplierName].styleCount++;
+      supplierStats[supplierName].totalQty += Number(row.total_qty) || 0;
+    }
+
+    for (const [name, stats] of Object.entries(supplierStats)) {
+      const isKnown = knownSupplierNames.has(name.toLowerCase());
+      if (!isKnown && name !== 'Unknown') {
+        unlinkedSuppliers.push({
+          name,
+          styleCount: stats.styleCount,
+          totalQty: stats.totalQty,
+        });
+      }
+    }
+
+    // Sort by total qty descending
+    unlinkedSuppliers.sort((a, b) => b.totalQty - a.totalQty);
+
+    if (unlinkedSuppliers.length > 0) {
+      console.log('[AI Suggestions] UNLINKED SUPPLIERS detected:', unlinkedSuppliers.length);
+      console.log('[AI Suggestions] These suppliers have no master data (MOQ, lead time, etc.):');
+      for (const s of unlinkedSuppliers) {
+        console.log(`  - "${s.name}": ${s.styleCount} styles, ${s.totalQty} pcs`);
+      }
+    }
+
     // Fetch season info if provided
     let seasonInfo = null;
     if (seasonId) {
@@ -767,6 +823,13 @@ export async function POST(req: Request) {
         withSales: seasonStyles.length - noSalesStyles.length,
         noSalesYet: noSalesStyles.length,
         noSalesStylesBySupplier: noSalesBySupplier,
+      },
+      // Suppliers from sales data that don't have a matching entry in suppliers table
+      unlinkedSuppliers: unlinkedSuppliers.length > 0 ? unlinkedSuppliers : null,
+      suppliersCoverage: {
+        totalFromSales: suppliersFromSales.size,
+        linkedCount: suppliersFromSales.size - unlinkedSuppliers.length,
+        unlinkedCount: unlinkedSuppliers.length,
       },
       stats: {
         durationMs,

@@ -546,6 +546,9 @@ export default function PurchaseMakeOrderPage() {
   const [yoyAnalysis, setYoyAnalysis] = useState<any>(null);
   const [purchaseRunId, setPurchaseRunId] = useState<string>('');
   const [aiStats, setAiStats] = useState<{ tokensUsed: number; durationMs: number } | null>(null);
+  const [unlinkedSuppliers, setUnlinkedSuppliers] = useState<Array<{ name: string; styleCount: number; totalQty: number }>>([]);
+  const [suppliersCoverage, setSuppliersCoverage] = useState<{ totalFromSales: number; linkedCount: number; unlinkedCount: number } | null>(null);
+  const [creatingSupplier, setCreatingSupplier] = useState<string | null>(null);
   
   const [currentSupplierIdx, setCurrentSupplierIdx] = useState(0);
   const [committedSuppliers, setCommittedSuppliers] = useState<SupplierCommitData[]>([]);
@@ -649,6 +652,16 @@ export default function PurchaseMakeOrderPage() {
         setYoyAnalysis(data.yoyAnalysis);
       }
       
+      // Store unlinked suppliers info
+      if (data.unlinkedSuppliers) {
+        setUnlinkedSuppliers(data.unlinkedSuppliers);
+      } else {
+        setUnlinkedSuppliers([]);
+      }
+      if (data.suppliersCoverage) {
+        setSuppliersCoverage(data.suppliersCoverage);
+      }
+      
       setAiOutput(data.suggestions);
       setPurchaseRunId(data.purchaseRunId);
       setAiStats({ tokensUsed: data.stats.tokensUsed, durationMs: data.stats.durationMs });
@@ -660,6 +673,42 @@ export default function PurchaseMakeOrderPage() {
       setIsRunningAI(false);
     }
   }, [importId, selectedSeasonId, comparisonSeasonId]);
+
+  // Create a new supplier from unlinked list
+  const handleCreateSupplier = useCallback(async (supplierName: string) => {
+    setCreatingSupplier(supplierName);
+    try {
+      const res = await fetch('/api/suppliers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: supplierName,
+          active: true,
+        }),
+      });
+      
+      const data = await res.json();
+      
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to create supplier');
+      }
+      
+      // Remove from unlinked list
+      setUnlinkedSuppliers(prev => prev.filter(s => s.name !== supplierName));
+      
+      // Update coverage
+      setSuppliersCoverage(prev => prev ? {
+        ...prev,
+        linkedCount: prev.linkedCount + 1,
+        unlinkedCount: prev.unlinkedCount - 1,
+      } : null);
+      
+    } catch (err: any) {
+      alert(`Error creating supplier: ${err.message}`);
+    } finally {
+      setCreatingSupplier(null);
+    }
+  }, []);
 
   const handleSupplierApprove = useCallback((data: SupplierCommitData) => {
     setCommittedSuppliers(prev => [...prev, data]);
@@ -1059,6 +1108,49 @@ export default function PurchaseMakeOrderPage() {
                 <div key={i} className="text-sm text-amber-800">⚠️ {w}</div>
                 ))}
               </div>
+          )}
+
+          {/* Unlinked Suppliers Warning */}
+          {unlinkedSuppliers.length > 0 && (
+            <Card className="border-orange-300 bg-orange-50">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base text-orange-800 flex items-center gap-2">
+                  ⚠️ Unlinked Suppliers ({unlinkedSuppliers.length})
+                </CardTitle>
+                <CardDescription className="text-orange-700 text-sm">
+                  These suppliers from your sales data don't have master data (MOQ, lead time). 
+                  The AI can still make suggestions, but without supplier constraints.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-2">
+                  {unlinkedSuppliers.map((s) => (
+                    <div key={s.name} className="flex items-center justify-between bg-white rounded-md p-3 border border-orange-200">
+                      <div>
+                        <div className="font-medium">{s.name}</div>
+                        <div className="text-xs text-slate-500">
+                          {s.styleCount} styles • {s.totalQty.toLocaleString()} pcs
+                        </div>
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={creatingSupplier === s.name}
+                        onClick={() => handleCreateSupplier(s.name)}
+                        className="border-orange-300 text-orange-700 hover:bg-orange-100"
+                      >
+                        {creatingSupplier === s.name ? 'Creating...' : '+ Create Supplier'}
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+                {suppliersCoverage && (
+                  <div className="mt-3 pt-3 border-t border-orange-200 text-xs text-orange-700">
+                    Supplier coverage: {suppliersCoverage.linkedCount} of {suppliersCoverage.totalFromSales} suppliers have master data
+                  </div>
+                )}
+              </CardContent>
+            </Card>
           )}
 
           {currentSupplier && (
