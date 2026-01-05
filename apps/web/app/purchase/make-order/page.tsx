@@ -56,6 +56,8 @@ type ImportStats = {
   dateRange: { start: string; end: string } | null;
 };
 
+type SizeQuantities = Record<string, number>; // e.g. { "S": 10, "M": 15, "L": 12 }
+
 type SupplierSuggestion = {
   supplier_name: string;
   supplier_id: string;
@@ -64,13 +66,18 @@ type SupplierSuggestion = {
   total_value_estimate: number;
   lines: Array<{
     style_no: string;
+    style_name?: string;
     color: string;
+    image_url?: string;
     suggested_qty: number;
     reasoning: string;
     priority: 'high' | 'medium' | 'low';
+    available_sizes?: string[]; // Available sizes from sales data
+    size_quantities?: SizeQuantities; // Quantity per size
   }>;
   moq_status: 'met' | 'under' | 'n/a';
   notes?: string;
+  skip_reason?: string; // AI recommendation to skip
 };
 
 type AIOutput = {
@@ -90,6 +97,7 @@ type SupplierCommitData = {
     adjusted_qty?: number;
     reasoning?: string;
     priority?: 'high' | 'medium' | 'low';
+    size_quantities?: SizeQuantities;
   }>;
   verdict: 'approved' | 'adjusted' | 'skipped';
   notes?: string;
@@ -386,19 +394,37 @@ function ProgressSteps({ currentStep, steps }: { currentStep: number; steps: str
 }
 
 // Supplier Review Card
+// Size quantity adjustment type
+type SizeAdjustments = Record<string, Record<string, number>>; // lineKey -> size -> qty
+
 function SupplierReviewCard({
   supplier,
   onApprove,
   onSkip,
-  isLast,
+  isActive,
 }: {
   supplier: SupplierSuggestion;
   onApprove: (data: SupplierCommitData) => void;
   onSkip: () => void;
-  isLast: boolean;
+  isActive: boolean;
 }) {
   const [adjustments, setAdjustments] = useState<Record<string, number>>({});
+  const [sizeAdjustments, setSizeAdjustments] = useState<SizeAdjustments>({});
   const [notes, setNotes] = useState('');
+  const [expandedLines, setExpandedLines] = useState<Set<string>>(new Set());
+  
+  // Get all unique sizes from all lines
+  const allSizes = useMemo(() => {
+    const sizes = new Set<string>();
+    for (const line of supplier.lines) {
+      if (line.available_sizes) {
+        line.available_sizes.forEach((s: string) => sizes.add(s));
+      } else if (line.size_quantities) {
+        Object.keys(line.size_quantities).forEach((s: string) => sizes.add(s));
+      }
+    }
+    return Array.from(sizes);
+  }, [supplier.lines]);
   
   const handleQtyChange = (styleNo: string, color: string, value: string) => {
     const key = `${styleNo}|${color}`;
@@ -412,16 +438,67 @@ function SupplierReviewCard({
     }
   };
   
+  const handleSizeQtyChange = (lineKey: string, size: string, value: string) => {
+    const num = parseInt(value, 10);
+    if (!isNaN(num) && num >= 0) {
+      setSizeAdjustments(prev => ({
+        ...prev,
+        [lineKey]: {
+          ...(prev[lineKey] || {}),
+          [size]: num,
+        },
+      }));
+    } else if (value === '') {
+      setSizeAdjustments(prev => {
+        const lineSizes = { ...(prev[lineKey] || {}) };
+        delete lineSizes[size];
+        return { ...prev, [lineKey]: lineSizes };
+      });
+    }
+  };
+  
+  const toggleLineExpand = (key: string) => {
+    setExpandedLines(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  };
+  
+  const getLineTotal = (line: SupplierSuggestion['lines'][0]) => {
+    const key = `${line.style_no}|${line.color}`;
+    // If we have size adjustments, sum them up
+    if (sizeAdjustments[key] && Object.keys(sizeAdjustments[key]).length > 0) {
+      return Object.values(sizeAdjustments[key]).reduce((sum, v) => sum + v, 0);
+    }
+    // Otherwise use the total adjustment or suggested
+    return adjustments[key] ?? line.suggested_qty;
+  };
+  
+  const getSizeQty = (line: SupplierSuggestion['lines'][0], size: string) => {
+    const key = `${line.style_no}|${line.color}`;
+    if (sizeAdjustments[key]?.[size] !== undefined) {
+      return sizeAdjustments[key][size];
+    }
+    return line.size_quantities?.[size] || 0;
+  };
+  
   const handleApprove = () => {
-    const hasAdjustments = Object.keys(adjustments).length > 0;
+    const hasAdjustments = Object.keys(adjustments).length > 0 || Object.keys(sizeAdjustments).length > 0;
     onApprove({
       supplier_name: supplier.supplier_name,
       supplier_id: supplier.supplier_id,
       lines: supplier.lines.map(line => {
         const key = `${line.style_no}|${line.color}`;
+        const totalQty = getLineTotal(line);
         return {
           ...line,
-          adjusted_qty: adjustments[key],
+          adjusted_qty: totalQty !== line.suggested_qty ? totalQty : undefined,
+          size_quantities: sizeAdjustments[key] || line.size_quantities,
         };
       }),
       verdict: hasAdjustments ? 'adjusted' : 'approved',
@@ -430,73 +507,134 @@ function SupplierReviewCard({
   };
   
   const totalOriginal = supplier.lines.reduce((sum, l) => sum + l.suggested_qty, 0);
-  const totalAdjusted = supplier.lines.reduce((sum, l) => {
-    const key = `${l.style_no}|${l.color}`;
-    return sum + (adjustments[key] ?? l.suggested_qty);
-  }, 0);
+  const totalAdjusted = supplier.lines.reduce((sum, l) => sum + getLineTotal(l), 0);
+
+  if (!isActive) return null;
 
   return (
     <Card className="border-[#C5D5CA]/50">
       <CardHeader className="bg-[#F5F3F0]">
         <div className="flex items-center justify-between w-full">
-                  <div>
-            <CardTitle className="text-lg">{supplier.supplier_name}</CardTitle>
+          <div className="flex-1">
+            <CardTitle className="text-lg flex items-center gap-2">
+              {supplier.supplier_name}
+              {supplier.skip_reason && (
+                <Badge className="bg-amber-100 text-amber-700 text-xs">⚠️ Consider Skipping</Badge>
+              )}
+            </CardTitle>
             <CardDescription>{supplier.recommendation_summary}</CardDescription>
-                  </div>
+            {supplier.skip_reason && (
+              <div className="text-xs text-amber-700 mt-1">
+                💡 {supplier.skip_reason}
+              </div>
+            )}
+          </div>
           <div className="text-right">
             <div className="text-2xl font-semibold text-[#8FA894]">{totalAdjusted}</div>
-            <div className="text-xs text-slate-500">units {totalAdjusted !== totalOriginal && `(was ${totalOriginal})`}</div>
-                </div>
+            <div className="text-xs text-slate-500">
+              units {totalAdjusted !== totalOriginal && `(was ${totalOriginal})`}
+            </div>
+          </div>
         </div>
       </CardHeader>
       <CardContent className="p-0">
-        <div className="max-h-80 overflow-y-auto">
+        <div className="max-h-[500px] overflow-y-auto">
           <table className="w-full text-sm">
-            <thead className="bg-slate-50 sticky top-0">
+            <thead className="bg-slate-50 sticky top-0 z-10">
               <tr>
+                <th className="text-left p-3 font-medium w-10"></th>
                 <th className="text-left p-3 font-medium">Style</th>
                 <th className="text-left p-3 font-medium">Color</th>
                 <th className="text-right p-3 font-medium">Suggested</th>
-                <th className="text-right p-3 font-medium w-24">Qty</th>
+                <th className="text-right p-3 font-medium w-24">Total Qty</th>
                 <th className="text-center p-3 font-medium w-20">Priority</th>
               </tr>
             </thead>
             <tbody>
               {supplier.lines.map((line, idx) => {
                 const key = `${line.style_no}|${line.color}`;
-                const currentQty = adjustments[key] ?? line.suggested_qty;
+                const currentQty = getLineTotal(line);
+                const hasSizes = (line.available_sizes && line.available_sizes.length > 0) || 
+                                 (line.size_quantities && Object.keys(line.size_quantities).length > 0);
+                const isExpanded = expandedLines.has(key);
+                const sizes: string[] = line.available_sizes || (line.size_quantities ? Object.keys(line.size_quantities) : []);
                 
-                      return (
-                  <tr key={idx} className="border-t hover:bg-slate-50">
-                    <td className="p-3" title={line.style_no}>
-                      <span className="text-sm">{(line as any).style_name || line.style_no}</span>
-                      {(line as any).style_name && (
-                        <span className="block text-xs text-slate-400 font-mono">{line.style_no}</span>
-                      )}
-                    </td>
-                    <td className="p-3">{line.color}</td>
-                    <td className="p-3 text-right text-slate-500">{line.suggested_qty}</td>
-                    <td className="p-3">
-                      <Input
-                        type="number"
-                        min={0}
-                        value={currentQty}
-                        onChange={e => handleQtyChange(line.style_no, line.color, e.target.value)}
-                        className="w-20 text-right h-8 ml-auto"
-                      />
-                    </td>
-                    <td className="p-3 text-center">
-                      <Badge className={
-                        line.priority === 'high' ? 'bg-red-100 text-red-700' :
-                        line.priority === 'medium' ? 'bg-amber-100 text-amber-700' :
-                        'bg-slate-100 text-slate-600'
-                      }>
-                        {line.priority}
-                      </Badge>
-                    </td>
-                  </tr>
-                      );
-                    })}
+                return (
+                  <React.Fragment key={idx}>
+                    <tr className="border-t hover:bg-slate-50">
+                      <td className="p-2 text-center">
+                        {hasSizes && (
+                          <button 
+                            onClick={() => toggleLineExpand(key)} 
+                            className="text-slate-400 hover:text-slate-600"
+                          >
+                            {isExpanded ? '▼' : '▶'}
+                          </button>
+                        )}
+                      </td>
+                      <td className="p-3">
+                        <div className="flex items-center gap-2">
+                          {line.image_url && (
+                            <img 
+                              src={line.image_url} 
+                              alt={line.style_no} 
+                              className="w-10 h-10 object-cover rounded border"
+                            />
+                          )}
+                          <div>
+                            <span className="text-sm font-medium">{line.style_name || line.style_no}</span>
+                            {line.style_name && (
+                              <span className="block text-xs text-slate-400 font-mono">{line.style_no}</span>
+                            )}
+                          </div>
+                        </div>
+                      </td>
+                      <td className="p-3">{line.color}</td>
+                      <td className="p-3 text-right text-slate-500">{line.suggested_qty}</td>
+                      <td className="p-3">
+                        <Input
+                          type="number"
+                          min={0}
+                          value={currentQty}
+                          onChange={e => handleQtyChange(line.style_no, line.color, e.target.value)}
+                          className="w-20 text-right h-8 ml-auto"
+                        />
+                      </td>
+                      <td className="p-3 text-center">
+                        <Badge className={
+                          line.priority === 'high' ? 'bg-red-100 text-red-700' :
+                          line.priority === 'medium' ? 'bg-amber-100 text-amber-700' :
+                          'bg-slate-100 text-slate-600'
+                        }>
+                          {line.priority}
+                        </Badge>
+                      </td>
+                    </tr>
+                    {/* Size breakdown row */}
+                    {isExpanded && hasSizes && (
+                      <tr className="bg-slate-50/50">
+                        <td colSpan={6} className="px-4 py-2">
+                          <div className="flex flex-wrap gap-2 items-center">
+                            <span className="text-xs text-slate-500 mr-2">Sizes:</span>
+                            {sizes.map(size => (
+                              <div key={size} className="flex items-center gap-1 bg-white rounded border px-2 py-1">
+                                <span className="text-xs font-medium w-8 text-center">{size}</span>
+                                <Input
+                                  type="number"
+                                  min={0}
+                                  value={getSizeQty(line, size)}
+                                  onChange={e => handleSizeQtyChange(key, size, e.target.value)}
+                                  className="w-14 text-right h-6 text-xs"
+                                />
+                              </div>
+                            ))}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -504,8 +642,14 @@ function SupplierReviewCard({
         {supplier.moq_status === 'under' && (
           <div className="p-3 bg-amber-50 border-t border-amber-200 text-amber-800 text-sm">
             ⚠️ Below minimum order quantity (MOQ)
-                  </div>
-                )}
+          </div>
+        )}
+        
+        {supplier.notes && (
+          <div className="p-3 bg-blue-50 border-t border-blue-200 text-blue-800 text-sm">
+            📝 {supplier.notes}
+          </div>
+        )}
         
         <div className="p-4 border-t bg-slate-50 space-y-3">
           <div>
@@ -516,19 +660,19 @@ function SupplierReviewCard({
               placeholder="Add notes about this order..."
               className="h-8"
             />
-              </div>
+          </div>
           
           <div className="flex items-center justify-between">
-            <Button variant="ghost" onClick={onSkip} size="sm">
-              Skip supplier
+            <Button variant="ghost" onClick={onSkip} size="sm" className="text-red-600 hover:text-red-700 hover:bg-red-50">
+              Skip Supplier
             </Button>
             <Button onClick={handleApprove} className="bg-[#8FA894] hover:bg-[#8FA894]/90">
-              {isLast ? 'Review Orders →' : 'Approve & Next'}
+              ✓ Approve
             </Button>
-            </div>
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -1790,14 +1934,74 @@ export default function PurchaseMakeOrderPage() {
             </details>
           )}
 
-          {currentSupplier && (
-            <SupplierReviewCard
-              supplier={currentSupplier}
-              onApprove={handleSupplierApprove}
-              onSkip={handleSupplierSkip}
-              isLast={currentSupplierIdx === aiOutput.suppliers.length - 1}
-            />
-          )}
+          {/* Supplier Tabs */}
+          <div className="border rounded-lg overflow-hidden">
+            {/* Tab Headers */}
+            <div className="flex overflow-x-auto bg-slate-100 border-b">
+              {aiOutput.suppliers.map((supplier, idx) => {
+                const isCommitted = committedSuppliers.some(s => s.supplier_name === supplier.supplier_name);
+                const wasSkipped = committedSuppliers.find(s => s.supplier_name === supplier.supplier_name)?.verdict === 'skipped';
+                
+                return (
+                  <button
+                    key={supplier.supplier_name}
+                    onClick={() => setCurrentSupplierIdx(idx)}
+                    className={`px-4 py-3 text-sm font-medium whitespace-nowrap border-r border-slate-200 flex items-center gap-2 transition-colors ${
+                      currentSupplierIdx === idx 
+                        ? 'bg-white text-[#8FA894] border-b-2 border-b-[#8FA894]' 
+                        : 'text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    {supplier.supplier_name}
+                    {isCommitted && (
+                      wasSkipped 
+                        ? <span className="text-slate-400">⊘</span>
+                        : <span className="text-green-600">✓</span>
+                    )}
+                    {supplier.skip_reason && !isCommitted && (
+                      <span className="text-amber-500">⚠</span>
+                    )}
+                    <span className="text-xs text-slate-400">({supplier.total_units})</span>
+                  </button>
+                );
+              })}
+            </div>
+            
+            {/* Tab Content */}
+            <div className="p-0">
+              {aiOutput.suppliers.map((supplier, idx) => (
+                <SupplierReviewCard
+                  key={supplier.supplier_name}
+                  supplier={supplier}
+                  onApprove={handleSupplierApprove}
+                  onSkip={handleSupplierSkip}
+                  isActive={currentSupplierIdx === idx}
+                />
+              ))}
+            </div>
+          </div>
+          
+          {/* Navigation and Progress */}
+          <div className="flex items-center justify-between bg-slate-50 rounded-md p-4">
+            <div className="text-sm text-slate-600">
+              <span className="font-medium">{committedSuppliers.length}</span> of {aiOutput.suppliers.length} suppliers reviewed
+              {committedSuppliers.filter(s => s.verdict !== 'skipped').length > 0 && (
+                <span className="text-green-600 ml-2">
+                  ({committedSuppliers.filter(s => s.verdict !== 'skipped').length} approved)
+                </span>
+              )}
+            </div>
+            <Button
+              onClick={() => setStep(3.5)}
+              disabled={committedSuppliers.length < aiOutput.suppliers.length}
+              className="bg-[#8FA894] hover:bg-[#8FA894]/90"
+            >
+              {committedSuppliers.length < aiOutput.suppliers.length 
+                ? `Review ${aiOutput.suppliers.length - committedSuppliers.length} More →`
+                : 'Continue to Order Review →'
+              }
+            </Button>
+          </div>
 
           {isCommitting && (
             <div className="text-center py-8">

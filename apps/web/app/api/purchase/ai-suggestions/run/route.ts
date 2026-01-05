@@ -8,6 +8,8 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60; // Allow up to 60 seconds for AI call
 
+type SizeQtyMap = Record<string, number>; // e.g. { "S": 10, "M": 15, "L": 12 }
+
 type SupplierSuggestion = {
   supplier_name: string;
   supplier_id: string;
@@ -16,13 +18,18 @@ type SupplierSuggestion = {
   total_value_estimate: number;
   lines: Array<{
     style_no: string;
+    style_name?: string;
     color: string;
+    image_url?: string;
     suggested_qty: number;
+    size_quantities?: SizeQtyMap; // AI suggests per size
+    available_sizes?: string[]; // sizes seen in sales data
     reasoning: string;
     priority: 'high' | 'medium' | 'low';
   }>;
   moq_status: 'met' | 'under' | 'n/a';
   notes?: string;
+  skip_reason?: string; // If AI recommends skipping this supplier
 };
 
 type AIOutput = {
@@ -102,6 +109,30 @@ export async function POST(req: Request) {
       salesSummary = salesWithImages || [];
       console.log('[AI Suggestions] Loaded sales summary with images:', salesSummary.length, 'style/color rows');
     }
+
+    // Fetch size breakdown data
+    const { data: sizeSummary, error: sizeError } = await supabase
+      .from('purchase_sales_size_summary')
+      .select('*')
+      .eq('import_id', importId);
+
+    if (sizeError) {
+      console.warn('[AI Suggestions] Could not fetch size summary:', sizeError.message);
+    }
+
+    // Build size breakdown lookup: style_no|color -> { size: qty }
+    const sizeBreakdownMap: Record<string, { sizes: string[]; sizeQty: SizeQtyMap }> = {};
+    for (const row of (sizeSummary || [])) {
+      const key = `${row.style_no}|${row.color}`;
+      if (!sizeBreakdownMap[key]) {
+        sizeBreakdownMap[key] = { sizes: [], sizeQty: {} };
+      }
+      if (row.size) {
+        sizeBreakdownMap[key].sizes.push(row.size);
+        sizeBreakdownMap[key].sizeQty[row.size] = Number(row.total_qty) || 0;
+      }
+    }
+    console.log('[AI Suggestions] Size breakdown loaded for', Object.keys(sizeBreakdownMap).length, 'style/color combinations');
 
     // Fetch customer summary for coverage analysis
     const { data: customerSummary, error: customerError } = await supabase
@@ -279,7 +310,15 @@ export async function POST(req: Request) {
         salesBySupplier[supplier] = [];
         supplierDebug[supplier] = { rowCount: 0, totalQty: 0 };
       }
-      salesBySupplier[supplier]!.push(row);
+      // Attach size breakdown to each row
+      const key = `${row.style_no}|${row.color}`;
+      const sizeData = sizeBreakdownMap[key];
+      const enrichedRow = {
+        ...row,
+        sizes: sizeData?.sizes || [],
+        size_breakdown: sizeData?.sizeQty || {},
+      };
+      salesBySupplier[supplier]!.push(enrichedRow);
       supplierDebug[supplier]!.rowCount++;
       supplierDebug[supplier]!.totalQty += Number(row.total_qty) || 0;
     }
@@ -828,13 +867,18 @@ export async function POST(req: Request) {
 
     const durationMs = Date.now() - startTime;
 
-    // Enrich AI output with style_name from sales summary
+    // Enrich AI output with style_name, image_url, and size data from sales summary
     if (aiOutput && aiOutput.suppliers) {
-      // Build style_name lookup from sales summary
+      // Build lookup maps from sales summary
       const styleNameMap: Record<string, string> = {};
+      const imageUrlMap: Record<string, string> = {};
+      
       for (const row of (salesSummary || [])) {
         if (row.style_no && row.style_name) {
           styleNameMap[row.style_no] = row.style_name;
+        }
+        if (row.style_no && row.image_url) {
+          imageUrlMap[row.style_no] = row.image_url;
         }
       }
       
@@ -845,18 +889,59 @@ export async function POST(req: Request) {
         }
       }
       
-      // Enrich each supplier's lines with style_name
+      // Enrich each supplier's lines with style_name, image_url, and size data
       for (const supplier of aiOutput.suppliers) {
         if (supplier.lines) {
           for (const line of supplier.lines) {
+            const key = `${line.style_no}|${line.color}`;
+            const sizeData = sizeBreakdownMap[key];
+            
             if (line.style_no && styleNameMap[line.style_no]) {
               (line as any).style_name = styleNameMap[line.style_no];
+            }
+            if (line.style_no && imageUrlMap[line.style_no]) {
+              (line as any).image_url = imageUrlMap[line.style_no];
+            }
+            // Add size info
+            if (sizeData) {
+              (line as any).available_sizes = sizeData.sizes;
+              // If AI didn't provide size_quantities, calculate from suggested_qty proportionally
+              if (!(line as any).size_quantities && sizeData.sizes.length > 0) {
+                const totalSold = Object.values(sizeData.sizeQty).reduce((sum: number, v) => sum + (v as number), 0);
+                if (totalSold > 0) {
+                  const sizeQuantities: SizeQtyMap = {};
+                  for (const size of sizeData.sizes) {
+                    const ratio = sizeData.sizeQty[size] / totalSold;
+                    sizeQuantities[size] = Math.round(line.suggested_qty * ratio);
+                  }
+                  // Adjust for rounding errors
+                  const sum = Object.values(sizeQuantities).reduce((s, v) => s + v, 0);
+                  if (sum !== line.suggested_qty && sizeData.sizes.length > 0) {
+                    const diff = line.suggested_qty - sum;
+                    // Add diff to largest size
+                    const largestSize = sizeData.sizes.reduce((a, b) => 
+                      (sizeQuantities[a] || 0) >= (sizeQuantities[b] || 0) ? a : b
+                    );
+                    sizeQuantities[largestSize] = (sizeQuantities[largestSize] || 0) + diff;
+                  }
+                  (line as any).size_quantities = sizeQuantities;
+                } else {
+                  // Even distribution if no sales data
+                  const perSize = Math.floor(line.suggested_qty / sizeData.sizes.length);
+                  const remainder = line.suggested_qty % sizeData.sizes.length;
+                  const sizeQuantities: SizeQtyMap = {};
+                  sizeData.sizes.forEach((size, idx) => {
+                    sizeQuantities[size] = perSize + (idx < remainder ? 1 : 0);
+                  });
+                  (line as any).size_quantities = sizeQuantities;
+                }
+              }
             }
           }
         }
       }
       
-      console.log('[AI Suggestions] Enriched output with', Object.keys(styleNameMap).length, 'style names');
+      console.log('[AI Suggestions] Enriched output with', Object.keys(styleNameMap).length, 'style names and size breakdowns');
     }
 
     // Update ai_runs record
