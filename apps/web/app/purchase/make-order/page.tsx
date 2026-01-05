@@ -93,26 +93,28 @@ type CreatedPO = {
   error?: string;
 };
 
-// CSV Parser
+// CSV Parser - handles size-level rows and aggregates to customer/style/color
 function parseCSV(text: string): CSVRow[] {
   const lines = text.split(/\r?\n/).filter(l => l.trim());
   if (lines.length < 2) return [];
   
   const headerLine = lines[0]!;
-  const headers = headerLine.split(/[,;\t]/).map(h => h.trim().toLowerCase().replace(/[^a-z0-9_]/g, '_'));
+  const headers = headerLine.split(/[,;\t]/).map(h => h.trim().toLowerCase().replace(/[^a-z0-9_ ]/g, '_').replace(/\s+/g, '_'));
   
-  const rows: CSVRow[] = [];
+  // First pass: collect all raw rows
+  const rawRows: any[] = [];
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i]!;
-    const values = line.split(/[,;\t]/).map(v => v.trim().replace(/^["']|["']$/g, ''));
+    const values = line.split(/[,;\t]/).map(v => v.trim().replace(/^["'=]|["']$/g, '')); // Also strip leading = from Excel
     
     const row: any = {};
     headers.forEach((h, idx) => {
       row[h] = values[idx] || '';
     });
     
-    // Map common header variations
-    const mapped: CSVRow = {
+    // Map column variations to standard names
+    // Your columns: Date, Style No, Color, Size Quantity Ordered, Customer Name, Country, Salesperson, Sales Price Exchange Total
+    const mapped = {
       date: row.date || row.dato || row.invoice_date || '',
       customer_name: row.customer_name || row.customer || row.kunde || row.debitor || '',
       customer_id: row.customer_id || row.debitor_nr || '',
@@ -122,17 +124,53 @@ function parseCSV(text: string): CSVRow[] {
       style_name: row.style_name || row.varenavn || row.description || '',
       color: row.color || row.farve || row.colour || '',
       supplier: row.supplier || row.leverandor || '',
-      qty: row.qty || row.quantity || row.antal || row.pcs || 0,
-      net_amount: row.net_amount || row.amount || row.belob || row.value || 0,
+      // Handle "Size Quantity Ordered" column
+      qty: Number(row.size_quantity_ordered || row.qty || row.quantity || row.antal || row.pcs || 0) || 0,
+      // Handle "Sales Price Exchange Total" - may be in cents
+      net_amount: Number(row.sales_price_exchange_total || row.net_amount || row.amount || row.belob || row.value || 0) || 0,
       currency: row.currency || row.valuta || 'DKK',
       order_ref: row.order_ref || row.invoice || row.faktura || '',
       channel: row.channel || row.kanal || '',
     };
     
     if (mapped.style_no && mapped.color) {
-      rows.push(mapped);
+      rawRows.push(mapped);
     }
   }
+  
+  // Detect if amounts are in cents (if average > 10000, likely cents)
+  const avgAmount = rawRows.reduce((sum, r) => sum + r.net_amount, 0) / (rawRows.length || 1);
+  const amountDivisor = avgAmount > 10000 ? 100 : 1; // Convert cents to currency
+  
+  // Aggregate by date + customer + style + color (since CSV is at size level)
+  const aggregated = new Map<string, CSVRow>();
+  
+  for (const row of rawRows) {
+    // Key by date + customer + style + color
+    const key = `${row.date}|${row.customer_name || row.customer_id}|${row.style_no}|${row.color}`;
+    
+    if (aggregated.has(key)) {
+      const existing = aggregated.get(key)!;
+      existing.qty = (Number(existing.qty) || 0) + (Number(row.qty) || 0);
+      existing.net_amount = (Number(existing.net_amount) || 0) + (Number(row.net_amount) || 0);
+    } else {
+      aggregated.set(key, {
+        ...row,
+        qty: Number(row.qty) || 0,
+        net_amount: (Number(row.net_amount) || 0) / amountDivisor,
+      });
+    }
+  }
+  
+  // Apply amount divisor to all aggregated rows if we detected cents
+  const rows = Array.from(aggregated.values());
+  if (amountDivisor > 1) {
+    for (const row of rows) {
+      row.net_amount = Number(row.net_amount) / amountDivisor;
+    }
+  }
+  
+  console.log(`[CSV Parser] ${rawRows.length} raw rows → ${rows.length} aggregated rows (amounts ${amountDivisor === 100 ? 'converted from cents' : 'kept as-is'})`);
   
   return rows;
 }

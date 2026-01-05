@@ -8,19 +8,19 @@ export const dynamic = 'force-dynamic';
 
 /**
  * Expected CSV columns (extended schema):
- * - date: YYYY-MM-DD
- * - customer_name or customer_id: customer identifier
- * - country: country code or name
- * - sales_rep: salesperson name or ID
- * - style_no: style number
- * - style_name (optional): style name for display
- * - color: color name
- * - supplier (optional): supplier name
- * - qty: quantity sold
- * - net_amount: net sales amount
- * - currency (optional): currency code, defaults to DKK
- * - order_ref (optional): invoice/order ID
- * - channel (optional): sales channel
+ * Frontend parses and aggregates size-level rows before sending here.
+ * 
+ * Column mappings supported:
+ * - date / Date: YYYY-MM-DD (may have leading = from Excel)
+ * - customer_name / Customer Name: customer identifier
+ * - country / Country: country code or name
+ * - sales_rep / Salesperson: salesperson name or ID
+ * - style_no / Style No: style number (may have leading = from Excel)
+ * - color / Color: color name
+ * - supplier: supplier name (fetched from styles if not provided)
+ * - qty / Size Quantity Ordered: quantity sold (aggregated from size level)
+ * - net_amount / Sales Price Exchange Total: net sales amount (auto-converted from cents if detected)
+ * - currency: currency code, defaults to DKK
  */
 
 type CSVRow = {
@@ -49,14 +49,17 @@ type ValidationError = {
 function parseDate(dateStr: string): string | null {
   if (!dateStr) return null;
   
-  // Try ISO format first
-  const isoMatch = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  // Strip leading = and quotes from Excel formula format (="2025-11-06")
+  const cleaned = dateStr.replace(/^[="']+|["']+$/g, '').trim();
+  
+  // Try ISO format first (YYYY-MM-DD)
+  const isoMatch = cleaned.match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (isoMatch) {
     return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
   }
   
   // Try DD/MM/YYYY or DD-MM-YYYY
-  const euroMatch = dateStr.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
+  const euroMatch = cleaned.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
   if (euroMatch) {
     const day = euroMatch[1]?.padStart(2, '0');
     const month = euroMatch[2]?.padStart(2, '0');
@@ -64,7 +67,7 @@ function parseDate(dateStr: string): string | null {
   }
   
   // Try MM/DD/YYYY
-  const usMatch = dateStr.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
+  const usMatch = cleaned.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
   if (usMatch) {
     const month = usMatch[1]?.padStart(2, '0');
     const day = usMatch[2]?.padStart(2, '0');
