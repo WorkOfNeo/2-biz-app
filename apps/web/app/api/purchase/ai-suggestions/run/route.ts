@@ -279,9 +279,9 @@ export async function POST(req: Request) {
         salesBySupplier[supplier] = [];
         supplierDebug[supplier] = { rowCount: 0, totalQty: 0 };
       }
-      salesBySupplier[supplier].push(row);
-      supplierDebug[supplier].rowCount++;
-      supplierDebug[supplier].totalQty += Number(row.total_qty) || 0;
+      salesBySupplier[supplier]!.push(row);
+      supplierDebug[supplier]!.rowCount++;
+      supplierDebug[supplier]!.totalQty += Number(row.total_qty) || 0;
     }
 
     console.log('[Supplier Grouping] Suppliers found in sales data:', Object.keys(salesBySupplier).length);
