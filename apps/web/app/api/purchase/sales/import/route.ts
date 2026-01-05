@@ -137,15 +137,27 @@ export async function POST(req: Request) {
 
     // Fetch supplier lookup (style_no -> supplier)
     const styleNos = [...new Set(rows.map(r => r.style_no).filter(Boolean))];
+    console.log('[Purchase Sales Import] Looking up suppliers for', styleNos.length, 'unique styles');
+    
     const { data: stylesData } = await supabase
       .from('styles')
       .select('style_no, supplier')
       .in('style_no', styleNos);
     
     const supplierMap = new Map<string, string>();
+    let stylesWithSupplier = 0;
     (stylesData || []).forEach((s: any) => {
-      if (s.supplier) supplierMap.set(s.style_no, s.supplier);
+      if (s.supplier) {
+        supplierMap.set(s.style_no, s.supplier);
+        stylesWithSupplier++;
+      }
     });
+    
+    console.log('[Purchase Sales Import] Styles found in DB:', (stylesData || []).length);
+    console.log('[Purchase Sales Import] Styles with supplier:', stylesWithSupplier);
+    console.log('[Purchase Sales Import] Supplier distribution:', Object.fromEntries(
+      [...new Set(Array.from(supplierMap.values()))].map(s => [s, [...supplierMap.values()].filter(v => v === s).length])
+    ));
 
     // Process each row
     for (let i = 0; i < rows.length; i++) {

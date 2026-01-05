@@ -987,6 +987,49 @@ export default function PurchaseMakeOrderPage() {
               </div>
             )}
 
+            {/* CSV Data Summary by Supplier */}
+            {csvData.length > 0 && (
+              <div className="bg-slate-50 border rounded-md p-4">
+                <div className="font-medium text-sm mb-3">📦 Data by Supplier</div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-left text-xs text-slate-500 border-b">
+                        <th className="pb-2">Supplier</th>
+                        <th className="pb-2 text-right">Styles</th>
+                        <th className="pb-2 text-right">Qty</th>
+                        <th className="pb-2 text-right">Amount</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(() => {
+                        // Aggregate by supplier from csvData
+                        const bySupplier: Record<string, { styles: Set<string>; qty: number; amount: number }> = {};
+                        for (const row of csvData) {
+                          const sup = row.supplier || '(Unknown)';
+                          if (!bySupplier[sup]) {
+                            bySupplier[sup] = { styles: new Set(), qty: 0, amount: 0 };
+                          }
+                          bySupplier[sup].styles.add(`${row.style_no}|${row.color}`);
+                          bySupplier[sup].qty += Number(row.qty) || 0;
+                          bySupplier[sup].amount += Number(row.net_amount) || 0;
+                        }
+                        const sorted = Object.entries(bySupplier).sort((a, b) => b[1].qty - a[1].qty);
+                        return sorted.map(([supplier, data]) => (
+                          <tr key={supplier} className="border-b border-slate-100">
+                            <td className="py-2 font-medium">{supplier}</td>
+                            <td className="py-2 text-right">{data.styles.size}</td>
+                            <td className="py-2 text-right">{data.qty.toLocaleString()}</td>
+                            <td className="py-2 text-right">{Math.round(data.amount).toLocaleString()}</td>
+                          </tr>
+                        ));
+                      })()}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
             {comparisonSeasonId && (
               <div className="bg-[#D4E4E8]/30 border border-[#D4E4E8] rounded-md p-4">
                 <div className="flex items-start gap-3">

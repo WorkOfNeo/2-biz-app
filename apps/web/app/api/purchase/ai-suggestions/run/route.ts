@@ -266,13 +266,27 @@ export async function POST(req: Request) {
     }
 
     // Build aggregated input for AI (grouped by supplier)
+    console.log('═══════════════════════════════════════════════════════════');
+    console.log('[Supplier Grouping] Starting...');
+    console.log('[Supplier Grouping] Sales summary rows:', (salesSummary || []).length);
+    
     const salesBySupplier: Record<string, any[]> = {};
+    const supplierDebug: Record<string, { rowCount: number; totalQty: number }> = {};
+    
     for (const row of (salesSummary || [])) {
       const supplier = row.supplier || 'Unknown';
       if (!salesBySupplier[supplier]) {
         salesBySupplier[supplier] = [];
+        supplierDebug[supplier] = { rowCount: 0, totalQty: 0 };
       }
       salesBySupplier[supplier].push(row);
+      supplierDebug[supplier].rowCount++;
+      supplierDebug[supplier].totalQty += Number(row.total_qty) || 0;
+    }
+
+    console.log('[Supplier Grouping] Suppliers found in sales data:', Object.keys(salesBySupplier).length);
+    for (const [supplier, debug] of Object.entries(supplierDebug)) {
+      console.log(`  - "${supplier}": ${debug.rowCount} style/colors, ${debug.totalQty} pcs`);
     }
 
     // Limit items per supplier to control tokens
@@ -282,6 +296,9 @@ export async function POST(req: Request) {
       const sorted = items.sort((a, b) => (b.total_qty || 0) - (a.total_qty || 0));
       limitedSalesBySupplier[supplier] = sorted.slice(0, topNPerSupplier);
     }
+    
+    console.log('[Supplier Grouping] After limiting to top', topNPerSupplier, 'items per supplier');
+    console.log('═══════════════════════════════════════════════════════════');
 
     // Build customer analysis summary
     const customerStats = {
