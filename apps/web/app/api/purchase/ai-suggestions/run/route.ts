@@ -714,13 +714,52 @@ export async function POST(req: Request) {
 
     const aiRunId = aiRun.id;
 
-    // Create purchase_ai_runs record
+    // Get next run number for this season
+    let runNumber = 1;
+    if (seasonId) {
+      const { data: runNumResult } = await supabase.rpc('get_next_purchase_run_number', { p_season_id: seasonId });
+      if (runNumResult) {
+        runNumber = runNumResult;
+      }
+    }
+    const runLabel = `Round_${runNumber}`;
+
+    // Build computed features snapshot for reproducibility
+    const computedFeaturesSnapshot = {
+      overall: {
+        totalQty: importData.total_qty,
+        totalAmount: importData.total_amount,
+        styleCount: importData.style_count,
+        customerCount: importData.customer_count,
+      },
+      supplierBreakdown: Object.entries(salesBySupplier).map(([supplier, items]) => ({
+        supplier,
+        styleCount: items.length,
+        totalQty: items.reduce((sum: number, r: any) => sum + (Number(r.total_qty) || 0), 0),
+      })),
+      yoyAnalysis: yoyAnalysis || null,
+      customerStats,
+      noSalesStylesCount: noSalesStyles.length,
+      seasonAssortment: {
+        totalStyleColors: seasonStyles.length,
+        withSales: seasonStyles.length - noSalesStyles.length,
+        noSalesYet: noSalesStyles.length,
+      },
+    };
+
+    // Create purchase_ai_runs record with extended fields
     const { data: purchaseRun, error: purchaseRunError } = await supabase
       .from('purchase_ai_runs')
       .insert({
         ai_run_id: aiRunId,
         season_id: seasonId || null,
         import_id: importId,
+        comparison_season_id: comparisonSeasonId || null,
+        run_label: runLabel,
+        run_number: runNumber,
+        comparison_mode: comparisonSeasonId ? 'csv_to_season_totals' : 'csv_only',
+        computed_features_snapshot: computedFeaturesSnapshot,
+        run_started_at: new Date().toISOString(),
         date_range: {
           start: importData.date_range_start,
           end: importData.date_range_end,
@@ -733,6 +772,8 @@ export async function POST(req: Request) {
     if (purchaseRunError) {
       console.error('[AI Suggestions] Failed to create purchase_ai_runs:', purchaseRunError);
     }
+    
+    console.log('[AI Suggestions] Created purchase run:', runLabel, '(run #' + runNumber + ')');
 
     // Call OpenAI
     const openai = new OpenAI({ apiKey: openaiApiKey });
@@ -847,6 +888,16 @@ export async function POST(req: Request) {
         totalFromSales: suppliersFromSales.size,
         linkedCount: suppliersFromSales.size - unlinkedSuppliers.length,
         unlinkedCount: unlinkedSuppliers.length,
+      },
+      // Analysis background for transparency
+      analysisBackground: {
+        promptKey: promptConfig.key,
+        promptVersion: promptConfig.version,
+        runLabel,
+        runNumber,
+        model: promptConfig.model,
+        temperature: promptConfig.temperature,
+        computedFeatures: computedFeaturesSnapshot,
       },
       stats: {
         durationMs,

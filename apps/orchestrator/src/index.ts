@@ -390,6 +390,223 @@ app.post('/cron/cleanup', async (c) => {
   return c.json({ ok: true, data });
 });
 
+/**
+ * Purchase AI Analysis Automation
+ * 
+ * This endpoint runs the purchase AI comparison and analysis on the latest import.
+ * Feature-flagged via PURCHASE_AI_ENABLED env var.
+ * 
+ * Usage:
+ * - POST /cron/purchase-ai?seasonId=xxx&comparisonSeasonId=yyy
+ * - Or configure via app_settings.purchase_ai_config
+ */
+const PURCHASE_AI_ENABLED = ((process.env.PURCHASE_AI_ENABLED || 'false').trim().toLowerCase() === 'true');
+
+app.post('/cron/purchase-ai', async (c) => {
+  if (!PURCHASE_AI_ENABLED) return c.json({ error: 'Purchase AI cron disabled. Set PURCHASE_AI_ENABLED=true' }, 403);
+  const token = c.req.header('x-cron-token');
+  if (!token || token !== CRON_TOKEN) return c.json({ error: 'Unauthorized' }, 401);
+
+  logRequest('/cron/purchase-ai called', c, { PURCHASE_AI_ENABLED });
+
+  try {
+    // Get config from query params or app_settings
+    let seasonId = c.req.query('seasonId') || null;
+    let comparisonSeasonId = c.req.query('comparisonSeasonId') || null;
+    let importId = c.req.query('importId') || null;
+
+    // Load config from app_settings if not provided
+    if (!seasonId || !comparisonSeasonId) {
+      const { data: config } = await supabase
+        .from('app_settings')
+        .select('value')
+        .eq('key', 'purchase_ai_config')
+        .maybeSingle();
+      
+      const configVal = (config?.value as any) || {};
+      seasonId = seasonId || configVal.seasonId || null;
+      comparisonSeasonId = comparisonSeasonId || configVal.comparisonSeasonId || null;
+    }
+
+    // If no importId, get the latest completed import for the season
+    if (!importId) {
+      const query = supabase
+        .from('purchase_sales_imports')
+        .select('id')
+        .eq('status', 'completed')
+        .order('created_at', { ascending: false })
+        .limit(1);
+      
+      if (seasonId) {
+        query.eq('season_id', seasonId);
+      }
+      
+      const { data: latestImport } = await query.maybeSingle();
+      importId = (latestImport as any)?.id || null;
+    }
+
+    if (!importId) {
+      logRequest('/cron/purchase-ai skipped', c, { reason: 'no import found' });
+      return c.json({ skipped: true, reason: 'No sales import found for the specified season' });
+    }
+
+    // Check if we already ran analysis on this import recently (within last hour)
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const { data: recentRun } = await supabase
+      .from('purchase_ai_runs')
+      .select('id, created_at')
+      .eq('import_id', importId)
+      .gte('created_at', oneHourAgo)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (recentRun) {
+      logRequest('/cron/purchase-ai skipped', c, { reason: 'recent run exists', runId: (recentRun as any)?.id });
+      return c.json({ 
+        skipped: true, 
+        reason: 'Analysis already ran within the last hour',
+        lastRunId: (recentRun as any)?.id,
+        lastRunAt: (recentRun as any)?.created_at,
+      });
+    }
+
+    // Call the comparison API (internal call via fetch to web app)
+    const webOrigin = allowedOrigins[0] || 'http://localhost:3001';
+    
+    // First, run comparison
+    logRequest('/cron/purchase-ai running comparison', c, { importId, seasonId, comparisonSeasonId });
+    
+    const compareRes = await fetch(`${webOrigin}/api/purchase/ai-suggestions/compare`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ importId, seasonId, comparisonSeasonId }),
+    });
+
+    if (!compareRes.ok) {
+      const err = await compareRes.json();
+      logRequest('/cron/purchase-ai comparison failed', c, { error: err });
+      return c.json({ error: 'Comparison failed', details: err }, 500);
+    }
+
+    const compareData = await compareRes.json();
+    logRequest('/cron/purchase-ai comparison complete', c, { 
+      currentQty: compareData.comparison?.overall?.currentSeason?.qty,
+      lastYearQty: compareData.comparison?.overall?.lastSeasonTotal?.qty,
+    });
+
+    // Then, run AI analysis
+    logRequest('/cron/purchase-ai running AI', c, { importId, seasonId, comparisonSeasonId });
+    
+    const aiRes = await fetch(`${webOrigin}/api/purchase/ai-suggestions/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ importId, seasonId, comparisonSeasonId }),
+    });
+
+    if (!aiRes.ok) {
+      const err = await aiRes.json();
+      logRequest('/cron/purchase-ai AI failed', c, { error: err });
+      return c.json({ error: 'AI analysis failed', details: err }, 500);
+    }
+
+    const aiData = await aiRes.json();
+    logRequest('/cron/purchase-ai complete', c, { 
+      purchaseRunId: aiData.purchaseRunId,
+      suppliersCount: aiData.suggestions?.suppliers?.length || 0,
+      totalUnits: aiData.suggestions?.total_units || 0,
+    });
+
+    return c.json({
+      success: true,
+      importId,
+      seasonId,
+      comparisonSeasonId,
+      purchaseRunId: aiData.purchaseRunId,
+      aiRunId: aiData.aiRunId,
+      comparison: {
+        currentQty: compareData.comparison?.overall?.currentSeason?.qty,
+        lastYearQty: compareData.comparison?.overall?.lastSeasonTotal?.qty,
+        gapPercent: compareData.comparison?.overall?.gapToTarget?.qtyPercent,
+      },
+      suggestions: {
+        suppliersCount: aiData.suggestions?.suppliers?.length || 0,
+        totalUnits: aiData.suggestions?.total_units || 0,
+      },
+      runLabel: aiData.analysisBackground?.runLabel,
+    });
+  } catch (err: any) {
+    logRequest('/cron/purchase-ai error', c, { error: err?.message });
+    return c.json({ error: err?.message || 'Internal error' }, 500);
+  }
+});
+
+/**
+ * Get/Set Purchase AI configuration
+ */
+app.get('/purchase-ai/config', async (c) => {
+  try {
+    const payload = await verifySupabaseJWT(c.req.header('authorization'));
+    const email = (payload?.email as string | undefined) ?? (payload?.user_metadata as any)?.email;
+    if (!email) return c.json({ error: 'Unauthorized' }, 401);
+
+    const { data } = await supabase
+      .from('app_settings')
+      .select('value')
+      .eq('key', 'purchase_ai_config')
+      .maybeSingle();
+
+    return c.json({ 
+      config: (data?.value as any) || {},
+      cronEnabled: PURCHASE_AI_ENABLED,
+    });
+  } catch (err: any) {
+    return c.json({ error: err?.message ?? 'Error fetching config' }, 500);
+  }
+});
+
+app.post('/purchase-ai/config', async (c) => {
+  try {
+    const payload = await verifySupabaseJWT(c.req.header('authorization'));
+    const email = (payload?.email as string | undefined) ?? (payload?.user_metadata as any)?.email;
+    if (!email) return c.json({ error: 'Unauthorized' }, 401);
+
+    const body = await c.req.json<{
+      seasonId?: string;
+      comparisonSeasonId?: string;
+    }>();
+
+    const { data: existing } = await supabase
+      .from('app_settings')
+      .select('id')
+      .eq('key', 'purchase_ai_config')
+      .maybeSingle();
+
+    const configValue = {
+      seasonId: body.seasonId || null,
+      comparisonSeasonId: body.comparisonSeasonId || null,
+      updatedBy: email,
+      updatedAt: new Date().toISOString(),
+    };
+
+    if (existing?.id) {
+      await supabase
+        .from('app_settings')
+        .update({ value: configValue })
+        .eq('key', 'purchase_ai_config');
+    } else {
+      await supabase
+        .from('app_settings')
+        .insert({ key: 'purchase_ai_config', value: configValue });
+    }
+
+    logRequest('/purchase-ai/config updated', c, { by: email });
+    return c.json({ ok: true, config: configValue });
+  } catch (err: any) {
+    return c.json({ error: err?.message ?? 'Error updating config' }, 500);
+  }
+});
+
 app.post('/import/customers', async (c) => {
   try {
     const payload = await verifySupabaseJWT(c.req.header('authorization'));

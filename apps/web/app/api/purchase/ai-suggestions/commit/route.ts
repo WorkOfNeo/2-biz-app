@@ -306,12 +306,66 @@ export async function POST(req: Request) {
       };
     }
 
+    // Store line-level feedback for AI learning
+    const lineFeedbackRows: Array<{
+      purchase_run_id: string;
+      supplier_name: string;
+      style_no: string;
+      color: string;
+      suggested_qty: number;
+      adjusted_qty: number | null;
+      verdict: string;
+      reason: string | null;
+      priority: string;
+    }> = [];
+
+    for (const supplierCommit of suppliers) {
+      const supplierVerdict = supplierCommit.verdict || 'approved';
+      
+      // For skipped suppliers, add a single entry
+      if (supplierVerdict === 'skipped') {
+        // Skip - no lines to record
+        continue;
+      }
+      
+      // Add each line
+      for (const line of supplierCommit.lines) {
+        const wasAdjusted = line.adjusted_qty !== undefined && line.adjusted_qty !== line.suggested_qty;
+        
+        lineFeedbackRows.push({
+          purchase_run_id: purchaseRunId,
+          supplier_name: supplierCommit.supplier_name,
+          style_no: line.style_no,
+          color: line.color,
+          suggested_qty: line.suggested_qty,
+          adjusted_qty: wasAdjusted ? line.adjusted_qty! : null,
+          verdict: wasAdjusted ? 'adjusted' : (supplierVerdict === 'approved' ? 'approved' : supplierVerdict),
+          reason: line.reasoning || null,
+          priority: line.priority || 'medium',
+        });
+      }
+    }
+
+    // Insert line-level feedback in batch
+    if (lineFeedbackRows.length > 0) {
+      const { error: feedbackError } = await supabase
+        .from('purchase_ai_line_feedback')
+        .insert(lineFeedbackRows);
+
+      if (feedbackError) {
+        console.warn('[AI Commit] Failed to store line feedback:', feedbackError.message);
+      } else {
+        console.log('[AI Commit] Stored', lineFeedbackRows.length, 'line-level feedback records');
+      }
+    }
+
     // Update purchase_ai_runs with results
     const { error: updateError } = await supabase
       .from('purchase_ai_runs')
       .update({
         created_app_po_ids: createdPoIds,
         user_feedback: userFeedback,
+        run_completed_at: new Date().toISOString(),
         status: 'completed',
       })
       .eq('id', purchaseRunId);

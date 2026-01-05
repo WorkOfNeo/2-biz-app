@@ -550,6 +550,22 @@ export default function PurchaseMakeOrderPage() {
   const [suppliersCoverage, setSuppliersCoverage] = useState<{ totalFromSales: number; linkedCount: number; unlinkedCount: number } | null>(null);
   const [creatingSupplier, setCreatingSupplier] = useState<string | null>(null);
   
+  // Comparison data
+  const [comparisonData, setComparisonData] = useState<any>(null);
+  const [isLoadingComparison, setIsLoadingComparison] = useState(false);
+  const [comparisonError, setComparisonError] = useState<string>('');
+  
+  // Analysis background (for transparency)
+  const [analysisBackground, setAnalysisBackground] = useState<{
+    promptKey: string;
+    promptVersion: number;
+    runLabel: string;
+    runNumber: number;
+    model: string;
+    temperature: number;
+    computedFeatures: any;
+  } | null>(null);
+  
   const [currentSupplierIdx, setCurrentSupplierIdx] = useState(0);
   const [committedSuppliers, setCommittedSuppliers] = useState<SupplierCommitData[]>([]);
   
@@ -617,12 +633,50 @@ export default function PurchaseMakeOrderPage() {
       setImportId(data.importId);
       setImportStats(data.stats);
       setStep(2);
+      
+      // Auto-load comparison if we have a comparison season
+      if (comparisonSeasonId) {
+        loadComparison(data.importId);
+      }
     } catch (err: any) {
       setImportError(err.message);
     } finally {
       setIsImporting(false);
     }
-  }, [csvData, selectedSeasonId, csvFileName]);
+  }, [csvData, selectedSeasonId, csvFileName, comparisonSeasonId]);
+
+  // Load comparison data
+  const loadComparison = useCallback(async (impId?: string) => {
+    const targetImportId = impId || importId;
+    if (!targetImportId) return;
+    
+    setIsLoadingComparison(true);
+    setComparisonError('');
+    
+    try {
+      const res = await fetch('/api/purchase/ai-suggestions/compare', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          importId: targetImportId,
+          seasonId: selectedSeasonId || null,
+          comparisonSeasonId: comparisonSeasonId || null,
+        }),
+      });
+      
+      const data = await res.json();
+      
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Failed to load comparison');
+      }
+      
+      setComparisonData(data.comparison);
+    } catch (err: any) {
+      setComparisonError(err.message);
+    } finally {
+      setIsLoadingComparison(false);
+    }
+  }, [importId, selectedSeasonId, comparisonSeasonId]);
 
   const handleRunAI = useCallback(async () => {
     if (!importId) return;
@@ -665,6 +719,12 @@ export default function PurchaseMakeOrderPage() {
       setAiOutput(data.suggestions);
       setPurchaseRunId(data.purchaseRunId);
       setAiStats({ tokensUsed: data.stats.tokensUsed, durationMs: data.stats.durationMs });
+      
+      // Store analysis background for transparency
+      if (data.analysisBackground) {
+        setAnalysisBackground(data.analysisBackground);
+      }
+      
       setStep(3);
       setCurrentSupplierIdx(0);
     } catch (err: any) {
@@ -895,10 +955,10 @@ export default function PurchaseMakeOrderPage() {
                     <div className="text-xs text-slate-400 mt-1">
                       Required: date, style_no, color, qty
             </div>
-        </div>
-      )}
+            </div>
+                          )}
               </Dropzone>
-          </div>
+            </div>
 
             {csvData.length > 0 && (
               <div className="bg-slate-50 rounded-md p-4">
@@ -926,7 +986,7 @@ export default function PurchaseMakeOrderPage() {
                       ))}
                               </tbody>
                             </table>
-            </div>
+          </div>
           </div>
             )}
 
@@ -937,14 +997,14 @@ export default function PurchaseMakeOrderPage() {
             )}
 
             <div className="flex justify-end">
-                    <Button
+                      <Button
                 onClick={handleImport}
                 disabled={csvData.length === 0 || isImporting}
                 className="bg-[#8FA894] hover:bg-[#8FA894]/90"
               >
                 {isImporting ? 'Importing...' : 'Import & Continue'}
-                    </Button>
-                  </div>
+                      </Button>
+            </div>
           </CardContent>
         </Card>
       )}
@@ -964,34 +1024,34 @@ export default function PurchaseMakeOrderPage() {
                 <div className="bg-[#F5F3F0] rounded-md p-4 text-center">
                   <div className="text-2xl font-semibold text-[#8FA894]">{importStats.insertedRows}</div>
                   <div className="text-xs text-slate-500">Rows Imported</div>
-                </div>
+        </div>
                 <div className="bg-[#F5F3F0] rounded-md p-4 text-center">
                   <div className="text-2xl font-semibold text-[#B8A8D8]">{importStats.styleCount}</div>
                   <div className="text-xs text-slate-500">Unique Styles</div>
-                </div>
+          </div>
                 <div className="bg-[#F5F3F0] rounded-md p-4 text-center">
                   <div className="text-2xl font-semibold text-[#D4E4E8]">{importStats.customerCount}</div>
                   <div className="text-xs text-slate-500">Customers</div>
-                </div>
+          </div>
                 <div className="bg-[#F5F3F0] rounded-md p-4 text-center">
                   <div className="text-2xl font-semibold text-slate-700">{importStats.totalQty.toLocaleString()}</div>
                   <div className="text-xs text-slate-500">Total Units</div>
                   </div>
-                </div>
-              )}
+                    </div>
+                              )}
 
             {importStats?.dateRange && (
               <div className="text-sm text-slate-600">
                 Date range: <span className="font-medium">{importStats.dateRange.start}</span> to{' '}
                 <span className="font-medium">{importStats.dateRange.end}</span>
-              </div>
-            )}
+                            </div>
+                    )}
 
             {/* CSV Data Summary by Supplier */}
             {csvData.length > 0 && (
               <div className="bg-slate-50 border rounded-md p-4">
                 <div className="font-medium text-sm mb-3">📦 Data by Supplier</div>
-                <div className="overflow-x-auto">
+            <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="text-left text-xs text-slate-500 border-b">
@@ -999,9 +1059,9 @@ export default function PurchaseMakeOrderPage() {
                         <th className="pb-2 text-right">Styles</th>
                         <th className="pb-2 text-right">Qty</th>
                         <th className="pb-2 text-right">Amount</th>
-                      </tr>
-                    </thead>
-                    <tbody>
+                                </tr>
+                              </thead>
+                              <tbody>
                       {(() => {
                         // Aggregate by supplier from csvData
                         const bySupplier: Record<string, { styles: Set<string>; qty: number; amount: number }> = {};
@@ -1026,24 +1086,111 @@ export default function PurchaseMakeOrderPage() {
                       })()}
                     </tbody>
                   </table>
-                </div>
-              </div>
+                                </div>
+                                </div>
             )}
 
             {comparisonSeasonId && (
               <div className="bg-[#D4E4E8]/30 border border-[#D4E4E8] rounded-md p-4">
                 <div className="flex items-start gap-3">
                   <div className="text-xl">📊</div>
-                  <div>
-                    <div className="font-medium text-sm">YoY Comparison Enabled</div>
-                    <p className="text-xs text-slate-600 mt-1">
-                      AI will compare current season against last season's customer totals (qty + price).
-                      Nulled and permanently closed customers will be factored in.
-                    </p>
+                  <div className="flex-1">
+                    <div className="flex items-center justify-between">
+                      <div className="font-medium text-sm">YoY Comparison</div>
+                      {!comparisonData && !isLoadingComparison && (
+                        <Button 
+                          size="sm" 
+                          variant="outline" 
+                          onClick={() => loadComparison()}
+                          className="text-xs"
+                        >
+                          Load Details
+                        </Button>
+                      )}
+                                </div>
+                    {isLoadingComparison && <p className="text-xs text-slate-500 mt-1">Loading comparison data...</p>}
+                    {comparisonError && <p className="text-xs text-red-500 mt-1">{comparisonError}</p>}
+                                </div>
+                                </div>
+                
+                {/* Comparison Overview */}
+                {comparisonData && (
+                  <div className="mt-4 space-y-4">
+                    {/* Overall stats */}
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-center">
+                      <div className="bg-white rounded-md p-3">
+                        <div className="text-lg font-semibold text-[#8FA894]">
+                          {comparisonData.overall.currentSeason.qty.toLocaleString()}
+                                </div>
+                        <div className="text-xs text-slate-500">Current Qty</div>
+                                </div>
+                      <div className="bg-white rounded-md p-3">
+                        <div className="text-lg font-semibold text-slate-600">
+                          {comparisonData.overall.lastSeasonTotal.qty.toLocaleString()}
+                                </div>
+                        <div className="text-xs text-slate-500">Last Year Total</div>
+                                </div>
+                      <div className="bg-white rounded-md p-3">
+                        <div className={`text-lg font-semibold ${comparisonData.overall.gapToTarget.qty > 0 ? 'text-red-500' : 'text-green-500'}`}>
+                          {comparisonData.overall.gapToTarget.qtyPercent}
+                                        </div>
+                        <div className="text-xs text-slate-500">vs Target</div>
+                                </div>
+                      <div className="bg-white rounded-md p-3">
+                        <div className="text-lg font-semibold text-[#B8A8D8]">
+                          {comparisonData.overall.weeksCovered}
+                                        </div>
+                        <div className="text-xs text-slate-500">Weeks Data</div>
+                      </div>
+                    </div>
+                    
+                    {/* By Country */}
+                    {comparisonData.byCountry.length > 0 && (
+                      <div>
+                        <div className="text-xs font-medium text-slate-600 mb-2">By Country</div>
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                          {comparisonData.byCountry.slice(0, 4).map((c: any) => (
+                            <div key={c.country} className="bg-white rounded-md p-2 text-xs">
+                              <div className="font-medium">{c.country}</div>
+                              <div className="text-slate-500">{c.qty.toLocaleString()} pcs</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    
+                    {/* Top 10 Styles */}
+                    {comparisonData.top10Styles.length > 0 && (
+                      <div>
+                        <div className="text-xs font-medium text-slate-600 mb-2">Top 10 Styles</div>
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-xs">
+                            <thead>
+                              <tr className="text-left text-slate-500 border-b">
+                                <th className="pb-1">Style</th>
+                                <th className="pb-1">Color</th>
+                                <th className="pb-1 text-right">Qty</th>
+                                <th className="pb-1 text-right">Customers</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                              {comparisonData.top10Styles.map((s: any, i: number) => (
+                                <tr key={i} className="border-b border-slate-100">
+                                  <td className="py-1 font-medium">{s.style_no}</td>
+                                  <td className="py-1">{s.color}</td>
+                                  <td className="py-1 text-right">{s.qty.toLocaleString()}</td>
+                                  <td className="py-1 text-right">{s.customerCount}</td>
+                                </tr>
+                              ))}
+                              </tbody>
+                            </table>
+            </div>
+          </div>
+                    )}
                   </div>
-                  </div>
-                </div>
-              )}
+                )}
+              </div>
+            )}
 
             <div className="bg-[#F5F3F0] rounded-md p-4">
               <div className="flex items-start gap-3">
@@ -1064,21 +1211,21 @@ export default function PurchaseMakeOrderPage() {
             {aiError && (
               <div className="bg-red-50 border border-red-200 text-red-700 rounded-md p-3 text-sm">
                 {aiError}
-            </div>
+              </div>
             )}
             
             <div className="flex justify-between">
               <Button variant="outline" onClick={() => setStep(1)}>
                 Back
               </Button>
-            <Button
+                    <Button
                 onClick={handleRunAI}
                 disabled={isRunningAI}
                 className="bg-[#B8A8D8] hover:bg-[#B8A8D8]/90"
               >
                 {isRunningAI ? 'Analyzing...' : 'Run AI Analysis'}
-            </Button>
-          </div>
+                    </Button>
+                  </div>
         </CardContent>
       </Card>
       )}
@@ -1090,7 +1237,7 @@ export default function PurchaseMakeOrderPage() {
             <div>
               <div className="text-sm text-slate-500">
                 Reviewing supplier {currentSupplierIdx + 1} of {aiOutput.suppliers.length}
-    </div>
+                  </div>
               {aiStats && (
                 <div className="text-xs text-slate-400 mt-1">
                   Analysis took {(aiStats.durationMs / 1000).toFixed(1)}s • {aiStats.tokensUsed.toLocaleString()} tokens
@@ -1106,7 +1253,7 @@ export default function PurchaseMakeOrderPage() {
           {aiOutput.overall_summary && (
             <div className="bg-[#F5F3F0] rounded-md p-4 text-sm">
               {aiOutput.overall_summary}
-            </div>
+                  </div>
           )}
 
           {yoyAnalysis && (
@@ -1116,7 +1263,7 @@ export default function PurchaseMakeOrderPage() {
                 <div>
                   <div className="text-xl font-semibold text-[#8FA894]">{yoyAnalysis.aggregatedIndex}</div>
                   <div className="text-xs text-slate-500">Index vs Last Year</div>
-        </div>
+                </div>
                     <div>
                   <div className="text-xl font-semibold text-slate-700">{yoyAnalysis.currentSeason?.visitRate}</div>
                   <div className="text-xs text-slate-500">Customer Visit Rate</div>
@@ -1139,10 +1286,10 @@ export default function PurchaseMakeOrderPage() {
                   {yoyAnalysis.nulledThisYear?.lostQty > 0 && yoyAnalysis.permanentlyClosed?.lostQty > 0 && <span>, </span>}
                   {yoyAnalysis.permanentlyClosed?.lostQty > 0 && (
                     <span>{yoyAnalysis.permanentlyClosed.lostQty.toLocaleString()} units from closed customers</span>
-                  )}
-                </div>
               )}
             </div>
+              )}
+          </div>
           )}
 
           {aiOutput.warnings.length > 0 && (
@@ -1150,7 +1297,7 @@ export default function PurchaseMakeOrderPage() {
               {aiOutput.warnings.map((w, i) => (
                 <div key={i} className="text-sm text-amber-800">⚠️ {w}</div>
                 ))}
-              </div>
+            </div>
           )}
 
           {/* Unlinked Suppliers Warning */}
@@ -1175,25 +1322,65 @@ export default function PurchaseMakeOrderPage() {
                           {s.styleCount} styles • {s.totalQty.toLocaleString()} pcs
                         </div>
                       </div>
-                      <Button
+            <Button
                         size="sm"
-                        variant="outline"
+              variant="outline"
                         disabled={creatingSupplier === s.name}
                         onClick={() => handleCreateSupplier(s.name)}
                         className="border-orange-300 text-orange-700 hover:bg-orange-100"
                       >
                         {creatingSupplier === s.name ? 'Creating...' : '+ Create Supplier'}
-                      </Button>
-                    </div>
+            </Button>
+          </div>
                   ))}
-                </div>
+          </div>
                 {suppliersCoverage && (
                   <div className="mt-3 pt-3 border-t border-orange-200 text-xs text-orange-700">
                     Supplier coverage: {suppliersCoverage.linkedCount} of {suppliersCoverage.totalFromSales} suppliers have master data
                   </div>
                 )}
-              </CardContent>
-            </Card>
+        </CardContent>
+      </Card>
+          )}
+
+          {/* Analysis Background (Transparency Panel) */}
+          {analysisBackground && (
+            <details className="bg-slate-50 border rounded-md">
+              <summary className="p-3 cursor-pointer text-sm font-medium text-slate-700 hover:bg-slate-100">
+                📋 Analysis Background (click to expand)
+              </summary>
+              <div className="p-4 pt-0 space-y-3 text-xs">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  <div>
+                    <div className="text-slate-500">Run Label</div>
+                    <div className="font-medium">{analysisBackground.runLabel}</div>
+        </div>
+                    <div>
+                    <div className="text-slate-500">Run Number</div>
+                    <div className="font-medium">#{analysisBackground.runNumber}</div>
+      </div>
+                  <div>
+                    <div className="text-slate-500">Prompt</div>
+                    <div className="font-medium">{analysisBackground.promptKey} v{analysisBackground.promptVersion}</div>
+      </div>
+                  <div>
+                    <div className="text-slate-500">Model</div>
+                    <div className="font-medium">{analysisBackground.model} (temp: {analysisBackground.temperature})</div>
+            </div>
+        </div>
+                
+                {analysisBackground.computedFeatures && (
+                  <div>
+                    <div className="text-slate-500 mb-2">Computed Features Snapshot</div>
+                    <div className="bg-white border rounded p-2 max-h-48 overflow-auto">
+                      <pre className="text-[10px] text-slate-600">
+                        {JSON.stringify(analysisBackground.computedFeatures, null, 2)}
+                      </pre>
+              </div>
+                  </div>
+                )}
+              </div>
+            </details>
           )}
 
           {currentSupplier && (
@@ -1222,16 +1409,16 @@ export default function PurchaseMakeOrderPage() {
 
       {/* Step 4: Summary */}
       {step === 4 && (
-        <Card>
+      <Card>
           <CardHeader className="bg-[#C5D5CA]/30">
             <CardTitle className="flex items-center gap-2">
               <span className="text-2xl">✓</span>
               Purchase Orders Created
             </CardTitle>
-            <CardDescription>
+          <CardDescription>
               Review and push orders to SPY when ready
-            </CardDescription>
-          </CardHeader>
+          </CardDescription>
+        </CardHeader>
           <CardContent className="p-0">
             <table className="w-full text-sm">
               <thead className="bg-slate-50">
