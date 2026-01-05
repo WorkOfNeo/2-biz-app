@@ -1,5 +1,5 @@
 'use client';
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import useSWR from 'swr';
 import { supabase } from '../../../lib/supabaseClient';
 import { Button } from '../../../components/ui/button';
@@ -12,8 +12,8 @@ import { Dropzone } from '../../../components/ui/dropzone';
 type Season = {
   id: string;
   name: string;
-  start_date?: string;
-  end_date?: string;
+  year: number | null;
+  is_current?: boolean | null;
 };
 
 type CSVRow = {
@@ -377,16 +377,26 @@ export default function PurchaseMakeOrderPage() {
   const [commitResults, setCommitResults] = useState<CreatedPO[]>([]);
   const [commitError, setCommitError] = useState<string>('');
 
-  // Fetch seasons
-  const { data: seasonsData } = useSWR('seasons', async () => {
+  // Fetch seasons (same pattern as statistics pages)
+  const { data: seasonsData } = useSWR('seasons:purchase', async () => {
     const { data, error } = await supabase
       .from('seasons')
-      .select('id, name, start_date, end_date')
-      .order('start_date', { ascending: false });
+      .select('id, name, year, is_current')
+      .order('created_at', { ascending: false });
     if (error) throw error;
-    return data as Season[];
+    return (data ?? []) as Season[];
   });
   const seasons = seasonsData || [];
+  
+  // Auto-select current season on load
+  useEffect(() => {
+    if (seasons.length > 0 && !selectedSeasonId) {
+      const current = seasons.find(s => s.is_current);
+      if (current) {
+        setSelectedSeasonId(current.id);
+      }
+    }
+  }, [seasons, selectedSeasonId]);
 
   // Handlers
   const handleFileUpload = useCallback(async (files: File[]) => {
@@ -607,15 +617,17 @@ export default function PurchaseMakeOrderPage() {
           <CardContent className="space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">Current Season (optional)</label>
+                <label className="block text-sm font-medium text-slate-700 mb-2">Current Season</label>
                 <select
                   value={selectedSeasonId}
                   onChange={e => setSelectedSeasonId(e.target.value)}
                   className="w-full border rounded-md h-10 px-3 text-sm"
                 >
-                  <option value="">No season selected</option>
+                  <option value="">Select season...</option>
                   {seasons.map(s => (
-                    <option key={s.id} value={s.id}>{s.name}</option>
+                    <option key={s.id} value={s.id}>
+                      {s.name}{s.year ? ` ${s.year}` : ''}{s.is_current ? ' (current)' : ''}
+                    </option>
                   ))}
                 </select>
               </div>
@@ -628,11 +640,13 @@ export default function PurchaseMakeOrderPage() {
                 >
                   <option value="">No comparison</option>
                   {seasons.map(s => (
-                    <option key={s.id} value={s.id}>{s.name}</option>
+                    <option key={s.id} value={s.id}>
+                      {s.name}{s.year ? ` ${s.year}` : ''}
+                    </option>
                   ))}
                 </select>
                 <p className="text-xs text-slate-500 mt-1">
-                  For YoY index calculation
+                  For YoY index calculation (price + qty comparison)
                 </p>
               </div>
             </div>
