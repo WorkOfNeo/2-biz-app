@@ -3,6 +3,7 @@
 import { useEffect, useState, useMemo } from 'react';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 
 type PoRow = {
   status: string | null;
@@ -86,6 +87,8 @@ export default function PurchaseDashboardPage() {
   const [rows, setRows] = useState<PoRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedSupplier, setSelectedSupplier] = useState<string | null>(null);
+  const [weekOffset, setWeekOffset] = useState(0); // 0 = current week, -1 = last week, 1 = next week
+  const [showWeekends, setShowWeekends] = useState(false);
 
   async function fetchRows() {
     setLoading(true);
@@ -109,14 +112,18 @@ export default function PurchaseDashboardPage() {
     return () => clearInterval(id);
   }, []);
 
-  // Build current week dates and MM/DD keys
+  // Build week dates and MM/DD keys based on offset
   const { weekDates, weekKeys, today } = useMemo(() => {
     const now = new Date();
-    const weekStart = getWeekStart(now);
+    const todayKey = formatMMDD(now);
+    const baseWeekStart = getWeekStart(now);
+    // Apply week offset
+    const weekStart = new Date(baseWeekStart);
+    weekStart.setDate(weekStart.getDate() + weekOffset * 7);
     const dates = buildWeekDates(weekStart);
     const keys = dates.map(formatMMDD);
-    return { weekDates: dates, weekKeys: keys, today: formatMMDD(now) };
-  }, []);
+    return { weekDates: dates, weekKeys: keys, today: todayKey };
+  }, [weekOffset]);
 
   // Get unique suppliers sorted alphabetically
   const suppliers = useMemo(() => {
@@ -174,15 +181,71 @@ export default function PurchaseDashboardPage() {
     return { columns: cols, outsideWeek: outside };
   }, [filteredRows, weekKeys]);
 
+  // Days to display (5 or 7 based on showWeekends)
+  const displayDays = showWeekends ? WEEKDAYS : WEEKDAYS.slice(0, 5);
+
   return (
     <div className="p-4 space-y-4 max-w-full">
-      <div>
-        <div className="text-xs text-slate-500">Purchase</div>
-        <h1 className="text-2xl font-semibold">Dashboard</h1>
-        <p className="text-sm text-slate-600 mt-1">
-          Week of {weekDates[0]?.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – {weekDates[6]?.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-        </p>
+      <div className="flex items-start justify-between">
+        <div>
+          <div className="text-xs text-slate-500">Purchase</div>
+          <h1 className="text-2xl font-semibold">Dashboard</h1>
+        </div>
+        
+        {/* Week Navigation & Controls */}
+        <div className="flex items-center gap-4">
+          {/* Show Weekends Checkbox */}
+          <label className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={showWeekends}
+              onChange={(e) => setShowWeekends(e.target.checked)}
+              className="w-4 h-4 rounded border-slate-300 text-slate-800 focus:ring-slate-500"
+            />
+            Show weekends
+          </label>
+          
+          {/* Week Navigation */}
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => setWeekOffset((prev) => prev - 1)}
+              className="p-1.5 rounded hover:bg-slate-100 transition-colors"
+              title="Previous week"
+            >
+              <ChevronLeft className="w-5 h-5 text-slate-600" />
+            </button>
+            <button
+              onClick={() => setWeekOffset(0)}
+              className={`
+                px-3 py-1 text-xs rounded border transition-colors
+                ${weekOffset === 0
+                  ? 'bg-slate-800 text-white border-slate-800'
+                  : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'
+                }
+              `}
+            >
+              Today
+            </button>
+            <button
+              onClick={() => setWeekOffset((prev) => prev + 1)}
+              className="p-1.5 rounded hover:bg-slate-100 transition-colors"
+              title="Next week"
+            >
+              <ChevronRight className="w-5 h-5 text-slate-600" />
+            </button>
+          </div>
+        </div>
       </div>
+      
+      {/* Week Label */}
+      <p className="text-sm text-slate-600">
+        Week of {weekDates[0]?.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – {weekDates[6]?.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+        {weekOffset !== 0 && (
+          <span className="ml-2 text-xs text-slate-400">
+            ({weekOffset > 0 ? `+${weekOffset}` : weekOffset} week{Math.abs(weekOffset) !== 1 ? 's' : ''})
+          </span>
+        )}
+      </p>
 
       {loading && rows.length === 0 && (
         <div className="text-center py-8 text-slate-500">Loading...</div>
@@ -227,8 +290,10 @@ export default function PurchaseDashboardPage() {
       )}
 
       {/* Kanban Board */}
-      <div className="grid grid-cols-7 gap-3 min-h-[60vh]">
-        {WEEKDAYS.map((day, idx) => {
+      <div className={`grid gap-3 min-h-[60vh] ${showWeekends ? 'grid-cols-7' : 'grid-cols-5'}`}>
+        {displayDays.map((day, displayIdx) => {
+          // Map display index to actual weekday index
+          const idx = WEEKDAYS.indexOf(day);
           const isWeekend = idx >= 5;
           const isToday = weekKeys[idx] === today;
           const columnGroups = columns[idx] ?? [];
