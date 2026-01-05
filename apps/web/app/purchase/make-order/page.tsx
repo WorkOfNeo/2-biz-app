@@ -95,25 +95,75 @@ type CreatedPO = {
 
 // CSV Parser - handles size-level rows and aggregates to customer/style/color
 function parseCSV(text: string): CSVRow[] {
+  console.log('═══════════════════════════════════════════════════════════');
+  console.log('[CSV Parser] Starting parse...');
+  
   const lines = text.split(/\r?\n/).filter(l => l.trim());
-  if (lines.length < 2) return [];
+  console.log(`[CSV Parser] Total lines (including header): ${lines.length}`);
+  
+  if (lines.length < 2) {
+    console.log('[CSV Parser] ERROR: Less than 2 lines, returning empty');
+    return [];
+  }
   
   const headerLine = lines[0]!;
-  const headers = headerLine.split(/[,;\t]/).map(h => h.trim().toLowerCase().replace(/[^a-z0-9_ ]/g, '_').replace(/\s+/g, '_'));
+  console.log('[CSV Parser] Raw header line:', headerLine);
+  
+  // Try to detect delimiter
+  const commaCount = (headerLine.match(/,/g) || []).length;
+  const semicolonCount = (headerLine.match(/;/g) || []).length;
+  const tabCount = (headerLine.match(/\t/g) || []).length;
+  const delimiter = tabCount > commaCount && tabCount > semicolonCount ? '\t' 
+    : semicolonCount > commaCount ? ';' : ',';
+  console.log(`[CSV Parser] Detected delimiter: "${delimiter === '\t' ? 'TAB' : delimiter}" (commas:${commaCount}, semicolons:${semicolonCount}, tabs:${tabCount})`);
+  
+  const rawHeaders = headerLine.split(delimiter).map(h => h.trim());
+  console.log('[CSV Parser] Raw headers (before normalization):', rawHeaders);
+  
+  const headers = rawHeaders.map(h => h.toLowerCase().replace(/[^a-z0-9_ ]/g, '_').replace(/\s+/g, '_'));
+  console.log('[CSV Parser] Normalized headers:', headers);
+  
+  // Show expected vs found mapping
+  const expectedMappings = {
+    'date': ['date', 'dato', 'invoice_date'],
+    'style_no': ['style_no', 'style', 'varenr', 'item_no'],
+    'color': ['color', 'farve', 'colour'],
+    'customer_name': ['customer_name', 'customer', 'kunde', 'debitor'],
+    'country': ['country', 'land'],
+    'sales_rep': ['sales_rep', 'salesperson', 'saelger'],
+    'qty': ['size_quantity_ordered', 'qty', 'quantity', 'antal', 'pcs'],
+    'net_amount': ['sales_price_exchange_total', 'net_amount', 'amount', 'belob', 'value'],
+  };
+  
+  console.log('[CSV Parser] Field mapping check:');
+  for (const [field, variations] of Object.entries(expectedMappings)) {
+    const found = variations.find(v => headers.includes(v));
+    console.log(`  ${field}: ${found ? `✓ found as "${found}"` : `✗ NOT FOUND (looked for: ${variations.join(', ')})`}`);
+  }
   
   // First pass: collect all raw rows
   const rawRows: any[] = [];
+  let skippedNoStyle = 0;
+  let skippedNoColor = 0;
+  
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i]!;
-    const values = line.split(/[,;\t]/).map(v => v.trim().replace(/^["'=]|["']$/g, '')); // Also strip leading = from Excel
+    const values = line.split(delimiter).map(v => v.trim().replace(/^["'=]|["']$/g, '')); // Also strip leading = from Excel
     
     const row: any = {};
     headers.forEach((h, idx) => {
       row[h] = values[idx] || '';
     });
     
+    // Log first row in detail
+    if (i === 1) {
+      console.log('[CSV Parser] First data row (raw values by header):');
+      headers.forEach((h, idx) => {
+        console.log(`  "${h}": "${values[idx] || '(empty)'}"`);
+      });
+    }
+    
     // Map column variations to standard names
-    // Your columns: Date, Style No, Color, Size Quantity Ordered, Customer Name, Country, Salesperson, Sales Price Exchange Total
     const mapped = {
       date: row.date || row.dato || row.invoice_date || '',
       customer_name: row.customer_name || row.customer || row.kunde || row.debitor || '',
@@ -124,29 +174,51 @@ function parseCSV(text: string): CSVRow[] {
       style_name: row.style_name || row.varenavn || row.description || '',
       color: row.color || row.farve || row.colour || '',
       supplier: row.supplier || row.leverandor || '',
-      // Handle "Size Quantity Ordered" column
       qty: Number(row.size_quantity_ordered || row.qty || row.quantity || row.antal || row.pcs || 0) || 0,
-      // Handle "Sales Price Exchange Total" - may be in cents
       net_amount: Number(row.sales_price_exchange_total || row.net_amount || row.amount || row.belob || row.value || 0) || 0,
       currency: row.currency || row.valuta || 'DKK',
       order_ref: row.order_ref || row.invoice || row.faktura || '',
       channel: row.channel || row.kanal || '',
     };
     
+    // Log first row mapped values
+    if (i === 1) {
+      console.log('[CSV Parser] First data row (mapped values):');
+      console.log(`  date: "${mapped.date}"`);
+      console.log(`  style_no: "${mapped.style_no}"`);
+      console.log(`  color: "${mapped.color}"`);
+      console.log(`  customer_name: "${mapped.customer_name}"`);
+      console.log(`  country: "${mapped.country}"`);
+      console.log(`  sales_rep: "${mapped.sales_rep}"`);
+      console.log(`  qty: ${mapped.qty}`);
+      console.log(`  net_amount: ${mapped.net_amount}`);
+    }
+    
+    if (!mapped.style_no) skippedNoStyle++;
+    if (!mapped.color) skippedNoColor++;
+    
     if (mapped.style_no && mapped.color) {
       rawRows.push(mapped);
     }
   }
   
+  console.log(`[CSV Parser] Rows parsed: ${rawRows.length} valid, skipped ${skippedNoStyle} (no style_no), ${skippedNoColor} (no color)`);
+  
+  if (rawRows.length === 0) {
+    console.log('[CSV Parser] ERROR: No valid rows! Check field mapping above.');
+    console.log('═══════════════════════════════════════════════════════════');
+    return [];
+  }
+  
   // Detect if amounts are in cents (if average > 10000, likely cents)
   const avgAmount = rawRows.reduce((sum, r) => sum + r.net_amount, 0) / (rawRows.length || 1);
-  const amountDivisor = avgAmount > 10000 ? 100 : 1; // Convert cents to currency
+  const amountDivisor = avgAmount > 10000 ? 100 : 1;
+  console.log(`[CSV Parser] Average net_amount: ${avgAmount.toFixed(2)} → ${amountDivisor === 100 ? 'Treating as cents, dividing by 100' : 'Keeping as-is'}`);
   
   // Aggregate by date + customer + style + color (since CSV is at size level)
   const aggregated = new Map<string, CSVRow>();
   
   for (const row of rawRows) {
-    // Key by date + customer + style + color
     const key = `${row.date}|${row.customer_name || row.customer_id}|${row.style_no}|${row.color}`;
     
     if (aggregated.has(key)) {
@@ -170,7 +242,13 @@ function parseCSV(text: string): CSVRow[] {
     }
   }
   
-  console.log(`[CSV Parser] ${rawRows.length} raw rows → ${rows.length} aggregated rows (amounts ${amountDivisor === 100 ? 'converted from cents' : 'kept as-is'})`);
+  // Sample of final output
+  if (rows.length > 0) {
+    console.log('[CSV Parser] Sample aggregated row:', JSON.stringify(rows[0], null, 2));
+  }
+  
+  console.log(`[CSV Parser] RESULT: ${rawRows.length} raw rows → ${rows.length} aggregated rows`);
+  console.log('═══════════════════════════════════════════════════════════');
   
   return rows;
 }
