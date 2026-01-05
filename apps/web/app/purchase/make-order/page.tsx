@@ -146,20 +146,43 @@ function parseCSV(text: string): CSVRow[] {
   let skippedNoStyle = 0;
   let skippedNoColor = 0;
   
+  // Helper to clean Excel-style values like ="1010191" or "value"
+  const cleanExcelValue = (v: string): string => {
+    let cleaned = v.trim();
+    // Handle Excel formula format: ="value" -> value
+    if (cleaned.startsWith('="') && cleaned.endsWith('"')) {
+      cleaned = cleaned.slice(2, -1);
+    }
+    // Handle quoted values: "value" -> value
+    else if ((cleaned.startsWith('"') && cleaned.endsWith('"')) || 
+             (cleaned.startsWith("'") && cleaned.endsWith("'"))) {
+      cleaned = cleaned.slice(1, -1);
+    }
+    // Handle leading = without quotes: =value -> value
+    else if (cleaned.startsWith('=')) {
+      cleaned = cleaned.slice(1);
+    }
+    return cleaned;
+  };
+  
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i]!;
-    const values = line.split(delimiter).map(v => v.trim().replace(/^["'=]|["']$/g, '')); // Also strip leading = from Excel
+    const rawValues = line.split(delimiter);
+    const values = rawValues.map(cleanExcelValue);
     
     const row: any = {};
     headers.forEach((h, idx) => {
       row[h] = values[idx] || '';
     });
     
-    // Log first row in detail
+    // Log first row in detail - show both raw and cleaned values
     if (i === 1) {
-      console.log('[CSV Parser] First data row (raw values by header):');
+      console.log('[CSV Parser] First data row (raw → cleaned):');
       headers.forEach((h, idx) => {
-        console.log(`  "${h}": "${values[idx] || '(empty)'}"`);
+        const raw = rawValues[idx]?.trim() || '(empty)';
+        const clean = values[idx] || '(empty)';
+        const changed = raw !== clean ? ` → "${clean}"` : '';
+        console.log(`  "${h}": "${raw}"${changed}`);
       });
     }
     
@@ -215,11 +238,12 @@ function parseCSV(text: string): CSVRow[] {
   const amountDivisor = avgAmount > 10000 ? 100 : 1;
   console.log(`[CSV Parser] Average net_amount: ${avgAmount.toFixed(2)} → ${amountDivisor === 100 ? 'Treating as cents, dividing by 100' : 'Keeping as-is'}`);
   
-  // Aggregate by date + customer + style + color (since CSV is at size level)
+  // Aggregate by customer + style + color (sum across all dates and sizes)
   const aggregated = new Map<string, CSVRow>();
   
   for (const row of rawRows) {
-    const key = `${row.date}|${row.customer_name || row.customer_id}|${row.style_no}|${row.color}`;
+    // Key WITHOUT date - we sum up all dates for same customer/style/color
+    const key = `${row.customer_name || row.customer_id}|${row.style_no}|${row.color}`;
     
     if (aggregated.has(key)) {
       const existing = aggregated.get(key)!;
