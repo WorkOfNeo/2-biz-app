@@ -32,6 +32,7 @@ type CSVRow = {
   style_no: string;
   style_name?: string;
   color: string;
+  size?: string;
   supplier?: string;
   qty: number | string;
   net_amount?: number | string;
@@ -205,6 +206,7 @@ export async function POST(req: Request) {
         style_no: row.style_no,
         style_name: row.style_name || null,
         color: row.color,
+        size: row.size || null,
         supplier: supplier,
         qty: qty,
         net_amount: netAmount,

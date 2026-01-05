@@ -78,15 +78,29 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Import not found' }, { status: 404 });
     }
 
-    // Fetch aggregated sales data by supplier/style/color
-    const { data: salesSummary, error: summaryError } = await supabase
-      .from('purchase_sales_summary')
+    // Fetch aggregated sales data by supplier/style/color (with images)
+    // Try the enhanced view first, fall back to basic view
+    let salesSummary: any[] = [];
+    const { data: salesWithImages, error: summaryErrorImages } = await supabase
+      .from('purchase_sales_summary_with_images')
       .select('*')
       .eq('import_id', importId);
 
-    if (summaryError) {
-      console.error('[AI Suggestions] Failed to fetch sales summary:', summaryError);
-      return NextResponse.json({ error: 'Failed to fetch sales data' }, { status: 500 });
+    if (summaryErrorImages) {
+      console.warn('[AI Suggestions] Could not fetch from purchase_sales_summary_with_images, falling back:', summaryErrorImages.message);
+      const { data: salesBasic, error: summaryError } = await supabase
+        .from('purchase_sales_summary')
+        .select('*')
+        .eq('import_id', importId);
+      
+      if (summaryError) {
+        console.error('[AI Suggestions] Failed to fetch sales summary:', summaryError);
+        return NextResponse.json({ error: 'Failed to fetch sales data' }, { status: 500 });
+      }
+      salesSummary = salesBasic || [];
+    } else {
+      salesSummary = salesWithImages || [];
+      console.log('[AI Suggestions] Loaded sales summary with images:', salesSummary.length, 'style/color rows');
     }
 
     // Fetch customer summary for coverage analysis
@@ -126,12 +140,14 @@ export async function POST(req: Request) {
       style_name: string | null;
       color: string;
       supplier: string | null;
+      image_url?: string | null;
     }> = [];
     let noSalesStyles: Array<{
       style_no: string;
       style_name: string | null;
       color: string;
       supplier: string | null;
+      image_url?: string | null;
     }> = [];
 
     if (seasonId) {
@@ -148,7 +164,8 @@ export async function POST(req: Request) {
               styles!inner (
                 style_no,
                 style_name,
-                supplier
+                supplier,
+                image_url
               )
             )
           `)
@@ -166,6 +183,7 @@ export async function POST(req: Request) {
                 style_name: sc.styles.style_name,
                 color: sc.color,
                 supplier: sc.styles.supplier,
+                image_url: sc.styles.image_url,
               });
             }
           }
@@ -238,11 +256,25 @@ export async function POST(req: Request) {
     // Build Year-over-Year comparison if comparison season provided
     let yoyAnalysis: any = null;
     if (comparisonSeasonId) {
+      console.log('═══════════════════════════════════════════════════════════');
+      console.log('[YoY Analysis] Starting Year-over-Year comparison');
+      console.log('[YoY Analysis] Comparison Season ID:', comparisonSeasonId);
+      console.log('[YoY Analysis] Current Season ID:', seasonId || 'none');
+      
       try {
         // Fetch customer master data (for nulled/permanently_closed status)
-        const { data: customersData } = await supabase
+        const { data: customersData, error: customersError } = await supabase
           .from('customers')
           .select('id, customer_id, company, nulled, permanently_closed, salesperson_id, country');
+
+        if (customersError) {
+          console.error('[YoY Analysis] ERROR fetching customers:', customersError);
+        } else {
+          console.log('[YoY Analysis] Customer master data loaded:', (customersData || []).length, 'customers');
+          const nulledCount = (customersData || []).filter(c => c.nulled).length;
+          const permClosedCount = (customersData || []).filter(c => c.permanently_closed).length;
+          console.log(`[YoY Analysis] Customer status: ${nulledCount} nulled, ${permClosedCount} permanently closed`);
+        }
 
         const customerMaster = new Map<string, any>();
         for (const c of (customersData || [])) {
@@ -256,19 +288,47 @@ export async function POST(req: Request) {
         }
 
         // Fetch last season's totals from season_statistics
-        const { data: lastSeasonStats } = await supabase
+        const { data: lastSeasonStats, error: lastSeasonError } = await supabase
           .from('season_statistics')
           .select('customer_id, qty, amount')
           .eq('season_id', comparisonSeasonId);
 
+        if (lastSeasonError) {
+          console.error('[YoY Analysis] ERROR fetching last season stats:', lastSeasonError);
+        } else {
+          console.log('[YoY Analysis] Last season (comparison) stats loaded:', (lastSeasonStats || []).length, 'customer records');
+          if ((lastSeasonStats || []).length > 0) {
+            const totalQty = (lastSeasonStats || []).reduce((sum, r) => sum + (Number(r.qty) || 0), 0);
+            const totalAmt = (lastSeasonStats || []).reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
+            console.log(`[YoY Analysis] Last season totals: ${totalQty} pcs, ${totalAmt.toFixed(0)} amount`);
+          } else {
+            console.warn('[YoY Analysis] WARNING: No data found for comparison season!');
+          }
+        }
+
         // Fetch current season's totals (if seasonId provided)
         let currentSeasonStats: any[] = [];
         if (seasonId) {
-          const { data } = await supabase
+          const { data, error: currentSeasonError } = await supabase
             .from('season_statistics')
             .select('customer_id, qty, amount')
             .eq('season_id', seasonId);
-          currentSeasonStats = data || [];
+          
+          if (currentSeasonError) {
+            console.error('[YoY Analysis] ERROR fetching current season stats:', currentSeasonError);
+          } else {
+            currentSeasonStats = data || [];
+            console.log('[YoY Analysis] Current season stats loaded:', currentSeasonStats.length, 'customer records');
+            if (currentSeasonStats.length > 0) {
+              const totalQty = currentSeasonStats.reduce((sum, r) => sum + (Number(r.qty) || 0), 0);
+              const totalAmt = currentSeasonStats.reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
+              console.log(`[YoY Analysis] Current season totals: ${totalQty} pcs, ${totalAmt.toFixed(0)} amount`);
+            } else {
+              console.warn('[YoY Analysis] WARNING: No data found for current season!');
+            }
+          }
+        } else {
+          console.log('[YoY Analysis] No current season ID provided, skipping current season lookup');
         }
 
         // Build lookup: customer UUID -> last season totals
@@ -394,10 +454,15 @@ export async function POST(req: Request) {
           },
         };
 
-        console.log('[AI Suggestions] YoY analysis:', yoyAnalysis);
+        console.log('[YoY Analysis] Final YoY analysis object:');
+        console.log(JSON.stringify(yoyAnalysis, null, 2));
+        console.log('═══════════════════════════════════════════════════════════');
       } catch (e) {
-        console.warn('[AI Suggestions] Could not build YoY analysis:', e);
+        console.error('[YoY Analysis] ERROR building YoY analysis:', e);
+        console.log('═══════════════════════════════════════════════════════════');
       }
+    } else {
+      console.log('[YoY Analysis] No comparison season provided, skipping YoY analysis');
     }
 
     // Build supplier lookup map
