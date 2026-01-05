@@ -468,7 +468,12 @@ function SupplierReviewCard({
                 
                       return (
                   <tr key={idx} className="border-t hover:bg-slate-50">
-                    <td className="p-3 font-mono text-xs">{line.style_no}</td>
+                    <td className="p-3" title={line.style_no}>
+                      <span className="text-sm">{(line as any).style_name || line.style_no}</span>
+                      {(line as any).style_name && (
+                        <span className="block text-xs text-slate-400 font-mono">{line.style_no}</span>
+                      )}
+                    </td>
                     <td className="p-3">{line.color}</td>
                     <td className="p-3 text-right text-slate-500">{line.suggested_qty}</td>
                     <td className="p-3">
@@ -1176,7 +1181,9 @@ export default function PurchaseMakeOrderPage() {
                             <tbody>
                               {comparisonData.top10Styles.map((s: any, i: number) => (
                                 <tr key={i} className="border-b border-slate-100">
-                                  <td className="py-1 font-medium">{s.style_no}</td>
+                                  <td className="py-1 font-medium" title={s.style_no}>
+                                    {s.style_name || s.style_no}
+                                  </td>
                                   <td className="py-1">{s.color}</td>
                                   <td className="py-1 text-right">{s.qty.toLocaleString()}</td>
                                   <td className="py-1 text-right">{s.customerCount}</td>

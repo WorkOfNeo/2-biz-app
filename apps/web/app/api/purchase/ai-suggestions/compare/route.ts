@@ -36,17 +36,18 @@ type ComparisonResult = {
     qty: number;
     amount: number;
     customerCount: number;
-    topStyles: Array<{ style_no: string; color: string; qty: number }>;
+    topStyles: Array<{ style_no: string; style_name: string; color: string; qty: number }>;
   }>;
   bySalesRep: Array<{
     sales_rep: string;
     qty: number;
     amount: number;
     customerCount: number;
-    topStyles: Array<{ style_no: string; color: string; qty: number }>;
+    topStyles: Array<{ style_no: string; style_name: string; color: string; qty: number }>;
   }>;
   top10Styles: Array<{
     style_no: string;
+    style_name: string;
     color: string;
     supplier: string | null;
     qty: number;
@@ -55,6 +56,7 @@ type ComparisonResult = {
   }>;
   top10ByCountry: Record<string, Array<{
     style_no: string;
+    style_name: string;
     color: string;
     qty: number;
   }>>;
@@ -113,6 +115,41 @@ export async function POST(req: Request) {
     const rows = salesRows || [];
     console.log('[Compare API] Fetched', rows.length, 'rows');
 
+    // Get unique style numbers and fetch style names
+    const uniqueStyleNos = [...new Set(rows.map(r => r.style_no).filter(Boolean))];
+    console.log('[Compare API] Unique style numbers:', uniqueStyleNos.length);
+    
+    // Clean style numbers (remove Excel formatting like ="xxx")
+    const cleanedStyleNos = uniqueStyleNos.map(s => 
+      s.replace(/^="?|"?$/g, '').trim()
+    );
+    
+    // Build style name lookup map
+    const styleNameMap: Record<string, string> = {};
+    if (cleanedStyleNos.length > 0) {
+      const { data: stylesData, error: stylesError } = await supabase
+        .from('styles')
+        .select('style_no, style_name')
+        .in('style_no', cleanedStyleNos);
+      
+      if (stylesError) {
+        console.error('[Compare API] Error fetching styles:', stylesError);
+      } else {
+        for (const style of (stylesData || [])) {
+          if (style.style_no && style.style_name) {
+            styleNameMap[style.style_no] = style.style_name;
+          }
+        }
+        console.log('[Compare API] Found style names for', Object.keys(styleNameMap).length, 'styles');
+      }
+    }
+    
+    // Helper to get style name
+    const getStyleName = (styleNo: string): string => {
+      const cleaned = styleNo.replace(/^="?|"?$/g, '').trim();
+      return styleNameMap[cleaned] || styleNo;
+    };
+
     // Calculate current season totals
     let currentQty = 0;
     let currentAmount = 0;
@@ -126,17 +163,52 @@ export async function POST(req: Request) {
     let lastSeasonTotalAmount = 0;
 
     if (comparisonSeasonId) {
-      const { data: lastSeasonStats } = await supabase
+      console.log('[Compare API] Fetching last season stats for comparison season:', comparisonSeasonId);
+      
+      const { data: lastSeasonStats, error: lastSeasonError } = await supabase
         .from('season_statistics')
         .select('qty, amount')
         .eq('season_id', comparisonSeasonId);
+
+      if (lastSeasonError) {
+        console.error('[Compare API] Error fetching last season stats:', lastSeasonError);
+      } else {
+        console.log('[Compare API] Found', lastSeasonStats?.length || 0, 'season_statistics rows for comparison season');
+      }
 
       for (const row of (lastSeasonStats || [])) {
         lastSeasonTotalQty += Number(row.qty) || 0;
         lastSeasonTotalAmount += Number(row.amount) || 0;
       }
 
-      console.log('[Compare API] Last season totals:', lastSeasonTotalQty, 'qty,', lastSeasonTotalAmount, 'amount');
+      console.log('[Compare API] Last season totals:', {
+        qty: lastSeasonTotalQty,
+        amount: lastSeasonTotalAmount,
+        rowCount: lastSeasonStats?.length || 0,
+      });
+      
+      // If no data found, let's also check sales_stats table as fallback
+      if (lastSeasonTotalQty === 0) {
+        console.log('[Compare API] No season_statistics found, checking sales_stats table...');
+        const { data: salesStats, error: salesStatsError } = await supabase
+          .from('sales_stats')
+          .select('qty, price')
+          .eq('season_id', comparisonSeasonId);
+        
+        if (salesStatsError) {
+          console.error('[Compare API] Error fetching sales_stats:', salesStatsError);
+        } else if (salesStats && salesStats.length > 0) {
+          console.log('[Compare API] Found', salesStats.length, 'sales_stats rows');
+          for (const row of salesStats) {
+            lastSeasonTotalQty += Number(row.qty) || 0;
+            lastSeasonTotalAmount += Number(row.price) || 0;
+          }
+          console.log('[Compare API] Sales stats totals:', {
+            qty: lastSeasonTotalQty,
+            amount: lastSeasonTotalAmount,
+          });
+        }
+      }
     }
 
     // Build weekly breakdown from CSV dates
@@ -244,7 +316,12 @@ export async function POST(req: Request) {
           .slice(0, 5)
           .map(([key, qty]) => {
             const [style_no, color] = key.split('|');
-            return { style_no: style_no || '', color: color || '', qty };
+            return { 
+              style_no: style_no || '', 
+              style_name: getStyleName(style_no || ''),
+              color: color || '', 
+              qty 
+            };
           });
 
         return {
@@ -280,7 +357,12 @@ export async function POST(req: Request) {
           .slice(0, 5)
           .map(([key, qty]) => {
             const [style_no, color] = key.split('|');
-            return { style_no: style_no || '', color: color || '', qty };
+            return { 
+              style_no: style_no || '', 
+              style_name: getStyleName(style_no || ''),
+              color: color || '', 
+              qty 
+            };
           });
 
         return {
@@ -310,6 +392,7 @@ export async function POST(req: Request) {
         const [style_no, color] = key.split('|');
         return {
           style_no: style_no || '',
+          style_name: getStyleName(style_no || ''),
           color: color || '',
           supplier: data.supplier,
           qty: data.qty,
@@ -322,7 +405,7 @@ export async function POST(req: Request) {
 
     // Top 10 by Country (for main Nordic countries)
     const mainCountries = ['Denmark', 'Sweden', 'Norway', 'Finland', 'DK', 'SE', 'NO', 'FI'];
-    const top10ByCountry: Record<string, Array<{ style_no: string; color: string; qty: number }>> = {};
+    const top10ByCountry: Record<string, Array<{ style_no: string; style_name: string; color: string; qty: number }>> = {};
 
     for (const countryData of byCountry) {
       const countryKey = countryData.country.toUpperCase();
@@ -344,7 +427,12 @@ export async function POST(req: Request) {
           .slice(0, 10)
           .map(([key, qty]) => {
             const [style_no, color] = key.split('|');
-            return { style_no: style_no || '', color: color || '', qty };
+            return { 
+              style_no: style_no || '', 
+              style_name: getStyleName(style_no || ''),
+              color: color || '', 
+              qty 
+            };
           });
       }
     }

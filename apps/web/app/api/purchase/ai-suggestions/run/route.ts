@@ -828,6 +828,37 @@ export async function POST(req: Request) {
 
     const durationMs = Date.now() - startTime;
 
+    // Enrich AI output with style_name from sales summary
+    if (aiOutput && aiOutput.suppliers) {
+      // Build style_name lookup from sales summary
+      const styleNameMap: Record<string, string> = {};
+      for (const row of (salesSummary || [])) {
+        if (row.style_no && row.style_name) {
+          styleNameMap[row.style_no] = row.style_name;
+        }
+      }
+      
+      // Add style_name from season styles if not in sales summary
+      for (const style of seasonStyles) {
+        if (style.style_no && style.style_name && !styleNameMap[style.style_no]) {
+          styleNameMap[style.style_no] = style.style_name;
+        }
+      }
+      
+      // Enrich each supplier's lines with style_name
+      for (const supplier of aiOutput.suppliers) {
+        if (supplier.lines) {
+          for (const line of supplier.lines) {
+            if (line.style_no && styleNameMap[line.style_no]) {
+              (line as any).style_name = styleNameMap[line.style_no];
+            }
+          }
+        }
+      }
+      
+      console.log('[AI Suggestions] Enriched output with', Object.keys(styleNameMap).length, 'style names');
+    }
+
     // Update ai_runs record
     await supabase
       .from('ai_runs')
