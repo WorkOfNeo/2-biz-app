@@ -136,28 +136,56 @@ export async function POST(req: Request) {
     let maxDate: string | null = null;
 
     // Fetch supplier lookup (style_no -> supplier)
-    const styleNos = [...new Set(rows.map(r => r.style_no).filter(Boolean))];
+    // Clean style numbers (remove Excel formatting like ="xxx")
+    const cleanStyleNo = (s: string) => s.replace(/^[="']+|["']+$/g, '').trim();
+    const rawStyleNos = [...new Set(rows.map(r => r.style_no).filter(Boolean))];
+    const styleNos = rawStyleNos.map(cleanStyleNo);
+    
     console.log('[Purchase Sales Import] Looking up suppliers for', styleNos.length, 'unique styles');
+    console.log('[Purchase Sales Import] Sample style numbers (raw -> cleaned):');
+    for (let i = 0; i < Math.min(5, rawStyleNos.length); i++) {
+      console.log(`  "${rawStyleNos[i]}" -> "${styleNos[i]}"`);
+    }
     
     const { data: stylesData } = await supabase
       .from('styles')
-      .select('style_no, supplier')
+      .select('style_no, supplier, style_name')
       .in('style_no', styleNos);
     
     const supplierMap = new Map<string, string>();
+    const styleNameMap = new Map<string, string>();
     let stylesWithSupplier = 0;
+    let stylesWithoutSupplier = 0;
+    
     (stylesData || []).forEach((s: any) => {
+      if (s.style_name) {
+        styleNameMap.set(s.style_no, s.style_name);
+      }
       if (s.supplier) {
         supplierMap.set(s.style_no, s.supplier);
         stylesWithSupplier++;
+      } else {
+        stylesWithoutSupplier++;
       }
     });
     
-    console.log('[Purchase Sales Import] Styles found in DB:', (stylesData || []).length);
+    // Log styles not found in DB
+    const stylesNotInDb = styleNos.filter(sn => !stylesData?.find((s: any) => s.style_no === sn));
+    
+    console.log('[Purchase Sales Import] Styles found in DB:', (stylesData || []).length, 'of', styleNos.length);
     console.log('[Purchase Sales Import] Styles with supplier:', stylesWithSupplier);
-    console.log('[Purchase Sales Import] Supplier distribution:', Object.fromEntries(
-      [...new Set(Array.from(supplierMap.values()))].map(s => [s, [...supplierMap.values()].filter(v => v === s).length])
-    ));
+    console.log('[Purchase Sales Import] Styles without supplier in DB:', stylesWithoutSupplier);
+    console.log('[Purchase Sales Import] Styles NOT found in DB:', stylesNotInDb.length);
+    if (stylesNotInDb.length > 0 && stylesNotInDb.length <= 20) {
+      console.log('[Purchase Sales Import] Missing styles:', stylesNotInDb);
+    }
+    
+    // Get supplier distribution
+    const supplierCounts: Record<string, number> = {};
+    for (const sup of supplierMap.values()) {
+      supplierCounts[sup] = (supplierCounts[sup] || 0) + 1;
+    }
+    console.log('[Purchase Sales Import] Supplier distribution:', supplierCounts);
 
     // Process each row
     for (let i = 0; i < rows.length; i++) {
@@ -195,11 +223,17 @@ export async function POST(req: Request) {
       const qty = Number(row.qty) || 0;
       const netAmount = Number(row.net_amount) || 0;
       
+      // Clean style_no for lookups
+      const cleanedStyleNo = cleanStyleNo(row.style_no);
+      
       // Get supplier (from row or lookup)
-      const supplier = row.supplier || supplierMap.get(row.style_no) || null;
+      const supplier = row.supplier || supplierMap.get(cleanedStyleNo) || null;
+      
+      // Get style_name from lookup if not in row
+      const styleName = row.style_name || styleNameMap.get(cleanedStyleNo) || null;
       
       // Track stats
-      uniqueStyles.add(row.style_no);
+      uniqueStyles.add(cleanedStyleNo);
       uniqueCustomers.add(customerRef);
       totalQty += qty;
       totalAmount += netAmount;
@@ -215,8 +249,8 @@ export async function POST(req: Request) {
         customer_id: row.customer_id || null,
         country: row.country || null,
         sales_rep: row.sales_rep || null,
-        style_no: row.style_no,
-        style_name: row.style_name || null,
+        style_no: cleanedStyleNo, // Use cleaned style number
+        style_name: styleName,
         color: row.color,
         size: row.size || null,
         supplier: supplier,

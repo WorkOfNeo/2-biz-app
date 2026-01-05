@@ -560,6 +560,11 @@ export default function PurchaseMakeOrderPage() {
   const [isLoadingComparison, setIsLoadingComparison] = useState(false);
   const [comparisonError, setComparisonError] = useState<string>('');
   
+  // Data preview (validation before AI)
+  const [previewData, setPreviewData] = useState<any>(null);
+  const [isLoadingPreview, setIsLoadingPreview] = useState(false);
+  const [previewError, setPreviewError] = useState<string>('');
+  
   // Analysis background (for transparency)
   const [analysisBackground, setAnalysisBackground] = useState<{
     promptKey: string;
@@ -639,6 +644,9 @@ export default function PurchaseMakeOrderPage() {
       setImportStats(data.stats);
       setStep(2);
       
+      // Auto-load preview to validate data
+      loadPreview(data.importId);
+      
       // Auto-load comparison if we have a comparison season
       if (comparisonSeasonId) {
         loadComparison(data.importId);
@@ -680,6 +688,39 @@ export default function PurchaseMakeOrderPage() {
       setComparisonError(err.message);
     } finally {
       setIsLoadingComparison(false);
+    }
+  }, [importId, selectedSeasonId, comparisonSeasonId]);
+
+  // Load data preview (validation before AI)
+  const loadPreview = useCallback(async (impId?: string) => {
+    const targetImportId = impId || importId;
+    if (!targetImportId) return;
+    
+    setIsLoadingPreview(true);
+    setPreviewError('');
+    
+    try {
+      const res = await fetch('/api/purchase/ai-suggestions/preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          importId: targetImportId,
+          seasonId: selectedSeasonId || null,
+          comparisonSeasonId: comparisonSeasonId || null,
+        }),
+      });
+      
+      const data = await res.json();
+      
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Failed to load preview');
+      }
+      
+      setPreviewData(data.preview);
+    } catch (err: any) {
+      setPreviewError(err.message);
+    } finally {
+      setIsLoadingPreview(false);
     }
   }, [importId, selectedSeasonId, comparisonSeasonId]);
 
@@ -1049,8 +1090,115 @@ export default function PurchaseMakeOrderPage() {
               <div className="text-sm text-slate-600">
                 Date range: <span className="font-medium">{importStats.dateRange.start}</span> to{' '}
                 <span className="font-medium">{importStats.dateRange.end}</span>
-                            </div>
+              </div>
+            )}
+
+            {/* Data Validation Preview */}
+            {isLoadingPreview && (
+              <div className="bg-slate-50 border rounded-md p-4 text-center text-slate-500">
+                Loading data preview...
+              </div>
+            )}
+            {previewError && (
+              <div className="bg-red-50 border border-red-200 text-red-700 rounded-md p-3 text-sm">
+                {previewError}
+              </div>
+            )}
+            {previewData && (
+              <div className="space-y-4">
+                {/* Validation Errors */}
+                {previewData.validation.errors.length > 0 && (
+                  <div className="bg-red-50 border border-red-300 rounded-md p-4">
+                    <div className="font-medium text-red-800 mb-2">⛔ Data Issues (must fix before AI analysis)</div>
+                    <ul className="text-sm text-red-700 space-y-1">
+                      {previewData.validation.errors.map((e: string, i: number) => (
+                        <li key={i}>• {e}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                
+                {/* Validation Warnings */}
+                {previewData.validation.warnings.length > 0 && (
+                  <div className="bg-amber-50 border border-amber-300 rounded-md p-4">
+                    <div className="font-medium text-amber-800 mb-2">⚠️ Warnings</div>
+                    <ul className="text-sm text-amber-700 space-y-1">
+                      {previewData.validation.warnings.map((w: string, i: number) => (
+                        <li key={i}>• {w}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {/* Supplier Breakdown from DB */}
+                <div className="bg-slate-50 border rounded-md p-4">
+                  <div className="font-medium text-sm mb-3">📊 Supplier Coverage (from Database)</div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="text-left text-xs text-slate-500 border-b">
+                          <th className="pb-2">Supplier</th>
+                          <th className="pb-2 text-right">Styles</th>
+                          <th className="pb-2 text-right">Qty</th>
+                          <th className="pb-2 text-right">Customers</th>
+                          <th className="pb-2 text-center">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {previewData.supplierBreakdown.map((s: any, i: number) => (
+                          <tr key={i} className="border-b border-slate-100">
+                            <td className={`py-2 font-medium ${!s.hasSupplier ? 'text-red-600' : ''}`}>
+                              {s.name}
+                            </td>
+                            <td className="py-2 text-right">{s.styleCount}</td>
+                            <td className="py-2 text-right">{s.qty.toLocaleString()}</td>
+                            <td className="py-2 text-right">{s.customerCount}</td>
+                            <td className="py-2 text-center">
+                              {s.hasSupplier ? (
+                                <span className="text-green-600">✓</span>
+                              ) : (
+                                <span className="text-red-600">✗</span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="mt-3 text-xs text-slate-500">
+                    Styles in DB: {previewData.stylesCoverage.foundInDb} of {previewData.stylesCoverage.total}
+                    {previewData.stylesCoverage.notFoundInDb > 0 && (
+                      <span className="text-amber-600"> ({previewData.stylesCoverage.notFoundInDb} not found)</span>
                     )}
+                  </div>
+                </div>
+
+                {/* Comparison Season Status */}
+                {previewData.comparisonSeason && (
+                  <div className={`border rounded-md p-4 ${
+                    previewData.comparisonSeason.dataSource === 'none' 
+                      ? 'bg-red-50 border-red-300' 
+                      : 'bg-green-50 border-green-300'
+                  }`}>
+                    <div className="font-medium text-sm mb-2">
+                      📈 Comparison Season: {previewData.comparisonSeason.seasonName}
+                    </div>
+                    {previewData.comparisonSeason.dataSource === 'none' ? (
+                      <div className="text-sm text-red-700">
+                        ❌ No data found! Check if season_statistics or sales_stats has data for this season.
+                      </div>
+                    ) : (
+                      <div className="text-sm text-green-700">
+                        ✓ Data source: <span className="font-medium">{previewData.comparisonSeason.dataSource}</span>
+                        <span className="ml-3">
+                          {previewData.comparisonSeason[previewData.comparisonSeason.dataSource === 'season_statistics' ? 'seasonStatistics' : 'salesStats'].totalQty.toLocaleString()} qty
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* CSV Data Summary by Supplier */}
             {csvData.length > 0 && (
@@ -1225,14 +1373,24 @@ export default function PurchaseMakeOrderPage() {
               <Button variant="outline" onClick={() => setStep(1)}>
                 Back
               </Button>
-                    <Button
-                onClick={handleRunAI}
-                disabled={isRunningAI}
-                className="bg-[#B8A8D8] hover:bg-[#B8A8D8]/90"
-              >
-                {isRunningAI ? 'Analyzing...' : 'Run AI Analysis'}
-                    </Button>
-                  </div>
+              <div className="flex items-center gap-3">
+                <Button
+                  variant="outline"
+                  onClick={() => loadPreview()}
+                  disabled={isLoadingPreview}
+                  size="sm"
+                >
+                  {isLoadingPreview ? 'Checking...' : '🔄 Refresh Preview'}
+                </Button>
+                <Button
+                  onClick={handleRunAI}
+                  disabled={isRunningAI || (previewData?.validation?.errors?.length > 0)}
+                  className="bg-[#B8A8D8] hover:bg-[#B8A8D8]/90"
+                >
+                  {isRunningAI ? 'Analyzing...' : 'Run AI Analysis'}
+                </Button>
+              </div>
+            </div>
         </CardContent>
       </Card>
       )}
