@@ -147,7 +147,7 @@ function parseCSV(text: string): CSVRow[] {
   
   // Show expected vs found mapping
   const expectedMappings = {
-    'date': ['date', 'dato', 'invoice_date'],
+    'date': ['date', 'dato', 'invoice_date', 'order_date'],
     'style_no': ['style_no', 'style', 'varenr', 'item_no'],
     'color': ['color', 'farve', 'colour'],
     'size': ['size', 'size_code', 'storrelse', 'str'],
@@ -155,7 +155,7 @@ function parseCSV(text: string): CSVRow[] {
     'country': ['country', 'land'],
     'sales_rep': ['sales_rep', 'salesperson', 'saelger'],
     'qty': ['size_quantity_ordered', 'qty', 'quantity', 'antal', 'pcs'],
-    'net_amount': ['sales_price_exchange_total', 'net_amount', 'amount', 'belob', 'value'],
+    'net_amount': ['sales_price_base_exchange_total', 'sales_price_exchange_total', 'net_amount', 'amount', 'belob', 'value'],
   };
   
   console.log('[CSV Parser] Field mapping check:');
@@ -172,11 +172,19 @@ function parseCSV(text: string): CSVRow[] {
   // Helper to clean Excel-style values like ="1010191" or "value"
   const cleanExcelValue = (v: string): string => {
     let cleaned = v.trim();
-    // Handle Excel formula format: ="value" -> value
+    
+    // Remove outer quotes first (CSV field quoting)
+    if ((cleaned.startsWith('"') && cleaned.endsWith('"'))) {
+      cleaned = cleaned.slice(1, -1);
+      // After removing outer quotes, there might be escaped quotes ("") inside - unescape them
+      cleaned = cleaned.replace(/""/g, '"');
+    }
+    
+    // Now handle Excel formula format: ="value" -> value
     if (cleaned.startsWith('="') && cleaned.endsWith('"')) {
       cleaned = cleaned.slice(2, -1);
     }
-    // Handle quoted values: "value" -> value
+    // Handle remaining quoted values
     else if ((cleaned.startsWith('"') && cleaned.endsWith('"')) || 
              (cleaned.startsWith("'") && cleaned.endsWith("'"))) {
       cleaned = cleaned.slice(1, -1);
@@ -185,7 +193,13 @@ function parseCSV(text: string): CSVRow[] {
     else if (cleaned.startsWith('=')) {
       cleaned = cleaned.slice(1);
     }
-    return cleaned;
+    
+    // Final cleanup: remove any remaining outer quotes
+    if ((cleaned.startsWith('"') && cleaned.endsWith('"'))) {
+      cleaned = cleaned.slice(1, -1);
+    }
+    
+    return cleaned.trim();
   };
   
   for (let i = 1; i < lines.length; i++) {
@@ -211,7 +225,7 @@ function parseCSV(text: string): CSVRow[] {
     
     // Map column variations to standard names
     const mapped = {
-      date: row.date || row.dato || row.invoice_date || '',
+      date: row.date || row.dato || row.invoice_date || row.order_date || '',
       customer_name: row.customer_name || row.customer || row.kunde || row.debitor || '',
       customer_id: row.customer_id || row.debitor_nr || '',
       country: row.country || row.land || '',
@@ -222,9 +236,9 @@ function parseCSV(text: string): CSVRow[] {
       size: row.size || row.size_code || row.storrelse || row.str || '',
       supplier: row.supplier || row.leverandor || '',
       qty: Number(row.size_quantity_ordered || row.qty || row.quantity || row.antal || row.pcs || 0) || 0,
-      net_amount: Number(row.sales_price_exchange_total || row.net_amount || row.amount || row.belob || row.value || 0) || 0,
+      net_amount: Number(row.sales_price_base_exchange_total || row.sales_price_exchange_total || row.net_amount || row.amount || row.belob || row.value || 0) || 0,
       currency: row.currency || row.valuta || 'DKK',
-      order_ref: row.order_ref || row.invoice || row.faktura || '',
+      order_ref: row.order_ref || row.order_no_ || row.invoice || row.faktura || '',
       channel: row.channel || row.kanal || '',
     };
     
@@ -250,7 +264,13 @@ function parseCSV(text: string): CSVRow[] {
     }
   }
   
+  // Calculate total qty from valid rows
+  const totalQtyParsed = rawRows.reduce((sum, row) => sum + (row.qty || 0), 0);
+  const totalAmountParsed = rawRows.reduce((sum, row) => sum + (row.net_amount || 0), 0);
+  
   console.log(`[CSV Parser] Rows parsed: ${rawRows.length} valid, skipped ${skippedNoStyle} (no style_no), ${skippedNoColor} (no color)`);
+  console.log(`[CSV Parser] Total qty from valid rows: ${totalQtyParsed}`);
+  console.log(`[CSV Parser] Total amount from valid rows: ${totalAmountParsed.toFixed(2)}`);
   
   if (rawRows.length === 0) {
     console.log('[CSV Parser] ERROR: No valid rows! Check field mapping above.');
@@ -269,9 +289,21 @@ function parseCSV(text: string): CSVRow[] {
     net_amount: amountDivisor > 1 ? row.net_amount / amountDivisor : row.net_amount,
   }));
   
-  // Collect unique sizes found
-  const uniqueSizes = new Set(rows.map(r => r.size).filter(Boolean));
-  console.log(`[CSV Parser] Unique sizes found: [${Array.from(uniqueSizes).join(', ')}]`);
+  // Collect unique sizes for debugging - filter out non-size values (colors appearing as sizes)
+  const allSizes: string[] = rows.map(r => r.size).filter((s): s is string => Boolean(s));
+  const uniqueSizes = new Set(allSizes);
+  
+  // Valid sizes are: S, M, L, XL, XXL, XS, S/M, M/L, L/XL, 34, 36, 38, 40, 42, 44, 46, One Size
+  const validSizePattern = /^(XS|S|M|L|XL|XXL|S\/M|M\/L|L\/XL|One Size|\d{2})$/i;
+  const validSizes = Array.from(uniqueSizes).filter(s => validSizePattern.test(s));
+  const invalidSizes = Array.from(uniqueSizes).filter(s => !validSizePattern.test(s));
+  
+  console.log(`[CSV Parser] Unique sizes found: [${validSizes.join(', ')}]`);
+  if (invalidSizes.length > 0) {
+    console.log(`[CSV Parser] WARNING: ${invalidSizes.length} invalid sizes (might be colors): [${invalidSizes.slice(0, 10).join(', ')}${invalidSizes.length > 10 ? '...' : ''}]`);
+    const invalidSizeCount = allSizes.filter(s => !validSizePattern.test(s)).length;
+    console.log(`[CSV Parser] Rows with invalid sizes: ${invalidSizeCount}`);
+  }
   
   // Collect unique customers
   const uniqueCustomers = new Set(rows.map(r => r.customer_name || r.customer_id).filter(Boolean));
@@ -487,7 +519,7 @@ function SupplierReviewCard({
       const next = new Set(prev);
       if (next.has(key)) {
         next.delete(key);
-      } else {
+    } else {
         next.add(key);
       }
       return next;
@@ -561,7 +593,7 @@ function SupplierReviewCard({
             </div>
           </div>
         </div>
-      </CardHeader>
+        </CardHeader>
       <CardContent className="p-0">
         <div className="max-h-[500px] overflow-y-auto">
           <table className="w-full text-sm">
@@ -587,7 +619,7 @@ function SupplierReviewCard({
                 const sizes = sortSizes(rawSizes);
                 const totalSold = line.total_sold ?? (line.sold_sizes ? Object.values(line.sold_sizes).reduce((s, v) => s + v, 0) : 0);
                 
-                return (
+            return (
                   <React.Fragment key={idx}>
                     <tr className="border-t hover:bg-slate-50">
                       <td className="p-2 text-center">
@@ -608,14 +640,14 @@ function SupplierReviewCard({
                               alt={line.style_no} 
                               className="w-10 h-10 object-cover rounded border"
                             />
-                          )}
-                          <div>
+                  )}
+                  <div>
                             <span className="text-sm font-medium">{line.style_name || line.style_no}</span>
                             {line.style_name && (
                               <span className="block text-xs text-slate-400 font-mono">{line.style_no}</span>
                             )}
-                          </div>
-                        </div>
+                  </div>
+                </div>
                       </td>
                       <td className="p-3">{line.color}</td>
                       <td className="p-3 text-right text-slate-400">{totalSold > 0 ? totalSold.toLocaleString() : '-'}</td>
@@ -646,7 +678,7 @@ function SupplierReviewCard({
                           <div className="flex gap-1 items-end overflow-x-auto pb-1">
                             {sizes.map(size => {
                               const soldQty = line.sold_sizes?.[size] ?? 0;
-                              return (
+                      return (
                                 <div key={size} className="flex flex-col items-center min-w-[52px]">
                                   <span className="text-[10px] font-semibold text-slate-600 mb-1">{size}</span>
                                   <Input
@@ -660,15 +692,15 @@ function SupplierReviewCard({
                                     {soldQty > 0 ? `(${soldQty})` : '-'}
                                   </span>
                                 </div>
-                              );
-                            })}
-                          </div>
+                      );
+                    })}
+                  </div>
                         </td>
                       </tr>
-                    )}
+                )}
                   </React.Fragment>
-                );
-              })}
+            );
+          })}
             </tbody>
           </table>
         </div>
@@ -676,7 +708,7 @@ function SupplierReviewCard({
         {supplier.moq_status === 'under' && (
           <div className="p-3 bg-amber-50 border-t border-amber-200 text-amber-800 text-sm">
             ⚠️ Below minimum order quantity (MOQ)
-          </div>
+              </div>
         )}
         
         {supplier.notes && (
@@ -702,11 +734,11 @@ function SupplierReviewCard({
             </Button>
             <Button onClick={handleApprove} className="bg-[#8FA894] hover:bg-[#8FA894]/90">
               ✓ Approve
-            </Button>
+              </Button>
+            </div>
           </div>
-        </div>
-      </CardContent>
-    </Card>
+        </CardContent>
+      </Card>
   );
 }
 
@@ -1196,13 +1228,13 @@ export default function PurchaseMakeOrderPage() {
 
       {/* Step 1: Upload */}
       {step === 1 && (
-      <Card>
-        <CardHeader>
+        <Card>
+          <CardHeader>
             <CardTitle>Upload Sales Data</CardTitle>
-          <CardDescription>
+            <CardDescription>
               Upload a CSV file with in-season sales data (style, color, customer, quantities)
-          </CardDescription>
-        </CardHeader>
+            </CardDescription>
+          </CardHeader>
         <CardContent className="space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
@@ -1219,7 +1251,7 @@ export default function PurchaseMakeOrderPage() {
                     </option>
                   ))}
                 </select>
-              </div>
+            </div>
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-2">Compare to (last year)</label>
                 <select
@@ -1237,7 +1269,7 @@ export default function PurchaseMakeOrderPage() {
                 <p className="text-xs text-slate-500 mt-1">
                   For YoY index calculation (price + qty comparison)
                 </p>
-              </div>
+      </div>
             </div>
             
             <div>
@@ -1314,14 +1346,14 @@ export default function PurchaseMakeOrderPage() {
 
       {/* Step 2: Run AI Analysis */}
       {step === 2 && (
-        <Card>
-          <CardHeader>
+      <Card>
+        <CardHeader>
             <CardTitle>Run AI Analysis</CardTitle>
-            <CardDescription>
+          <CardDescription>
               Analyze sales data and generate purchase suggestions by supplier
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-6">
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
             {importStats && (
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <div className="bg-[#F5F3F0] rounded-md p-4 text-center">
@@ -1359,7 +1391,7 @@ export default function PurchaseMakeOrderPage() {
             {previewError && (
               <div className="bg-red-50 border border-red-200 text-red-700 rounded-md p-3 text-sm">
                 {previewError}
-              </div>
+            </div>
             )}
             {previewData && (
               <div className="space-y-4">
@@ -1399,7 +1431,7 @@ export default function PurchaseMakeOrderPage() {
                           These suppliers are in your styles but not in the suppliers table. Create them for MOQ and lead time tracking.
                         </p>
                       </div>
-                      <Button
+            <Button
                         size="sm"
                         onClick={handleCreateAllNewSuppliers}
                         disabled={isCreatingSuppliers}
@@ -1429,19 +1461,19 @@ export default function PurchaseMakeOrderPage() {
                               <td className="py-2 text-center">
                                 <Button
                                   size="sm"
-                                  variant="outline"
+              variant="outline"
                                   onClick={() => handleCreateSingleSupplier(s.name)}
                                   disabled={isCreatingSuppliers || createdSuppliers.includes(s.name)}
                                   className="text-xs border-purple-300 text-purple-700 hover:bg-purple-100"
                                 >
                                   {createdSuppliers.includes(s.name) ? '✓ Created' : 'Create'}
-                                </Button>
+            </Button>
                               </td>
                             </tr>
                           ))}
                         </tbody>
                       </table>
-                    </div>
+          </div>
                   </div>
                 )}
 
@@ -1479,14 +1511,14 @@ export default function PurchaseMakeOrderPage() {
                         ))}
                       </tbody>
                     </table>
-                  </div>
+            </div>
                   <div className="mt-3 text-xs text-slate-500">
                     Styles in DB: {previewData.stylesCoverage.foundInDb} of {previewData.stylesCoverage.total}
                     {previewData.stylesCoverage.notFoundInDb > 0 && (
                       <span className="text-amber-600"> ({previewData.stylesCoverage.notFoundInDb} not found)</span>
-                    )}
-                  </div>
-                </div>
+                          )}
+            </div>
+          </div>
 
                 {/* Comparison Season Status */}
                 {previewData.comparisonSeason && (
@@ -1566,21 +1598,21 @@ export default function PurchaseMakeOrderPage() {
                     <div className="flex items-center justify-between">
                       <div className="font-medium text-sm">YoY Comparison</div>
                       {!comparisonData && !isLoadingComparison && (
-                        <Button 
-                          size="sm" 
-                          variant="outline" 
+                      <Button
+                        size="sm"
+                        variant="outline"
                           onClick={() => loadComparison()}
                           className="text-xs"
-                        >
+                      >
                           Load Details
-                        </Button>
+                      </Button>
                       )}
                                 </div>
                     {isLoadingComparison && <p className="text-xs text-slate-500 mt-1">Loading comparison data...</p>}
                     {comparisonError && <p className="text-xs text-red-500 mt-1">{comparisonError}</p>}
                                 </div>
-                                </div>
-                
+            </div>
+
                 {/* Comparison Overview */}
                 {comparisonData && (
                   <div className="mt-4 space-y-4">
@@ -1589,7 +1621,7 @@ export default function PurchaseMakeOrderPage() {
                       <div className="bg-white rounded-md p-3">
                         <div className="text-lg font-semibold text-[#8FA894]">
                           {comparisonData.overall.currentSeason.qty.toLocaleString()}
-                                </div>
+        </div>
                         <div className="text-xs text-slate-500">Current Qty</div>
                                 </div>
                       <div className="bg-white rounded-md p-3">
@@ -1629,17 +1661,17 @@ export default function PurchaseMakeOrderPage() {
                             <div key={c.country} className="bg-white rounded-md p-2 text-xs">
                               <div className="font-medium">{c.country}</div>
                               <div className="text-slate-500">{c.qty.toLocaleString()} pcs</div>
-                            </div>
+          </div>
                           ))}
-                        </div>
-                      </div>
+          </div>
+                            </div>
                     )}
-                    
+
                     {/* Top 10 Styles */}
                     {comparisonData.top10Styles.length > 0 && (
                       <div>
                         <div className="text-xs font-medium text-slate-600 mb-2">Top 10 Styles</div>
-                        <div className="overflow-x-auto">
+            <div className="overflow-x-auto">
                           <table className="w-full text-xs">
                             <thead>
                               <tr className="text-left text-slate-500 border-b">
@@ -1648,13 +1680,13 @@ export default function PurchaseMakeOrderPage() {
                                 <th className="pb-1 text-right">Qty</th>
                                 <th className="pb-1 text-right">Customers</th>
                                 </tr>
-                            </thead>
-                            <tbody>
+                              </thead>
+                              <tbody>
                               {comparisonData.top10Styles.map((s: any, i: number) => (
                                 <tr key={i} className="border-b border-slate-100">
                                   <td className="py-1 font-medium" title={s.style_no}>
                                     {s.style_name || s.style_no}
-                                  </td>
+                                    </td>
                                   <td className="py-1">{s.color}</td>
                                   <td className="py-1 text-right">{s.qty.toLocaleString()}</td>
                                   <td className="py-1 text-right">{s.customerCount}</td>
@@ -1662,12 +1694,12 @@ export default function PurchaseMakeOrderPage() {
                               ))}
                               </tbody>
                             </table>
-            </div>
-          </div>
+                                </div>
+                                </div>
                     )}
-                  </div>
+                                </div>
                 )}
-              </div>
+                                </div>
             )}
 
             {/* Customer Analysis - from comparison API */}
@@ -1678,21 +1710,21 @@ export default function PurchaseMakeOrderPage() {
                   <div className="bg-white rounded-md p-3">
                     <div className="text-lg font-semibold text-[#8FA894]">
                       {(comparisonData as any).customerAnalysis.visited}
-                    </div>
+                                </div>
                     <div className="text-xs text-slate-500">Visited</div>
-                  </div>
+                                </div>
                   <div className="bg-white rounded-md p-3">
                     <div className="text-lg font-semibold text-slate-600">
                       {(comparisonData as any).customerAnalysis.shouldVisit}
-                    </div>
+                                </div>
                     <div className="text-xs text-slate-500">Should Visit</div>
-                  </div>
+                                        </div>
                   <div className="bg-white rounded-md p-3">
                     <div className={`text-lg font-semibold ${(comparisonData as any).customerAnalysis.visitRate >= 80 ? 'text-green-600' : (comparisonData as any).customerAnalysis.visitRate >= 50 ? 'text-amber-600' : 'text-red-600'}`}>
                       {(comparisonData as any).customerAnalysis.visitRate}%
-                    </div>
+                                </div>
                     <div className="text-xs text-slate-500">Visit Rate</div>
-                  </div>
+                                        </div>
                   <div className="bg-white rounded-md p-3">
                     <div className="text-lg font-semibold text-amber-600">
                       {(comparisonData as any).customerAnalysis.notVisited}
@@ -1745,7 +1777,7 @@ export default function PurchaseMakeOrderPage() {
                                 {rep.indexQty}%
                               </span>
                             ) : '-'}
-                          </td>
+                                    </td>
                           <td className="py-2 text-center">
                             <span className={rep.visitRate >= 80 ? 'text-green-600' : rep.visitRate >= 50 ? 'text-amber-600' : 'text-red-600'}>
                               {rep.customersVisited}/{rep.customersShouldVisit}
@@ -1758,13 +1790,13 @@ export default function PurchaseMakeOrderPage() {
                                 {s.style_name || s.style_no}
                               </span>
                             ))}
-                          </td>
-                        </tr>
+                                  </td>
+                                </tr>
                       ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
+                              </tbody>
+                            </table>
+            </div>
+          </div>
             )}
 
             <div className="bg-[#F5F3F0] rounded-md p-4">
@@ -1794,23 +1826,23 @@ export default function PurchaseMakeOrderPage() {
                 Back
               </Button>
               <div className="flex items-center gap-3">
-                <Button
+                    <Button
                   variant="outline"
                   onClick={() => loadPreview()}
                   disabled={isLoadingPreview}
-                  size="sm"
-                >
+                      size="sm"
+                    >
                   {isLoadingPreview ? 'Checking...' : '🔄 Refresh Preview'}
-                </Button>
-                <Button
+                    </Button>
+                    <Button
                   onClick={handleRunAI}
                   disabled={isRunningAI || (previewData?.validation?.errors?.length > 0)}
                   className="bg-[#B8A8D8] hover:bg-[#B8A8D8]/90"
                 >
                   {isRunningAI ? 'Analyzing...' : 'Run AI Analysis'}
-                </Button>
-              </div>
-            </div>
+                    </Button>
+                  </div>
+                </div>
         </CardContent>
       </Card>
       )}
@@ -1848,7 +1880,7 @@ export default function PurchaseMakeOrderPage() {
                 <div>
                   <div className="text-xl font-semibold text-[#8FA894]">{yoyAnalysis.aggregatedIndex}</div>
                   <div className="text-xs text-slate-500">Index vs Last Year</div>
-                </div>
+            </div>
                     <div>
                   <div className="text-xl font-semibold text-slate-700">{yoyAnalysis.currentSeason?.visitRate}</div>
                   <div className="text-xs text-slate-500">Customer Visit Rate</div>
@@ -1939,7 +1971,7 @@ export default function PurchaseMakeOrderPage() {
                   <div>
                     <div className="text-slate-500">Run Label</div>
                     <div className="font-medium">{analysisBackground.runLabel}</div>
-        </div>
+    </div>
                     <div>
                     <div className="text-slate-500">Run Number</div>
                     <div className="font-medium">#{analysisBackground.runNumber}</div>
@@ -2054,46 +2086,46 @@ export default function PurchaseMakeOrderPage() {
 
       {/* Step 3.5: Review Before Creating POs */}
       {step === 3.5 && (
-        <Card>
+      <Card>
           <CardHeader className="bg-[#B8A8D8]/20">
             <CardTitle className="flex items-center gap-2">
               <span className="text-2xl">📋</span>
               Review Orders Before Creating
             </CardTitle>
-            <CardDescription>
+          <CardDescription>
               Review your selections before creating draft purchase orders
-            </CardDescription>
-          </CardHeader>
+          </CardDescription>
+        </CardHeader>
           <CardContent className="space-y-4 p-6">
             {/* Summary Stats */}
             <div className="grid grid-cols-3 gap-4 text-center">
               <div className="bg-green-50 border border-green-200 rounded-md p-4">
                 <div className="text-2xl font-semibold text-green-700">
                   {committedSuppliers.filter(s => s.verdict !== 'skipped').length}
-                </div>
+        </div>
                 <div className="text-xs text-green-600">Suppliers to Order</div>
-              </div>
+      </div>
               <div className="bg-slate-50 border border-slate-200 rounded-md p-4">
                 <div className="text-2xl font-semibold text-slate-600">
                   {committedSuppliers.filter(s => s.verdict === 'skipped').length}
-                </div>
+      </div>
                 <div className="text-xs text-slate-500">Skipped</div>
-              </div>
+            </div>
               <div className="bg-purple-50 border border-purple-200 rounded-md p-4">
                 <div className="text-2xl font-semibold text-purple-700">
                   {committedSuppliers.reduce((sum, s) => 
                     sum + s.lines.reduce((lSum, l) => lSum + (l.adjusted_qty ?? l.suggested_qty), 0), 0
                   ).toLocaleString()}
-                </div>
+        </div>
                 <div className="text-xs text-purple-600">Total Units</div>
               </div>
-            </div>
+              </div>
 
             {/* Size distribution info */}
             <div className="bg-blue-50 border border-blue-200 rounded-md p-3 text-sm text-blue-800">
               <span className="font-medium">📐 Size Distribution:</span> Quantities will be automatically distributed across sizes 
               (S-XXL, 34-46, etc.) based on historical sales patterns when POs are created.
-            </div>
+        </div>
 
             {/* Orders to be created */}
             <div className="border rounded-md overflow-hidden">
@@ -2131,7 +2163,7 @@ export default function PurchaseMakeOrderPage() {
                   })}
                 </tbody>
               </table>
-            </div>
+      </div>
 
             {commitError && (
               <div className="bg-red-50 border border-red-200 text-red-700 rounded-md p-3 text-sm">
@@ -2149,7 +2181,7 @@ export default function PurchaseMakeOrderPage() {
                 }}
               >
                 ← Back to Review
-              </Button>
+                </Button>
               <Button
                 onClick={() => handleCommit(committedSuppliers)}
                 disabled={isCommitting || committedSuppliers.filter(s => s.verdict !== 'skipped').length === 0}
