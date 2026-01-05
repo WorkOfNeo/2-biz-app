@@ -32,6 +32,9 @@ type CSVRow = {
   currency?: string;
   order_ref?: string;
   channel?: string;
+  // Extra fields for debugging/filtering
+  order_type?: string;
+  season?: string;
 };
 
 // Aggregated row with size breakdown
@@ -231,7 +234,7 @@ function parseCSV(text: string): CSVRow[] {
       country: row.country || row.land || '',
       sales_rep: row.sales_rep || row.salesperson || row.saelger || '',
       style_no: row.style_no || row.style || row.varenr || row.item_no || '',
-      style_name: row.style_name || row.varenavn || row.description || '',
+      style_name: row.style_name || row.varenavn || '',
       color: row.color || row.farve || row.colour || '',
       size: row.size || row.size_code || row.storrelse || row.str || '',
       supplier: row.supplier || row.leverandor || '',
@@ -240,6 +243,9 @@ function parseCSV(text: string): CSVRow[] {
       currency: row.currency || row.valuta || 'DKK',
       order_ref: row.order_ref || row.order_no_ || row.invoice || row.faktura || '',
       channel: row.channel || row.kanal || '',
+      // Extra fields for debugging/filtering
+      order_type: row.order_type || '',
+      season: row.season || '',
     };
     
     // Log first row mapped values
@@ -303,11 +309,37 @@ function parseCSV(text: string): CSVRow[] {
     console.log(`[CSV Parser] WARNING: ${invalidSizes.length} invalid sizes (might be colors): [${invalidSizes.slice(0, 10).join(', ')}${invalidSizes.length > 10 ? '...' : ''}]`);
     const invalidSizeCount = allSizes.filter(s => !validSizePattern.test(s)).length;
     console.log(`[CSV Parser] Rows with invalid sizes: ${invalidSizeCount}`);
+    
+    // Log one example row with invalid size to debug
+    const badRow = rows.find(r => r.size && !validSizePattern.test(r.size));
+    if (badRow) {
+      console.log('[CSV Parser] Example row with invalid size:', JSON.stringify({
+        style_no: badRow.style_no,
+        style_name: badRow.style_name,
+        color: badRow.color,
+        size: badRow.size,
+        qty: badRow.qty,
+      }));
+    }
   }
   
   // Collect unique customers
   const uniqueCustomers = new Set(rows.map(r => r.customer_name || r.customer_id).filter(Boolean));
   console.log(`[CSV Parser] Unique customers: ${uniqueCustomers.size}`);
+  
+  // Breakdown by order_type and season (if available in extended data)
+  // The rawRows still have access to original row data via the mapping
+  const qtyByOrderType: Record<string, number> = {};
+  const qtyBySeason: Record<string, number> = {};
+  for (const row of rawRows) {
+    // These might be available from extended parsing
+    const orderType = (row as any).order_type || 'Unknown';
+    const season = (row as any).season || 'Unknown';
+    qtyByOrderType[orderType] = (qtyByOrderType[orderType] || 0) + (row.qty || 0);
+    qtyBySeason[season] = (qtyBySeason[season] || 0) + (row.qty || 0);
+  }
+  console.log('[CSV Parser] Qty by order_type:', JSON.stringify(qtyByOrderType));
+  console.log('[CSV Parser] Qty by season:', JSON.stringify(qtyBySeason));
   
   // Sample of final output
   if (rows.length > 0) {
