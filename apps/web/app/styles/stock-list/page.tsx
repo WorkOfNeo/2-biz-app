@@ -62,6 +62,8 @@ export default function StockListPage({ publicMode = false, sharedListId = '' }:
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  // Next.js "typedRoutes" can reject dynamic strings; this keeps runtime behavior while satisfying types.
+  const asRoute = React.useCallback((href: string) => href as any, []);
 
   // Preselect previously active list by URL (?list=) or localStorage
   const [activeListId, setActiveListId] = React.useState<string>('');
@@ -104,7 +106,7 @@ export default function StockListPage({ publicMode = false, sharedListId = '' }:
       if (activeListId) next.set('list', activeListId);
       else next.delete('list');
       const qs = next.toString();
-      router.replace(qs ? `${pathname}?${qs}` : pathname);
+      router.replace(asRoute(qs ? `${pathname}?${qs}` : pathname));
     }
   }, [activeListId, publicMode, pathname, router, searchParams]);
   const [searchQuery, setSearchQuery] = React.useState<string>('');
@@ -1900,7 +1902,7 @@ export default function StockListPage({ publicMode = false, sharedListId = '' }:
                     const href = `${pathname}?${next.toString()}`;
                     return (
                       <TabsTrigger key={row.id} value={row.id} asChild>
-                        <Link href={href}>{row.name}</Link>
+                        <Link href={asRoute(href)}>{row.name}</Link>
                       </TabsTrigger>
                     );
                   })}
@@ -1911,7 +1913,7 @@ export default function StockListPage({ publicMode = false, sharedListId = '' }:
                     const href = qs ? `${pathname}?${qs}` : pathname;
                     return (
                       <TabsTrigger value="all" asChild>
-                        <Link href={href}>Alle</Link>
+                        <Link href={asRoute(href)}>Alle</Link>
                       </TabsTrigger>
                     );
                   })()}
