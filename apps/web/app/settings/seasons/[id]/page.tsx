@@ -80,10 +80,12 @@ export default function SeasonDetailPage() {
   const [compareSalespersonId, setCompareSalespersonId] = useState<string>('');
   const [compareInput, setCompareInput] = useState<string>('');
   const [isComparing, setIsComparing] = useState(false);
+  const [isFixing, setIsFixing] = useState(false);
+  const [fixResult, setFixResult] = useState<{ success: boolean; message: string } | null>(null);
   const [compareResults, setCompareResults] = useState<{
     matches: Array<{ name: string; city: string; excelQty: number; excelPrice: number; dbQty: number; dbPrice: number; customerId: string }>;
     mismatches: Array<{ name: string; city: string; excelQty: number; excelPrice: number; dbQty: number; dbPrice: number; customerId: string; qtyDiff: number; priceDiff: number }>;
-    notInDb: Array<{ name: string; city: string; qty: number; price: number; bestMatch: string | null }>;
+    notInDb: Array<{ name: string; city: string; qty: number; price: number; bestMatch: string | null; matchedCustomerId: string | null }>;
     notInExcel: Array<{ name: string; city: string; qty: number; price: number; customerId: string }>;
   } | null>(null);
   
@@ -472,7 +474,7 @@ export default function SeasonDetailPage() {
 
       type MatchEntry = { name: string; city: string; excelQty: number; excelPrice: number; dbQty: number; dbPrice: number; customerId: string };
       type MismatchEntry = MatchEntry & { qtyDiff: number; priceDiff: number };
-      type NotInDbEntry = { name: string; city: string; qty: number; price: number; bestMatch: string | null };
+      type NotInDbEntry = { name: string; city: string; qty: number; price: number; bestMatch: string | null; matchedCustomerId: string | null };
       type NotInExcelEntry = { name: string; city: string; qty: number; price: number; customerId: string };
 
       const matches: MatchEntry[] = [];
@@ -533,7 +535,8 @@ export default function SeasonDetailPage() {
             city: excel.city,
             qty: excel.qty,
             price: excel.price,
-            bestMatch: match?.bestMatch ? `${match.bestMatch.company} (${Math.round(match.confidence * 100)}%)` : null
+            bestMatch: match?.bestMatch ? `${match.bestMatch.company} (${Math.round(match.confidence * 100)}%)` : null,
+            matchedCustomerId: (match?.bestMatch && match.confidence >= 0.65) ? match.bestMatch.customerId : null
           });
         }
       }
@@ -567,6 +570,108 @@ export default function SeasonDetailPage() {
       alert(err?.message || 'Comparison failed');
     } finally {
       setIsComparing(false);
+    }
+  }
+
+  // Fix mismatches: update DB values to match Excel (source of truth)
+  async function fixMismatches() {
+    if (!id || !compareSalespersonId || !compareResults?.mismatches.length) return;
+
+    const count = compareResults.mismatches.length;
+    if (!confirm(`Update ${count} entries in the database to match Excel values?\n\nThis will overwrite the current qty and price values.`)) {
+      return;
+    }
+
+    setIsFixing(true);
+    setFixResult(null);
+
+    try {
+      let updated = 0;
+      for (const mismatch of compareResults.mismatches) {
+        const { error } = await supabase
+          .from('sales_stats')
+          .update({ qty: mismatch.excelQty, price: mismatch.excelPrice })
+          .eq('season_id', id)
+          .eq('account_no', mismatch.customerId);
+
+        if (error) {
+          console.error('[fixMismatches] Error updating', mismatch.customerId, error);
+        } else {
+          updated++;
+        }
+      }
+
+      setFixResult({
+        success: true,
+        message: `Updated ${updated}/${count} entries to match Excel values`
+      });
+
+      // Re-run comparison to show updated state
+      await runComparison();
+    } catch (err: any) {
+      console.error('[fixMismatches] Error:', err);
+      setFixResult({
+        success: false,
+        message: err?.message || 'Failed to fix mismatches'
+      });
+    } finally {
+      setIsFixing(false);
+    }
+  }
+
+  // Add missing entries: insert Excel data for entries not in DB
+  async function addMissingEntries() {
+    if (!id || !compareSalespersonId || !compareResults?.notInDb.length) return;
+
+    // Only add entries that have a matched customer ID
+    const entriesToAdd = compareResults.notInDb.filter(e => e.matchedCustomerId);
+    
+    if (entriesToAdd.length === 0) {
+      alert('No entries with matched customers to add. Entries need at least 65% confidence match to be added.');
+      return;
+    }
+
+    if (!confirm(`Add ${entriesToAdd.length} new entries to the database?\n\nThese are entries from Excel that were matched to customers but don't exist in the DB yet.`)) {
+      return;
+    }
+
+    setIsFixing(true);
+    setFixResult(null);
+
+    try {
+      const rowsToInsert = entriesToAdd.map(e => ({
+        season_id: id,
+        account_no: e.matchedCustomerId,
+        customer_name: e.name,
+        city: e.city,
+        qty: e.qty,
+        price: e.price,
+        salesperson_id: compareSalespersonId,
+        currency: 'DKK',
+        frozen: false
+      }));
+
+      const { error } = await supabase
+        .from('sales_stats')
+        .upsert(rowsToInsert as any, { onConflict: 'season_id,account_no' });
+
+      if (error) throw new Error(error.message);
+
+      setFixResult({
+        success: true,
+        message: `Added ${entriesToAdd.length} entries from Excel`
+      });
+
+      // Re-run comparison to show updated state
+      await runComparison();
+    } catch (err: any) {
+      console.error('[addMissingEntries] Error:', err);
+      setFixResult({
+        success: false,
+        message: err?.message || 'Failed to add entries'
+      });
+    } finally {
+      setIsFixing(false);
     }
   }
 
@@ -1030,6 +1135,7 @@ export default function SeasonDetailPage() {
         <div className="text-sm font-medium text-gray-700">Compare Customer Statistics</div>
         <div className="text-xs text-gray-500">
           Paste tab-separated data from Excel (Name, City, Qty, Price) to compare against existing data for a salesperson.
+          <span className="block mt-1 text-amber-600 font-medium">Excel data is the source of truth — use "Fix" buttons to update DB to match.</span>
         </div>
         
         <div className="flex flex-col sm:flex-row sm:items-end gap-3">
@@ -1102,12 +1208,34 @@ export default function SeasonDetailPage() {
               </span>
             </div>
 
+            {/* Fix Result */}
+            {fixResult && (
+              <div className={
+                'rounded-md border px-3 py-2 text-xs ' +
+                (fixResult.success
+                  ? 'border-green-200 bg-green-50 text-green-700'
+                  : 'border-red-200 bg-red-50 text-red-700')
+              }>
+                {fixResult.message}
+              </div>
+            )}
+
             {/* Mismatches - most important */}
             {compareResults.mismatches.length > 0 && (
               <details open className="border rounded-md">
-                <summary className="px-3 py-2 bg-red-50 cursor-pointer font-medium text-xs text-red-800">
-                  Mismatches ({compareResults.mismatches.length}) — values differ between Excel and DB
+                <summary className="px-3 py-2 bg-red-50 cursor-pointer font-medium text-xs text-red-800 flex items-center justify-between">
+                  <span>Mismatches ({compareResults.mismatches.length}) — values differ between Excel and DB</span>
                 </summary>
+                <div className="px-3 py-2 border-b bg-red-50/50 flex items-center gap-2">
+                  <button
+                    onClick={fixMismatches}
+                    disabled={isFixing}
+                    className="rounded-md bg-red-600 text-white px-3 py-1 text-xs hover:bg-red-700 disabled:opacity-50"
+                  >
+                    {isFixing ? 'Fixing...' : `Fix All (${compareResults.mismatches.length})`}
+                  </button>
+                  <span className="text-xs text-red-700">Update DB values to match Excel</span>
+                </div>
                 <div className="max-h-60 overflow-auto">
                   <table className="w-full text-xs">
                     <thead className="bg-gray-50 sticky top-0">
@@ -1151,6 +1279,18 @@ export default function SeasonDetailPage() {
                 <summary className="px-3 py-2 bg-amber-50 cursor-pointer font-medium text-xs text-amber-800">
                   Not in DB ({compareResults.notInDb.length}) — in Excel but not found in database
                 </summary>
+                {compareResults.notInDb.filter(e => e.matchedCustomerId).length > 0 && (
+                  <div className="px-3 py-2 border-b bg-amber-50/50 flex items-center gap-2">
+                    <button
+                      onClick={addMissingEntries}
+                      disabled={isFixing}
+                      className="rounded-md bg-amber-600 text-white px-3 py-1 text-xs hover:bg-amber-700 disabled:opacity-50"
+                    >
+                      {isFixing ? 'Adding...' : `Add Matched (${compareResults.notInDb.filter(e => e.matchedCustomerId).length})`}
+                    </button>
+                    <span className="text-xs text-amber-700">Add entries with matched customers to DB</span>
+                  </div>
+                )}
                 <div className="max-h-48 overflow-auto">
                   <table className="w-full text-xs">
                     <thead className="bg-gray-50 sticky top-0">
@@ -1164,12 +1304,18 @@ export default function SeasonDetailPage() {
                     </thead>
                     <tbody>
                       {compareResults.notInDb.map((r, i) => (
-                        <tr key={i} className="hover:bg-gray-50">
+                        <tr key={i} className={r.matchedCustomerId ? 'bg-green-50 hover:bg-green-100' : 'hover:bg-gray-50'}>
                           <td className="p-1.5 border-b font-medium text-amber-700">{r.name}</td>
                           <td className="p-1.5 border-b">{r.city}</td>
                           <td className="p-1.5 border-b text-right">{r.qty}</td>
                           <td className="p-1.5 border-b text-right">{r.price.toLocaleString()}</td>
-                          <td className="p-1.5 border-b text-gray-500">{r.bestMatch || '—'}</td>
+                          <td className="p-1.5 border-b">
+                            {r.matchedCustomerId ? (
+                              <span className="text-green-700">{r.bestMatch} ✓</span>
+                            ) : (
+                              <span className="text-gray-400">{r.bestMatch || '—'}</span>
+                            )}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
