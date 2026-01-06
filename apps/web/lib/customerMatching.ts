@@ -300,6 +300,7 @@ export function matchCustomers(
   
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
+    if (!row) continue;
     const candidates = getCandidates(row.name, row.city, customers, tokenIndex, cityIndex);
     
     // Score all candidates
