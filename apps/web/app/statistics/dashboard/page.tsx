@@ -1,13 +1,15 @@
 'use client';
 import React from 'react';
-import useSWR from 'swr';
+import useSWR, { mutate } from 'swr';
 import { supabase } from '../../../lib/supabaseClient';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../../components/ui/tabs';
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '../../../components/ui/card';
 import { Button } from '../../../components/ui/button';
-import { Table, TableBody, TableRow, TableCell } from '../../../components/ui/table';
+import { Table, TableBody, TableRow, TableCell, TableHead, TableHeader } from '../../../components/ui/table';
 import { Badge } from '../../../components/ui/badge';
 import { EmailPillsInput } from '../../../components/EmailPillsInput';
+import { Sheet, SheetHeader, SheetTitle, SheetContent, SheetClose } from '../../../components/ui/sheet';
+import { Plus, Pencil, Trash2, Send, Clock, Calendar } from 'lucide-react';
 
 const EMAILJS_ENDPOINT = 'https://api.emailjs.com/api/v1.0/email/send';
 const EMAILJS_SERVICE_ID = process.env.NEXT_PUBLIC_EMAILJS_SERVICE_ID || process.env.NEXT_PUBLIC_EMAILJS_SERVICE_KEY || '';
@@ -16,6 +18,29 @@ const EMAILJS_PUBLIC_KEY = process.env.NEXT_PUBLIC_EMAILJS_PUBLIC_KEY || '';
 const EMAILJS_FROM_NAME = process.env.NEXT_PUBLIC_EMAILJS_FROM_NAME || '2-BIZ';
 const EMAILJS_FROM_EMAIL = process.env.NEXT_PUBLIC_EMAILJS_FROM_EMAIL || '';
 
+const DAYS_OF_WEEK = [
+  { value: 1, label: 'Mon' },
+  { value: 2, label: 'Tue' },
+  { value: 3, label: 'Wed' },
+  { value: 4, label: 'Thu' },
+  { value: 5, label: 'Fri' },
+  { value: 6, label: 'Sat' },
+  { value: 0, label: 'Sun' },
+];
+
+interface StockListSchedule {
+  id: string;
+  name: string;
+  stockLists: string[];
+  recipients: string[];
+  scheduleType: 'daily' | 'weekly';
+  time: string;
+  days: number[];
+  emailBody: string;
+  enabled: boolean;
+  lastRun?: string;
+}
+
 /** Parse receivers from legacy stored string (supports comma, semicolon, whitespace) */
 function parseReceivers(raw: string | undefined | null): string[] {
   if (!raw) return [];
@@ -23,6 +48,35 @@ function parseReceivers(raw: string | undefined | null): string[] {
     .split(/[,;\s\n]+/)
     .map((t) => t.trim().toLowerCase())
     .filter(Boolean);
+}
+
+function generateId(): string {
+  return Math.random().toString(36).substring(2, 9);
+}
+
+function formatSchedule(schedule: StockListSchedule): string {
+  if (schedule.scheduleType === 'daily') {
+    return `Daily at ${schedule.time}`;
+  }
+  const dayLabels = schedule.days
+    .sort((a, b) => a - b)
+    .map(d => DAYS_OF_WEEK.find(day => day.value === d)?.label || '')
+    .filter(Boolean);
+  return `${dayLabels.join(', ')} at ${schedule.time}`;
+}
+
+function formatLastRun(iso: string | undefined): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  const now = new Date();
+  const diffMs = now.getTime() - d.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+  if (diffMins < 1) return 'Just now';
+  if (diffMins < 60) return `${diffMins}m ago`;
+  const diffHours = Math.floor(diffMins / 60);
+  if (diffHours < 24) return `${diffHours}h ago`;
+  const diffDays = Math.floor(diffHours / 24);
+  return `${diffDays}d ago`;
 }
 
 export default function StatisticsDashboardPage() {
@@ -65,9 +119,13 @@ export default function StatisticsDashboardPage() {
     return (data ?? []) as Array<{ id: string; name: string }>
   });
 
+  // Only show stock lists that have exports
+  const availableStockLists = React.useMemo(() => {
+    return (stockListsAll ?? []).filter(l => latestStockListByName.has(l.name));
+  }, [stockListsAll, latestStockListByName]);
+
   const [selectedStockListsSalesmen, setSelectedStockListsSalesmen] = React.useState<Set<string>>(new Set());
   const [selectedStockListsOverall, setSelectedStockListsOverall] = React.useState<Set<string>>(new Set());
-  const [selectedStockListsForEmail, setSelectedStockListsForEmail] = React.useState<Set<string>>(new Set());
   
   function toggleStockListSalesmen(name: string) {
     setSelectedStockListsSalesmen((prev) => { const n = new Set(prev); if (n.has(name)) n.delete(name); else n.add(name); return n; });
@@ -76,19 +134,158 @@ export default function StatisticsDashboardPage() {
   function toggleStockListOverall(name: string) {
     setSelectedStockListsOverall((prev) => { const n = new Set(prev); if (n.has(name)) n.delete(name); else n.add(name); return n; });
   }
-  
-  function toggleStockListForEmail(name: string) {
-    setSelectedStockListsForEmail((prev) => { const n = new Set(prev); if (n.has(name)) n.delete(name); else n.add(name); return n; });
-  }
 
-  // Load/save Stock List email prefs
-  useSWR('dashboard:stock_list_email', async () => {
-    const { data } = await supabase.from('app_settings').select('id, value').eq('key', 'dashboard_stock_list_email').maybeSingle();
-    const val = ((data?.value as any) || {}) as { receivers?: string; body?: string };
-    if (val.receivers !== undefined) setStockListReceivers(parseReceivers(val.receivers));
-    if (val.body !== undefined) setStockListBodyText(val.body);
+  // Stock List Schedules
+  const [schedules, setSchedules] = React.useState<StockListSchedule[]>([]);
+  const [sheetOpen, setSheetOpen] = React.useState(false);
+  const [editingSchedule, setEditingSchedule] = React.useState<StockListSchedule | null>(null);
+  const [savingSchedules, setSavingSchedules] = React.useState(false);
+  const [sendingScheduleId, setSendingScheduleId] = React.useState<string | null>(null);
+
+  // Form state for schedule editor
+  const [formName, setFormName] = React.useState('');
+  const [formStockLists, setFormStockLists] = React.useState<Set<string>>(new Set());
+  const [formRecipients, setFormRecipients] = React.useState<string[]>([]);
+  const [formScheduleType, setFormScheduleType] = React.useState<'daily' | 'weekly'>('weekly');
+  const [formTime, setFormTime] = React.useState('09:00');
+  const [formDays, setFormDays] = React.useState<Set<number>>(new Set([1])); // Monday default
+  const [formEmailBody, setFormEmailBody] = React.useState('Hermed lagerliste :)');
+  const [formEnabled, setFormEnabled] = React.useState(true);
+
+  // Load schedules from app_settings
+  useSWR('dashboard:stock_list_schedules', async () => {
+    const { data } = await supabase.from('app_settings').select('id, value').eq('key', 'stock_list_schedules').maybeSingle();
+    const val = ((data?.value as any) || {}) as { schedules?: StockListSchedule[] };
+    if (val.schedules) setSchedules(val.schedules);
     return data;
   });
+
+  async function saveSchedules(newSchedules: StockListSchedule[]) {
+    setSavingSchedules(true);
+    try {
+      const value = { schedules: newSchedules };
+      const { data: existing } = await supabase.from('app_settings').select('id').eq('key', 'stock_list_schedules').maybeSingle();
+      if (existing?.id) await supabase.from('app_settings').update({ value }).eq('id', existing.id);
+      else await supabase.from('app_settings').insert({ key: 'stock_list_schedules', value } as any);
+      setSchedules(newSchedules);
+    } finally {
+      setSavingSchedules(false);
+    }
+  }
+
+  function openNewSchedule() {
+    setEditingSchedule(null);
+    setFormName('');
+    setFormStockLists(new Set());
+    setFormRecipients([]);
+    setFormScheduleType('weekly');
+    setFormTime('09:00');
+    setFormDays(new Set([1]));
+    setFormEmailBody('Hermed lagerliste :)');
+    setFormEnabled(true);
+    setSheetOpen(true);
+  }
+
+  function openEditSchedule(schedule: StockListSchedule) {
+    setEditingSchedule(schedule);
+    setFormName(schedule.name);
+    setFormStockLists(new Set(schedule.stockLists));
+    setFormRecipients(schedule.recipients);
+    setFormScheduleType(schedule.scheduleType);
+    setFormTime(schedule.time);
+    setFormDays(new Set(schedule.days));
+    setFormEmailBody(schedule.emailBody);
+    setFormEnabled(schedule.enabled);
+    setSheetOpen(true);
+  }
+
+  function handleSaveSchedule() {
+    if (!formName.trim()) {
+      alert('Please enter a schedule name');
+      return;
+    }
+    if (formStockLists.size === 0) {
+      alert('Please select at least one stock list');
+      return;
+    }
+    if (formRecipients.length === 0) {
+      alert('Please add at least one recipient');
+      return;
+    }
+    if (formScheduleType === 'weekly' && formDays.size === 0) {
+      alert('Please select at least one day');
+      return;
+    }
+
+    const newSchedule: StockListSchedule = {
+      id: editingSchedule?.id || generateId(),
+      name: formName.trim(),
+      stockLists: Array.from(formStockLists),
+      recipients: formRecipients,
+      scheduleType: formScheduleType,
+      time: formTime,
+      days: Array.from(formDays),
+      emailBody: formEmailBody,
+      enabled: formEnabled,
+      lastRun: editingSchedule?.lastRun,
+    };
+
+    let newSchedules: StockListSchedule[];
+    if (editingSchedule) {
+      newSchedules = schedules.map(s => s.id === editingSchedule.id ? newSchedule : s);
+    } else {
+      newSchedules = [...schedules, newSchedule];
+    }
+
+    saveSchedules(newSchedules);
+    setSheetOpen(false);
+  }
+
+  function handleDeleteSchedule(id: string) {
+    if (!confirm('Delete this schedule?')) return;
+    const newSchedules = schedules.filter(s => s.id !== id);
+    saveSchedules(newSchedules);
+  }
+
+  function handleToggleEnabled(id: string) {
+    const newSchedules = schedules.map(s => 
+      s.id === id ? { ...s, enabled: !s.enabled } : s
+    );
+    saveSchedules(newSchedules);
+  }
+
+  async function handleSendNow(schedule: StockListSchedule) {
+    if (sendingScheduleId) return;
+    setSendingScheduleId(schedule.id);
+    try {
+      const bodyHtml = schedule.emailBody || 'Hermed lagerliste :)';
+      
+      for (const listName of schedule.stockLists) {
+        const exp = latestStockListByName.get(listName);
+        if (!exp?.public_url) continue;
+        
+        const subject = `${listName} - Lagerliste`;
+        const filename = `${listName} - Lagerliste.pdf`;
+        const dynamicParams: Record<string, string> = {
+          stock_list_1_url: exp.public_url,
+          stock_list_1_name: listName,
+          stock_list_1_filename: filename,
+        };
+        
+        await sendEmailJs(schedule.recipients, subject, bodyHtml, undefined, dynamicParams, true);
+      }
+      
+      // Update lastRun
+      const newSchedules = schedules.map(s => 
+        s.id === schedule.id ? { ...s, lastRun: new Date().toISOString() } : s
+      );
+      await saveSchedules(newSchedules);
+      
+      alert(`${schedule.stockLists.length} email(s) sent`);
+    } finally {
+      setSendingScheduleId(null);
+    }
+  }
 
   // Errors: Missing DG for Top 10 (current season)
   const { data: currentSeason } = useSWR('season:current', async () => {
@@ -251,12 +448,6 @@ export default function StatisticsDashboardPage() {
   const [overallOpts, setOverallOpts] = React.useState<{ all: boolean; countries: boolean; top10overall: boolean }>({ all: false, countries: true, top10overall: false });
   const [sendingOverall, setSendingOverall] = React.useState(false);
   const [savingOverallPrefs, setSavingOverallPrefs] = React.useState(false);
-
-  // Box #3 - Send Stock Lists (receivers now an array)
-  const [stockListReceivers, setStockListReceivers] = React.useState<string[]>([]);
-  const [stockListBodyText, setStockListBodyText] = React.useState('Hermed stock list :)');
-  const [sendingStockList, setSendingStockList] = React.useState(false);
-  const [savingStockListPrefs, setSavingStockListPrefs] = React.useState(false);
 
   // Load/save Overall email prefs
   useSWR('dashboard:overall_email', async () => {
@@ -437,79 +628,18 @@ export default function StatisticsDashboardPage() {
     }
   }
 
-  async function saveStockListPrefs() {
-    setSavingStockListPrefs(true);
-    try {
-      const value = { receivers: stockListReceivers.join(', '), body: stockListBodyText };
-      const { data: existing } = await supabase.from('app_settings').select('id').eq('key', 'dashboard_stock_list_email').maybeSingle();
-      if (existing?.id) await supabase.from('app_settings').update({ value }).eq('id', existing.id);
-      else await supabase.from('app_settings').insert({ key: 'dashboard_stock_list_email', value } as any);
-    } finally {
-      setSavingStockListPrefs(false);
-    }
-  }
-
-  async function sendStockLists() {
-    if (sendingStockList) return;
-    setSendingStockList(true);
-    try {
-      if (stockListReceivers.length === 0) { alert('Enter at least one recipient email.'); return; }
-      
-      if (selectedStockListsForEmail.size === 0) { alert('Select at least one stock list.'); return; }
-      
-      // Collect lists with valid exports
-      const listsToSend: Array<{ name: string; url: string }> = [];
-      for (const name of Array.from(selectedStockListsForEmail)) {
-        const exp = latestStockListByName.get(name);
-        if (exp?.public_url) {
-          listsToSend.push({ name, url: exp.public_url });
-        }
-      }
-      
-      if (listsToSend.length === 0) { alert('No available stock list exports found. Please export stock lists first.'); return; }
-      
-      const bodyHtml = stockListBodyText || 'Hermed stock list :)';
-      
-      // Send ONE email per stock list
-      for (const list of listsToSend) {
-        const subject = `${list.name} - Lagerliste`;
-        // Filename: use the list name with .pdf extension
-        const filename = `${list.name} - Lagerliste.pdf`;
-        const dynamicParams: Record<string, string> = {
-          stock_list_1_url: list.url,
-          stock_list_1_name: list.name,
-          stock_list_1_filename: filename,
-        };
-        
-        try {
-          console.log('[email:stock_list] sending', {
-            to: stockListReceivers,
-            listName: list.name,
-            subject,
-          });
-        } catch {}
-        
-        await sendEmailJs(stockListReceivers, subject, bodyHtml, undefined, dynamicParams, true);
-      }
-      
-      alert(`${listsToSend.length} email(s) sent`);
-    } finally {
-      setSendingStockList(false);
-    }
-  }
-
   // Toggle switch component for reuse
-  const Toggle = ({ checked, onChange, label }: { checked: boolean; onChange: () => void; label: string }) => (
+  const Toggle = ({ checked, onChange, label, size = 'md' }: { checked: boolean; onChange: () => void; label?: string; size?: 'sm' | 'md' }) => (
     <label className="flex items-center gap-2.5 text-sm cursor-pointer">
       <button
         type="button"
         onClick={onChange}
-        className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${checked ? 'bg-slate-900' : 'bg-slate-200'}`}
+        className={`relative inline-flex items-center rounded-full transition-colors ${checked ? 'bg-slate-900' : 'bg-slate-200'} ${size === 'sm' ? 'h-4 w-7' : 'h-5 w-9'}`}
         aria-pressed={checked}
       >
-        <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${checked ? 'translate-x-4' : 'translate-x-0.5'}`} />
+        <span className={`inline-block transform rounded-full bg-white shadow transition-transform ${size === 'sm' ? 'h-3 w-3' : 'h-4 w-4'} ${checked ? (size === 'sm' ? 'translate-x-3.5' : 'translate-x-4') : 'translate-x-0.5'}`} />
       </button>
-      <span className="text-slate-700">{label}</span>
+      {label && <span className="text-slate-700">{label}</span>}
     </label>
   );
 
@@ -576,25 +706,25 @@ export default function StatisticsDashboardPage() {
                   <Toggle checked={includeTop15Salesmen} onChange={() => setIncludeTop15Salesmen((v) => !v)} label="Include Top 15 - Salesmen" />
                 </div>
 
-                <div>
-                  <div className="text-xs text-gray-600 mb-2">Stock Lists</div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {(stockListsAll ?? []).map((l) => {
-                      const on = selectedStockListsSalesmen.has(l.name);
-                      const available = Boolean(latestStockListByName.get(l.name)?.public_url);
-                      return (
-                        <Badge
-                          key={l.id}
-                          className={`cursor-pointer select-none transition-colors ${on ? 'bg-slate-900 text-white border-slate-900' : 'bg-white hover:bg-slate-50'} ${!available ? 'opacity-50 cursor-not-allowed' : ''}`}
-                          onClick={() => available && toggleStockListSalesmen(l.name)}
-                        >
-                          {l.name}
-                          {!available && <span className="ml-1 text-[9px]">(no export)</span>}
-                        </Badge>
-                      );
-                    })}
+                {availableStockLists.length > 0 && (
+                  <div>
+                    <div className="text-xs text-gray-600 mb-2">Stock Lists</div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {availableStockLists.map((l) => {
+                        const on = selectedStockListsSalesmen.has(l.name);
+                        return (
+                          <Badge
+                            key={l.id}
+                            className={`cursor-pointer select-none transition-colors ${on ? 'bg-slate-900 text-white border-slate-900' : 'bg-white hover:bg-slate-50'}`}
+                            onClick={() => toggleStockListSalesmen(l.name)}
+                          >
+                            {l.name}
+                          </Badge>
+                        );
+                      })}
+                    </div>
                   </div>
-                </div>
+                )}
 
                 <div>
                   <div className="text-xs text-gray-600 mb-1">Email body</div>
@@ -647,25 +777,25 @@ export default function StatisticsDashboardPage() {
                   ))}
                 </div>
 
-                <div>
-                  <div className="text-xs text-gray-600 mb-2">Stock Lists</div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {(stockListsAll ?? []).map((l) => {
-                      const on = selectedStockListsOverall.has(l.name);
-                      const available = Boolean(latestStockListByName.get(l.name)?.public_url);
-                      return (
-                        <Badge
-                          key={l.id}
-                          className={`cursor-pointer select-none transition-colors ${on ? 'bg-slate-900 text-white border-slate-900' : 'bg-white hover:bg-slate-50'} ${!available ? 'opacity-50 cursor-not-allowed' : ''}`}
-                          onClick={() => available && toggleStockListOverall(l.name)}
-                        >
-                          {l.name}
-                          {!available && <span className="ml-1 text-[9px]">(no export)</span>}
-                        </Badge>
-                      );
-                    })}
+                {availableStockLists.length > 0 && (
+                  <div>
+                    <div className="text-xs text-gray-600 mb-2">Stock Lists</div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {availableStockLists.map((l) => {
+                        const on = selectedStockListsOverall.has(l.name);
+                        return (
+                          <Badge
+                            key={l.id}
+                            className={`cursor-pointer select-none transition-colors ${on ? 'bg-slate-900 text-white border-slate-900' : 'bg-white hover:bg-slate-50'}`}
+                            onClick={() => toggleStockListOverall(l.name)}
+                          >
+                            {l.name}
+                          </Badge>
+                        );
+                      })}
+                    </div>
                   </div>
-                </div>
+                )}
 
                 <div>
                   <div className="text-xs text-gray-600 mb-1">Email body</div>
@@ -689,61 +819,114 @@ export default function StatisticsDashboardPage() {
             </Card>
           </div>
 
-          {/* Box #3 - Send Stock Lists */}
+          {/* Box #3 - Stock List Schedules */}
           <Card>
-            <CardHeader>
-              <CardTitle>Send Stock Lists</CardTitle>
-              <CardDescription>Email stock list PDFs to recipients</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                <EmailPillsInput
-                  label="Recipients"
-                  value={stockListReceivers}
-                  onChange={setStockListReceivers}
-                  placeholder="Add email…"
-                  helpText="Press Enter or comma to add"
-                />
-
-                <div>
-                  <div className="text-xs text-gray-600 mb-2">Select Stock Lists</div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {(stockListsAll ?? []).map((l) => {
-                      const on = selectedStockListsForEmail.has(l.name);
-                      const available = Boolean(latestStockListByName.get(l.name)?.public_url);
-                      return (
-                        <Badge
-                          key={l.id}
-                          className={`cursor-pointer select-none transition-colors ${on ? 'bg-slate-900 text-white border-slate-900' : 'bg-white hover:bg-slate-50'} ${!available ? 'opacity-50 cursor-not-allowed' : ''}`}
-                          onClick={() => available && toggleStockListForEmail(l.name)}
-                        >
-                          {l.name}
-                          {!available && <span className="ml-1 text-[9px]">(no export)</span>}
-                        </Badge>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
-
+            <CardHeader className="flex flex-row items-center justify-between">
               <div>
-                <div className="text-xs text-gray-600 mb-1">Email body</div>
-                <textarea
-                  className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-offset-2 h-24 resize-none"
-                  placeholder="Write your message…"
-                  value={stockListBodyText}
-                  onChange={(e) => setStockListBodyText(e.target.value)}
-                />
+                <CardTitle>Stock List Schedules</CardTitle>
+                <CardDescription>Configure automated stock list emails</CardDescription>
               </div>
+              <Button size="sm" onClick={openNewSchedule}>
+                <Plus className="h-4 w-4 mr-1" />
+                New Schedule
+              </Button>
+            </CardHeader>
+            <CardContent>
+              {schedules.length === 0 ? (
+                <div className="text-center py-8 text-gray-500 text-sm">
+                  No schedules configured yet. Create one to get started.
+                </div>
+              ) : (
+                <div className="rounded-md border overflow-hidden">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-12">On</TableHead>
+                        <TableHead>Name</TableHead>
+                        <TableHead>Stock Lists</TableHead>
+                        <TableHead>Recipients</TableHead>
+                        <TableHead>Schedule</TableHead>
+                        <TableHead>Last Run</TableHead>
+                        <TableHead className="w-28">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {schedules.map((schedule) => (
+                        <TableRow key={schedule.id}>
+                          <TableCell>
+                            <Toggle
+                              checked={schedule.enabled}
+                              onChange={() => handleToggleEnabled(schedule.id)}
+                              size="sm"
+                            />
+                          </TableCell>
+                          <TableCell className="font-medium">{schedule.name}</TableCell>
+                          <TableCell>
+                            <div className="flex flex-wrap gap-1">
+                              {schedule.stockLists.slice(0, 2).map(name => (
+                                <Badge key={name} className="text-[10px] py-0">{name}</Badge>
+                              ))}
+                              {schedule.stockLists.length > 2 && (
+                                <Badge className="text-[10px] py-0 bg-slate-100">+{schedule.stockLists.length - 2}</Badge>
+                              )}
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <span className="text-xs text-gray-600">{schedule.recipients.length} recipient{schedule.recipients.length !== 1 ? 's' : ''}</span>
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex items-center gap-1 text-xs text-gray-600">
+                              <Clock className="h-3 w-3" />
+                              {formatSchedule(schedule)}
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <span className="text-xs text-gray-500">{formatLastRun(schedule.lastRun)}</span>
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex items-center gap-1">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 w-7 p-0"
+                                onClick={() => handleSendNow(schedule)}
+                                disabled={sendingScheduleId === schedule.id}
+                                title="Send now"
+                              >
+                                <Send className="h-3.5 w-3.5" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 w-7 p-0"
+                                onClick={() => openEditSchedule(schedule)}
+                                title="Edit"
+                              >
+                                <Pencil className="h-3.5 w-3.5" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 w-7 p-0 text-red-600 hover:text-red-700 hover:bg-red-50"
+                                onClick={() => handleDeleteSchedule(schedule.id)}
+                                title="Delete"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
 
-              <div className="flex gap-2">
-                <Button variant="outline" size="sm" disabled={savingStockListPrefs} onClick={saveStockListPrefs}>
-                  {savingStockListPrefs ? 'Saving…' : 'Save settings'}
-                </Button>
-                <Button size="sm" disabled={sendingStockList} onClick={sendStockLists}>
-                  {sendingStockList ? 'Sending…' : 'Send'}
-                </Button>
-              </div>
+              {availableStockLists.length === 0 && (
+                <div className="mt-4 p-3 rounded-md bg-amber-50 border border-amber-200 text-amber-800 text-xs">
+                  No stock list exports available. Export stock lists first to create schedules.
+                </div>
+              )}
             </CardContent>
           </Card>
 
@@ -754,7 +937,13 @@ export default function StatisticsDashboardPage() {
                 <CardTitle>Info</CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="text-xs text-gray-500">—</div>
+                <div className="text-xs text-gray-500">
+                  {availableStockLists.length > 0 ? (
+                    <span>{availableStockLists.length} stock list{availableStockLists.length !== 1 ? 's' : ''} with exports available</span>
+                  ) : (
+                    <span>—</span>
+                  )}
+                </div>
               </CardContent>
             </Card>
 
@@ -792,6 +981,155 @@ export default function StatisticsDashboardPage() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* Schedule Editor Sheet */}
+      <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
+        <SheetClose onClick={() => setSheetOpen(false)} />
+        <SheetHeader>
+          <SheetTitle>{editingSchedule ? 'Edit Schedule' : 'New Schedule'}</SheetTitle>
+        </SheetHeader>
+        <SheetContent className="space-y-6">
+          {/* Schedule Name */}
+          <div>
+            <label className="text-sm text-gray-600 block mb-1">Schedule Name</label>
+            <input
+              type="text"
+              className="w-full h-9 rounded-md border border-slate-200 bg-white px-3 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-offset-2"
+              placeholder="e.g., Weekly Customer Update"
+              value={formName}
+              onChange={(e) => setFormName(e.target.value)}
+            />
+          </div>
+
+          {/* Stock Lists */}
+          <div>
+            <label className="text-sm text-gray-600 block mb-2">Stock Lists</label>
+            {availableStockLists.length === 0 ? (
+              <div className="text-xs text-gray-500">No stock lists with exports available</div>
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                {availableStockLists.map((l) => {
+                  const on = formStockLists.has(l.name);
+                  return (
+                    <Badge
+                      key={l.id}
+                      className={`cursor-pointer select-none transition-colors ${on ? 'bg-slate-900 text-white border-slate-900' : 'bg-white hover:bg-slate-50'}`}
+                      onClick={() => {
+                        setFormStockLists(prev => {
+                          const n = new Set(prev);
+                          if (n.has(l.name)) n.delete(l.name);
+                          else n.add(l.name);
+                          return n;
+                        });
+                      }}
+                    >
+                      {l.name}
+                    </Badge>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Recipients */}
+          <EmailPillsInput
+            label="Recipients"
+            value={formRecipients}
+            onChange={setFormRecipients}
+            placeholder="Add email…"
+            helpText="Press Enter or comma to add"
+          />
+
+          {/* Schedule Type */}
+          <div>
+            <label className="text-sm text-gray-600 block mb-2">Frequency</label>
+            <div className="flex gap-2">
+              <Button
+                variant={formScheduleType === 'daily' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setFormScheduleType('daily')}
+              >
+                Daily
+              </Button>
+              <Button
+                variant={formScheduleType === 'weekly' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setFormScheduleType('weekly')}
+              >
+                Weekly
+              </Button>
+            </div>
+          </div>
+
+          {/* Days (for weekly) */}
+          {formScheduleType === 'weekly' && (
+            <div>
+              <label className="text-sm text-gray-600 block mb-2">Days</label>
+              <div className="flex gap-1">
+                {DAYS_OF_WEEK.map((day) => {
+                  const on = formDays.has(day.value);
+                  return (
+                    <button
+                      key={day.value}
+                      type="button"
+                      onClick={() => {
+                        setFormDays(prev => {
+                          const n = new Set(prev);
+                          if (n.has(day.value)) n.delete(day.value);
+                          else n.add(day.value);
+                          return n;
+                        });
+                      }}
+                      className={`h-9 w-10 rounded-md text-xs font-medium transition-colors ${on ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}
+                    >
+                      {day.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Time */}
+          <div>
+            <label className="text-sm text-gray-600 block mb-1">Time</label>
+            <input
+              type="time"
+              className="h-9 rounded-md border border-slate-200 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-offset-2"
+              value={formTime}
+              onChange={(e) => setFormTime(e.target.value)}
+            />
+          </div>
+
+          {/* Email Body */}
+          <div>
+            <label className="text-sm text-gray-600 block mb-1">Email Body</label>
+            <textarea
+              className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-offset-2 h-24 resize-none"
+              placeholder="Write your message…"
+              value={formEmailBody}
+              onChange={(e) => setFormEmailBody(e.target.value)}
+            />
+          </div>
+
+          {/* Enabled */}
+          <Toggle
+            checked={formEnabled}
+            onChange={() => setFormEnabled(v => !v)}
+            label="Schedule enabled"
+          />
+
+          {/* Actions */}
+          <div className="flex gap-2 pt-4 border-t">
+            <Button variant="outline" onClick={() => setSheetOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleSaveSchedule} disabled={savingSchedules}>
+              {savingSchedules ? 'Saving…' : editingSchedule ? 'Update Schedule' : 'Create Schedule'}
+            </Button>
+          </div>
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }
