@@ -102,39 +102,18 @@ export function EmailPillsInput({
   };
 
   return (
-    <div className={cn('space-y-1.5', className)}>
-      {label && <div className="text-sm text-gray-600">{label}</div>}
-      <div
-        className={cn(
-          'flex flex-wrap items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2 py-1.5 text-sm focus-within:ring-2 focus-within:ring-slate-400 focus-within:ring-offset-2',
-          error && 'border-red-400'
-        )}
-        onClick={() => inputRef.current?.focus()}
-      >
-        {value.map((email) => (
-          <Badge
-            key={email}
-            className="inline-flex items-center gap-1 rounded-full border-slate-200 bg-slate-100 px-2 py-0.5 text-xs text-slate-700"
-          >
-            {email}
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                removeEmail(email);
-              }}
-              className="ml-0.5 rounded-full p-0.5 hover:bg-slate-200 focus:outline-none"
-              aria-label={`Remove ${email}`}
-            >
-              <X className="h-3 w-3" />
-            </button>
-          </Badge>
-        ))}
+    <div className={cn('space-y-2', className)}>
+      {/* Label + Input row */}
+      <div className="flex items-center gap-3">
+        {label && <div className="text-sm text-gray-600 shrink-0">{label}</div>}
         <input
           ref={inputRef}
           type="text"
-          className="min-w-[120px] flex-1 border-none bg-transparent p-0 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-0"
-          placeholder={value.length === 0 ? placeholder : ''}
+          className={cn(
+            'h-8 flex-1 rounded-md border border-slate-200 bg-white px-3 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-offset-2',
+            error && 'border-red-400'
+          )}
+          placeholder={placeholder}
           value={inputValue}
           onChange={(e) => {
             setInputValue(e.target.value);
@@ -145,8 +124,32 @@ export function EmailPillsInput({
           onBlur={handleBlur}
         />
       </div>
+
+      {/* Error / Help text */}
       {error && <div className="text-xs text-red-500">{error}</div>}
       {helpText && !error && <div className="text-xs text-gray-500">{helpText}</div>}
+
+      {/* Pills below */}
+      {value.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {value.map((email) => (
+            <Badge
+              key={email}
+              className="inline-flex items-center gap-1 rounded-full border-slate-200 bg-slate-100 px-2.5 py-1 text-xs text-slate-700"
+            >
+              {email}
+              <button
+                type="button"
+                onClick={() => removeEmail(email)}
+                className="ml-0.5 rounded-full p-0.5 hover:bg-slate-300 focus:outline-none transition-colors"
+                aria-label={`Remove ${email}`}
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </Badge>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
