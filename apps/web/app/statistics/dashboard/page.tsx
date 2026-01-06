@@ -473,9 +473,12 @@ export default function StatisticsDashboardPage() {
       // Send ONE email per stock list
       for (const list of listsToSend) {
         const subject = `${list.name} - Lagerliste`;
+        // Filename: use the list name with .pdf extension
+        const filename = `${list.name} - Lagerliste.pdf`;
         const dynamicParams: Record<string, string> = {
           stock_list_1_url: list.url,
           stock_list_1_name: list.name,
+          stock_list_1_filename: filename,
         };
         
         try {
