@@ -75,6 +75,17 @@ export default function SeasonDetailPage() {
   const [clearSalespersonId, setClearSalespersonId] = useState<string>('');
   const [isClearing, setIsClearing] = useState(false);
   const [clearResult, setClearResult] = useState<{ success: boolean; message: string } | null>(null);
+
+  // Compare data state
+  const [compareSalespersonId, setCompareSalespersonId] = useState<string>('');
+  const [compareInput, setCompareInput] = useState<string>('');
+  const [isComparing, setIsComparing] = useState(false);
+  const [compareResults, setCompareResults] = useState<{
+    matches: Array<{ name: string; city: string; excelQty: number; excelPrice: number; dbQty: number; dbPrice: number; customerId: string }>;
+    mismatches: Array<{ name: string; city: string; excelQty: number; excelPrice: number; dbQty: number; dbPrice: number; customerId: string; qtyDiff: number; priceDiff: number }>;
+    notInDb: Array<{ name: string; city: string; qty: number; price: number; bestMatch: string | null }>;
+    notInExcel: Array<{ name: string; city: string; qty: number; price: number; customerId: string }>;
+  } | null>(null);
   
   useEffect(() => {
     if (rates?.value) {
@@ -392,6 +403,165 @@ export default function SeasonDetailPage() {
       });
     } finally {
       setIsClearing(false);
+    }
+  }
+
+  // Compare pasted data against database
+  async function runComparison() {
+    if (!id || !compareSalespersonId || !compareInput.trim()) return;
+
+    setIsComparing(true);
+    setCompareResults(null);
+
+    try {
+      // Parse tab-separated input (expects: Name\tCity\tQty\tPrice per line)
+      const lines = compareInput.trim().split('\n').filter(line => line.trim());
+      
+      // Skip header row if it looks like headers
+      const firstLine = lines[0]?.toLowerCase() || '';
+      const hasHeader = firstLine.includes('name') || firstLine.includes('customer') || firstLine.includes('qty');
+      const dataLines = hasHeader ? lines.slice(1) : lines;
+
+      const excelRows = dataLines.map(line => {
+        const parts = line.split('\t');
+        return {
+          name: (parts[0] || '').trim(),
+          city: (parts[1] || '').trim(),
+          qty: Number((parts[2] || '0').replace(/[^\d.-]/g, '')) || 0,
+          price: Number((parts[3] || '0').replace(/[^\d.-]/g, '')) || 0,
+        };
+      }).filter(r => r.name && (r.qty || r.price));
+
+      if (excelRows.length === 0) {
+        alert('No valid data rows found. Expected format: Name\\tCity\\tQty\\tPrice (tab-separated)');
+        setIsComparing(false);
+        return;
+      }
+
+      // Fetch existing sales_stats for this salesperson + season
+      const { data: dbStats, error } = await supabase
+        .from('sales_stats')
+        .select('account_no, customer_name, city, qty, price')
+        .eq('season_id', id)
+        .eq('salesperson_id', compareSalespersonId);
+
+      if (error) throw new Error(error.message);
+
+      // Build lookup from DB stats by normalized name+city
+      const dbByKey = new Map<string, typeof dbStats[0]>();
+      const dbByAccount = new Map<string, typeof dbStats[0]>();
+      for (const row of (dbStats || [])) {
+        const key = `${(row.customer_name || '').toLowerCase().trim()}||${(row.city || '').toLowerCase().trim()}`;
+        dbByKey.set(key, row);
+        if (row.account_no) dbByAccount.set(row.account_no, row);
+      }
+
+      // Use our matching logic for fuzzy matching
+      const { matchCustomers, normalize } = await import('../../../../lib/customerMatching');
+
+      // Match excel rows to customers
+      const parsedRows = excelRows.map(r => ({
+        name: r.name,
+        city: r.city,
+        qty: r.qty,
+        price: r.price,
+        originalRow: r
+      }));
+      
+      const matchResults = matchCustomers(parsedRows, customers || []);
+
+      const matches: typeof compareResults.matches = [];
+      const mismatches: typeof compareResults.mismatches = [];
+      const notInDb: typeof compareResults.notInDb = [];
+      const matchedDbAccounts = new Set<string>();
+
+      for (let i = 0; i < excelRows.length; i++) {
+        const excel = excelRows[i];
+        const match = matchResults[i];
+        
+        if (!excel) continue;
+
+        // Try to find in DB by matched customer_id or by name+city
+        let dbRow: typeof dbStats[0] | undefined;
+        
+        if (match?.bestMatch && match.confidence >= 0.65) {
+          dbRow = dbByAccount.get(match.bestMatch.customerId);
+        }
+        
+        if (!dbRow) {
+          // Fallback to exact name+city match
+          const key = `${excel.name.toLowerCase().trim()}||${excel.city.toLowerCase().trim()}`;
+          dbRow = dbByKey.get(key);
+        }
+
+        if (dbRow) {
+          matchedDbAccounts.add(dbRow.account_no);
+          const qtyDiff = excel.qty - (dbRow.qty || 0);
+          const priceDiff = excel.price - (dbRow.price || 0);
+          
+          if (Math.abs(qtyDiff) < 0.01 && Math.abs(priceDiff) < 0.01) {
+            matches.push({
+              name: excel.name,
+              city: excel.city,
+              excelQty: excel.qty,
+              excelPrice: excel.price,
+              dbQty: dbRow.qty || 0,
+              dbPrice: dbRow.price || 0,
+              customerId: dbRow.account_no
+            });
+          } else {
+            mismatches.push({
+              name: excel.name,
+              city: excel.city,
+              excelQty: excel.qty,
+              excelPrice: excel.price,
+              dbQty: dbRow.qty || 0,
+              dbPrice: dbRow.price || 0,
+              customerId: dbRow.account_no,
+              qtyDiff,
+              priceDiff
+            });
+          }
+        } else {
+          notInDb.push({
+            name: excel.name,
+            city: excel.city,
+            qty: excel.qty,
+            price: excel.price,
+            bestMatch: match?.bestMatch ? `${match.bestMatch.company} (${Math.round(match.confidence * 100)}%)` : null
+          });
+        }
+      }
+
+      // Find DB entries not in Excel
+      const notInExcel: typeof compareResults.notInExcel = [];
+      for (const dbRow of (dbStats || [])) {
+        if (!matchedDbAccounts.has(dbRow.account_no)) {
+          notInExcel.push({
+            name: dbRow.customer_name || '',
+            city: dbRow.city || '',
+            qty: dbRow.qty || 0,
+            price: dbRow.price || 0,
+            customerId: dbRow.account_no
+          });
+        }
+      }
+
+      setCompareResults({ matches, mismatches, notInDb, notInExcel });
+      
+      console.log('[runComparison]', {
+        excelRows: excelRows.length,
+        dbStats: dbStats?.length,
+        matches: matches.length,
+        mismatches: mismatches.length,
+        notInDb: notInDb.length,
+        notInExcel: notInExcel.length
+      });
+    } catch (err: any) {
+      console.error('[runComparison] Error:', err);
+      alert(err?.message || 'Comparison failed');
+    } finally {
+      setIsComparing(false);
     }
   }
 
@@ -846,6 +1016,224 @@ export default function SeasonDetailPage() {
               : 'border-red-200 bg-red-50 text-red-700')
           }>
             {clearResult.message}
+          </div>
+        )}
+      </div>
+
+      {/* Compare Data Section */}
+      <div className="border rounded-md p-4 space-y-3">
+        <div className="text-sm font-medium text-gray-700">Compare Customer Statistics</div>
+        <div className="text-xs text-gray-500">
+          Paste tab-separated data from Excel (Name, City, Qty, Price) to compare against existing data for a salesperson.
+        </div>
+        
+        <div className="flex flex-col sm:flex-row sm:items-end gap-3">
+          <div className="flex-1 max-w-xs">
+            <label className="block text-xs text-gray-600 mb-1">Select Salesperson</label>
+            <select
+              className="w-full rounded border px-2 py-1.5 text-sm"
+              value={compareSalespersonId}
+              onChange={(e) => {
+                setCompareSalespersonId(e.target.value);
+                setCompareResults(null);
+              }}
+            >
+              <option value="">Select...</option>
+              {(salespersons ?? []).map(sp => (
+                <option key={sp.id} value={sp.id}>{sp.name}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        <div>
+          <label className="block text-xs text-gray-600 mb-1">
+            Paste data (tab-separated: Name → City → Qty → Price)
+          </label>
+          <textarea
+            className="w-full rounded border px-2 py-1.5 text-xs font-mono h-32"
+            placeholder={"Customer Name\tCity\tQty\tPrice\nAcme Corp\tCopenhagen\t100\t5000\nBest Shop\tOslo\t50\t2500"}
+            value={compareInput}
+            onChange={(e) => {
+              setCompareInput(e.target.value);
+              setCompareResults(null);
+            }}
+          />
+        </div>
+
+        <button
+          onClick={runComparison}
+          disabled={!compareSalespersonId || !compareInput.trim() || isComparing}
+          className={
+            'rounded-md px-4 py-2 text-sm font-medium transition-colors ' +
+            (compareSalespersonId && compareInput.trim() && !isComparing
+              ? 'bg-slate-900 text-white hover:bg-slate-800'
+              : 'bg-gray-200 text-gray-400 cursor-not-allowed')
+          }
+        >
+          {isComparing ? 'Comparing...' : 'Compare'}
+        </button>
+
+        {/* Compare Results */}
+        {compareResults && (
+          <div className="space-y-3 pt-2">
+            {/* Summary */}
+            <div className="flex items-center gap-4 text-xs">
+              <span className="inline-flex items-center gap-1">
+                <span className="w-2.5 h-2.5 rounded-full bg-green-500"></span>
+                Matches: {compareResults.matches.length}
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <span className="w-2.5 h-2.5 rounded-full bg-red-500"></span>
+                Mismatches: {compareResults.mismatches.length}
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <span className="w-2.5 h-2.5 rounded-full bg-amber-500"></span>
+                Not in DB: {compareResults.notInDb.length}
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <span className="w-2.5 h-2.5 rounded-full bg-blue-500"></span>
+                Not in Excel: {compareResults.notInExcel.length}
+              </span>
+            </div>
+
+            {/* Mismatches - most important */}
+            {compareResults.mismatches.length > 0 && (
+              <details open className="border rounded-md">
+                <summary className="px-3 py-2 bg-red-50 cursor-pointer font-medium text-xs text-red-800">
+                  Mismatches ({compareResults.mismatches.length}) — values differ between Excel and DB
+                </summary>
+                <div className="max-h-60 overflow-auto">
+                  <table className="w-full text-xs">
+                    <thead className="bg-gray-50 sticky top-0">
+                      <tr>
+                        <th className="text-left p-1.5 border-b">Customer</th>
+                        <th className="text-left p-1.5 border-b">City</th>
+                        <th className="text-right p-1.5 border-b">Excel Qty</th>
+                        <th className="text-right p-1.5 border-b">DB Qty</th>
+                        <th className="text-right p-1.5 border-b">Diff</th>
+                        <th className="text-right p-1.5 border-b">Excel Price</th>
+                        <th className="text-right p-1.5 border-b">DB Price</th>
+                        <th className="text-right p-1.5 border-b">Diff</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {compareResults.mismatches.map((r, i) => (
+                        <tr key={i} className="hover:bg-gray-50">
+                          <td className="p-1.5 border-b font-medium">{r.name}</td>
+                          <td className="p-1.5 border-b">{r.city}</td>
+                          <td className="p-1.5 border-b text-right">{r.excelQty}</td>
+                          <td className="p-1.5 border-b text-right">{r.dbQty}</td>
+                          <td className={`p-1.5 border-b text-right font-mono ${r.qtyDiff !== 0 ? 'text-red-600 font-medium' : ''}`}>
+                            {r.qtyDiff > 0 ? '+' : ''}{r.qtyDiff.toFixed(0)}
+                          </td>
+                          <td className="p-1.5 border-b text-right">{r.excelPrice.toLocaleString()}</td>
+                          <td className="p-1.5 border-b text-right">{r.dbPrice.toLocaleString()}</td>
+                          <td className={`p-1.5 border-b text-right font-mono ${r.priceDiff !== 0 ? 'text-red-600 font-medium' : ''}`}>
+                            {r.priceDiff > 0 ? '+' : ''}{r.priceDiff.toLocaleString()}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </details>
+            )}
+
+            {/* Not in DB */}
+            {compareResults.notInDb.length > 0 && (
+              <details className="border rounded-md">
+                <summary className="px-3 py-2 bg-amber-50 cursor-pointer font-medium text-xs text-amber-800">
+                  Not in DB ({compareResults.notInDb.length}) — in Excel but not found in database
+                </summary>
+                <div className="max-h-48 overflow-auto">
+                  <table className="w-full text-xs">
+                    <thead className="bg-gray-50 sticky top-0">
+                      <tr>
+                        <th className="text-left p-1.5 border-b">Customer</th>
+                        <th className="text-left p-1.5 border-b">City</th>
+                        <th className="text-right p-1.5 border-b">Qty</th>
+                        <th className="text-right p-1.5 border-b">Price</th>
+                        <th className="text-left p-1.5 border-b">Best Match</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {compareResults.notInDb.map((r, i) => (
+                        <tr key={i} className="hover:bg-gray-50">
+                          <td className="p-1.5 border-b font-medium text-amber-700">{r.name}</td>
+                          <td className="p-1.5 border-b">{r.city}</td>
+                          <td className="p-1.5 border-b text-right">{r.qty}</td>
+                          <td className="p-1.5 border-b text-right">{r.price.toLocaleString()}</td>
+                          <td className="p-1.5 border-b text-gray-500">{r.bestMatch || '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </details>
+            )}
+
+            {/* Not in Excel */}
+            {compareResults.notInExcel.length > 0 && (
+              <details className="border rounded-md">
+                <summary className="px-3 py-2 bg-blue-50 cursor-pointer font-medium text-xs text-blue-800">
+                  Not in Excel ({compareResults.notInExcel.length}) — in DB but not in pasted data
+                </summary>
+                <div className="max-h-48 overflow-auto">
+                  <table className="w-full text-xs">
+                    <thead className="bg-gray-50 sticky top-0">
+                      <tr>
+                        <th className="text-left p-1.5 border-b">Customer</th>
+                        <th className="text-left p-1.5 border-b">City</th>
+                        <th className="text-right p-1.5 border-b">Qty</th>
+                        <th className="text-right p-1.5 border-b">Price</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {compareResults.notInExcel.map((r, i) => (
+                        <tr key={i} className="hover:bg-gray-50">
+                          <td className="p-1.5 border-b font-medium text-blue-700">{r.name}</td>
+                          <td className="p-1.5 border-b">{r.city}</td>
+                          <td className="p-1.5 border-b text-right">{r.qty}</td>
+                          <td className="p-1.5 border-b text-right">{r.price.toLocaleString()}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </details>
+            )}
+
+            {/* Matches */}
+            {compareResults.matches.length > 0 && (
+              <details className="border rounded-md">
+                <summary className="px-3 py-2 bg-green-50 cursor-pointer font-medium text-xs text-green-800">
+                  Matches ({compareResults.matches.length}) — values match exactly
+                </summary>
+                <div className="max-h-48 overflow-auto">
+                  <table className="w-full text-xs">
+                    <thead className="bg-gray-50 sticky top-0">
+                      <tr>
+                        <th className="text-left p-1.5 border-b">Customer</th>
+                        <th className="text-left p-1.5 border-b">City</th>
+                        <th className="text-right p-1.5 border-b">Qty</th>
+                        <th className="text-right p-1.5 border-b">Price</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {compareResults.matches.map((r, i) => (
+                        <tr key={i} className="hover:bg-gray-50">
+                          <td className="p-1.5 border-b text-green-700">{r.name}</td>
+                          <td className="p-1.5 border-b">{r.city}</td>
+                          <td className="p-1.5 border-b text-right">{r.excelQty}</td>
+                          <td className="p-1.5 border-b text-right">{r.excelPrice.toLocaleString()}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </details>
+            )}
           </div>
         )}
       </div>
