@@ -9,7 +9,8 @@ export default function robots(): MetadataRoute.Robots {
         disallow: '/'
       }
     ],
-    sitemap: null
+    // Next expects string|string[]|undefined (not null)
+    sitemap: undefined
   };
 }
 
