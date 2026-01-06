@@ -1,18 +1,19 @@
 'use client';
 import Link from 'next/link';
-import type { Route } from 'next';
 import { usePathname } from 'next/navigation';
 import { useRoles, useRoleAccess } from '../lib/supabaseClient';
 import { Button } from './ui/button';
 import { cn } from '../lib/cn';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 
-function NavLink({ href, label }: { href: Route; label: string }) {
+// With Next.js `experimental.typedRoutes`, the `Route` type is a strict union.
+// Some valid routes can still fail typing during build; keep `href` as a string and cast at the Link boundary.
+function NavLink({ href, label }: { href: string; label: string }) {
   const pathname = usePathname();
   const active = pathname === href || pathname.startsWith(href + '/');
   return (
     <Link
-      href={href}
+      href={href as any}
       className={cn(
         'flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors',
         active
