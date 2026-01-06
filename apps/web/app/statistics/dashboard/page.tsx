@@ -457,32 +457,39 @@ export default function StatisticsDashboardPage() {
       
       if (selectedStockListsForEmail.size === 0) { alert('Select at least one stock list.'); return; }
       
-      const dynamicParams: Record<string, string> = {};
-      let idx = 1;
+      // Collect lists with valid exports
+      const listsToSend: Array<{ name: string; url: string }> = [];
       for (const name of Array.from(selectedStockListsForEmail)) {
         const exp = latestStockListByName.get(name);
         if (exp?.public_url) {
-          dynamicParams[`stock_list_${idx}_url`] = exp.public_url;
-          dynamicParams[`stock_list_${idx}_name`] = name;
-          idx++;
+          listsToSend.push({ name, url: exp.public_url });
         }
       }
       
-      if (Object.keys(dynamicParams).length === 0) { alert('No available stock list exports found. Please export stock lists first.'); return; }
+      if (listsToSend.length === 0) { alert('No available stock list exports found. Please export stock lists first.'); return; }
       
-      try {
-        const summarize = (p: Record<string, string>) => Object.fromEntries(Object.entries(p).map(([k, v]) => [k, { len: (v || '').length, head: (v || '').slice(0, 32) }]));
-        console.log('[email:stock_list] prepared', {
-          to: stockListReceivers,
-          stockLists: Array.from(selectedStockListsForEmail),
-          params: summarize(dynamicParams)
-        });
-      } catch {}
-      
-      const subject = 'Stock List';
       const bodyHtml = stockListBodyText || 'Hermed stock list :)';
-      await sendEmailJs(stockListReceivers, subject, bodyHtml, undefined, dynamicParams, true);
-      alert('Email sent');
+      
+      // Send ONE email per stock list
+      for (const list of listsToSend) {
+        const subject = `${list.name} - Lagerliste`;
+        const dynamicParams: Record<string, string> = {
+          stock_list_1_url: list.url,
+          stock_list_1_name: list.name,
+        };
+        
+        try {
+          console.log('[email:stock_list] sending', {
+            to: stockListReceivers,
+            listName: list.name,
+            subject,
+          });
+        } catch {}
+        
+        await sendEmailJs(stockListReceivers, subject, bodyHtml, undefined, dynamicParams, true);
+      }
+      
+      alert(`${listsToSend.length} email(s) sent`);
     } finally {
       setSendingStockList(false);
     }
