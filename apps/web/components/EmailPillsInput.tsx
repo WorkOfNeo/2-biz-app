@@ -84,7 +84,8 @@ export function EmailPillsInput({
       addEmails(inputValue);
     } else if (e.key === 'Backspace' && inputValue === '' && value.length > 0) {
       // Remove last pill on backspace when input is empty
-      removeEmail(value[value.length - 1]);
+      const lastEmail = value[value.length - 1];
+      if (lastEmail) removeEmail(lastEmail);
     }
   };
 
