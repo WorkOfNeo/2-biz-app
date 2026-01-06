@@ -2,6 +2,8 @@
 import useSWR from 'swr';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import React from 'react';
+import Link from 'next/link';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useRoles } from '../../../lib/supabaseClient';
 import { MultiSelect } from '../../../components/MultiSelect';
 import { ProgressBar } from '../../../components/ProgressBar';
@@ -46,17 +48,65 @@ function formatRelativeTime(isoString: string): string {
   return `Opdateret ${date.toLocaleDateString('da-DK')}`;
 }
 
-export default function StockListPage() {
+type StockListPageProps = {
+  /** When true, renders a simplified, share-friendly UI (used by /public/stock-list/[id]) */
+  publicMode?: boolean;
+  /** Stock list ID to lock to in public mode */
+  sharedListId?: string;
+};
+
+export default function StockListPage({ publicMode = false, sharedListId = '' }: StockListPageProps) {
   const supabase = createClientComponentClient();
   const { has } = useRoles();
-  // Preselect previously active list if stored by Settings → Stock Lists tab
+
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+
+  // Preselect previously active list by URL (?list=) or localStorage
   const [activeListId, setActiveListId] = React.useState<string>('');
+  const didInitActiveList = React.useRef(false);
   React.useEffect(() => {
+    if (publicMode) return;
+    const listParam = searchParams.get('list');
+    if (listParam !== null) {
+      setActiveListId(listParam === 'all' ? '' : listParam);
+      didInitActiveList.current = true;
+      return;
+    }
     try {
       const v = localStorage.getItem('activeStockListId') || '';
       if (v) setActiveListId(v);
     } catch {}
-  }, []);
+    didInitActiveList.current = true;
+  }, [publicMode, searchParams]);
+
+  // Public mode: always pin active list id to the shared list
+  React.useEffect(() => {
+    if (!publicMode) return;
+    if (sharedListId) setActiveListId(sharedListId);
+  }, [publicMode, sharedListId]);
+
+  // Persist active list selection to URL and localStorage (private view only)
+  React.useEffect(() => {
+    if (publicMode) return;
+    if (!didInitActiveList.current) return;
+
+    try {
+      if (activeListId) localStorage.setItem('activeStockListId', activeListId);
+      else localStorage.removeItem('activeStockListId');
+    } catch {}
+
+    const current = searchParams.get('list'); // string | null
+    const desired = activeListId || null;
+    if (current !== desired) {
+      const next = new URLSearchParams(searchParams.toString());
+      if (activeListId) next.set('list', activeListId);
+      else next.delete('list');
+      const qs = next.toString();
+      router.replace(qs ? `${pathname}?${qs}` : pathname);
+    }
+  }, [activeListId, publicMode, pathname, router, searchParams]);
   const [searchQuery, setSearchQuery] = React.useState<string>('');
   const [scrapeBusy, setScrapeBusy] = React.useState<string | null>(null);
   const [selectedSeasons, setSelectedSeasons] = React.useState<string[]>([]);
@@ -441,6 +491,14 @@ export default function StockListPage() {
   const [showStyleTotals, setShowStyleTotals] = React.useState(false);
 
   // (migrated to top of file to satisfy dependencies)
+
+  // Public view should never be affected by private-view filters/toggles
+  React.useEffect(() => {
+    if (!publicMode) return;
+    setSelectedSeasons([]);
+    setHideZeros(false);
+    setShowStyleTotals(false);
+  }, [publicMode]);
 
   // Filter rows based on active Stock List, search, seasons, and hide zeros
   const filteredForView = React.useMemo(() => {
@@ -1694,37 +1752,43 @@ export default function StockListPage() {
       <div>
         <div className="text-xs text-gray-500 sl-header-eyebrow">Styles</div>
         <div className="flex items-center gap-3 mb-4">
-          <h1 className="text-2xl font-semibold sl-header-title">Stock List</h1>
-          <span className="text-sm text-gray-600">
-            (Showing {filteredForView.length.toLocaleString()} / {totalStyles.toLocaleString()} {totalStyles === 1 ? 'style' : 'styles'})
-          </span>
-            {hiddenStyles.length > 0 && (
-            <button
-              onClick={() => setShowHiddenModal(true)}
-              className="text-sm text-blue-600 hover:text-blue-800 underline"
-            >
-              {hiddenStyles.length} hidden
-            </button>
+          <h1 className="text-2xl font-semibold sl-header-title">
+            {publicMode ? (stockLists?.find((l) => l.id === activeListId)?.name || 'Stock List') : 'Stock List'}
+          </h1>
+          {!publicMode && (
+            <>
+              <span className="text-sm text-gray-600">
+                (Showing {filteredForView.length.toLocaleString()} / {totalStyles.toLocaleString()} {totalStyles === 1 ? 'style' : 'styles'})
+              </span>
+              {hiddenStyles.length > 0 && (
+                <button
+                  onClick={() => setShowHiddenModal(true)}
+                  className="text-sm text-blue-600 hover:text-blue-800 underline"
+                >
+                  {hiddenStyles.length} hidden
+                </button>
+              )}
+              <Button
+                size="sm"
+                variant="default"
+                onClick={exportToExcel}
+                disabled={exporting || filteredForView.length === 0}
+              >
+                {exporting ? 'Exporting...' : 'Export to Excel'}
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  setShowCheckerModal(true);
+                  setCheckerResults(null);
+                  setCheckerInput('');
+                }}
+              >
+                Checker
+              </Button>
+            </>
           )}
-          <Button
-            size="sm"
-            variant="default"
-            onClick={exportToExcel}
-            disabled={exporting || filteredForView.length === 0}
-          >
-            {exporting ? 'Exporting...' : 'Export to Excel'}
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => {
-              setShowCheckerModal(true);
-              setCheckerResults(null);
-              setCheckerInput('');
-            }}
-          >
-            Checker
-          </Button>
         </div>
         
         {/* Loading Progress Bar - Fixed Bottom Right */}
@@ -1742,40 +1806,42 @@ export default function StockListPage() {
         )}
         
         {/* Summary Totals - Cards */}
-        <div className="grid grid-cols-4 gap-3">
-          <Card className="shadow-sm">
-            <CardContent className="p-4">
-              <div className="text-xs text-gray-600 mb-1">Stock</div>
-              <div className="text-2xl font-bold text-black">{totals.stock.toLocaleString()}</div>
-            </CardContent>
-          </Card>
-          <Card className="shadow-sm">
-            <CardContent className="p-4">
-              <div className="text-xs text-gray-600 mb-1">Sold</div>
-              <div className="text-2xl font-bold text-red-700">
-                {totals.sold > 0 ? `-${totals.sold.toLocaleString()}` : totals.sold}
-              </div>
-            </CardContent>
-          </Card>
-          <Card className="shadow-sm">
-            <CardContent className="p-4">
-              <div className="text-xs text-gray-600 mb-1">Purchase</div>
-              <div className="text-2xl font-bold text-green-700">{totals.purchase.toLocaleString()}</div>
-            </CardContent>
-          </Card>
-          <Card className="shadow-sm">
-            <CardContent className="p-4">
-              <div className="text-xs text-gray-600 mb-1">Available</div>
-              <div className={`text-2xl font-bold ${totals.available < 0 ? 'text-red-700' : totals.available > 0 ? 'text-green-800' : 'text-black'}`}>
-                {totals.available.toLocaleString()}
-              </div>
-            </CardContent>
-          </Card>
-        </div>
+        {!publicMode && (
+          <div className="grid grid-cols-4 gap-3">
+            <Card className="shadow-sm">
+              <CardContent className="p-4">
+                <div className="text-xs text-gray-600 mb-1">Stock</div>
+                <div className="text-2xl font-bold text-black">{totals.stock.toLocaleString()}</div>
+              </CardContent>
+            </Card>
+            <Card className="shadow-sm">
+              <CardContent className="p-4">
+                <div className="text-xs text-gray-600 mb-1">Sold</div>
+                <div className="text-2xl font-bold text-red-700">
+                  {totals.sold > 0 ? `-${totals.sold.toLocaleString()}` : totals.sold}
+                </div>
+              </CardContent>
+            </Card>
+            <Card className="shadow-sm">
+              <CardContent className="p-4">
+                <div className="text-xs text-gray-600 mb-1">Purchase</div>
+                <div className="text-2xl font-bold text-green-700">{totals.purchase.toLocaleString()}</div>
+              </CardContent>
+            </Card>
+            <Card className="shadow-sm">
+              <CardContent className="p-4">
+                <div className="text-xs text-gray-600 mb-1">Available</div>
+                <div className={`text-2xl font-bold ${totals.available < 0 ? 'text-red-700' : totals.available > 0 ? 'text-green-800' : 'text-black'}`}>
+                  {totals.available.toLocaleString()}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        )}
       </div>
 
       {/* Scraping Progress Banner - Outside Modal */}
-      {scrapingMismatches && scrapeProgress && (
+      {!publicMode && scrapingMismatches && scrapeProgress && (
         <Card className="shadow-sm border-blue-300 bg-blue-50">
           <CardContent className="p-4">
             <div className="flex items-center justify-between mb-3">
@@ -1799,7 +1865,7 @@ export default function StockListPage() {
       )}
 
       {/* Scraping Complete/Error Message Banner */}
-      {!scrapingMismatches && scrapeMessage && (
+      {!publicMode && !scrapingMismatches && scrapeMessage && (
         <Card className={`shadow-sm ${
           scrapeMessage.type === 'success' ? 'border-green-300 bg-green-50' :
           scrapeMessage.type === 'error' ? 'border-red-300 bg-red-50' :
@@ -1825,14 +1891,33 @@ export default function StockListPage() {
         <CardContent className="p-3">
           <div className="space-y-3">
             {/* Stock List Tabs */}
-            <Tabs value={activeListId || 'all'} onValueChange={(v) => setActiveListId(v === 'all' ? '' : v)}>
-              <TabsList className="w-full justify-start">
-                {(stockLists ?? []).map((row) => (
-                  <TabsTrigger key={row.id} value={row.id}>{row.name}</TabsTrigger>
-                ))}
-                <TabsTrigger value="all">Alle</TabsTrigger>
-              </TabsList>
-            </Tabs>
+            {!publicMode && (
+              <Tabs value={activeListId || 'all'} onValueChange={(v) => setActiveListId(v === 'all' ? '' : v)}>
+                <TabsList className="w-full justify-start">
+                  {(stockLists ?? []).map((row) => {
+                    const next = new URLSearchParams(searchParams.toString());
+                    next.set('list', row.id);
+                    const href = `${pathname}?${next.toString()}`;
+                    return (
+                      <TabsTrigger key={row.id} value={row.id} asChild>
+                        <Link href={href}>{row.name}</Link>
+                      </TabsTrigger>
+                    );
+                  })}
+                  {(() => {
+                    const next = new URLSearchParams(searchParams.toString());
+                    next.delete('list');
+                    const qs = next.toString();
+                    const href = qs ? `${pathname}?${qs}` : pathname;
+                    return (
+                      <TabsTrigger value="all" asChild>
+                        <Link href={href}>Alle</Link>
+                      </TabsTrigger>
+                    );
+                  })()}
+                </TabsList>
+              </Tabs>
+            )}
             
             {/* All Filters in One Row */}
             <div className="flex items-center gap-3 flex-wrap">
@@ -1843,53 +1928,57 @@ export default function StockListPage() {
                 className="w-64"
               />
               
-              <MultiSelect
-                items={(seasons || []).map(s => ({ 
-                  value: s.id, 
-                  label: `${s.name}${s.year ? ` ${s.year}` : ''}` 
-                }))}
-                values={selectedSeasons}
-                onChange={setSelectedSeasons}
-                placeholder="Filter by seasons..."
-              />
-              
-              <label className="flex items-center gap-2 text-sm cursor-pointer border rounded px-3 py-2 bg-white hover:bg-gray-50">
-                <input
-                  type="checkbox"
-                  checked={hideZeros}
-                  onChange={(e) => setHideZeros(e.target.checked)}
-                  className="h-4 w-4 rounded accent-slate-900"
-                />
-                <span>Hide all zeros</span>
-              </label>
-              
-              <label className="flex items-center gap-2 text-sm cursor-pointer border rounded px-3 py-2 bg-white hover:bg-gray-50">
-                <input
-                  type="checkbox"
-                  checked={showStyleTotals}
-                  onChange={(e) => setShowStyleTotals(e.target.checked)}
-                  className="h-4 w-4 rounded accent-slate-900"
-                />
-                <span>Display style totals</span>
-              </label>
-              
-              {(selectedSeasons.length > 0 || hideZeros) && (
-                <button
-                  onClick={() => {
-                    setSelectedSeasons([]);
-                    setHideZeros(false);
-                  }}
-                  className="text-sm text-slate-600 hover:text-slate-900 underline"
-                >
-                  Clear filters
-                </button>
+              {!publicMode && (
+                <>
+                  <MultiSelect
+                    items={(seasons || []).map(s => ({ 
+                      value: s.id, 
+                      label: `${s.name}${s.year ? ` ${s.year}` : ''}` 
+                    }))}
+                    values={selectedSeasons}
+                    onChange={setSelectedSeasons}
+                    placeholder="Filter by seasons..."
+                  />
+                  
+                  <label className="flex items-center gap-2 text-sm cursor-pointer border rounded px-3 py-2 bg-white hover:bg-gray-50">
+                    <input
+                      type="checkbox"
+                      checked={hideZeros}
+                      onChange={(e) => setHideZeros(e.target.checked)}
+                      className="h-4 w-4 rounded accent-slate-900"
+                    />
+                    <span>Hide all zeros</span>
+                  </label>
+                  
+                  <label className="flex items-center gap-2 text-sm cursor-pointer border rounded px-3 py-2 bg-white hover:bg-gray-50">
+                    <input
+                      type="checkbox"
+                      checked={showStyleTotals}
+                      onChange={(e) => setShowStyleTotals(e.target.checked)}
+                      className="h-4 w-4 rounded accent-slate-900"
+                    />
+                    <span>Display style totals</span>
+                  </label>
+                  
+                  {(selectedSeasons.length > 0 || hideZeros) && (
+                    <button
+                      onClick={() => {
+                        setSelectedSeasons([]);
+                        setHideZeros(false);
+                      }}
+                      className="text-sm text-slate-600 hover:text-slate-900 underline"
+                    >
+                      Clear filters
+                    </button>
+                  )}
+                </>
               )}
             </div>
           </div>
         </CardContent>
       </Card>
       {/* Scrape active list */}
-      {activeListId && (
+      {!publicMode && activeListId && (
         <div className="flex items-center justify-end">
           <ScrapeActiveListButton
             listId={activeListId}
@@ -2143,59 +2232,62 @@ export default function StockListPage() {
       </div>
 
       {/* Hidden Styles Modal */}
-      <Modal
-        open={showHiddenModal}
-        onClose={() => setShowHiddenModal(false)}
-        title={`Hidden Styles (${hiddenStyles.length})`}
-        maxWidth="max-w-4xl"
-        footer={
-          <Button onClick={() => setShowHiddenModal(false)} variant="default">
-            Close
-          </Button>
-        }
-      >
-        <div className="space-y-2">
-          <p className="text-sm text-gray-600 mb-4">
-            These styles are in {activeListId ? 'the selected list' : 'your database'} but not currently visible due to filters or missing data.
-          </p>
-          <div className="overflow-auto max-h-[50vh]">
-            <table className="min-w-full text-sm">
-              <thead className="bg-gray-50 sticky top-0">
-                <tr>
-                  <th className="p-2 text-left border-b font-semibold">Style No</th>
-                  <th className="p-2 text-left border-b font-semibold">Name</th>
-                  <th className="p-2 text-left border-b font-semibold">Supplier</th>
-                  <th className="p-2 text-left border-b font-semibold">Reason</th>
-                </tr>
-              </thead>
-              <tbody>
-                {hiddenStyles.map((style, idx) => (
-                  <tr key={idx} className="hover:bg-gray-50">
-                    <td className="p-2 border-b font-mono text-xs">{style.styleNo}</td>
-                    <td className="p-2 border-b">{style.name || '—'}</td>
-                    <td className="p-2 border-b text-gray-600">{style.supplier || '—'}</td>
-                    <td className="p-2 border-b text-gray-500">{style.reason}</td>
+      {!publicMode && (
+        <Modal
+          open={showHiddenModal}
+          onClose={() => setShowHiddenModal(false)}
+          title={`Hidden Styles (${hiddenStyles.length})`}
+          maxWidth="max-w-4xl"
+          footer={
+            <Button onClick={() => setShowHiddenModal(false)} variant="default">
+              Close
+            </Button>
+          }
+        >
+          <div className="space-y-2">
+            <p className="text-sm text-gray-600 mb-4">
+              These styles are in {activeListId ? 'the selected list' : 'your database'} but not currently visible due to filters or missing data.
+            </p>
+            <div className="overflow-auto max-h-[50vh]">
+              <table className="min-w-full text-sm">
+                <thead className="bg-gray-50 sticky top-0">
+                  <tr>
+                    <th className="p-2 text-left border-b font-semibold">Style No</th>
+                    <th className="p-2 text-left border-b font-semibold">Name</th>
+                    <th className="p-2 text-left border-b font-semibold">Supplier</th>
+                    <th className="p-2 text-left border-b font-semibold">Reason</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {hiddenStyles.map((style, idx) => (
+                    <tr key={idx} className="hover:bg-gray-50">
+                      <td className="p-2 border-b font-mono text-xs">{style.styleNo}</td>
+                      <td className="p-2 border-b">{style.name || '—'}</td>
+                      <td className="p-2 border-b text-gray-600">{style.supplier || '—'}</td>
+                      <td className="p-2 border-b text-gray-500">{style.reason}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
-        </div>
-      </Modal>
+        </Modal>
+      )}
 
       {/* Checker Modal */}
-      <Modal
-        open={showCheckerModal}
-        onClose={() => {
-          setShowCheckerModal(false);
-          setCheckerResults(null);
-          setCheckerInput('');
-          setCheckerMode('styles');
-        }}
-        title="Stock Checker"
-        maxWidth="max-w-6xl"
-      >
-        <div className="space-y-4">
+      {!publicMode && (
+        <Modal
+          open={showCheckerModal}
+          onClose={() => {
+            setShowCheckerModal(false);
+            setCheckerResults(null);
+            setCheckerInput('');
+            setCheckerMode('styles');
+          }}
+          title="Stock Checker"
+          maxWidth="max-w-6xl"
+        >
+          <div className="space-y-4">
           {/* Tabs */}
           <div className="flex gap-2 border-b">
             <button
@@ -2599,8 +2691,9 @@ PO7332, 2100"
               </div>
             </div>
           )}
-        </div>
-      </Modal>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
