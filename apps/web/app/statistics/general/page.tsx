@@ -925,14 +925,40 @@ export default function StatisticsGeneralPage() {
       const spLog = filteredLogging.find(log => log.salespersonId === selectedSalespersonId);
       if (!spLog) {
         alert('No logging data found for this salesperson');
+        setFixingLogging(false);
         return;
       }
 
-      // Find all customers who have S2 data
+      // Find all customers who have S2 data (meaning they exist in the S2 season stats)
       const customersWithS2 = spLog.customers.filter(c => c.hasS2Data && c.customer_id);
       
+      console.log('[fixLogging] Salesperson:', selectedSalespersonId, 'Total customers:', spLog.customers.length);
+      console.log('[fixLogging] Customers with S2 data:', customersWithS2.length);
+      console.log('[fixLogging] Sample customers with S2:', customersWithS2.slice(0, 5).map(c => ({
+        id: c.customer_id,
+        company: c.company,
+        hasS2Data: c.hasS2Data,
+        hidden: c.hidden,
+        nulled: c.nulled,
+        excluded: c.excluded,
+        permanentlyClosed: c.permanentlyClosed
+      })));
+      
       if (customersWithS2.length === 0) {
-        alert('No customers with S2 data found for this salesperson');
+        // Also show customers that are hidden/nulled to help debug
+        const hiddenOrNulled = spLog.customers.filter(c => c.hidden || c.nulled || c.excluded);
+        console.log('[fixLogging] Hidden/nulled customers:', hiddenOrNulled.length, hiddenOrNulled.slice(0, 10).map(c => ({
+          id: c.customer_id,
+          company: c.company,
+          hasS1Data: c.hasS1Data,
+          hasS2Data: c.hasS2Data,
+          hidden: c.hidden,
+          nulled: c.nulled,
+          excluded: c.excluded,
+          permanentlyClosed: c.permanentlyClosed
+        })));
+        alert(`No customers with S2 data found for this salesperson.\n\nTotal customers: ${spLog.customers.length}\nHidden/nulled: ${hiddenOrNulled.length}\n\nCheck browser console for details.`);
+        setFixingLogging(false);
         return;
       }
 
@@ -942,6 +968,7 @@ export default function StatisticsGeneralPage() {
       
       let unhiddenCount = 0;
       let unnulledCount = 0;
+      const customerIds = customersWithS2.map(c => c.customer_id);
 
       for (const customer of customersWithS2) {
         const accountNo = customer.customer_id;
@@ -952,8 +979,7 @@ export default function StatisticsGeneralPage() {
           unhiddenCount++;
         }
         
-        // Unnull if nulled seasonally (but NOT if permanently closed - they stay visible but keep flag)
-        // We only remove from seasonal nulled list, not touching the permanent flag
+        // Unnull if nulled seasonally
         if (currentNulled.has(accountNo)) {
           currentNulled.delete(accountNo);
           unnulledCount++;
@@ -961,34 +987,47 @@ export default function StatisticsGeneralPage() {
       }
 
       // Save the updated overrides
+      console.log('[fixLogging] Saving overrides - removing from nulled:', unnulledCount, 'removing from hidden:', unhiddenCount);
       await saveOverrides({
         nulled: Array.from(currentNulled),
         hidden: Array.from(currentHidden)
       });
 
-      // Also unnull customers in the customers table if they were nulled (but not permanently closed)
-      const toUnnullInDb = customersWithS2
-        .filter(c => c.nulled && !c.permanentlyClosed)
+      // Update customers table: unnull AND un-exclude customers with S2 data (except perm closed)
+      // This makes them visible in the table
+      const toUpdateInDb = customersWithS2
+        .filter(c => (c.nulled || c.excluded) && !c.permanentlyClosed)
         .map(c => c.customer_id);
       
-      if (toUnnullInDb.length > 0) {
-        const { error } = await supabase
+      let dbUpdated = 0;
+      if (toUpdateInDb.length > 0) {
+        console.log('[fixLogging] Updating customers in DB:', toUpdateInDb.length, toUpdateInDb.slice(0, 10));
+        const { error, count } = await supabase
           .from('customers')
-          .update({ nulled: false })
-          .in('customer_id', toUnnullInDb);
-        if (error) console.error('[fixLogging] Error unnulling in DB:', error);
+          .update({ nulled: false, excluded: false })
+          .in('customer_id', toUpdateInDb);
+        if (error) {
+          console.error('[fixLogging] Error updating customers in DB:', error);
+        } else {
+          dbUpdated = toUpdateInDb.length;
+        }
       }
 
+      // Force refresh all data
+      console.log('[fixLogging] Refreshing all data...');
       await refreshAll();
       
-      console.log('[fixLogging] Fixed logging for', selectedSalespersonId, {
+      // Small delay to let React re-render
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
+      console.log('[fixLogging] Complete:', {
         customersWithS2: customersWithS2.length,
         unhiddenCount,
         unnulledCount,
-        unnulledInDb: toUnnullInDb.length
+        dbUpdated
       });
       
-      alert(`Fixed logging:\n- Customers with S2 data: ${customersWithS2.length}\n- Unhidden: ${unhiddenCount}\n- Unnulled (seasonal): ${unnulledCount}\n- Unnulled (database): ${toUnnullInDb.length}`);
+      alert(`Fixed logging:\n- Customers with S2 data: ${customersWithS2.length}\n- Unhidden (seasonal): ${unhiddenCount}\n- Unnulled (seasonal): ${unnulledCount}\n- Updated in DB (unnulled + un-excluded): ${dbUpdated}\n\nThe view should now update. If not, try refreshing the page.`);
     } catch (err: any) {
       console.error('[fixLogging] Error:', err);
       alert(err?.message || 'Failed to fix logging');
