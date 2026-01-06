@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo } from 'react';
 import useSWR from 'swr';
 import { supabase } from '../../../../lib/supabaseClient';
 import { Dropzone } from '../../../../components/ui/dropzone';
+import { SearchSelect } from '../../../../components/SearchSelect';
 import {
   matchCustomers,
   autoDetectHeaders,
@@ -207,6 +208,15 @@ export default function SeasonDetailPage() {
     };
   }, [matchResults]);
 
+  // Prepare customer items for SearchSelect
+  const customerItems = useMemo(() => {
+    return (customers || []).map(c => ({
+      value: c.customer_id,
+      label: c.company || c.customer_id,
+      description: c.city || undefined
+    }));
+  }, [customers]);
+
   // Handle override for a review row
   function handleOverride(rowIndex: number, customerId: string | null) {
     setOverrides(prev => {
@@ -279,6 +289,20 @@ export default function SeasonDetailPage() {
         }
       }
 
+      // Add unmatched rows that have been manually assigned a customer
+      for (const r of unmatched) {
+        const overrideId = overrides.get(r.rowIndex);
+        if (overrideId) {
+          rowsToImport.push({
+            account_no: overrideId,
+            customer_name: r.originalName,
+            city: r.originalCity,
+            qty: r.qty,
+            price: r.price
+          });
+        }
+      }
+
       if (rowsToImport.length === 0) {
         setValidationError('No rows to import');
         setIsImporting(false);
@@ -316,7 +340,17 @@ export default function SeasonDetailPage() {
   }
 
   const canRunMatching = mapping.name && mapping.city && mapping.qty && mapping.price && uploadedRows.length > 0;
-  const canImport = matchResults && (matched.length > 0 || (review.length > 0 && review.some(r => r.bestMatch || overrides.has(r.rowIndex))));
+  
+  // Count importable rows
+  const importableCount = useMemo(() => {
+    if (!matchResults) return 0;
+    let count = matched.length;
+    count += review.filter(r => r.bestMatch || overrides.has(r.rowIndex)).length;
+    count += unmatched.filter(r => overrides.has(r.rowIndex)).length;
+    return count;
+  }, [matchResults, matched, review, unmatched, overrides]);
+  
+  const canImport = matchResults && importableCount > 0;
 
   return (
     <div className="space-y-4">
@@ -520,17 +554,17 @@ export default function SeasonDetailPage() {
         {matchResults && !importResult && (
           <div className="space-y-4">
             {/* Summary */}
-            <div className="flex items-center gap-4 text-sm">
+            <div className="flex items-center gap-4 text-xs">
               <span className="inline-flex items-center gap-1">
-                <span className="w-3 h-3 rounded-full bg-green-500"></span>
+                <span className="w-2.5 h-2.5 rounded-full bg-green-500"></span>
                 Matched: {matched.length}
               </span>
               <span className="inline-flex items-center gap-1">
-                <span className="w-3 h-3 rounded-full bg-amber-500"></span>
+                <span className="w-2.5 h-2.5 rounded-full bg-amber-500"></span>
                 Needs Review: {review.length}
               </span>
               <span className="inline-flex items-center gap-1">
-                <span className="w-3 h-3 rounded-full bg-red-500"></span>
+                <span className="w-2.5 h-2.5 rounded-full bg-red-500"></span>
                 Unmatched: {unmatched.length}
               </span>
             </div>
@@ -538,34 +572,34 @@ export default function SeasonDetailPage() {
             {/* Matched Section */}
             {matched.length > 0 && (
               <details open className="border rounded-md">
-                <summary className="px-3 py-2 bg-green-50 cursor-pointer font-medium text-sm text-green-800">
+                <summary className="px-3 py-2 bg-green-50 cursor-pointer font-medium text-xs text-green-800">
                   Matched ({matched.length}) — will be imported
                 </summary>
                 <div className="max-h-60 overflow-auto">
-                  <table className="w-full text-sm">
+                  <table className="w-full text-xs">
                     <thead className="bg-gray-50 sticky top-0">
                       <tr>
-                        <th className="text-left p-2 border-b">Excel Name</th>
-                        <th className="text-left p-2 border-b">Excel City</th>
-                        <th className="text-left p-2 border-b">Matched Customer</th>
-                        <th className="text-left p-2 border-b">Matched City</th>
-                        <th className="text-right p-2 border-b">Confidence</th>
-                        <th className="text-right p-2 border-b">Qty</th>
-                        <th className="text-right p-2 border-b">Price</th>
+                        <th className="text-left p-1.5 border-b">Excel Name</th>
+                        <th className="text-left p-1.5 border-b">Excel City</th>
+                        <th className="text-left p-1.5 border-b">Matched Customer</th>
+                        <th className="text-left p-1.5 border-b">Matched City</th>
+                        <th className="text-right p-1.5 border-b">Conf.</th>
+                        <th className="text-right p-1.5 border-b">Qty</th>
+                        <th className="text-right p-1.5 border-b">Price</th>
                       </tr>
                     </thead>
                     <tbody>
                       {matched.map((r) => (
                         <tr key={r.rowIndex} className="hover:bg-gray-50">
-                          <td className="p-2 border-b">{r.originalName}</td>
-                          <td className="p-2 border-b">{r.originalCity}</td>
-                          <td className="p-2 border-b text-green-700">{r.bestMatch?.company}</td>
-                          <td className="p-2 border-b text-gray-500">{r.bestMatch?.city}</td>
-                          <td className="p-2 border-b text-right font-mono text-green-600">
+                          <td className="p-1.5 border-b">{r.originalName}</td>
+                          <td className="p-1.5 border-b">{r.originalCity}</td>
+                          <td className="p-1.5 border-b text-green-700">{r.bestMatch?.company}</td>
+                          <td className="p-1.5 border-b text-gray-500">{r.bestMatch?.city}</td>
+                          <td className="p-1.5 border-b text-right font-mono text-green-600">
                             {Math.round(r.confidence * 100)}%
                           </td>
-                          <td className="p-2 border-b text-right">{r.qty}</td>
-                          <td className="p-2 border-b text-right">{r.price.toLocaleString()}</td>
+                          <td className="p-1.5 border-b text-right">{r.qty}</td>
+                          <td className="p-1.5 border-b text-right">{r.price.toLocaleString()}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -577,19 +611,19 @@ export default function SeasonDetailPage() {
             {/* Review Section */}
             {review.length > 0 && (
               <details open className="border rounded-md">
-                <summary className="px-3 py-2 bg-amber-50 cursor-pointer font-medium text-sm text-amber-800">
+                <summary className="px-3 py-2 bg-amber-50 cursor-pointer font-medium text-xs text-amber-800">
                   Needs Review ({review.length}) — select correct customer or skip
                 </summary>
                 <div className="max-h-80 overflow-auto">
-                  <table className="w-full text-sm">
+                  <table className="w-full text-xs">
                     <thead className="bg-gray-50 sticky top-0">
                       <tr>
-                        <th className="text-left p-2 border-b">Excel Name</th>
-                        <th className="text-left p-2 border-b">Excel City</th>
-                        <th className="text-left p-2 border-b">Best Match</th>
-                        <th className="text-left p-2 border-b">Select Customer</th>
-                        <th className="text-right p-2 border-b">Qty</th>
-                        <th className="text-right p-2 border-b">Price</th>
+                        <th className="text-left p-1.5 border-b">Excel Name</th>
+                        <th className="text-left p-1.5 border-b">Excel City</th>
+                        <th className="text-left p-1.5 border-b">Best Match</th>
+                        <th className="text-left p-1.5 border-b min-w-[200px]">Select Customer</th>
+                        <th className="text-right p-1.5 border-b">Qty</th>
+                        <th className="text-right p-1.5 border-b">Price</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -598,38 +632,26 @@ export default function SeasonDetailPage() {
                         const selectedId = currentOverride !== undefined ? currentOverride : r.bestMatch?.customerId;
                         return (
                           <tr key={r.rowIndex} className="hover:bg-gray-50">
-                            <td className="p-2 border-b font-medium">{r.originalName}</td>
-                            <td className="p-2 border-b">{r.originalCity}</td>
-                            <td className="p-2 border-b">
+                            <td className="p-1.5 border-b font-medium">{r.originalName}</td>
+                            <td className="p-1.5 border-b">{r.originalCity}</td>
+                            <td className="p-1.5 border-b">
                               {r.bestMatch && (
                                 <span className="text-amber-700">
                                   {r.bestMatch.company} ({r.bestMatch.city}) — {Math.round(r.bestMatch.score * 100)}%
                                 </span>
                               )}
                             </td>
-                            <td className="p-2 border-b">
-                              <select
-                                className="w-full rounded border px-2 py-1 text-sm"
+                            <td className="p-1.5 border-b">
+                              <SearchSelect
+                                items={customerItems}
                                 value={selectedId || ''}
-                                onChange={(e) => handleOverride(r.rowIndex, e.target.value || null)}
-                              >
-                                <option value="">Skip (don't import)</option>
-                                {r.topCandidates.map((c) => (
-                                  <option key={c.customerId} value={c.customerId}>
-                                    {c.company} ({c.city}) — {Math.round(c.score * 100)}%
-                                  </option>
-                                ))}
-                                <optgroup label="All customers">
-                                  {(customers || []).slice(0, 100).map((c) => (
-                                    <option key={c.customer_id} value={c.customer_id}>
-                                      {c.company} ({c.city})
-                                    </option>
-                                  ))}
-                                </optgroup>
-                              </select>
+                                onChange={(val) => handleOverride(r.rowIndex, val || null)}
+                                placeholder="Select customer..."
+                                clearable
+                              />
                             </td>
-                            <td className="p-2 border-b text-right">{r.qty}</td>
-                            <td className="p-2 border-b text-right">{r.price.toLocaleString()}</td>
+                            <td className="p-1.5 border-b text-right">{r.qty}</td>
+                            <td className="p-1.5 border-b text-right">{r.price.toLocaleString()}</td>
                           </tr>
                         );
                       })}
@@ -641,44 +663,55 @@ export default function SeasonDetailPage() {
 
             {/* Unmatched Section */}
             {unmatched.length > 0 && (
-              <details className="border rounded-md">
-                <summary className="px-3 py-2 bg-red-50 cursor-pointer font-medium text-sm text-red-800">
-                  Unmatched ({unmatched.length}) — will NOT be imported
+              <details open className="border rounded-md">
+                <summary className="px-3 py-2 bg-red-50 cursor-pointer font-medium text-xs text-red-800">
+                  Unmatched ({unmatched.length}) — manually assign or skip
                 </summary>
                 <div className="p-3 space-y-2">
                   <button
                     onClick={downloadUnmatchedCsv}
-                    className="text-sm text-red-700 hover:text-red-900 underline"
+                    className="text-xs text-red-700 hover:text-red-900 underline"
                   >
                     Download unmatched as CSV
                   </button>
-                  <div className="max-h-60 overflow-auto">
-                    <table className="w-full text-sm">
+                  <div className="max-h-72 overflow-auto">
+                    <table className="w-full text-xs">
                       <thead className="bg-gray-50 sticky top-0">
                         <tr>
-                          <th className="text-left p-2 border-b">Excel Name</th>
-                          <th className="text-left p-2 border-b">Excel City</th>
-                          <th className="text-left p-2 border-b">Best Guess</th>
-                          <th className="text-right p-2 border-b">Score</th>
-                          <th className="text-right p-2 border-b">Qty</th>
-                          <th className="text-right p-2 border-b">Price</th>
+                          <th className="text-left p-1.5 border-b">Excel Name</th>
+                          <th className="text-left p-1.5 border-b">Excel City</th>
+                          <th className="text-left p-1.5 border-b">Best Guess</th>
+                          <th className="text-left p-1.5 border-b min-w-[200px]">Assign Customer</th>
+                          <th className="text-right p-1.5 border-b">Qty</th>
+                          <th className="text-right p-1.5 border-b">Price</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {unmatched.map((r) => (
-                          <tr key={r.rowIndex} className="hover:bg-gray-50">
-                            <td className="p-2 border-b font-medium text-red-700">{r.originalName}</td>
-                            <td className="p-2 border-b">{r.originalCity}</td>
-                            <td className="p-2 border-b text-gray-500">
-                              {r.bestMatch ? `${r.bestMatch.company} (${r.bestMatch.city})` : '—'}
-                            </td>
-                            <td className="p-2 border-b text-right font-mono text-red-600">
-                              {r.bestMatch ? `${Math.round(r.bestMatch.score * 100)}%` : '—'}
-                            </td>
-                            <td className="p-2 border-b text-right">{r.qty}</td>
-                            <td className="p-2 border-b text-right">{r.price.toLocaleString()}</td>
-                          </tr>
-                        ))}
+                        {unmatched.map((r) => {
+                          const assignedId = overrides.get(r.rowIndex) || '';
+                          return (
+                            <tr key={r.rowIndex} className={assignedId ? 'bg-green-50 hover:bg-green-100' : 'hover:bg-gray-50'}>
+                              <td className="p-1.5 border-b font-medium text-red-700">{r.originalName}</td>
+                              <td className="p-1.5 border-b">{r.originalCity}</td>
+                              <td className="p-1.5 border-b text-gray-500">
+                                {r.bestMatch ? (
+                                  <span>{r.bestMatch.company} ({r.bestMatch.city}) — <span className="font-mono text-red-600">{Math.round(r.bestMatch.score * 100)}%</span></span>
+                                ) : '—'}
+                              </td>
+                              <td className="p-1.5 border-b">
+                                <SearchSelect
+                                  items={customerItems}
+                                  value={assignedId}
+                                  onChange={(val) => handleOverride(r.rowIndex, val || null)}
+                                  placeholder="Search customer..."
+                                  clearable
+                                />
+                              </td>
+                              <td className="p-1.5 border-b text-right">{r.qty}</td>
+                              <td className="p-1.5 border-b text-right">{r.price.toLocaleString()}</td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
@@ -692,17 +725,17 @@ export default function SeasonDetailPage() {
                 onClick={confirmImport}
                 disabled={!canImport || isImporting}
                 className={
-                  'rounded-md px-4 py-2 text-sm font-medium transition-colors ' +
+                  'rounded-md px-4 py-2 text-xs font-medium transition-colors ' +
                   (canImport && !isImporting
                     ? 'bg-green-600 text-white hover:bg-green-700'
                     : 'bg-gray-200 text-gray-400 cursor-not-allowed')
                 }
               >
-                {isImporting ? 'Importing...' : `Confirm Import (${matched.length + review.filter(r => r.bestMatch || overrides.has(r.rowIndex)).length} rows)`}
+                {isImporting ? 'Importing...' : `Confirm Import (${importableCount} rows)`}
               </button>
               <button
                 onClick={resetUpload}
-                className="rounded-md border px-4 py-2 text-sm font-medium hover:bg-gray-50"
+                className="rounded-md border px-4 py-2 text-xs font-medium hover:bg-gray-50"
               >
                 Cancel
               </button>
