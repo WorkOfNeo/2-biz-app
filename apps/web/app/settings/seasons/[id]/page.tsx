@@ -470,9 +470,14 @@ export default function SeasonDetailPage() {
       
       const matchResults = matchCustomers(parsedRows, customers || []);
 
-      const matches: typeof compareResults.matches = [];
-      const mismatches: typeof compareResults.mismatches = [];
-      const notInDb: typeof compareResults.notInDb = [];
+      type MatchEntry = { name: string; city: string; excelQty: number; excelPrice: number; dbQty: number; dbPrice: number; customerId: string };
+      type MismatchEntry = MatchEntry & { qtyDiff: number; priceDiff: number };
+      type NotInDbEntry = { name: string; city: string; qty: number; price: number; bestMatch: string | null };
+      type NotInExcelEntry = { name: string; city: string; qty: number; price: number; customerId: string };
+
+      const matches: MatchEntry[] = [];
+      const mismatches: MismatchEntry[] = [];
+      const notInDb: NotInDbEntry[] = [];
       const matchedDbAccounts = new Set<string>();
 
       for (let i = 0; i < excelRows.length; i++) {
@@ -534,7 +539,7 @@ export default function SeasonDetailPage() {
       }
 
       // Find DB entries not in Excel
-      const notInExcel: typeof compareResults.notInExcel = [];
+      const notInExcel: NotInExcelEntry[] = [];
       for (const dbRow of (dbStats || [])) {
         if (!matchedDbAccounts.has(dbRow.account_no)) {
           notInExcel.push({
