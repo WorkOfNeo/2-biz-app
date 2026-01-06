@@ -2,8 +2,6 @@
 import useSWR from 'swr';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import React from 'react';
-import Link from 'next/link';
-import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useRoles } from '../../../lib/supabaseClient';
 import { MultiSelect } from '../../../components/MultiSelect';
 import { ProgressBar } from '../../../components/ProgressBar';
@@ -59,29 +57,31 @@ export default function StockListPage({ publicMode = false, sharedListId = '' }:
   const supabase = createClientComponentClient();
   const { has } = useRoles();
 
-  const router = useRouter();
-  const pathname = usePathname();
-  const searchParams = useSearchParams();
-  // Next.js "typedRoutes" can reject dynamic strings; this keeps runtime behavior while satisfying types.
-  const asRoute = React.useCallback((href: string) => href as any, []);
+  // This app is statically prerendered on Vercel; using next/navigation's useSearchParams() will fail
+  // unless wrapped in a Suspense boundary. We avoid that by reading/updating the URL via window/history.
+  const basePath = '/styles/stock-list';
+  const [baseQueryString, setBaseQueryString] = React.useState<string>('');
 
   // Preselect previously active list by URL (?list=) or localStorage
   const [activeListId, setActiveListId] = React.useState<string>('');
   const didInitActiveList = React.useRef(false);
   React.useEffect(() => {
     if (publicMode) return;
-    const listParam = searchParams.get('list');
-    if (listParam !== null) {
-      setActiveListId(listParam === 'all' ? '' : listParam);
-      didInitActiveList.current = true;
-      return;
-    }
+    try {
+      setBaseQueryString(window.location.search || '');
+      const listParam = new URLSearchParams(window.location.search || '').get('list');
+      if (listParam !== null) {
+        setActiveListId(listParam === 'all' ? '' : listParam);
+        didInitActiveList.current = true;
+        return;
+      }
+    } catch {}
     try {
       const v = localStorage.getItem('activeStockListId') || '';
       if (v) setActiveListId(v);
     } catch {}
     didInitActiveList.current = true;
-  }, [publicMode, searchParams]);
+  }, [publicMode]);
 
   // Public mode: always pin active list id to the shared list
   React.useEffect(() => {
@@ -99,16 +99,14 @@ export default function StockListPage({ publicMode = false, sharedListId = '' }:
       else localStorage.removeItem('activeStockListId');
     } catch {}
 
-    const current = searchParams.get('list'); // string | null
-    const desired = activeListId || null;
-    if (current !== desired) {
-      const next = new URLSearchParams(searchParams.toString());
-      if (activeListId) next.set('list', activeListId);
-      else next.delete('list');
-      const qs = next.toString();
-      router.replace(asRoute(qs ? `${pathname}?${qs}` : pathname));
-    }
-  }, [activeListId, publicMode, pathname, router, searchParams]);
+    try {
+      const url = new URL(window.location.href);
+      if (activeListId) url.searchParams.set('list', activeListId);
+      else url.searchParams.delete('list');
+      window.history.replaceState({}, '', url.toString());
+      setBaseQueryString(url.search || '');
+    } catch {}
+  }, [activeListId, publicMode]);
   const [searchQuery, setSearchQuery] = React.useState<string>('');
   const [scrapeBusy, setScrapeBusy] = React.useState<string | null>(null);
   const [selectedSeasons, setSelectedSeasons] = React.useState<string[]>([]);
@@ -1897,23 +1895,24 @@ export default function StockListPage({ publicMode = false, sharedListId = '' }:
               <Tabs value={activeListId || 'all'} onValueChange={(v) => setActiveListId(v === 'all' ? '' : v)}>
                 <TabsList className="w-full justify-start">
                   {(stockLists ?? []).map((row) => {
-                    const next = new URLSearchParams(searchParams.toString());
+                    const next = new URLSearchParams(baseQueryString || '');
                     next.set('list', row.id);
-                    const href = `${pathname}?${next.toString()}`;
+                    const qs = next.toString();
+                    const href = qs ? `${basePath}?${qs}` : basePath;
                     return (
                       <TabsTrigger key={row.id} value={row.id} asChild>
-                        <Link href={asRoute(href)}>{row.name}</Link>
+                        <a href={href}>{row.name}</a>
                       </TabsTrigger>
                     );
                   })}
                   {(() => {
-                    const next = new URLSearchParams(searchParams.toString());
+                    const next = new URLSearchParams(baseQueryString || '');
                     next.delete('list');
                     const qs = next.toString();
-                    const href = qs ? `${pathname}?${qs}` : pathname;
+                    const href = qs ? `${basePath}?${qs}` : basePath;
                     return (
                       <TabsTrigger value="all" asChild>
-                        <Link href={asRoute(href)}>Alle</Link>
+                        <a href={href}>Alle</a>
                       </TabsTrigger>
                     );
                   })()}

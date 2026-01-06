@@ -1,5 +1,20 @@
 import './globals.css';
-export const metadata = { title: 'Admin' };
+export const metadata = {
+  title: 'Admin',
+  robots: {
+    index: false,
+    follow: false,
+    nocache: true,
+    noarchive: true,
+    googleBot: {
+      index: false,
+      follow: false,
+      noimageindex: true,
+      noarchive: true,
+      nosnippet: true
+    }
+  }
+};
 import { ToastStack } from '../components/Toast';
 import AppShell from './AppShell';
 
