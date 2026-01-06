@@ -279,6 +279,7 @@ export default function StatisticsGeneralPage() {
   const [commentLoading, setCommentLoading] = useState(false);
   // Detailed logging section state
   const [showLogging, setShowLogging] = useState(false);
+  const [fixingLogging, setFixingLogging] = useState(false);
 
   async function openDetails(row: RowOut) {
     if (!s1 && !s2) return;
@@ -908,6 +909,92 @@ export default function StatisticsGeneralPage() {
     console.log('[stats] permanentClose', account);
     await toggleNull(account);
     await refreshAll();
+  }
+
+  /**
+   * Fix Logging: For all customers who have S2 data, unhide and unnull them for this season.
+   * Permanently closed customers remain visible but keep their perm closed flag.
+   */
+  async function fixLogging() {
+    if (!s1) return alert('Select Season 1 first');
+    if (!selectedSalespersonId) return alert('Select a salesperson first');
+    
+    setFixingLogging(true);
+    try {
+      // Get all customers for the selected salesperson from the logging data
+      const spLog = filteredLogging.find(log => log.salespersonId === selectedSalespersonId);
+      if (!spLog) {
+        alert('No logging data found for this salesperson');
+        return;
+      }
+
+      // Find all customers who have S2 data
+      const customersWithS2 = spLog.customers.filter(c => c.hasS2Data && c.customer_id);
+      
+      if (customersWithS2.length === 0) {
+        alert('No customers with S2 data found for this salesperson');
+        return;
+      }
+
+      // Get current overrides
+      const currentNulled = new Set(overrides?.value.nulled ?? []);
+      const currentHidden = new Set(overrides?.value.hidden ?? []);
+      
+      let unhiddenCount = 0;
+      let unnulledCount = 0;
+
+      for (const customer of customersWithS2) {
+        const accountNo = customer.customer_id;
+        
+        // Unhide if hidden (in seasonal overrides)
+        if (currentHidden.has(accountNo)) {
+          currentHidden.delete(accountNo);
+          unhiddenCount++;
+        }
+        
+        // Unnull if nulled seasonally (but NOT if permanently closed - they stay visible but keep flag)
+        // We only remove from seasonal nulled list, not touching the permanent flag
+        if (currentNulled.has(accountNo)) {
+          currentNulled.delete(accountNo);
+          unnulledCount++;
+        }
+      }
+
+      // Save the updated overrides
+      await saveOverrides({
+        nulled: Array.from(currentNulled),
+        hidden: Array.from(currentHidden)
+      });
+
+      // Also unnull customers in the customers table if they were nulled (but not permanently closed)
+      const toUnnullInDb = customersWithS2
+        .filter(c => c.nulled && !c.permanentlyClosed)
+        .map(c => c.customer_id);
+      
+      if (toUnnullInDb.length > 0) {
+        const { error } = await supabase
+          .from('customers')
+          .update({ nulled: false })
+          .in('customer_id', toUnnullInDb);
+        if (error) console.error('[fixLogging] Error unnulling in DB:', error);
+      }
+
+      await refreshAll();
+      
+      console.log('[fixLogging] Fixed logging for', selectedSalespersonId, {
+        customersWithS2: customersWithS2.length,
+        unhiddenCount,
+        unnulledCount,
+        unnulledInDb: toUnnullInDb.length
+      });
+      
+      alert(`Fixed logging:\n- Customers with S2 data: ${customersWithS2.length}\n- Unhidden: ${unhiddenCount}\n- Unnulled (seasonal): ${unnulledCount}\n- Unnulled (database): ${toUnnullInDb.length}`);
+    } catch (err: any) {
+      console.error('[fixLogging] Error:', err);
+      alert(err?.message || 'Failed to fix logging');
+    } finally {
+      setFixingLogging(false);
+    }
   }
 
   function ActionBtn({ label, onClick, children }: { label: string; onClick: () => void; children: ReactNode }) {
@@ -1583,12 +1670,24 @@ export default function StatisticsGeneralPage() {
                 <div className="p-4 border-b">
                   <div className="flex items-center justify-between">
                     <h2 className="text-lg font-semibold">Customer Logging: {activePerson}</h2>
-                    <button
-                      onClick={() => setShowLogging(!showLogging)}
-                      className="rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50"
-                    >
-                      {showLogging ? 'Hide' : 'Show'} Logging
-                    </button>
+                    <div className="flex items-center gap-2">
+                      {showLogging && (
+                        <button
+                          onClick={fixLogging}
+                          disabled={fixingLogging}
+                          className="rounded-md bg-green-600 text-white px-3 py-1.5 text-sm hover:bg-green-700 disabled:opacity-50"
+                          title="Unhide and unnull all customers with S2 data for this season"
+                        >
+                          {fixingLogging ? 'Fixing...' : 'Fix Logging'}
+                        </button>
+                      )}
+                      <button
+                        onClick={() => setShowLogging(!showLogging)}
+                        className="rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50"
+                      >
+                        {showLogging ? 'Hide' : 'Show'} Logging
+                      </button>
+                    </div>
                   </div>
                   {showLogging && (
                     <div className="mt-2 text-sm text-gray-600">
