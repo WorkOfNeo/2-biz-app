@@ -43,6 +43,13 @@ export default function SeasonDetailPage() {
     if (error) throw new Error(error.message);
     return (data ?? []) as Customer[];
   });
+
+  // Fetch salespersons for clear data section
+  const { data: salespersons } = useSWR('salespersons:all', async () => {
+    const { data, error } = await supabase.from('salespersons').select('id, name').order('name');
+    if (error) throw new Error(error.message);
+    return (data ?? []) as { id: string; name: string }[];
+  });
   
   const [localRates, setLocalRates] = useState<Record<string, number>>({});
   const [saving, setSaving] = useState(false);
@@ -63,6 +70,11 @@ export default function SeasonDetailPage() {
   // Import state
   const [isImporting, setIsImporting] = useState(false);
   const [importResult, setImportResult] = useState<any | null>(null);
+
+  // Clear salesperson data state
+  const [clearSalespersonId, setClearSalespersonId] = useState<string>('');
+  const [isClearing, setIsClearing] = useState(false);
+  const [clearResult, setClearResult] = useState<{ success: boolean; message: string } | null>(null);
   
   useEffect(() => {
     if (rates?.value) {
@@ -337,6 +349,50 @@ export default function SeasonDetailPage() {
     setMatchResults(null);
     setOverrides(new Map());
     setImportResult(null);
+  }
+
+  // Clear salesperson data for this season
+  async function clearSalespersonData() {
+    if (!id || !clearSalespersonId) return;
+    
+    const salesperson = salespersons?.find(sp => sp.id === clearSalespersonId);
+    const spName = salesperson?.name || clearSalespersonId;
+    
+    if (!confirm(`Are you sure you want to delete ALL sales statistics for "${spName}" in this season?\n\nThis action cannot be undone.`)) {
+      return;
+    }
+
+    setIsClearing(true);
+    setClearResult(null);
+
+    try {
+      // Delete all sales_stats entries for this salesperson + season
+      const { data: deleted, error, count } = await supabase
+        .from('sales_stats')
+        .delete()
+        .eq('season_id', id)
+        .eq('salesperson_id', clearSalespersonId)
+        .select('id');
+
+      if (error) throw new Error(error.message);
+
+      const deletedCount = deleted?.length ?? 0;
+      
+      setClearResult({
+        success: true,
+        message: `Successfully deleted ${deletedCount} entries for ${spName}`
+      });
+      
+      console.log('[clearSalespersonData]', { seasonId: id, salespersonId: clearSalespersonId, deletedCount });
+    } catch (err: any) {
+      console.error('[clearSalespersonData] Error:', err);
+      setClearResult({
+        success: false,
+        message: err?.message || 'Failed to clear data'
+      });
+    } finally {
+      setIsClearing(false);
+    }
   }
 
   const canRunMatching = mapping.name && mapping.city && mapping.qty && mapping.price && uploadedRows.length > 0;
@@ -740,6 +796,56 @@ export default function SeasonDetailPage() {
                 Cancel
               </button>
             </div>
+          </div>
+        )}
+      </div>
+
+      {/* Clear Salesperson Data Section */}
+      <div className="border rounded-md p-4 space-y-3">
+        <div className="text-sm font-medium text-gray-700">Clear Salesperson Data</div>
+        <div className="text-xs text-gray-500">
+          Remove all sales statistics entries for a specific salesperson in this season. This action cannot be undone.
+        </div>
+        
+        <div className="flex flex-col sm:flex-row sm:items-end gap-3">
+          <div className="flex-1 max-w-xs">
+            <label className="block text-xs text-gray-600 mb-1">Select Salesperson</label>
+            <select
+              className="w-full rounded border px-2 py-1.5 text-sm"
+              value={clearSalespersonId}
+              onChange={(e) => {
+                setClearSalespersonId(e.target.value);
+                setClearResult(null);
+              }}
+            >
+              <option value="">Select...</option>
+              {(salespersons ?? []).map(sp => (
+                <option key={sp.id} value={sp.id}>{sp.name}</option>
+              ))}
+            </select>
+          </div>
+          <button
+            onClick={clearSalespersonData}
+            disabled={!clearSalespersonId || isClearing}
+            className={
+              'rounded-md px-4 py-2 text-sm font-medium transition-colors ' +
+              (clearSalespersonId && !isClearing
+                ? 'bg-red-600 text-white hover:bg-red-700'
+                : 'bg-gray-200 text-gray-400 cursor-not-allowed')
+            }
+          >
+            {isClearing ? 'Clearing...' : 'Clear Data'}
+          </button>
+        </div>
+
+        {clearResult && (
+          <div className={
+            'rounded-md border px-3 py-2 text-sm ' +
+            (clearResult.success
+              ? 'border-green-200 bg-green-50 text-green-700'
+              : 'border-red-200 bg-red-50 text-red-700')
+          }>
+            {clearResult.message}
           </div>
         )}
       </div>
