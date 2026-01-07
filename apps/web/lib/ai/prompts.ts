@@ -51,30 +51,42 @@ const DEFAULT_PROMPTS: Record<PromptKey, Omit<PromptConfig, 'key'>> = {
 
 ## CRITICAL RULES FOR QUANTITY SUGGESTIONS
 
-**IMPORTANT**: Each style has a "CURRENT_SOLD_QTY" field - this is how many have ALREADY been sold. Your suggested_qty should almost always be HIGHER than this!
+**IMPORTANT**: Each style has "CURRENT_SOLD_QTY" (already sold) and "SALES_REPS" (which reps sold it).
 
-### Rule 1: Project full season demand
-- CURRENT_SOLD_QTY = orders received so far (partial season)
-- Suggested_qty = what you think we need for the ENTIRE season
-- If only 6% of customers have ordered, multiply sold qty by ~10-15x
+### Rule 1: Salesperson Coverage = Confidence
+- If ALL salespersons are selling this style → HIGH confidence → can buy more
+- If only 1-2 salespersons selling it → LOWER confidence → be conservative
+- Check "sales_reps_count" vs "total_active_reps" in the data
 
-### Rule 2: Use this formula
-  visit_rate = (customers_who_ordered / total_potential_customers) * 100
-  projection_multiplier = 100 / visit_rate
-  suggested_qty = CURRENT_SOLD_QTY * projection_multiplier * confidence_factor
+### Rule 2: Season Timing (Purchase Round)
+See {{purchase_level}} section. This is CRITICAL:
 
-Example: 
-- Style sold 900 pcs, visit_rate = 6%
-- 900 × (100/6) = 15,000 projected
-- With 0.8 confidence: suggest 12,000
+**EARLY SEASON (Run 1-2)**:
+- Sold 400 → suggest 500-600 (buffer for growth, room to reorder)
+- Be optimistic, better to have stock than miss sales
 
-### Rule 3: Purchase level adjustments
-See {{purchase_level}} section for whether this is early/middle/closing round.
+**MID SEASON (Run 3-4)**:
+- Sold 600, already purchased 400 → suggest ~200-300 more
+- Factor in what's already on order (PREVIOUS_PURCHASES field if available)
+- Only add if style is performing well across multiple reps
 
-### Rule 4: NEVER suggest less than CURRENT_SOLD_QTY
-Unless BOTH of these are true:
-- Style is clearly underperforming vs last year (check yoy_analysis)
-- Customer visit rate is already >80%
+**CLOSING (Run 5+, final 10-20% of season)**:
+- Sold 900, already purchased 600 → suggest just to cover, or UNDER
+- NEVER gamble on late-season purchases
+- Only reorder proven bestsellers, and conservatively
+- Example: Sold 900, purchased 600 → suggest 250-300 (not 1500!)
+
+### Rule 3: Customer Potential per Rep
+- Check how many customers each rep has LEFT to visit
+- If a rep has sold 50 pcs and has 80% customers remaining → room to grow
+- If a rep has sold 50 pcs but visited 90% of customers → style may be maxed out
+
+### Rule 4: When to Suggest LESS than Sold
+Suggest less than CURRENT_SOLD_QTY when:
+- It's a CLOSING purchase round ({{purchase_level}})
+- Style is only selling with 1-2 reps (not broad appeal)
+- YoY comparison shows this style declining
+- Customer visit rate is >80% (limited upside)
 
 ### Rule 5: YOU MUST INCLUDE EVERY SINGLE STYLE
 **CRITICAL: Return a suggestion for EVERY style/color in the input data.**
