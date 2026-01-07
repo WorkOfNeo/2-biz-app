@@ -462,7 +462,16 @@ export default function StatisticsExportsPage() {
                   <tr>
                     <td className="p-2 border-b whitespace-nowrap">{timeAgo(r.created_at)}</td>
                     <td className="p-2 border-b">{r.kind}</td>
-                    <td className="p-2 border-b">{r.title ?? '—'}</td>
+                    <td className="p-2 border-b">
+                      <div className="flex items-center gap-2">
+                        <span>{r.title ?? '—'}</span>
+                        {r.kind === 'general_salesmen_pdfs' && r.meta?.seasons?.s1 && (
+                          <span className="inline-flex items-center rounded-full bg-blue-100 px-2 py-0.5 text-xs text-blue-700">
+                            {r.meta.seasons.s1} vs {r.meta.seasons.s2}
+                          </span>
+                        )}
+                      </div>
+                    </td>
                     <td className="p-2 border-b text-sm text-gray-600 max-w-xs truncate" title={r.comment || undefined}>
                       {r.comment || '—'}
                     </td>

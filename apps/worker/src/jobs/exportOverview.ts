@@ -898,7 +898,7 @@ export async function exportOverview(ctx: Ctx) {
       } catch (e: any) {
         await log(job.id, 'error', 'STEP:export_general_combined_failed', { error: e?.message || String(e) });
       }
-      // Insert a record pointing to the folder (no zip). Include meta.files and meta.all for combined
+      // Insert a record pointing to the folder (no zip). Include meta.files, meta.all, and meta.seasons for combined
       const folderPath = `General/${job.id}/salesmen/`;
       try {
         await supabase.from('exports').insert({
@@ -907,7 +907,11 @@ export async function exportOverview(ctx: Ctx) {
           path: folderPath,
           public_url: null,
           job_id: job.id,
-          meta: { files: filesList, all: { path: combinedPath, publicUrl: combinedPublicUrl } },
+          meta: {
+            files: filesList,
+            all: { path: combinedPath, publicUrl: combinedPublicUrl },
+            seasons: { s1: s1Name, s2: s2Name, s1Id: s1, s2Id: s2 }
+          },
           comment: comment || null
         });
       } catch {}

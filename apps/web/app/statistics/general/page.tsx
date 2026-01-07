@@ -54,6 +54,10 @@ export default function StatisticsGeneralPage() {
   const [nullByInputOpen, setNullByInputOpen] = useState(false);
   const [nullByInputText, setNullByInputText] = useState('');
   const [nullByInputResult, setNullByInputResult] = useState<string | null>(null);
+  // PDF Export state
+  const [pdfExporting, setPdfExporting] = useState(false);
+  const [pdfExportJobId, setPdfExportJobId] = useState<string | null>(null);
+  const [pdfExportProgress, setPdfExportProgress] = useState<{ index: number; total: number } | null>(null);
   // Import Statistics modal state
   const [importOpen, setImportOpen] = useState(false);
   const [importSeasonId, setImportSeasonId] = useState<string>('');
@@ -1294,6 +1298,69 @@ export default function StatisticsGeneralPage() {
                     }
                   }}
                 >Export PDF (ZIP)</button>
+                <button
+                  className="block w-full px-3 py-2 text-left hover:bg-gray-50 disabled:opacity-60"
+                  disabled={pdfExporting}
+                  onClick={async () => {
+                    if (!s1 || !s2) {
+                      alert('Please select both seasons before exporting.');
+                      return;
+                    }
+                    setPdfExporting(true);
+                    setPdfExportProgress(null);
+                    try {
+                      const { data: { session } } = await supabase.auth.getSession();
+                      if (!session) throw new Error('Not signed in');
+                      const token = session.access_token;
+                      const body = {
+                        type: 'export_overview',
+                        payload: { mode: 'general_salesmen_react_pdf', requestedBy: session.user.email, s1, s2 }
+                      };
+                      const res = await fetch('/api/enqueue', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                        body: JSON.stringify(body)
+                      });
+                      if (!res.ok) throw new Error(await res.text());
+                      const { jobId } = await res.json();
+                      setPdfExportJobId(jobId);
+                      // Poll for progress
+                      const pollInterval = setInterval(async () => {
+                        try {
+                          const { data: logs } = await supabase
+                            .from('job_logs')
+                            .select('msg, data')
+                            .eq('job_id', jobId)
+                            .order('ts', { ascending: false })
+                            .limit(20);
+                          for (const l of (logs ?? []) as any[]) {
+                            if (l.msg === 'STEP:export_general_progress' && l.data) {
+                              setPdfExportProgress({ index: Number(l.data.index || 0), total: Number(l.data.total || 0) });
+                              break;
+                            }
+                          }
+                          const { data: jobRow } = await supabase.from('jobs').select('status').eq('id', jobId).maybeSingle();
+                          const st = (jobRow as any)?.status;
+                          if (st === 'succeeded' || st === 'failed' || st === 'cancelled') {
+                            clearInterval(pollInterval);
+                            setPdfExporting(false);
+                            setPdfExportJobId(null);
+                            setPdfExportProgress(null);
+                            if (st === 'succeeded') {
+                              alert('PDF export completed! Check the Exports page.');
+                            } else {
+                              alert(`PDF export ${st}.`);
+                            }
+                          }
+                        } catch {}
+                      }, 1500);
+                    } catch (e: any) {
+                      console.error('PDF export failed', e);
+                      alert(e?.message || 'Failed to start PDF export');
+                      setPdfExporting(false);
+                    }
+                  }}
+                >{pdfExporting ? `Exporting PDF${pdfExportProgress ? ` (${pdfExportProgress.index}/${pdfExportProgress.total})` : '...'}` : 'Export PDF (Server)'}</button>
                 <button
                   className="block w-full px-3 py-2 text-left hover:bg-gray-50"
                   onClick={() => { setImportOpen(true); }}

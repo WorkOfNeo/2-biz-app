@@ -17,3 +17,4 @@ CREATE INDEX IF NOT EXISTS idx_purchase_orders_status_delivered
 
 COMMENT ON COLUMN public.purchase_orders.status IS 'Running = in progress, Shipped = shipped, Delivered = no longer in SPY system (assumed delivered)';
 
+
