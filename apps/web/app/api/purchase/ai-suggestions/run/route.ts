@@ -799,6 +799,51 @@ export async function POST(req: Request) {
     // Fetch recent feedback from past runs to improve suggestions
     let feedbackStr = 'No previous feedback available.';
     try {
+      const feedbackParts: string[] = [];
+      
+      // 1. Fetch detailed line-level feedback from purchase_ai_line_feedback
+      //    This captures individual style/color corrections with reasons
+      const { data: lineFeedback } = await supabase
+        .from('purchase_ai_line_feedback')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(50);
+
+      if (lineFeedback && lineFeedback.length > 0) {
+        // Group feedback by verdict for better AI understanding
+        const adjusted = lineFeedback.filter((f: any) => f.verdict === 'adjusted');
+        const approved = lineFeedback.filter((f: any) => f.verdict === 'approved');
+        const skipped = lineFeedback.filter((f: any) => f.verdict === 'skipped');
+        
+        feedbackParts.push(`## Line-Level Feedback Summary (${lineFeedback.length} total entries)`);
+        feedbackParts.push(`- Correct suggestions: ${approved.length}`);
+        feedbackParts.push(`- Adjusted suggestions: ${adjusted.length}`);
+        feedbackParts.push(`- Skipped items: ${skipped.length}`);
+        
+        // Show specific adjustments with reasons (most valuable for learning)
+        if (adjusted.length > 0) {
+          feedbackParts.push('\n### Recent Corrections (User adjusted AI suggestion):');
+          for (const adj of adjusted.slice(0, 15)) {
+            const delta = adj.adjusted_qty - adj.suggested_qty;
+            const direction = delta > 0 ? '↑' : '↓';
+            feedbackParts.push(
+              `- ${adj.supplier_name} | ${adj.style_no}/${adj.color}: ` +
+              `AI suggested ${adj.suggested_qty} → User changed to ${adj.adjusted_qty} (${direction}${Math.abs(delta)})` +
+              (adj.reason ? ` | Reason: "${adj.reason}"` : '')
+            );
+          }
+        }
+        
+        // Show patterns in corrections
+        if (adjusted.length >= 3) {
+          const avgDelta = adjusted.reduce((sum: number, f: any) => 
+            sum + (f.adjusted_qty - f.suggested_qty), 0) / adjusted.length;
+          const direction = avgDelta > 0 ? 'INCREASING' : 'DECREASING';
+          feedbackParts.push(`\n### Pattern: User is typically ${direction} quantities by ~${Math.abs(Math.round(avgDelta))} units on average.`);
+        }
+      }
+
+      // 2. Also fetch run-level feedback from purchase_ai_runs
       const { data: recentRuns } = await supabase
         .from('purchase_ai_runs')
         .select('user_feedback, created_at')
@@ -808,7 +853,7 @@ export async function POST(req: Request) {
         .limit(5);
 
       if (recentRuns && recentRuns.length > 0) {
-        const feedbackSummary: string[] = [];
+        const runFeedback: string[] = [];
         
         for (const run of recentRuns) {
           const feedback = run.user_feedback as Record<string, any>;
@@ -816,23 +861,29 @@ export async function POST(req: Request) {
           
           for (const [supplier, data] of Object.entries(feedback)) {
             if (data.verdict === 'skipped') {
-              feedbackSummary.push(`- ${supplier}: User skipped this supplier`);
+              runFeedback.push(`- ${supplier}: User skipped this supplier`);
             } else if (data.adjustments && data.adjustments.length > 0) {
               const adj = data.adjustments.slice(0, 3);
               const adjStr = adj.map((a: any) => 
                 `${a.style_no}/${a.color}: ${a.original}→${a.adjusted}`
               ).join(', ');
-              feedbackSummary.push(`- ${supplier}: Adjusted quantities (${adjStr}${data.adjustments.length > 3 ? '...' : ''})`);
+              runFeedback.push(`- ${supplier}: Adjusted quantities (${adjStr}${data.adjustments.length > 3 ? '...' : ''})`);
             }
             if (data.notes) {
-              feedbackSummary.push(`  Note: "${data.notes}"`);
+              runFeedback.push(`  Note: "${data.notes}"`);
             }
           }
         }
         
-        if (feedbackSummary.length > 0) {
-          feedbackStr = `Recent user adjustments:\n${feedbackSummary.slice(0, 15).join('\n')}`;
+        if (runFeedback.length > 0) {
+          feedbackParts.push('\n### Run-Level Notes:');
+          feedbackParts.push(...runFeedback.slice(0, 10));
         }
+      }
+      
+      if (feedbackParts.length > 0) {
+        feedbackStr = feedbackParts.join('\n');
+        console.log(`[AI Suggestions] Loaded ${lineFeedback?.length || 0} line feedback entries for AI learning`);
       }
     } catch (e) {
       console.warn('[AI Suggestions] Could not fetch feedback:', e);
