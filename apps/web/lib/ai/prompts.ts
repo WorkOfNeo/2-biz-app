@@ -157,8 +157,19 @@ Examples:
 
 /**
  * Get active prompt config from DB, falling back to code defaults
+ * 
+ * IMPORTANT: Model and maxTokens ALWAYS use code defaults to prevent
+ * stale database values from overriding critical settings.
+ * Only prompt content can be customized via the database.
  */
 export async function getPromptConfig(key: PromptKey): Promise<PromptConfig> {
+  // Code defaults are the source of truth for model, temperature, maxTokens
+  const codeDefaults = DEFAULT_PROMPTS[key];
+  
+  if (!codeDefaults) {
+    throw new Error(`Unknown prompt key: ${key}`);
+  }
+  
   try {
     const supabase = createRouteHandlerClient({ cookies });
     
@@ -170,28 +181,32 @@ export async function getPromptConfig(key: PromptKey): Promise<PromptConfig> {
       .single();
     
     if (error || !data) {
-      console.log(`[prompts] No active DB prompt for "${key}", using default`);
-      const defaults = DEFAULT_PROMPTS[key];
+      console.log(`[prompts] No active DB prompt for "${key}", using code defaults`);
       return {
         key,
-        ...defaults,
+        ...codeDefaults,
       };
     }
     
+    // DB prompt found - use its content, but ALWAYS use code defaults for model/tokens
+    // This prevents stale DB values from overriding updated code settings
+    console.log(`[prompts] DB prompt found for "${key}", merging with code defaults`);
+    console.log(`[prompts] Using model: ${codeDefaults.model}, maxTokens: ${codeDefaults.maxTokens}`);
+    
     return {
       key,
-      version: data.version,
-      content: data.content,
-      model: data.model || 'gpt-4o-mini',
-      temperature: Number(data.temperature) || 0.3,
-      maxTokens: data.max_tokens || 4000,
+      version: data.version || codeDefaults.version,
+      content: data.content || codeDefaults.content,  // Allow DB content override
+      // CRITICAL: Always use code defaults for these to prevent stale DB values
+      model: codeDefaults.model,
+      temperature: codeDefaults.temperature,
+      maxTokens: codeDefaults.maxTokens,
     };
   } catch (e) {
-    console.error('[prompts] Error fetching prompt, using default:', e);
-    const defaults = DEFAULT_PROMPTS[key];
+    console.error('[prompts] Error fetching prompt, using code defaults:', e);
     return {
       key,
-      ...defaults,
+      ...codeDefaults,
     };
   }
 }
