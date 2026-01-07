@@ -126,7 +126,6 @@ export async function sendStockListEmail(
         status: res.status,
         statusText: res.statusText,
         error: responseText,
-        headers: Object.fromEntries(res.headers.entries()),
       });
       return {
         success: false,
