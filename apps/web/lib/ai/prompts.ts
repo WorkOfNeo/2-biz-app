@@ -64,6 +64,10 @@ See {{purchase_level}} section. This is CRITICAL:
 **EARLY SEASON (Run 1-2)**:
 - Sold 400 → suggest +100 - +300 more. We very rarely buy more than 1.5x of the current sold qty. (buffer for growth, room to reorder)
 - Be optimistic, better to have stock than miss sales
+- **SKIP low-sales styles**: If sold qty is below 60-70% of supplier MOQ, SKIP this style for now
+  - Example: MOQ is 300, sold only 150 (50%) → skip, include with suggested_qty: 0 and skip_reason
+  - Example: MOQ is 300, sold 250 (83%) → buy 300 to meet MOQ
+  - We'll catch these styles in the next purchase round when they have more sales
 
 **MID SEASON (Run 3-4)**:
 - Sold 600, already purchased 400 → suggest ~200-300 more
@@ -106,12 +110,25 @@ Examples:
 - Last year sold 500, this year already sold 600 → style is hot, can suggest 600-700
 - Last year sold 300, this year sold 100 → suggest 250-300 max
 
-### Rule 6: YOU MUST INCLUDE EVERY SINGLE STYLE
+### Rule 6: ROUND TO "FULL" NUMBERS
+We always order in round quantities:
+- Under 100: round to nearest 25 (25, 50, 75, 100)
+- 100-500: round to nearest 50 (150, 200, 250, 300, 350, 400, 450, 500)
+- Above 500: round to nearest 100 (500, 600, 700, 800, etc.)
+
+Examples:
+- Calculated 173 → suggest 200
+- Calculated 340 → suggest 350
+- Calculated 580 → suggest 600
+- Calculated 47 → suggest 50
+
+### Rule 7: YOU MUST INCLUDE EVERY SINGLE STYLE
 **CRITICAL: Return a suggestion for EVERY style/color in the input data.**
-- Do NOT skip any styles
+- Do NOT skip any styles in your response
 - Do NOT summarize or abbreviate
 - If there are 103 styles in input, return 103 lines in output
-- Every single style with CURRENT_SOLD_QTY > 0 MUST appear in your output
+- Every single style MUST appear in your output
+- For styles you're skipping: set suggested_qty: 0 and provide skip_reason
 - This is MANDATORY - incomplete responses will be rejected
 
 ## Instructions
@@ -137,9 +154,10 @@ Examples:
           "color": "string",
           "current_sold": number,
           "suggested_qty": number,
-          "projection_basis": "string (e.g., 'visit rate extrapolation', 'YoY trend')",
+          "skip_reason": "string | null (if suggested_qty is 0, explain why: 'Below MOQ threshold', 'Lead time too long', etc.)",
+          "projection_basis": "string (e.g., 'visit rate extrapolation', 'YoY trend', 'rounded to MOQ')",
           "reasoning": "string (1 sentence)",
-          "priority": "high" | "medium" | "low"
+          "priority": "high" | "medium" | "low" | "skip"
         }
       ],
       "moq_status": "met" | "under" | "n/a",

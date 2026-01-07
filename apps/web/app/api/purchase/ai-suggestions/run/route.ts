@@ -26,7 +26,8 @@ type SupplierSuggestion = {
     size_quantities?: SizeQtyMap; // AI suggests per size
     available_sizes?: string[]; // sizes seen in sales data
     reasoning: string;
-    priority: 'high' | 'medium' | 'low';
+    priority: 'high' | 'medium' | 'low' | 'skip';
+    skip_reason?: string | null; // If this line should be skipped
   }>;
   moq_status: 'met' | 'under' | 'n/a';
   notes?: string;
@@ -39,6 +40,23 @@ type AIOutput = {
   total_units: number;
   warnings: string[];
 };
+
+/**
+ * Round quantity to "full" purchase numbers
+ * - Under 100: round to nearest 25
+ * - 100-500: round to nearest 50
+ * - Above 500: round to nearest 100
+ */
+function roundToFullQty(qty: number): number {
+  if (qty <= 0) return 0;
+  if (qty < 100) {
+    return Math.round(qty / 25) * 25;
+  } else if (qty <= 500) {
+    return Math.round(qty / 50) * 50;
+  } else {
+    return Math.round(qty / 100) * 100;
+  }
+}
 
 export async function POST(req: Request) {
   const startTime = Date.now();
@@ -1376,12 +1394,16 @@ This is a CLOSING/LATE purchase run. Two options only:
         
         // Add to AI output
         for (const [supplierName, styles] of Object.entries(missingBySupplier)) {
+          // Get supplier MOQ from master data
+          const supplierData = supplierMap[supplierName];
+          const supplierMoq = supplierData?.moq || 0;
+          
           // Find or create supplier in output
           let supplierOutput = aiOutput.suppliers.find(s => s.supplier_name === supplierName);
           if (!supplierOutput) {
             const newSupplier: SupplierSuggestion = {
               supplier_name: supplierName,
-              supplier_id: '',
+              supplier_id: supplierData?.id || '',
               recommendation_summary: 'Backfilled - AI did not include this supplier',
               lines: [],
               total_units: 0,
@@ -1396,16 +1418,31 @@ This is a CLOSING/LATE purchase run. Two options only:
           }
           
           for (const m of styles) {
-            // Project quantity: sold × multiplier, rounded to nearest 10
-            // For CLOSING, don't enforce minimum - can suggest less than sold
-            const rawProjected = Math.round((m.soldQty * multiplier) / 10) * 10;
-            const projectedQty = purchaseRunNumber >= 5 
-              ? rawProjected  // CLOSING: can be less than sold
-              : Math.max(m.soldQty, rawProjected);  // EARLY/MID: at least sold qty
+            // Check if sales are too low vs MOQ (skip if below 65% of MOQ)
+            // Only applies to EARLY rounds - we'll catch them in next purchase round
+            const moqThreshold = 0.65; // 65% of MOQ
+            const isBelowMoqThreshold = supplierMoq > 0 && 
+              m.soldQty < (supplierMoq * moqThreshold) && 
+              purchaseRunNumber <= 2; // Only skip in early rounds
             
-            // Build size quantities
+            // Project quantity: sold × multiplier, then round to "full" numbers
+            const rawProjected = m.soldQty * multiplier;
+            let projectedQty: number;
+            
+            if (isBelowMoqThreshold) {
+              // Skip this style - below MOQ threshold for early round
+              projectedQty = 0;
+            } else if (isClosingRound) {
+              // CLOSING: match sold exactly, rounded to full numbers
+              projectedQty = roundToFullQty(m.soldQty);
+            } else {
+              // EARLY/MID: at least sold qty, rounded to full numbers
+              projectedQty = roundToFullQty(Math.max(m.soldQty, rawProjected));
+            }
+            
+            // Build size quantities (only if we're ordering)
             let sizeQuantities: Record<string, number> | undefined = undefined;
-            if (m.sizeData && m.sizeData.sizes.length > 0) {
+            if (projectedQty > 0 && m.sizeData && m.sizeData.sizes.length > 0) {
               const totalSold = Object.values(m.sizeData.sizeQty).reduce((sum, v) => sum + (v || 0), 0);
               if (totalSold > 0) {
                 sizeQuantities = {};
@@ -1424,6 +1461,27 @@ This is a CLOSING/LATE purchase run. Two options only:
               }
             }
             
+            // Determine skip reason if applicable
+            let skipReason: string | null = null;
+            let notes: string;
+            let reasoning: string;
+            let priority: 'high' | 'medium' | 'low' | 'skip';
+            
+            if (isBelowMoqThreshold) {
+              skipReason = `Below MOQ threshold: sold ${m.soldQty} < ${Math.round(supplierMoq * moqThreshold)} (65% of MOQ ${supplierMoq})`;
+              notes = 'Skipped - will reconsider in next purchase round when sales increase';
+              reasoning = 'Sales too low vs MOQ, waiting for more demand';
+              priority = 'skip';
+            } else if (isClosingRound) {
+              notes = 'Backfilled - CLOSING round: exact match to sold qty';
+              reasoning = 'Closing round: buy to cover exactly, or skip if MOQ not met';
+              priority = 'low';
+            } else {
+              notes = 'Backfilled - AI did not include this style';
+              reasoning = 'System backfill based on sold qty projection';
+              priority = 'medium';
+            }
+            
             const backfillLine: any = {
               style_no: m.style_no,
               color: m.color,
@@ -1431,21 +1489,17 @@ This is a CLOSING/LATE purchase run. Two options only:
               current_sold: m.soldQty,
               style_name: m.style_name,
               image_url: m.image_url,
-              skip_reason: null,
-              notes: isClosingRound 
-                ? 'Backfilled - CLOSING round: match sold qty exactly, skip if MOQ not met'
-                : 'Backfilled - AI did not include this style',
-              projection_basis: isClosingRound
-                ? `Closing: exact match to sold ${m.soldQty} (verify MOQ)`
-                : `Sold ${m.soldQty} × ${multiplier.toFixed(1)}x = ${projectedQty}`,
+              skip_reason: skipReason,
+              notes: notes,
+              projection_basis: isBelowMoqThreshold
+                ? `Skipped: ${m.soldQty} sold < ${Math.round(supplierMoq * moqThreshold)} MOQ threshold`
+                : `Sold ${m.soldQty} × ${multiplier.toFixed(1)}x → rounded to ${projectedQty}`,
               available_sizes: m.sizeData?.sizes || [],
               sold_sizes: m.sizeData?.sizeQty || {},
               total_sold: m.soldQty,
               size_quantities: sizeQuantities,
-              reasoning: isClosingRound
-                ? 'Closing round: buy to cover exactly, or skip if MOQ/lead time not viable'
-                : 'System backfill based on sold qty projection',
-              priority: isClosingRound ? 'low' as const : 'medium' as const,
+              reasoning: reasoning,
+              priority: priority,
             };
             
             supplierOutput.lines!.push(backfillLine);
