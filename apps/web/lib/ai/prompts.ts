@@ -62,13 +62,13 @@ const DEFAULT_PROMPTS: Record<PromptKey, Omit<PromptConfig, 'key'>> = {
 See {{purchase_level}} section. This is CRITICAL:
 
 **EARLY SEASON (Run 1-2)**:
-- Sold 400 → suggest 500-600 (buffer for growth, room to reorder)
+- Sold 400 → suggest +100 - +300 more. We very rarely buy more than 1.5x of the current sold qty. (buffer for growth, room to reorder)
 - Be optimistic, better to have stock than miss sales
 
 **MID SEASON (Run 3-4)**:
 - Sold 600, already purchased 400 → suggest ~200-300 more
 - Factor in what's already on order (PREVIOUS_PURCHASES field if available)
-- Only add if style is performing well across multiple reps
+- Only add styles that still has more sales than purchases, and are not maxed out.
 
 **CLOSING (Run 5+, final 10-20% of season)**:
 - Sold 900, already purchased 600 → suggest just to cover, or UNDER
@@ -88,7 +88,23 @@ Suggest less than CURRENT_SOLD_QTY when:
 - YoY comparison shows this style declining
 - Customer visit rate is >80% (limited upside)
 
-### Rule 5: YOU MUST INCLUDE EVERY SINGLE STYLE
+### Rule 5: LAST YEAR'S TOTAL IS THE CEILING
+**CRITICAL**: 9 out of 10 times, we NEVER suggest more than what was sold last year for the same style.
+
+- Check "LAST_YEAR_QTY" in yoy_analysis if available
+- Typical suggestion = match last year's qty, or +100-200 if style is outperforming
+- Only exceed last year's total if ALL of these are true:
+  1. Style is selling at 150%+ index vs last year
+  2. ALL salespersons are selling it (broad appeal)
+  3. It's an EARLY season run (not mid or closing)
+  4. Customer visit rate is still low (<50%)
+
+Examples:
+- Last year sold 800, this year sold 400 (early season) → suggest 700-800 total (not 1500)
+- Last year sold 500, this year already sold 600 → style is hot, can suggest 600-700
+- Last year sold 300, this year sold 100 → suggest 250-300 max
+
+### Rule 6: YOU MUST INCLUDE EVERY SINGLE STYLE
 **CRITICAL: Return a suggestion for EVERY style/color in the input data.**
 - Do NOT skip any styles
 - Do NOT summarize or abbreviate
