@@ -1079,6 +1079,7 @@ export default function PurchaseMakeOrderPage() {
   const [importError, setImportError] = useState<string>('');
   
   const [isRunningAI, setIsRunningAI] = useState(false);
+  const [aiProgressMessage, setAiProgressMessage] = useState<string>('');
   const [aiError, setAiError] = useState<string>('');
   const [aiOutput, setAiOutput] = useState<AIOutput | null>(null);
   const [yoyAnalysis, setYoyAnalysis] = useState<any>(null);
@@ -1341,6 +1342,33 @@ export default function PurchaseMakeOrderPage() {
     setIsRunningAI(true);
     setAiError('');
     
+    // Get supplier names from preview data for progress display
+    const supplierNames = previewData?.supplierBreakdown?.map((s: any) => s.supplier) || [];
+    const totalStyles = previewData?.supplierBreakdown?.reduce((sum: number, s: any) => sum + (s.styleCount || 0), 0) || 0;
+    
+    // Show initial progress message
+    if (supplierNames.length > 0) {
+      setAiProgressMessage(`Analyzing ${supplierNames.length} suppliers (${totalStyles} styles)...`);
+      
+      // Cycle through supplier names to show progress
+      let idx = 0;
+      const progressInterval = setInterval(() => {
+        if (idx < supplierNames.length) {
+          const supplier = supplierNames[idx];
+          const supplierStyles = previewData?.supplierBreakdown?.find((s: any) => s.supplier === supplier)?.styleCount || 0;
+          setAiProgressMessage(`Analyzing ${supplier} (${supplierStyles} styles)...`);
+          idx++;
+        } else {
+          setAiProgressMessage('Combining results and validating...');
+        }
+      }, 2000); // Show each supplier for 2 seconds
+      
+      // Store interval ID to clear it later
+      (window as any).__aiProgressInterval = progressInterval;
+    } else {
+      setAiProgressMessage('Running AI analysis...');
+    }
+    
     try {
       const res = await fetch('/api/purchase/ai-suggestions/run', {
         method: 'POST',
@@ -1351,6 +1379,11 @@ export default function PurchaseMakeOrderPage() {
           comparisonSeasonId: comparisonSeasonId || null,
         }),
       });
+      
+      // Clear progress interval
+      if ((window as any).__aiProgressInterval) {
+        clearInterval((window as any).__aiProgressInterval);
+      }
       
       const data = await res.json();
       
@@ -1387,9 +1420,14 @@ export default function PurchaseMakeOrderPage() {
     } catch (err: any) {
       setAiError(err.message);
     } finally {
+      // Clear progress interval if still running
+      if ((window as any).__aiProgressInterval) {
+        clearInterval((window as any).__aiProgressInterval);
+      }
       setIsRunningAI(false);
+      setAiProgressMessage('');
     }
-  }, [importId, selectedSeasonId, comparisonSeasonId]);
+  }, [importId, selectedSeasonId, comparisonSeasonId, previewData]);
 
   // Create a new supplier from unlinked list
   const handleCreateSupplier = useCallback(async (supplierName: string) => {
@@ -2144,6 +2182,24 @@ export default function PurchaseMakeOrderPage() {
               </div>
             )}
             
+            {/* AI Progress Display */}
+            {isRunningAI && aiProgressMessage && (
+              <div className="bg-[#B8A8D8]/10 border border-[#B8A8D8]/30 rounded-lg p-4">
+                <div className="flex items-center gap-3">
+                  <svg className="animate-spin h-5 w-5 text-[#B8A8D8]" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                  </svg>
+                  <div>
+                    <div className="font-medium text-[#8FA894]">{aiProgressMessage}</div>
+                    <div className="text-xs text-slate-500 mt-1">
+                      Processing in parallel for faster results...
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+            
             <div className="flex justify-between">
               <Button variant="outline" onClick={() => setStep(1)}>
                 Back
@@ -2160,9 +2216,17 @@ export default function PurchaseMakeOrderPage() {
                     <Button
                   onClick={handleRunAI}
                   disabled={isRunningAI || (previewData?.validation?.errors?.length > 0)}
-                  className="bg-[#B8A8D8] hover:bg-[#B8A8D8]/90"
+                  className="bg-[#B8A8D8] hover:bg-[#B8A8D8]/90 min-w-[180px]"
                 >
-                  {isRunningAI ? 'Analyzing...' : 'Run AI Analysis'}
+                  {isRunningAI ? (
+                    <span className="flex items-center gap-2">
+                      <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                      </svg>
+                      Analyzing...
+                    </span>
+                  ) : 'Run AI Analysis'}
                     </Button>
                   </div>
                 </div>
