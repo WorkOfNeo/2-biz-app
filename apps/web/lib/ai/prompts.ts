@@ -51,7 +51,13 @@ const DEFAULT_PROMPTS: Record<PromptKey, Omit<PromptConfig, 'key'>> = {
 
 ## CRITICAL RULES FOR QUANTITY SUGGESTIONS
 
-**IMPORTANT**: Each style has "CURRENT_SOLD_QTY" (already sold) and "SALES_REPS" (which reps sold it).
+**IMPORTANT**: Each style now includes:
+- "CURRENT_SOLD_QTY" = What we've sold this season
+- "ALREADY_PURCHASED_QTY" = What's already on order from previous purchases
+- "REMAINING_NEED" = CURRENT_SOLD_QTY - ALREADY_PURCHASED_QTY (the gap to cover)
+- "previous_po_numbers" = Which POs contain previous orders
+
+Your suggestion should cover the REMAINING_NEED, not duplicate what's already purchased!
 
 ### Rule 1: Salesperson Coverage = Confidence
 - If ALL salespersons are selling this style → HIGH confidence → can buy more
@@ -65,27 +71,27 @@ Stage is determined by % of customers already visited this season:
 
 **EARLY STAGE (<40% customers visited)**:
 - Lots of customers left to visit → room for growth
-- Sold 400 → suggest +100 - +300 more. We very rarely buy more than 1.5x of the current sold qty.
+- Focus on REMAINING_NEED + growth buffer
+- Example: Sold 400, already purchased 200, REMAINING_NEED = 200 → suggest 250-400 (cover gap + buffer)
 - Be optimistic, better to have stock than miss sales
-- **SKIP low-sales styles**: If sold qty is below 60-70% of supplier MOQ, SKIP this style for now
-  - Example: MOQ is 300, sold only 150 (50%) → skip, include with suggested_qty: 0 and skip_reason
-  - Example: MOQ is 300, sold 250 (83%) → buy 300 to meet MOQ
-  - We'll catch these styles when more customers are visited
+- **SKIP low-sales styles**: If REMAINING_NEED is below 60-70% of supplier MOQ, SKIP for now
+  - Example: MOQ is 300, REMAINING_NEED = 150 (50%) → skip, include with suggested_qty: 0 and skip_reason
+  - Example: MOQ is 300, REMAINING_NEED = 250 (83%) → suggest 300 to meet MOQ
 
 **MID STAGE (40-75% customers visited)**:
 - About half the season is complete
-- Sold 600, already purchased 400 → suggest ~200-300 more
-- Factor in what's already on order (PREVIOUS_PURCHASES field if available)
-- Only add styles that still has more sales than purchases, and are not maxed out.
+- Focus on covering REMAINING_NEED with modest buffer
+- Example: Sold 600, already purchased 400, REMAINING_NEED = 200 → suggest 200-250
+- If REMAINING_NEED ≤ 0 (fully covered), suggest 0
 
 **CLOSING STAGE (>75% customers visited)**:
 - Most customers have been seen - wrapping up the season
-- Buy EXACTLY to match sold amount, OR skip entirely
+- Suggest EXACTLY the REMAINING_NEED (no buffer), OR skip entirely
 - Key constraint: MOQ (Minimum Order Qty) and lead time for deliveries
-- If remaining qty needed doesn't meet supplier MOQ → suggest 0 (skip)
-- Example: Sold 600, already purchased 550 → remaining need is 50, but if MOQ is 100 → skip (suggest 0)
-- Example: Sold 900, already purchased 600 → need 300, if MOQ is 200 → suggest 300 to cover exactly
-- NEVER gamble on late-season purchases - only proven bestsellers
+- If REMAINING_NEED < MOQ → suggest 0 (skip, not worth it)
+- Example: Sold 600, purchased 550, REMAINING_NEED = 50, MOQ = 100 → skip (suggest 0)
+- Example: Sold 900, purchased 600, REMAINING_NEED = 300, MOQ = 200 → suggest 300 exactly
+- NEVER gamble on late-season purchases
 
 ### Rule 3: Customer Potential per Rep
 - Check how many customers each rep has LEFT to visit

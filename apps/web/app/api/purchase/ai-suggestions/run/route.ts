@@ -61,14 +61,17 @@ function roundToFullQty(qty: number): number {
 /**
  * Compress styles data to minimal format for AI input
  * Reduces token usage significantly
+ * Format: style_no|color|sold|purchased|remaining|sizes_json
  */
 function compressStylesForAI(styles: any[]): string {
-  // Format: style_no|color|sold|sizes_json
   const lines = styles.map(s => {
+    const sold = s.CURRENT_SOLD_QTY || s.total_qty || 0;
+    const purchased = s.ALREADY_PURCHASED_QTY || 0;
+    const remaining = s.REMAINING_NEED ?? Math.max(0, sold - purchased);
     const sizes = s.size_breakdown && Object.keys(s.size_breakdown).length > 0 
       ? JSON.stringify(s.size_breakdown)
       : '';
-    return `${s.style_no}|${s.color}|${s.CURRENT_SOLD_QTY || s.total_qty}${sizes ? '|' + sizes : ''}`;
+    return `${s.style_no}|${s.color}|${sold}|${purchased}|${remaining}${sizes ? '|' + sizes : ''}`;
   });
   return lines.join('\n');
 }
@@ -335,6 +338,71 @@ export async function POST(req: Request) {
       }
     }
 
+    // ═══════════════════════════════════════════════════════════════════════
+    // FETCH PREVIOUS PURCHASES - What has already been ordered for each style/color
+    // ═══════════════════════════════════════════════════════════════════════
+    console.log('═══════════════════════════════════════════════════════════');
+    console.log('[Previous Purchases] Fetching previously ordered quantities...');
+    
+    // Get all unique style_no from our sales data
+    const styleNosFromSales = new Set<string>();
+    for (const row of (salesSummary || [])) {
+      if (row.style_no) styleNosFromSales.add(row.style_no);
+    }
+    
+    // Build a map of style_no|color → total already purchased
+    const previousPurchasesByStyleColor = new Map<string, { qty: number; poNumbers: string[] }>();
+    
+    if (styleNosFromSales.size > 0) {
+      try {
+        // Fetch purchase order items for these styles
+        // Only consider "Running" POs (not yet fully delivered) and all "Shipped" POs
+        const { data: poItems, error: poError } = await supabase
+          .from('purchase_order_items')
+          .select(`
+            style_no,
+            color,
+            qty,
+            po_no,
+            purchase_orders!inner (
+              status
+            )
+          `)
+          .in('style_no', Array.from(styleNosFromSales));
+        
+        if (poError) {
+          console.warn('[Previous Purchases] Error fetching PO items:', poError);
+        } else if (poItems && poItems.length > 0) {
+          // Aggregate by style_no|color
+          for (const item of poItems) {
+            const key = `${item.style_no}|${item.color}`.toLowerCase();
+            const existing = previousPurchasesByStyleColor.get(key) || { qty: 0, poNumbers: [] };
+            existing.qty += item.qty || 0;
+            if (item.po_no && !existing.poNumbers.includes(item.po_no)) {
+              existing.poNumbers.push(item.po_no);
+            }
+            previousPurchasesByStyleColor.set(key, existing);
+          }
+          
+          console.log('[Previous Purchases] Found', poItems.length, 'PO line items');
+          console.log('[Previous Purchases] Covering', previousPurchasesByStyleColor.size, 'unique style/colors');
+          
+          // Show top 5 with most previous purchases
+          const topPurchased = Array.from(previousPurchasesByStyleColor.entries())
+            .sort((a, b) => b[1].qty - a[1].qty)
+            .slice(0, 5);
+          for (const [key, data] of topPurchased) {
+            console.log(`  - ${key}: ${data.qty} pcs already ordered (${data.poNumbers.join(', ')})`);
+          }
+        } else {
+          console.log('[Previous Purchases] No previous purchases found for these styles');
+        }
+      } catch (e) {
+        console.warn('[Previous Purchases] Error:', e);
+      }
+    }
+    console.log('═══════════════════════════════════════════════════════════');
+
     // Build aggregated input for AI (grouped by supplier)
     console.log('═══════════════════════════════════════════════════════════');
     console.log('[Supplier Grouping] Starting...');
@@ -377,16 +445,27 @@ export async function POST(req: Request) {
       const sorted = items.sort((a, b) => (b.total_qty || 0) - (a.total_qty || 0));
       const limited = sorted.slice(0, topNPerSupplier);
       
-      // Rename fields to be crystal clear for AI
-      limitedSalesBySupplier[supplier] = limited.map(item => ({
-        style_no: item.style_no,
-        style_name: item.style_name,
-        color: item.color,
-        CURRENT_SOLD_QTY: item.total_qty,  // Renamed for clarity!
-        customer_count: item.customer_count,
-        countries: item.countries,
-        total_amount: item.total_amount,
-      }));
+      // Rename fields to be crystal clear for AI - include previous purchases!
+      limitedSalesBySupplier[supplier] = limited.map(item => {
+        const key = `${item.style_no}|${item.color}`.toLowerCase();
+        const prevPurchase = previousPurchasesByStyleColor.get(key);
+        const soldQty = item.total_qty || 0;
+        const purchasedQty = prevPurchase?.qty || 0;
+        const remainingNeed = Math.max(0, soldQty - purchasedQty);
+        
+        return {
+          style_no: item.style_no,
+          style_name: item.style_name,
+          color: item.color,
+          CURRENT_SOLD_QTY: soldQty,  // What we've sold this season
+          ALREADY_PURCHASED_QTY: purchasedQty,  // What's already on order
+          REMAINING_NEED: remainingNeed,  // Sold - Purchased (minimum to cover)
+          previous_po_numbers: prevPurchase?.poNumbers || [],  // Which POs
+          customer_count: item.customer_count,
+          countries: item.countries,
+          total_amount: item.total_amount,
+        };
+      });
       
       totalStylesSent += limited.length;
       totalQtySent += limited.reduce((sum, i) => sum + (i.total_qty || 0), 0);
@@ -1129,31 +1208,37 @@ Most customers have been visited - wrapping up the season. Two options only:
         
         // Build compact prompt for this supplier
         const stylesData = compressStylesForAI(supplierStyles);
+        const supplierMoq = supplierData.moq || 0;
         const singleSupplierPrompt = `You are a purchasing advisor. Generate purchase suggestions for ONE supplier.
 
 ## Supplier: ${supplierName}
-MOQ: ${supplierData.moq || 0} | Lead Time: ${supplierData.lead_time_days || 0} days
+MOQ: ${supplierMoq} | Lead Time: ${supplierData.lead_time_days || 0} days
 
 ## Purchase Stage (based on ${visitRatePercent.toFixed(0)}% of customers visited)
 ${purchaseLevelInfo}
 
-## Styles (format: style_no|color|sold|sizes_json)
+## Styles (format: style_no|color|sold|purchased|remaining|sizes_json)
 ${stylesData}
+
+## Field Meanings
+- sold = CURRENT_SOLD_QTY (what we've sold this season)
+- purchased = ALREADY_PURCHASED_QTY (what's already on order)
+- remaining = REMAINING_NEED (sold - purchased, the gap to cover)
 
 ## Rules
 1. **INCLUDE ALL STYLES** - every style in input MUST appear in output (${supplierStyles.length} total)
-2. **Round to full numbers**: <100→nearest 25, 100-500→nearest 50, >500→nearest 100
-3. **Skip low sales**: If sold < ${Math.round((supplierData.moq || 0) * 0.65)} (65% of MOQ) in EARLY stage → qty:0, skip_reason:"Below MOQ threshold"
-4. **EARLY (<40% visited)**: Suggest 1.0-1.3x of sold (buffer for growth)
-5. **MID (40-75% visited)**: Match sold or slightly above
-6. **CLOSING (>75% visited)**: Exact match to sold, or skip if remaining < MOQ
-7. **Never exceed last year** unless style is 150%+ vs last year
+2. **Focus on REMAINING_NEED** - don't re-order what's already purchased!
+3. **Round to full numbers**: <100→nearest 25, 100-500→nearest 50, >500→nearest 100
+4. **EARLY (<40% visited)**: Suggest remaining + buffer (1.0-1.3x of remaining need)
+5. **MID (40-75% visited)**: Cover remaining need exactly or +10%
+6. **CLOSING (>75% visited)**: Cover remaining exactly, or skip if remaining < MOQ (${supplierMoq})
+7. **Skip if remaining < ${Math.round(supplierMoq * 0.65)}** (65% of MOQ) → qty:0, skip_reason:"Below MOQ threshold"
 
 ## Output (valid JSON only, no markdown):
 {
   "supplier_name": "${supplierName}",
   "lines": [
-    {"style_no":"X","color":"Y","qty":N,"sold":N,"skip_reason":null,"reason":"brief"}
+    {"style_no":"X","color":"Y","qty":N,"sold":N,"purchased":N,"remaining":N,"skip_reason":null,"reason":"brief"}
   ],
   "total_units": N,
   "moq_status": "met|under|n/a",
@@ -1517,6 +1602,8 @@ ${stylesData}
         style_no: string;
         color: string;
         soldQty: number;
+        purchasedQty: number;
+        remainingNeed: number;
         style_name?: string;
         image_url?: string;
         sizeData: { sizes: string[]; sizeQty: Record<string, number> } | null;
@@ -1526,11 +1613,19 @@ ${stylesData}
         const key = `${row.style_no}|${row.color}`;
         if (!aiReturnedKeys.has(key)) {
           const sizeData = sizeBreakdownMap[key];
+          const keyLower = key.toLowerCase();
+          const prevPurchase = previousPurchasesByStyleColor.get(keyLower);
+          const soldQty = Number(row.total_qty) || 0;
+          const purchasedQty = prevPurchase?.qty || 0;
+          const remainingNeed = Math.max(0, soldQty - purchasedQty);
+          
           missingStyles.push({
             supplier: row.supplier || 'Unknown',
             style_no: row.style_no,
             color: row.color || 'Default',
-            soldQty: Number(row.total_qty) || 0,
+            soldQty,
+            purchasedQty,
+            remainingNeed,
             style_name: styleNameMap[row.style_no],
             image_url: imageUrlMap[row.style_no],
             sizeData: sizeData || null,
@@ -1597,26 +1692,36 @@ ${stylesData}
           }
           
           for (const m of styles) {
-            // Check if sales are too low vs MOQ (skip if below 65% of MOQ)
+            // Use REMAINING_NEED for calculations (not soldQty!)
+            // remaining = sold - already purchased
+            const remaining = m.remainingNeed;
+            
+            // Check if REMAINING NEED is too low vs MOQ (skip if below 65% of MOQ)
             // Only applies to EARLY stage - we'll catch them in next purchase
             const moqThreshold = 0.65; // 65% of MOQ
             const isBelowMoqThreshold = supplierMoq > 0 && 
-              m.soldQty < (supplierMoq * moqThreshold) && 
+              remaining < (supplierMoq * moqThreshold) && 
               purchaseStage === 'EARLY'; // Only skip in early stage
             
-            // Project quantity: sold × multiplier, then round to "full" numbers
-            const rawProjected = m.soldQty * multiplier;
+            // If already fully covered (remaining <= 0), skip
+            const isFullyCovered = remaining <= 0;
+            
+            // Project quantity: remaining × multiplier, then round to "full" numbers
+            const rawProjected = remaining * multiplier;
             let projectedQty: number;
             
-            if (isBelowMoqThreshold) {
+            if (isFullyCovered) {
+              // Already fully covered by previous purchases
+              projectedQty = 0;
+            } else if (isBelowMoqThreshold) {
               // Skip this style - below MOQ threshold for early stage
               projectedQty = 0;
             } else if (isClosingStage) {
-              // CLOSING: match sold exactly, rounded to full numbers
-              projectedQty = roundToFullQty(m.soldQty);
+              // CLOSING: match remaining exactly, rounded to full numbers
+              projectedQty = roundToFullQty(remaining);
             } else {
-              // EARLY/MID: at least sold qty, rounded to full numbers
-              projectedQty = roundToFullQty(Math.max(m.soldQty, rawProjected));
+              // EARLY/MID: at least remaining, rounded to full numbers
+              projectedQty = roundToFullQty(Math.max(remaining, rawProjected));
             }
             
             // Build size quantities (only if we're ordering)
@@ -1646,18 +1751,23 @@ ${stylesData}
             let reasoning: string;
             let priority: 'high' | 'medium' | 'low' | 'skip';
             
-            if (isBelowMoqThreshold) {
-              skipReason = `Below MOQ threshold: sold ${m.soldQty} < ${Math.round(supplierMoq * moqThreshold)} (65% of MOQ ${supplierMoq})`;
-              notes = 'Skipped - will reconsider in next purchase round when sales increase';
-              reasoning = 'Sales too low vs MOQ, waiting for more demand';
+            if (isFullyCovered) {
+              skipReason = `Already covered: sold ${m.soldQty}, purchased ${m.purchasedQty}, remaining ${remaining}`;
+              notes = 'Skipped - previous purchases already cover sold quantity';
+              reasoning = 'No additional purchase needed';
               priority = 'skip';
-            } else if (isClosingRound) {
-              notes = 'Backfilled - CLOSING round: exact match to sold qty';
-              reasoning = 'Closing round: buy to cover exactly, or skip if MOQ not met';
+            } else if (isBelowMoqThreshold) {
+              skipReason = `Below MOQ threshold: remaining ${remaining} < ${Math.round(supplierMoq * moqThreshold)} (65% of MOQ ${supplierMoq})`;
+              notes = 'Skipped - will reconsider when remaining need increases';
+              reasoning = 'Remaining need too low vs MOQ, waiting for more demand';
+              priority = 'skip';
+            } else if (isClosingStage) {
+              notes = `Backfilled - CLOSING stage: cover remaining ${remaining} exactly`;
+              reasoning = `Closing stage: sold ${m.soldQty}, purchased ${m.purchasedQty}, need ${remaining}`;
               priority = 'low';
             } else {
-              notes = 'Backfilled - AI did not include this style';
-              reasoning = 'System backfill based on sold qty projection';
+              notes = `Backfilled - cover remaining ${remaining} with buffer`;
+              reasoning = `Sold ${m.soldQty}, purchased ${m.purchasedQty}, remaining ${remaining}`;
               priority = 'medium';
             }
             
@@ -1666,13 +1776,17 @@ ${stylesData}
               color: m.color,
               suggested_qty: projectedQty,
               current_sold: m.soldQty,
+              already_purchased: m.purchasedQty,
+              remaining_need: remaining,
               style_name: m.style_name,
               image_url: m.image_url,
               skip_reason: skipReason,
               notes: notes,
-              projection_basis: isBelowMoqThreshold
-                ? `Skipped: ${m.soldQty} sold < ${Math.round(supplierMoq * moqThreshold)} MOQ threshold`
-                : `Sold ${m.soldQty} × ${multiplier.toFixed(1)}x → rounded to ${projectedQty}`,
+              projection_basis: isFullyCovered
+                ? `Skipped: fully covered (sold ${m.soldQty}, purchased ${m.purchasedQty})`
+                : isBelowMoqThreshold
+                  ? `Skipped: remaining ${remaining} < ${Math.round(supplierMoq * moqThreshold)} MOQ threshold`
+                  : `Remaining ${remaining} × ${multiplier.toFixed(1)}x → rounded to ${projectedQty}`,
               available_sizes: m.sizeData?.sizes || [],
               sold_sizes: m.sizeData?.sizeQty || {},
               total_sold: m.soldQty,
