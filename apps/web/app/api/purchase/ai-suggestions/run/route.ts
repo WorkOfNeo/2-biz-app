@@ -595,24 +595,77 @@ export async function POST(req: Request) {
           }
         }
 
-        // Get stats from uploaded CSV for accurate current season numbers
+        // ═══════════════════════════════════════════════════════════════════════
+        // Build VISITED customers from uploaded CSV (customerSummary)
+        // ═══════════════════════════════════════════════════════════════════════
+        
+        // Build map of customer sales from uploaded CSV
+        const uploadedCustomerSales = new Map<string, { qty: number; amount: number }>();
+        for (const c of (customerSummary || [])) {
+          const ref = c.customer_ref;
+          if (!ref) continue;
+          const existing = uploadedCustomerSales.get(ref) || { qty: 0, amount: 0 };
+          uploadedCustomerSales.set(ref, {
+            qty: existing.qty + (Number(c.total_qty) || 0),
+            amount: existing.amount + (Number(c.total_amount) || 0),
+          });
+        }
+        
         const uploadedTotalQty = (salesSummary || []).reduce((sum, r) => sum + (Number(r.total_qty) || 0), 0);
         const uploadedTotalAmount = (salesSummary || []).reduce((sum, r) => sum + (Number(r.total_amount) || 0), 0);
-        const uploadedCustomers = new Set((customerSummary || []).map(c => c.customer_ref)).size;
+        const uploadedCustomerCount = uploadedCustomerSales.size;
+        
+        console.log('[YoY Analysis] Uploaded CSV: qty=', uploadedTotalQty, 'unique customers=', uploadedCustomerCount);
+        
+        // Now calculate INDEX for VISITED customers only:
+        // - Find which uploaded customers also bought last year
+        // - Compare: this year qty / those same customers' last year qty
+        
+        let visitedCustomersLastYearQty = 0;
+        let visitedCustomersLastYearAmount = 0;
+        let visitedCustomersThisYearQty = 0;
+        let visitedCustomersThisYearAmount = 0;
+        let matchedCustomerCount = 0;
+        
+        // We need to match customer_ref (from CSV) to customer_id (in sales_stats)
+        // Build reverse lookup: customer company/customer_id → UUID
+        const customerRefToId = new Map<string, string>();
+        for (const c of (customersData || [])) {
+          if (c.company) customerRefToId.set(c.company.toLowerCase().trim(), c.id);
+          if (c.customer_id) customerRefToId.set(String(c.customer_id).toLowerCase().trim(), c.id);
+        }
+        
+        for (const [customerRef, thisYearSales] of uploadedCustomerSales) {
+          // Try to find this customer in last year's data
+          const refLower = customerRef.toLowerCase().trim();
+          const customerId = customerRefToId.get(refLower);
+          
+          if (customerId) {
+            const lastYearData = lastSeasonByCustomerId.get(customerId);
+            if (lastYearData) {
+              // This customer bought BOTH years - count for index
+              visitedCustomersLastYearQty += lastYearData.qty;
+              visitedCustomersLastYearAmount += lastYearData.amount;
+              visitedCustomersThisYearQty += thisYearSales.qty;
+              visitedCustomersThisYearAmount += thisYearSales.amount;
+              matchedCustomerCount++;
+            }
+          }
+        }
+        
+        // Calculate index for VISITED customers only
+        const visitedCustomersIndex = visitedCustomersLastYearQty > 0 
+          ? ((visitedCustomersThisYearQty / visitedCustomersLastYearQty) * 100).toFixed(1)
+          : 'N/A';
         
         // Calculate visit rate based on uploaded customers vs last year customers
         const actualVisitRate = customersFromLastSeason > 0 
-          ? ((uploadedCustomers / customersFromLastSeason) * 100).toFixed(1)
+          ? ((uploadedCustomerCount / customersFromLastSeason) * 100).toFixed(1)
           : 'N/A';
         
-        // Calculate index using UPLOADED data, not empty season_statistics
-        const aggregatedIndex = lastSeasonTotalQty > 0 
-          ? ((uploadedTotalQty / lastSeasonTotalQty) * 100).toFixed(1)
-          : 'N/A';
-        
-        console.log('[YoY Analysis] Uploaded CSV stats: qty=', uploadedTotalQty, 'customers=', uploadedCustomers);
-        console.log('[YoY Analysis] Actual visit rate based on CSV:', actualVisitRate, '%');
-        console.log('[YoY Analysis] Aggregated Index:', aggregatedIndex, '% (current', uploadedTotalQty, '/ last', lastSeasonTotalQty, ')');
+        console.log('[YoY Analysis] Matched', matchedCustomerCount, 'customers between this year and last year');
+        console.log('[YoY Analysis] Visited customers: this year=', visitedCustomersThisYearQty, 'same customers last year=', visitedCustomersLastYearQty);
+        console.log('[YoY Analysis] VISITED CUSTOMERS INDEX:', visitedCustomersIndex, '%');
         
         yoyAnalysis = {
           comparisonSeasonId,
@@ -622,12 +675,20 @@ export async function POST(req: Request) {
             customerCount: customersFromLastSeason,
           },
           currentSeason: {
-            totalQty: uploadedTotalQty,  // Use uploaded CSV data!
+            totalQty: uploadedTotalQty,  // Total from uploaded CSV
             totalAmount: Math.round(uploadedTotalAmount),
-            customersVisited: uploadedCustomers,  // From uploaded CSV
-            visitRate: `${actualVisitRate}%`,  // Based on uploaded customers
+            customersVisited: uploadedCustomerCount,  // Unique customers in CSV
+            visitRate: `${actualVisitRate}%`,  // visitedCustomers / lastYearCustomers
           },
-          aggregatedIndex: `${aggregatedIndex}%`,
+          // INDEX: Compare visited customers' this year sales vs SAME customers' last year sales
+          aggregatedIndex: `${visitedCustomersIndex}%`,
+          visitedCustomersAnalysis: {
+            matchedCustomers: matchedCustomerCount,
+            thisYearQty: visitedCustomersThisYearQty,
+            lastYearQty: visitedCustomersLastYearQty,
+            index: `${visitedCustomersIndex}%`,
+            note: 'Compares this year qty vs same customers last year qty',
+          },
           nulledThisYear: {
             count: nulledThisYearCount,
             lostQty: nulledThisYearLostQty,
@@ -641,14 +702,14 @@ export async function POST(req: Request) {
             note: 'Customers permanently closed - excluded from potential',
           },
           remainingPotential: {
-            customerCount: customersFromLastSeason - customersVisitedThisSeason - nulledThisYearCount - permClosedCount,
+            customerCount: customersFromLastSeason - uploadedCustomerCount - nulledThisYearCount - permClosedCount,
             projectedQty: remainingPotentialQty,
             projectedAmount: Math.round(remainingPotentialAmount),
             note: 'If remaining active customers buy same as last year',
           },
           projectedTotal: {
-            qty: currentSeasonTotalQty + remainingPotentialQty,
-            amount: Math.round(currentSeasonTotalAmount + remainingPotentialAmount),
+            qty: uploadedTotalQty + remainingPotentialQty,
+            amount: Math.round(uploadedTotalAmount + remainingPotentialAmount),
           },
         };
 
