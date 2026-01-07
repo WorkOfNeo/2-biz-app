@@ -1168,10 +1168,11 @@ This is a CLOSING/LATE purchase run. Be CONSERVATIVE.
         // Group missing by supplier
         const missingBySupplier: Record<string, typeof missingStyles> = {};
         for (const m of missingStyles) {
-          if (!missingBySupplier[m.supplier]) {
-            missingBySupplier[m.supplier] = [];
+          const supplierKey = m.supplier;
+          if (!missingBySupplier[supplierKey]) {
+            missingBySupplier[supplierKey] = [];
           }
-          missingBySupplier[m.supplier].push(m);
+          missingBySupplier[supplierKey]!.push(m);
         }
         
         // Add to AI output
@@ -1179,14 +1180,17 @@ This is a CLOSING/LATE purchase run. Be CONSERVATIVE.
           // Find or create supplier in output
           let supplierOutput = aiOutput.suppliers.find(s => s.supplier_name === supplierName);
           if (!supplierOutput) {
-            supplierOutput = {
+            const newSupplier: SupplierSuggestion = {
               supplier_name: supplierName,
+              supplier_id: '',
+              recommendation_summary: 'Backfilled - AI did not include this supplier',
               lines: [],
               total_units: 0,
-              order_value: 0,
-              notes: 'Added by system backfill - AI did not include this supplier',
+              total_value_estimate: 0,
+              moq_status: 'n/a',
             };
-            aiOutput.suppliers.push(supplierOutput);
+            aiOutput.suppliers.push(newSupplier);
+            supplierOutput = newSupplier;
           }
           if (!supplierOutput.lines) {
             supplierOutput.lines = [];
@@ -1231,9 +1235,11 @@ This is a CLOSING/LATE purchase run. Be CONSERVATIVE.
               sold_sizes: m.sizeData?.sizeQty || {},
               total_sold: m.soldQty,
               size_quantities: sizeQuantities,
+              reasoning: 'System backfill based on sold qty projection',
+              priority: 'medium' as const,
             };
             
-            supplierOutput.lines.push(backfillLine);
+            supplierOutput.lines!.push(backfillLine);
             supplierOutput.total_units += projectedQty;
           }
         }
