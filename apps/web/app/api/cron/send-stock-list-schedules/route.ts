@@ -85,18 +85,21 @@ async function handle(req: Request) {
   const serviceId = process.env.EMAILJS_SERVICE_ID || process.env.EMAILJS_SERVICE_KEY || process.env.NEXT_PUBLIC_EMAILJS_SERVICE_ID || process.env.NEXT_PUBLIC_EMAILJS_SERVICE_KEY || '';
   const templateId = process.env.EMAILJS_TEMPLATE_ID || process.env.NEXT_PUBLIC_EMAILJS_TEMPLATE_ID || '';
   const publicKey = process.env.EMAILJS_PUBLIC_KEY || process.env.NEXT_PUBLIC_EMAILJS_PUBLIC_KEY || '';
+  // Private key is REQUIRED for server-side EmailJS calls
+  const privateKey = process.env.EMAILJS_PRIVATE_KEY || '';
   const fromEmail = process.env.EMAILJS_FROM_EMAIL || process.env.NEXT_PUBLIC_EMAILJS_FROM_EMAIL || '';
   const fromName = process.env.EMAILJS_FROM_NAME || process.env.NEXT_PUBLIC_EMAILJS_FROM_NAME || '2-BIZ';
 
-  if (!serviceId || !templateId || !publicKey) {
+  if (!serviceId || !templateId || !publicKey || !privateKey) {
     return new Response(JSON.stringify({ 
       error: 'EmailJS env missing',
       missing: {
         serviceId: !serviceId,
         templateId: !templateId,
         publicKey: !publicKey,
+        privateKey: !privateKey,
       },
-      hint: 'Set EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, EMAILJS_PUBLIC_KEY in Vercel env vars'
+      hint: 'For server-side EmailJS, you need EMAILJS_PRIVATE_KEY (from EmailJS dashboard > Account > API Keys > Private Key)'
     }), { status: 500 });
   }
 
@@ -156,10 +159,12 @@ async function handle(req: Request) {
         const filename = `${listName} - Lagerliste.pdf`;
 
         // Send to all recipients (as BCC if multiple)
+        // For server-side EmailJS, we need accessToken (private key)
         const payload = {
           service_id: serviceId,
           template_id: templateId,
           user_id: publicKey,
+          accessToken: privateKey, // Required for server-side calls
           template_params: {
             to_email: schedule.recipients[0] || '',
             bcc_email: schedule.recipients.slice(1).join(','),
