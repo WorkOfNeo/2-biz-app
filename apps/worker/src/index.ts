@@ -24,6 +24,7 @@ import { pushAppPoToSpy } from './jobs/pushAppPoToSpy.js';
 import { syncAppPoFromSpy } from './jobs/syncAppPoFromSpy.js';
 import { createSpyStockOrder } from './jobs/createSpyStockOrder.js';
 import { scrapeStyleRawCosts } from './jobs/scrapeStyleRawCosts.js';
+import { sendStockListEmail } from './jobs/sendStockListEmail.js';
 // (imported with .js extension above)
 
 const SUPABASE_URL = process.env.SUPABASE_URL!;
@@ -2226,6 +2227,21 @@ async function runJob(job: JobRow) {
       await log(job.id, 'info', 'STEP:complete');
     }
       return; // scrape_statistics handled successfully
+    }
+
+    // Handle send_stock_list_email job (for scheduled stock list emails)
+    if ((job.type as any) === 'send_stock_list_email') {
+      const result = await sendStockListEmail(
+        supabase,
+        job.payload as any,
+        async (level, msg, data) => log(job.id, level, msg, data)
+      );
+      if (result.success) {
+        await setJobSucceeded(job.id);
+      } else {
+        await setJobFailedOrRequeue(job, result.message || 'Failed to send email');
+      }
+      return;
     }
 
     // If we reach here, the job type was not handled

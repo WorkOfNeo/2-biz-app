@@ -20,16 +20,6 @@ interface StockListSchedule {
   lastRun?: string;
 }
 
-interface PendingSend {
-  id: string;
-  scheduleId: string;
-  scheduleName: string;
-  listName: string;
-  listUrl: string;
-  recipients: string[];
-  emailBody: string;
-  createdAt: string;
-}
 
 interface ScheduleCheckResult {
   shouldRun: boolean;
@@ -165,15 +155,6 @@ async function handle(req: Request) {
 
   const supabase = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } });
 
-  // Load existing pending sends
-  const { data: pendingRow } = await supabase
-    .from('app_settings')
-    .select('id, value')
-    .eq('key', 'pending_stock_list_sends')
-    .maybeSingle();
-  
-  const existingPending: PendingSend[] = (pendingRow?.value as any)?.pending || [];
-
   // Load schedules
   const { data: settingsRow } = await supabase
     .from('app_settings')
@@ -207,7 +188,6 @@ async function handle(req: Request) {
   const cph = getCopenhagenTime(now);
   const results: Array<{ scheduleId: string; scheduleName: string; queued: number; error?: string }> = [];
   const updatedSchedules: StockListSchedule[] = [...schedules];
-  const newPendingSends: PendingSend[] = [];
 
   // Check all schedules and collect debug info
   const scheduleChecks: Array<{
@@ -236,7 +216,7 @@ async function handle(req: Request) {
 
     if (!willRun) continue;
 
-    // Queue pending sends for each stock list (browser will send them)
+    // Queue jobs for Railway worker to send emails
     let queuedCount = 0;
     for (const listName of schedule.stockLists) {
       const exp = latestStockListByName.get(listName);
@@ -245,20 +225,28 @@ async function handle(req: Request) {
         continue;
       }
 
-      // Create pending send entry
-      const pendingSend: PendingSend = {
-        id: `${schedule.id}-${listName}-${now.getTime()}`,
+      // Insert job for the Railway worker
+      const jobPayload = {
         scheduleId: schedule.id,
         scheduleName: schedule.name,
         listName,
         listUrl: exp.public_url,
         recipients: schedule.recipients,
         emailBody: schedule.emailBody || 'Hermed lagerliste :)',
-        createdAt: now.toISOString(),
       };
-      
-      newPendingSends.push(pendingSend);
-      queuedCount++;
+
+      const { error: insertError } = await supabase.from('jobs').insert({
+        type: 'send_stock_list_email',
+        payload: jobPayload,
+        status: 'pending',
+        queue: 'default',
+      });
+
+      if (insertError) {
+        console.error(`[cron:stock-list-schedules] Failed to insert job for ${listName}:`, insertError);
+      } else {
+        queuedCount++;
+      }
     }
 
     // Update lastRun
@@ -279,30 +267,14 @@ async function handle(req: Request) {
       .eq('id', settingsRow.id);
   }
 
-  // Save pending sends
-  const allPending = [...existingPending, ...newPendingSends];
-  if (newPendingSends.length > 0) {
-    if (pendingRow?.id) {
-      await supabase
-        .from('app_settings')
-        .update({ value: { pending: allPending } })
-        .eq('id', pendingRow.id);
-    } else {
-      await supabase
-        .from('app_settings')
-        .insert({ key: 'pending_stock_list_sends', value: { pending: allPending } } as any);
-    }
-  }
-
   const totalQueued = results.reduce((sum, r) => sum + (r.queued || 0), 0);
 
   // Build response
   const response: Record<string, any> = {
     message: results.length > 0 
-      ? `Queued ${totalQueued} email(s) from ${results.length} schedule(s)` 
+      ? `Queued ${totalQueued} job(s) for Railway worker from ${results.length} schedule(s)` 
       : 'No schedules due to run',
     queued: totalQueued,
-    pendingTotal: allPending.length,
     serverTime: {
       utc: now.toISOString(),
       copenhagen: cph.formatted,
@@ -328,7 +300,6 @@ async function handle(req: Request) {
       minutesUntilNext: s.check.minutesUntilNext,
     }));
     response.queueResults = results;
-    response.pendingSends = allPending;
   }
 
   return new Response(JSON.stringify(response, null, debug ? 2 : 0), {
