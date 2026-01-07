@@ -659,11 +659,12 @@ export async function exportOverview(ctx: Ctx) {
           cell: { padding: 4, fontSize: 8 },
           left: { textAlign: 'left' },
           right: { textAlign: 'right' },
+          center: { textAlign: 'center' },
           strike: { textDecoration: 'line-through', color: '#64748b' },
           green: { color: '#16a34a' },
           red: { color: '#dc2626' }
         });
-        const Cell = (txt: string, w: string | number, align: 'left' | 'right' = 'left', extra?: any) => React.createElement(Text, { style: [{ width: w }, styles.cell, align === 'left' ? styles.left : styles.right, extra || {}] }, txt);
+        const Cell = (txt: string, w: string | number, align: 'left' | 'right' | 'center' = 'left', extra?: any) => React.createElement(Text, { style: [{ width: w }, styles.cell, align === 'left' ? styles.left : align === 'right' ? styles.right : styles.center, extra || {}] }, txt);
         const fmt = (n: number) => new Intl.NumberFormat('da-DK').format(Math.round(n));
         
         // Calculate KPI statistics for this salesperson
@@ -725,22 +726,23 @@ export async function exportOverview(ctx: Ctx) {
           )
         );
         
+        // Column widths: Kunde 25% + By 12% + Kommentar 10% = 47% | S1: Stk 7% + Oms 10% = 17% | S2: Stk 7% + Oms 10% = 17% | Diff: Stk 6% + Oms 7% = 13%
         const groupHeader = React.createElement(View, { style: styles.tableHeaderGlobal },
-          Cell('KUNDE', '45%', 'left', styles.headerCell),
-          Cell(s1Name ?? 'S1', '20%', 'right', styles.headerCell),
-          Cell(s2Name ?? 'S2', '20%', 'right', styles.headerCell),
-          Cell('Forskel', '15%', 'right', styles.headerCell)
+          Cell('KUNDE', '47%', 'left', styles.headerCell),
+          Cell(s1Name ?? 'S1', '17%', 'center', styles.headerCell),
+          Cell(s2Name ?? 'S2', '17%', 'center', styles.headerCell),
+          Cell('Forskel', '13%', 'center', styles.headerCell)
         );
         const header = React.createElement(View, { style: styles.tableHeader },
           Cell('Kunde', '25%', 'left', styles.headerCell),
           Cell('By', '12%', 'left', styles.headerCell),
           Cell('Kommentar', '10%', 'left', styles.headerCell),
-          Cell('Stk', '7%', 'right', styles.headerCell),
-          Cell('Oms', '10%', 'right', styles.headerCell),
-          Cell('Stk', '7%', 'right', styles.headerCell),
-          Cell('Oms', '10%', 'right', styles.headerCell),
-          Cell('Stk', '6%', 'right', styles.headerCell),
-          Cell('Oms', '7%', 'right', styles.headerCell)
+          Cell('Stk', '7%', 'center', styles.headerCell),
+          Cell('Oms', '10%', 'center', styles.headerCell),
+          Cell('Stk', '7%', 'center', styles.headerCell),
+          Cell('Oms', '10%', 'center', styles.headerCell),
+          Cell('Stk', '6%', 'center', styles.headerCell),
+          Cell('Oms', '7%', 'center', styles.headerCell)
         );
         // Respect group_name: sort by group then company, and add a subtotal row at the end of each group
         const sorted = [...rows].sort((a,b) => {
