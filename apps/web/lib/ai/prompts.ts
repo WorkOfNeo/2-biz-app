@@ -76,8 +76,13 @@ Unless BOTH of these are true:
 - Style is clearly underperforming vs last year (check yoy_analysis)
 - Customer visit rate is already >80%
 
-### Rule 5: Include ALL styles
-Every style with sales should have a suggestion. Don't skip any.
+### Rule 5: YOU MUST INCLUDE EVERY SINGLE STYLE
+**CRITICAL: Return a suggestion for EVERY style/color in the input data.**
+- Do NOT skip any styles
+- Do NOT summarize or abbreviate
+- If there are 103 styles in input, return 103 lines in output
+- Every single style with CURRENT_SOLD_QTY > 0 MUST appear in your output
+- This is MANDATORY - incomplete responses will be rejected
 
 ## Instructions
 - If aggregated YoY index is below 100%, factor this into projections

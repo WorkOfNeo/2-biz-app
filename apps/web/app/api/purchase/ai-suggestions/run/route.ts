@@ -600,6 +600,19 @@ export async function POST(req: Request) {
           ? ((currentSeasonTotalQty / lastSeasonTotalQty) * 100).toFixed(1)
           : 'N/A';
 
+        // Also get stats from uploaded CSV for accurate current season numbers
+        const uploadedTotalQty = (salesSummary || []).reduce((sum, r) => sum + (Number(r.total_qty) || 0), 0);
+        const uploadedTotalAmount = (salesSummary || []).reduce((sum, r) => sum + (Number(r.total_amount) || 0), 0);
+        const uploadedCustomers = new Set((customerSummary || []).map(c => c.customer_ref)).size;
+        
+        // Calculate visit rate based on uploaded customers vs last year customers
+        const actualVisitRate = customersFromLastSeason > 0 
+          ? ((uploadedCustomers / customersFromLastSeason) * 100).toFixed(1)
+          : 'N/A';
+        
+        console.log('[YoY Analysis] Uploaded CSV stats: qty=', uploadedTotalQty, 'customers=', uploadedCustomers);
+        console.log('[YoY Analysis] Actual visit rate based on CSV:', actualVisitRate, '%');
+        
         yoyAnalysis = {
           comparisonSeasonId,
           lastSeason: {
@@ -608,12 +621,10 @@ export async function POST(req: Request) {
             customerCount: customersFromLastSeason,
           },
           currentSeason: {
-            totalQty: currentSeasonTotalQty,
-            totalAmount: Math.round(currentSeasonTotalAmount),
-            customersVisited: customersVisitedThisSeason,
-            visitRate: customersFromLastSeason > 0 
-              ? `${((customersVisitedThisSeason / customersFromLastSeason) * 100).toFixed(1)}%`
-              : 'N/A',
+            totalQty: uploadedTotalQty,  // Use uploaded CSV data!
+            totalAmount: Math.round(uploadedTotalAmount),
+            customersVisited: uploadedCustomers,  // From uploaded CSV
+            visitRate: `${actualVisitRate}%`,  // Based on uploaded customers
           },
           aggregatedIndex: `${aggregatedIndex}%`,
           nulledThisYear: {
@@ -959,6 +970,13 @@ This is a CLOSING/LATE purchase run. Be CONSERVATIVE.
       try {
         aiOutput = JSON.parse(rawResponse) as AIOutput;
         
+        // Build sold qty lookup FIRST so we can use it in logging
+        const soldQtyMapForLog: Record<string, number> = {};
+        for (const row of (salesSummary || [])) {
+          const key = `${row.style_no}|${row.color}`;
+          soldQtyMapForLog[key] = (soldQtyMapForLog[key] || 0) + (Number(row.total_qty) || 0);
+        }
+        
         // Log AI response summary
         console.log('═══════════════════════════════════════════════════════════');
         console.log('[AI Response] SUMMARY:');
@@ -979,14 +997,16 @@ This is a CLOSING/LATE purchase run. Be CONSERVATIVE.
             `Missing ${totalStylesSent - totalAILines} styles`);
         }
         
-        // Log per-supplier summary
+        // Log per-supplier summary (with actual sold qty from our data)
         for (const supplier of (aiOutput.suppliers || [])) {
           const topLines = (supplier.lines || []).slice(0, 3);
           console.log(`[AI Response] ${supplier.supplier_name}:`);
           console.log(`  - ${supplier.lines?.length || 0} lines, ${supplier.total_units} total units`);
-          console.log(`  - Top suggestions:`, topLines.map(l => 
-            `${l.style_no}/${l.color}: ${(l as any).current_sold || '?'} sold → ${l.suggested_qty} suggested`
-          ).join(', '));
+          console.log(`  - Top suggestions:`, topLines.map(l => {
+            const key = `${l.style_no}|${l.color}`;
+            const soldQty = soldQtyMapForLog[key] || 0;
+            return `${l.style_no}/${l.color}: ${soldQty} sold → ${l.suggested_qty} suggested`;
+          }).join(', '));
         }
         console.log('═══════════════════════════════════════════════════════════');
         
@@ -1092,6 +1112,139 @@ This is a CLOSING/LATE purchase run. Be CONSERVATIVE.
       }
       
       console.log('[AI Suggestions] Enriched output with', Object.keys(styleNameMap).length, 'style names and size breakdowns');
+      
+      // ═══════════════════════════════════════════════════════════════════════
+      // BACKFILL: Add missing styles that AI didn't include
+      // This ensures we get a suggestion for EVERY style with sales
+      // ═══════════════════════════════════════════════════════════════════════
+      
+      // Build set of style/colors that AI already returned
+      const aiReturnedKeys = new Set<string>();
+      for (const supplier of aiOutput.suppliers) {
+        for (const line of (supplier.lines || [])) {
+          aiReturnedKeys.add(`${line.style_no}|${line.color}`);
+        }
+      }
+      
+      // Find missing styles from our sales data
+      const missingStyles: Array<{
+        supplier: string;
+        style_no: string;
+        color: string;
+        soldQty: number;
+        style_name?: string;
+        image_url?: string;
+        sizeData: { sizes: string[]; sizeQty: Record<string, number> } | null;
+      }> = [];
+      
+      for (const row of (salesSummary || [])) {
+        const key = `${row.style_no}|${row.color}`;
+        if (!aiReturnedKeys.has(key)) {
+          const sizeData = sizeBreakdownMap[key];
+          missingStyles.push({
+            supplier: row.supplier || 'Unknown',
+            style_no: row.style_no,
+            color: row.color || 'Default',
+            soldQty: Number(row.total_qty) || 0,
+            style_name: styleNameMap[row.style_no],
+            image_url: imageUrlMap[row.style_no],
+            sizeData: sizeData || null,
+          });
+        }
+      }
+      
+      if (missingStyles.length > 0) {
+        console.log('═══════════════════════════════════════════════════════════');
+        console.log('[BACKFILL] Adding', missingStyles.length, 'styles that AI missed');
+        
+        // Calculate visit rate for quantity projection
+        const visitRateNum = yoyAnalysis?.currentSeason?.visitRate 
+          ? parseFloat(yoyAnalysis.currentSeason.visitRate) / 100 
+          : 0.1; // Default 10% if unknown
+        const multiplier = visitRateNum > 0 ? Math.min(1 / visitRateNum, 15) : 10; // Cap at 15x
+        
+        console.log('[BACKFILL] Visit rate:', yoyAnalysis?.currentSeason?.visitRate, '→ multiplier:', multiplier.toFixed(2));
+        
+        // Group missing by supplier
+        const missingBySupplier: Record<string, typeof missingStyles> = {};
+        for (const m of missingStyles) {
+          if (!missingBySupplier[m.supplier]) {
+            missingBySupplier[m.supplier] = [];
+          }
+          missingBySupplier[m.supplier].push(m);
+        }
+        
+        // Add to AI output
+        for (const [supplierName, styles] of Object.entries(missingBySupplier)) {
+          // Find or create supplier in output
+          let supplierOutput = aiOutput.suppliers.find(s => s.supplier_name === supplierName);
+          if (!supplierOutput) {
+            supplierOutput = {
+              supplier_name: supplierName,
+              lines: [],
+              total_units: 0,
+              order_value: 0,
+              notes: 'Added by system backfill - AI did not include this supplier',
+            };
+            aiOutput.suppliers.push(supplierOutput);
+          }
+          if (!supplierOutput.lines) {
+            supplierOutput.lines = [];
+          }
+          
+          for (const m of styles) {
+            // Project quantity: sold × multiplier, rounded to nearest 10
+            const projectedQty = Math.max(m.soldQty, Math.round((m.soldQty * multiplier) / 10) * 10);
+            
+            // Build size quantities
+            let sizeQuantities: Record<string, number> | undefined = undefined;
+            if (m.sizeData && m.sizeData.sizes.length > 0) {
+              const totalSold = Object.values(m.sizeData.sizeQty).reduce((sum, v) => sum + (v || 0), 0);
+              if (totalSold > 0) {
+                sizeQuantities = {};
+                for (const size of m.sizeData.sizes) {
+                  const sizeQty = m.sizeData.sizeQty[size] || 0;
+                  const ratio = sizeQty / totalSold;
+                  sizeQuantities[size] = Math.round(projectedQty * ratio);
+                }
+              } else {
+                // Even distribution
+                sizeQuantities = {};
+                const perSize = Math.floor(projectedQty / m.sizeData.sizes.length);
+                m.sizeData.sizes.forEach((size, idx) => {
+                  sizeQuantities![size] = perSize + (idx < projectedQty % m.sizeData!.sizes.length ? 1 : 0);
+                });
+              }
+            }
+            
+            const backfillLine: any = {
+              style_no: m.style_no,
+              color: m.color,
+              suggested_qty: projectedQty,
+              current_sold: m.soldQty,
+              style_name: m.style_name,
+              image_url: m.image_url,
+              skip_reason: null,
+              notes: 'Backfilled - AI did not include this style',
+              projection_basis: `Sold ${m.soldQty} × ${multiplier.toFixed(1)}x = ${projectedQty}`,
+              available_sizes: m.sizeData?.sizes || [],
+              sold_sizes: m.sizeData?.sizeQty || {},
+              total_sold: m.soldQty,
+              size_quantities: sizeQuantities,
+            };
+            
+            supplierOutput.lines.push(backfillLine);
+            supplierOutput.total_units += projectedQty;
+          }
+        }
+        
+        // Update total units
+        aiOutput.total_units = aiOutput.suppliers.reduce((sum, s) => sum + (s.total_units || 0), 0);
+        
+        console.log('[BACKFILL] Total styles now:', aiReturnedKeys.size + missingStyles.length);
+        console.log('[BACKFILL] Total units now:', aiOutput.total_units);
+        console.log('═══════════════════════════════════════════════════════════');
+      }
     }
 
     // Update ai_runs record
