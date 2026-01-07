@@ -51,7 +51,7 @@ export async function POST(req: Request) {
       seasonId,
       comparisonSeasonId, // Last year's season for YoY comparison
       dateRange,
-      topNPerSupplier = 50, // Limit items per supplier to control token usage
+      topNPerSupplier = 200, // Increased from 50 - need to see all styles!
     } = body as {
       importId: string;
       seasonId?: string;
@@ -333,15 +333,33 @@ export async function POST(req: Request) {
       console.log(`  - "${supplier}": ${debug.rowCount} style/colors, ${debug.totalQty} pcs`);
     }
 
-    // Limit items per supplier to control tokens
+    // Limit items per supplier to control tokens, but add clear sold qty context
     const limitedSalesBySupplier: Record<string, any[]> = {};
+    let totalStylesSent = 0;
+    let totalQtySent = 0;
+    
     for (const [supplier, items] of Object.entries(salesBySupplier)) {
       // Sort by total_qty descending and take top N
       const sorted = items.sort((a, b) => (b.total_qty || 0) - (a.total_qty || 0));
-      limitedSalesBySupplier[supplier] = sorted.slice(0, topNPerSupplier);
+      const limited = sorted.slice(0, topNPerSupplier);
+      
+      // Rename fields to be crystal clear for AI
+      limitedSalesBySupplier[supplier] = limited.map(item => ({
+        style_no: item.style_no,
+        style_name: item.style_name,
+        color: item.color,
+        CURRENT_SOLD_QTY: item.total_qty,  // Renamed for clarity!
+        customer_count: item.customer_count,
+        countries: item.countries,
+        total_amount: item.total_amount,
+      }));
+      
+      totalStylesSent += limited.length;
+      totalQtySent += limited.reduce((sum, i) => sum + (i.total_qty || 0), 0);
     }
     
-    console.log('[Supplier Grouping] After limiting to top', topNPerSupplier, 'items per supplier');
+    console.log('[Supplier Grouping] Sending', totalStylesSent, 'styles to AI with', totalQtySent, 'total qty sold');
+    console.log('[Supplier Grouping] Limited to top', topNPerSupplier, 'items per supplier');
     console.log('═══════════════════════════════════════════════════════════');
 
     // Build customer analysis summary
