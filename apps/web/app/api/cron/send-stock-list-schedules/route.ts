@@ -69,20 +69,35 @@ async function handle(req: Request) {
   const serviceKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVER_ROLE_KEY || '').trim();
 
   if (!supabaseUrl || !serviceKey) {
-    return new Response(JSON.stringify({ error: 'Supabase env missing' }), { status: 500 });
+    return new Response(JSON.stringify({ 
+      error: 'Supabase env missing',
+      missing: {
+        url: !supabaseUrl,
+        serviceKey: !serviceKey,
+      },
+      hint: 'Set NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in Vercel env vars'
+    }), { status: 500 });
   }
 
   const supabase = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } });
 
-  // Get EmailJS config
-  const serviceId = process.env.EMAILJS_SERVICE_ID || process.env.EMAILJS_SERVICE_KEY || '';
-  const templateId = process.env.EMAILJS_TEMPLATE_ID || '';
-  const publicKey = process.env.EMAILJS_PUBLIC_KEY || '';
-  const fromEmail = process.env.EMAILJS_FROM_EMAIL || '';
-  const fromName = process.env.EMAILJS_FROM_NAME || '2-BIZ';
+  // Get EmailJS config (try both server-side and NEXT_PUBLIC_ variants)
+  const serviceId = process.env.EMAILJS_SERVICE_ID || process.env.EMAILJS_SERVICE_KEY || process.env.NEXT_PUBLIC_EMAILJS_SERVICE_ID || process.env.NEXT_PUBLIC_EMAILJS_SERVICE_KEY || '';
+  const templateId = process.env.EMAILJS_TEMPLATE_ID || process.env.NEXT_PUBLIC_EMAILJS_TEMPLATE_ID || '';
+  const publicKey = process.env.EMAILJS_PUBLIC_KEY || process.env.NEXT_PUBLIC_EMAILJS_PUBLIC_KEY || '';
+  const fromEmail = process.env.EMAILJS_FROM_EMAIL || process.env.NEXT_PUBLIC_EMAILJS_FROM_EMAIL || '';
+  const fromName = process.env.EMAILJS_FROM_NAME || process.env.NEXT_PUBLIC_EMAILJS_FROM_NAME || '2-BIZ';
 
   if (!serviceId || !templateId || !publicKey) {
-    return new Response(JSON.stringify({ error: 'EmailJS env missing' }), { status: 500 });
+    return new Response(JSON.stringify({ 
+      error: 'EmailJS env missing',
+      missing: {
+        serviceId: !serviceId,
+        templateId: !templateId,
+        publicKey: !publicKey,
+      },
+      hint: 'Set EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, EMAILJS_PUBLIC_KEY in Vercel env vars'
+    }), { status: 500 });
   }
 
   // Load schedules
