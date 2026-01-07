@@ -232,7 +232,7 @@ export default function FeedbackPage() {
                 <div className="text-sm">
                   <span className="text-slate-500">Common words in reasons: </span>
                   {summary.topPatterns.map((p, i) => (
-                    <Badge key={p.pattern} variant="outline" className="ml-1">
+                    <Badge key={p.pattern} className="ml-1 bg-slate-100 text-slate-600">
                       {p.pattern} ({p.count})
                     </Badge>
                   ))}
