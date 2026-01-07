@@ -175,8 +175,9 @@ async function handle(req: Request) {
 
       // Update lastRun
       const idx = updatedSchedules.findIndex(s => s.id === schedule.id);
-      if (idx !== -1) {
-        updatedSchedules[idx] = { ...updatedSchedules[idx], lastRun: now.toISOString() };
+      const existing = updatedSchedules[idx];
+      if (idx !== -1 && existing) {
+        updatedSchedules[idx] = { ...existing, lastRun: now.toISOString() };
       }
 
       results.push({ scheduleId: schedule.id, scheduleName: schedule.name, sent: sentCount });
