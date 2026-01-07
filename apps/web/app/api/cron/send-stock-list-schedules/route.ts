@@ -1,8 +1,12 @@
 // Stock List Schedule Cron Job - sends scheduled emails automatically
+// Times are compared in Europe/Copenhagen timezone
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 const EMAILJS_ENDPOINT = 'https://api.emailjs.com/api/v1.0/email/send';
+const TIMEZONE = 'Europe/Copenhagen';
+
+const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 interface StockListSchedule {
   id: string;
@@ -17,47 +21,116 @@ interface StockListSchedule {
   lastRun?: string;
 }
 
-/**
- * Check if a schedule should run now.
- * We check if:
- * 1. The schedule is enabled
- * 2. Current day matches (for weekly) or any day (for daily)
- * 3. Current time is within 10 minutes of scheduled time
- * 4. It hasn't run in the last 50 minutes (to prevent duplicate sends)
- */
-function shouldRunNow(schedule: StockListSchedule, now: Date): boolean {
-  if (!schedule.enabled) return false;
+interface ScheduleCheckResult {
+  shouldRun: boolean;
+  reason: string;
+  currentTime: string;
+  scheduledTime: string;
+  currentDay: string;
+  scheduledDays: string;
+  lastRun: string | null;
+  minutesUntilNext: number | null;
+}
 
-  const currentDay = now.getDay(); // 0-6, 0=Sunday
-  const currentHour = now.getHours();
-  const currentMinute = now.getMinutes();
+/**
+ * Get current time in Copenhagen timezone
+ */
+function getCopenhagenTime(date: Date): { day: number; hour: number; minute: number; formatted: string } {
+  const formatter = new Intl.DateTimeFormat('en-GB', {
+    timeZone: TIMEZONE,
+    weekday: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+  const parts = formatter.formatToParts(date);
+  const weekday = parts.find(p => p.type === 'weekday')?.value || '';
+  const hour = parseInt(parts.find(p => p.type === 'hour')?.value || '0', 10);
+  const minute = parseInt(parts.find(p => p.type === 'minute')?.value || '0', 10);
+  
+  const dayMap: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  const day = dayMap[weekday] ?? 0;
+  
+  return { 
+    day, 
+    hour, 
+    minute, 
+    formatted: `${weekday} ${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}` 
+  };
+}
+
+/**
+ * Check if a schedule should run now and return detailed info
+ */
+function checkSchedule(schedule: StockListSchedule, now: Date): ScheduleCheckResult {
+  const cph = getCopenhagenTime(now);
+  const currentDay = cph.day;
+  const currentHour = cph.hour;
+  const currentMinute = cph.minute;
 
   // Parse scheduled time
   const timeParts = schedule.time.split(':').map(Number);
   const schedHour = timeParts[0] ?? 0;
   const schedMinute = timeParts[1] ?? 0;
 
+  const scheduledDays = schedule.scheduleType === 'daily' 
+    ? 'Every day' 
+    : schedule.days.map(d => DAY_NAMES[d]).join(', ');
+
+  const result: ScheduleCheckResult = {
+    shouldRun: false,
+    reason: '',
+    currentTime: `${currentHour.toString().padStart(2, '0')}:${currentMinute.toString().padStart(2, '0')}`,
+    scheduledTime: schedule.time,
+    currentDay: DAY_NAMES[currentDay] || '',
+    scheduledDays,
+    lastRun: schedule.lastRun || null,
+    minutesUntilNext: null,
+  };
+
+  if (!schedule.enabled) {
+    result.reason = 'Schedule is disabled';
+    return result;
+  }
+
   // Check day match
   if (schedule.scheduleType === 'weekly') {
-    if (!schedule.days.includes(currentDay)) return false;
+    if (!schedule.days.includes(currentDay)) {
+      result.reason = `Today (${DAY_NAMES[currentDay]}) not in scheduled days`;
+      return result;
+    }
   }
 
   // Check time match (within 10 minute window)
   const scheduledMinutes = schedHour * 60 + schedMinute;
   const currentMinutes = currentHour * 60 + currentMinute;
-  const diff = Math.abs(currentMinutes - scheduledMinutes);
+  const diff = currentMinutes - scheduledMinutes;
+  const absDiff = Math.abs(diff);
   
-  // Within 10 minutes of scheduled time
-  if (diff > 10 && diff < (24 * 60 - 10)) return false;
+  if (absDiff > 10 && absDiff < (24 * 60 - 10)) {
+    if (diff < 0) {
+      result.minutesUntilNext = -diff;
+      result.reason = `${-diff} minutes until scheduled time`;
+    } else {
+      result.reason = `${diff} minutes past scheduled time (window closed)`;
+    }
+    return result;
+  }
 
   // Check if already ran recently (within 50 minutes)
   if (schedule.lastRun) {
     const lastRunTime = new Date(schedule.lastRun).getTime();
     const fiftyMinutesAgo = now.getTime() - 50 * 60 * 1000;
-    if (lastRunTime > fiftyMinutesAgo) return false;
+    if (lastRunTime > fiftyMinutesAgo) {
+      const minsAgo = Math.round((now.getTime() - lastRunTime) / 60000);
+      result.reason = `Already ran ${minsAgo} minutes ago`;
+      return result;
+    }
   }
 
-  return true;
+  result.shouldRun = true;
+  result.reason = 'Ready to send';
+  return result;
 }
 
 async function handle(req: Request) {
@@ -134,17 +207,36 @@ async function handle(req: Request) {
   }
 
   const now = new Date();
+  const cph = getCopenhagenTime(now);
   const results: Array<{ scheduleId: string; scheduleName: string; sent: number; error?: string }> = [];
   const updatedSchedules: StockListSchedule[] = [...schedules];
 
-  for (const schedule of schedules) {
-    const shouldRun = forceId === schedule.id || shouldRunNow(schedule, now);
-    
-    if (debug) {
-      console.log(`[cron:stock-list-schedules] Checking schedule "${schedule.name}" (${schedule.id}): shouldRun=${shouldRun}`);
-    }
+  // Check all schedules and collect debug info
+  const scheduleChecks: Array<{
+    id: string;
+    name: string;
+    enabled: boolean;
+    stockLists: string[];
+    recipients: number;
+    check: ScheduleCheckResult;
+    willRun: boolean;
+  }> = [];
 
-    if (!shouldRun) continue;
+  for (const schedule of schedules) {
+    const check = checkSchedule(schedule, now);
+    const willRun = forceId === schedule.id || check.shouldRun;
+    
+    scheduleChecks.push({
+      id: schedule.id,
+      name: schedule.name,
+      enabled: schedule.enabled,
+      stockLists: schedule.stockLists,
+      recipients: schedule.recipients.length,
+      check,
+      willRun,
+    });
+
+    if (!willRun) continue;
 
     try {
       let sentCount = 0;
@@ -217,12 +309,38 @@ async function handle(req: Request) {
 
   const totalSent = results.reduce((sum, r) => sum + r.sent, 0);
 
-  return new Response(JSON.stringify({
+  // Build response
+  const response: Record<string, any> = {
     message: results.length > 0 ? `Processed ${results.length} schedule(s)` : 'No schedules due to run',
     sent: totalSent,
-    results: debug ? results : undefined,
-    time: now.toISOString(),
-  }), {
+    serverTime: {
+      utc: now.toISOString(),
+      copenhagen: cph.formatted,
+      timezone: TIMEZONE,
+    },
+  };
+
+  // Always include schedule summary in debug mode
+  if (debug) {
+    response.schedules = scheduleChecks.map(s => ({
+      id: s.id,
+      name: s.name,
+      enabled: s.enabled,
+      stockLists: s.stockLists,
+      recipients: s.recipients,
+      scheduledTime: s.check.scheduledTime,
+      scheduledDays: s.check.scheduledDays,
+      currentTime: s.check.currentTime,
+      currentDay: s.check.currentDay,
+      lastRun: s.check.lastRun,
+      status: s.check.reason,
+      willRun: s.willRun,
+      minutesUntilNext: s.check.minutesUntilNext,
+    }));
+    response.sendResults = results;
+  }
+
+  return new Response(JSON.stringify(response, null, debug ? 2 : 0), {
     status: 200,
     headers: { 'Content-Type': 'application/json' }
   });
