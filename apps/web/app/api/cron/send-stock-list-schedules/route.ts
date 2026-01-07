@@ -32,7 +32,9 @@ function shouldRunNow(schedule: StockListSchedule, now: Date): boolean {
   const currentMinute = now.getMinutes();
 
   // Parse scheduled time
-  const [schedHour, schedMinute] = schedule.time.split(':').map(Number);
+  const timeParts = schedule.time.split(':').map(Number);
+  const schedHour = timeParts[0] ?? 0;
+  const schedMinute = timeParts[1] ?? 0;
 
   // Check day match
   if (schedule.scheduleType === 'weekly') {
