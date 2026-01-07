@@ -24,7 +24,7 @@ import { pushAppPoToSpy } from './jobs/pushAppPoToSpy.js';
 import { syncAppPoFromSpy } from './jobs/syncAppPoFromSpy.js';
 import { createSpyStockOrder } from './jobs/createSpyStockOrder.js';
 import { scrapeStyleRawCosts } from './jobs/scrapeStyleRawCosts.js';
-import { sendStockListEmail } from './jobs/sendStockListEmail.js';
+import { sendEmail } from './jobs/sendEmail.js';
 // (imported with .js extension above)
 
 const SUPABASE_URL = process.env.SUPABASE_URL!;
@@ -2229,9 +2229,10 @@ async function runJob(job: JobRow) {
       return; // scrape_statistics handled successfully
     }
 
-    // Handle send_stock_list_email job (for scheduled stock list emails)
-    if ((job.type as any) === 'send_stock_list_email') {
-      const result = await sendStockListEmail(
+    // Handle send_email job (generic email sending)
+    // Also supports legacy 'send_stock_list_email' for backwards compatibility
+    if ((job.type as any) === 'send_email' || (job.type as any) === 'send_stock_list_email') {
+      const result = await sendEmail(
         supabase,
         job.payload as any,
         async (level, msg, data) => log(job.id, level, msg, data)

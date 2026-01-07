@@ -1,5 +1,5 @@
--- 102_jobs_add_send_stock_list_email.sql
--- Add 'send_stock_list_email' to jobs.type check constraint for scheduled stock list emails
+-- 102_jobs_add_send_email.sql
+-- Add 'send_email' generic email job type (replaces send_stock_list_email)
 
 alter table public.jobs
   drop constraint if exists jobs_type_check;
@@ -29,6 +29,7 @@ alter table public.jobs
     'sync_app_po_from_spy',
     'create_spy_stock_order',
     'scrape_style_raw_costs',
-    'send_stock_list_email'
+    'send_stock_list_email',
+    'send_email'
   ));
 

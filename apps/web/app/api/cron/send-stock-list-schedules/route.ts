@@ -237,17 +237,26 @@ async function handle(req: Request) {
 
       // Create one job per recipient
       for (const recipient of schedule.recipients) {
+        const subject = `${listName} - Lagerliste`;
+        const filename = `${listName} - Lagerliste.pdf`;
+        
+        // Generic email payload format
         const jobPayload = {
-          scheduleId: schedule.id,
-          scheduleName: schedule.name,
-          listName,
-          listUrl: exp.public_url,
-          recipient, // Single recipient per job
-          emailBody: schedule.emailBody || 'Hermed lagerliste :)',
+          recipient,
+          subject,
+          body: schedule.emailBody || 'Hermed lagerliste :)',
+          context: 'stock_list_schedule',
+          contextId: schedule.id,
+          contextName: schedule.name,
+          templateParams: {
+            stock_list_1_url: exp.public_url,
+            stock_list_1_name: listName,
+            stock_list_1_filename: filename,
+          },
         };
 
         const { error: insertError, data: insertedJob } = await supabase.from('jobs').insert({
-          type: 'send_stock_list_email',
+          type: 'send_email',
           payload: jobPayload,
           status: 'queued',
           queue: 'default',

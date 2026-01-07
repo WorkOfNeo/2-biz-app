@@ -2,13 +2,22 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 
 const EMAILJS_ENDPOINT = 'https://api.emailjs.com/api/v1.0/email/send';
 
-interface SendStockListEmailPayload {
-  scheduleId: string;
-  scheduleName: string;
-  listName: string;
-  listUrl: string;
-  recipient: string; // Single recipient per job
-  emailBody: string;
+/**
+ * Generic email payload - can be used for any type of email
+ */
+interface SendEmailPayload {
+  // Required
+  recipient: string;
+  subject: string;
+  body: string;
+  
+  // Optional metadata (for logging/tracking)
+  context?: string; // e.g. "stock_list_schedule", "salesperson_report", etc.
+  contextId?: string; // e.g. schedule ID, report ID, etc.
+  contextName?: string; // e.g. schedule name, report name, etc.
+  
+  // Optional template params for EmailJS
+  templateParams?: Record<string, string>;
 }
 
 interface JobResult {
@@ -18,15 +27,20 @@ interface JobResult {
 }
 
 /**
- * Sends a stock list email using EmailJS.
+ * Generic email sender using EmailJS.
  * This runs on the Railway worker (server-side), so we need the private key.
+ * 
+ * Can be used for:
+ * - Stock list schedules
+ * - Salesperson reports
+ * - Any future email needs
  */
-export async function sendStockListEmail(
+export async function sendEmail(
   supabase: SupabaseClient,
-  payload: SendStockListEmailPayload,
+  payload: SendEmailPayload,
   log: (level: 'info' | 'error' | 'progress', msg: string, data?: Record<string, any>) => Promise<void>
 ): Promise<JobResult> {
-  const { scheduleId, scheduleName, listName, listUrl, recipient, emailBody } = payload;
+  const { recipient, subject, body, context, contextId, contextName, templateParams } = payload;
 
   // Get EmailJS config from environment
   const serviceId = process.env.EMAILJS_SERVICE_ID || '';
@@ -59,14 +73,14 @@ export async function sendStockListEmail(
     };
   }
 
-  await log('info', `Sending stock list email: ${listName} to ${recipient}`, {
-    scheduleName,
-    listName,
+  const contextLabel = context ? `[${context}]` : '';
+  await log('info', `Sending email ${contextLabel} to ${recipient}`, {
+    context,
+    contextId,
+    contextName,
     recipient,
+    subject,
   });
-
-  const subject = `${listName} - Lagerliste`;
-  const filename = `${listName} - Lagerliste.pdf`;
 
   // Build EmailJS payload with accessToken for server-side calls
   const emailPayload = {
@@ -77,12 +91,11 @@ export async function sendStockListEmail(
     template_params: {
       to_email: recipient,
       subject,
-      message_html: emailBody || 'Hermed lagerliste :)',
+      message_html: body,
       from_name: fromName,
       from_email: fromEmail,
-      stock_list_1_url: listUrl,
-      stock_list_1_name: listName,
-      stock_list_1_filename: filename,
+      // Merge any additional template params
+      ...(templateParams || {}),
     },
   };
 
@@ -105,19 +118,22 @@ export async function sendStockListEmail(
     const responseText = await res.text();
     
     if (res.ok) {
-      await log('info', `Successfully sent ${listName} to ${recipient}`, {
-        listName,
+      await log('info', `Successfully sent email to ${recipient}`, {
+        context,
+        contextName,
         recipient,
+        subject,
         responseStatus: res.status,
       });
       return {
         success: true,
-        message: `Sent ${listName} to ${recipient}`,
-        data: { listName, recipient },
+        message: `Sent to ${recipient}`,
+        data: { recipient, subject, context },
       };
     } else {
-      await log('error', `Failed to send ${listName}: ${responseText}`, {
-        listName,
+      await log('error', `Failed to send email to ${recipient}: ${responseText}`, {
+        context,
+        recipient,
         status: res.status,
         statusText: res.statusText,
         error: responseText,
@@ -128,8 +144,9 @@ export async function sendStockListEmail(
       };
     }
   } catch (err: any) {
-    await log('error', `Exception sending ${listName}: ${err?.message || String(err)}`, {
-      listName,
+    await log('error', `Exception sending email to ${recipient}: ${err?.message || String(err)}`, {
+      context,
+      recipient,
       error: err?.message || String(err),
     });
     return {
