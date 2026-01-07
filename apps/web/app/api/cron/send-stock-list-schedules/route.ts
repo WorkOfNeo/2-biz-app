@@ -137,6 +137,7 @@ async function handle(req: Request) {
   const urlObj = new URL(req.url);
   const debug = urlObj.searchParams.get('debug') === '1';
   const forceId = urlObj.searchParams.get('force'); // Force run a specific schedule by ID
+  const testMode = urlObj.searchParams.get('test') === '1'; // Bypass all timing checks
 
   const { createClient } = await import('@supabase/supabase-js');
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -202,7 +203,9 @@ async function handle(req: Request) {
 
   for (const schedule of schedules) {
     const check = checkSchedule(schedule, now);
-    const willRun = forceId === schedule.id || check.shouldRun;
+    // testMode: run all enabled schedules regardless of timing
+    // forceId: run a specific schedule by ID
+    const willRun = (testMode && schedule.enabled) || forceId === schedule.id || check.shouldRun;
     
     scheduleChecks.push({
       id: schedule.id,
@@ -275,6 +278,7 @@ async function handle(req: Request) {
       ? `Queued ${totalQueued} job(s) for Railway worker from ${results.length} schedule(s)` 
       : 'No schedules due to run',
     queued: totalQueued,
+    testMode,
     serverTime: {
       utc: now.toISOString(),
       copenhagen: cph.formatted,
