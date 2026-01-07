@@ -5,7 +5,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../..
 import { Button } from '../../../components/ui/button';
 import { Badge } from '../../../components/ui/badge';
 import { Input } from '../../../components/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
 
 type FeedbackItem = {
   id: string;
@@ -158,16 +157,16 @@ export default function FeedbackPage() {
           <h1 className="text-2xl font-semibold text-slate-800">AI Feedback & Learning</h1>
           <p className="text-slate-500">Review corrections made to AI suggestions</p>
         </div>
-        <Select value={selectedSeason} onValueChange={setSelectedSeason}>
-          <SelectTrigger className="w-[200px]">
-            <SelectValue placeholder="Select season" />
-          </SelectTrigger>
-          <SelectContent>
-            {seasons.map(s => (
-              <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <select 
+          value={selectedSeason} 
+          onChange={e => setSelectedSeason(e.target.value)}
+          className="w-[200px] h-10 px-3 rounded-md border border-slate-200 bg-white text-sm"
+        >
+          <option value="">Select season</option>
+          {seasons.map(s => (
+            <option key={s.id} value={s.id}>{s.name}</option>
+          ))}
+        </select>
       </div>
 
       {/* Summary Cards */}
@@ -252,17 +251,16 @@ export default function FeedbackPage() {
           onChange={e => setSearchTerm(e.target.value)}
           className="max-w-sm"
         />
-        <Select value={filterVerdict} onValueChange={setFilterVerdict}>
-          <SelectTrigger className="w-[150px]">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All</SelectItem>
-            <SelectItem value="approved">Correct</SelectItem>
-            <SelectItem value="adjusted">Incorrect</SelectItem>
-            <SelectItem value="skipped">Skipped</SelectItem>
-          </SelectContent>
-        </Select>
+        <select 
+          value={filterVerdict} 
+          onChange={e => setFilterVerdict(e.target.value)}
+          className="w-[150px] h-10 px-3 rounded-md border border-slate-200 bg-white text-sm"
+        >
+          <option value="all">All</option>
+          <option value="approved">Correct</option>
+          <option value="adjusted">Incorrect</option>
+          <option value="skipped">Skipped</option>
+        </select>
       </div>
 
       {/* Feedback Table */}
