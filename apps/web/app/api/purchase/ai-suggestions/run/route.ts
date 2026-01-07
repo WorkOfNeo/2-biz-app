@@ -404,23 +404,46 @@ export async function POST(req: Request) {
           }
         }
 
-        // Fetch last season's totals from season_statistics
-        const { data: lastSeasonStats, error: lastSeasonError } = await supabase
+        // Fetch last season's totals - try season_statistics first, then fallback to sales_stats
+        let lastSeasonStats: any[] = [];
+        
+        const { data: seasonStatsData, error: seasonStatsError } = await supabase
           .from('season_statistics')
           .select('customer_id, qty, amount')
           .eq('season_id', comparisonSeasonId);
 
-        if (lastSeasonError) {
-          console.error('[YoY Analysis] ERROR fetching last season stats:', lastSeasonError);
+        if (seasonStatsError) {
+          console.error('[YoY Analysis] ERROR fetching season_statistics:', seasonStatsError);
+        } else if ((seasonStatsData || []).length > 0) {
+          lastSeasonStats = seasonStatsData || [];
+          console.log('[YoY Analysis] Using season_statistics:', lastSeasonStats.length, 'customer records');
         } else {
-          console.log('[YoY Analysis] Last season (comparison) stats loaded:', (lastSeasonStats || []).length, 'customer records');
-          if ((lastSeasonStats || []).length > 0) {
-            const totalQty = (lastSeasonStats || []).reduce((sum, r) => sum + (Number(r.qty) || 0), 0);
-            const totalAmt = (lastSeasonStats || []).reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
-            console.log(`[YoY Analysis] Last season totals: ${totalQty} pcs, ${totalAmt.toFixed(0)} amount`);
+          // Fallback to sales_stats table
+          console.log('[YoY Analysis] No data in season_statistics, trying sales_stats...');
+          const { data: salesStatsData, error: salesStatsError } = await supabase
+            .from('sales_stats')
+            .select('account_no, qty, price')
+            .eq('season_id', comparisonSeasonId);
+          
+          if (salesStatsError) {
+            console.error('[YoY Analysis] ERROR fetching sales_stats:', salesStatsError);
+          } else if ((salesStatsData || []).length > 0) {
+            // Map sales_stats format to expected format
+            lastSeasonStats = (salesStatsData || []).map(s => ({
+              customer_id: s.account_no,  // Use account_no as customer_id
+              qty: s.qty,
+              amount: s.price,
+            }));
+            console.log('[YoY Analysis] Using sales_stats:', lastSeasonStats.length, 'customer records');
           } else {
-            console.warn('[YoY Analysis] WARNING: No data found for comparison season!');
+            console.warn('[YoY Analysis] WARNING: No data found in either table!');
           }
+        }
+        
+        if (lastSeasonStats.length > 0) {
+          const totalQty = lastSeasonStats.reduce((sum, r) => sum + (Number(r.qty) || 0), 0);
+          const totalAmt = lastSeasonStats.reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
+          console.log(`[YoY Analysis] Last season totals: ${totalQty} pcs, ${totalAmt.toFixed(0)} amount`);
         }
 
         // Fetch current season's totals (if seasonId provided)
@@ -700,9 +723,34 @@ export async function POST(req: Request) {
       ? JSON.stringify(yoyAnalysis, null, 2)
       : 'No comparison season selected - YoY analysis not available.';
 
+    // Build purchase level info based on run number
+    const runNumber = Number(body.runNumber) || 1;
+    let purchaseLevelInfo = '';
+    if (runNumber <= 2) {
+      purchaseLevelInfo = `PURCHASE LEVEL: OPENING/EARLY (Run ${runNumber})
+This is an EARLY purchase run. Be AGGRESSIVE with quantities.
+- Order 100-150% of projected seasonal need
+- Better to over-order popular styles than miss sales
+- New styles should get healthy initial orders`;
+    } else if (runNumber <= 4) {
+      purchaseLevelInfo = `PURCHASE LEVEL: MIDDLE (Run ${runNumber})
+This is a MID-SEASON purchase run.
+- Order 60-80% of remaining projected need
+- Focus on proven performers
+- Be cautious with slow sellers`;
+    } else {
+      purchaseLevelInfo = `PURCHASE LEVEL: CLOSING (Run ${runNumber}+)
+This is a CLOSING/LATE purchase run. Be CONSERVATIVE.
+- Order only 30-50% of remaining need
+- Only reorder proven bestsellers
+- Avoid new or slow styles`;
+    }
+    console.log('[AI Suggestions] Purchase level info:', purchaseLevelInfo.split('\n')[0]);
+
     // Interpolate prompt
     const finalPrompt = interpolatePrompt(promptConfig.content, {
       context: contextStr,
+      purchase_level: purchaseLevelInfo,
       suppliers: suppliersStr,
       sales_by_supplier: salesBySupplierStr,
       no_sales_styles: noSalesStylesStr,
@@ -861,8 +909,29 @@ export async function POST(req: Request) {
       // Parse JSON response
       try {
         aiOutput = JSON.parse(rawResponse) as AIOutput;
+        
+        // Log AI response summary
+        console.log('═══════════════════════════════════════════════════════════');
+        console.log('[AI Response] SUMMARY:');
+        console.log('[AI Response] Overall:', aiOutput.overall_summary);
+        console.log('[AI Response] Total units suggested:', aiOutput.total_units);
+        console.log('[AI Response] Warnings:', aiOutput.warnings || 'none');
+        console.log('[AI Response] Suppliers:', aiOutput.suppliers?.length || 0);
+        
+        // Log per-supplier summary
+        for (const supplier of (aiOutput.suppliers || [])) {
+          const topLines = (supplier.lines || []).slice(0, 3);
+          console.log(`[AI Response] ${supplier.supplier_name}:`);
+          console.log(`  - ${supplier.lines?.length || 0} lines, ${supplier.total_units} total units`);
+          console.log(`  - Top suggestions:`, topLines.map(l => 
+            `${l.style_no}/${l.color}: ${(l as any).current_sold || '?'} sold → ${l.suggested_qty} suggested`
+          ).join(', '));
+        }
+        console.log('═══════════════════════════════════════════════════════════');
+        
       } catch (parseError) {
         console.error('[AI Suggestions] Failed to parse AI response as JSON:', parseError);
+        console.error('[AI Suggestions] Raw response (first 1000 chars):', rawResponse.substring(0, 1000));
         aiError = 'Failed to parse AI response as JSON';
       }
     } catch (openaiError: any) {

@@ -22,11 +22,14 @@ export type PromptConfig = {
 // Default prompts (fallback if not in DB)
 const DEFAULT_PROMPTS: Record<PromptKey, Omit<PromptConfig, 'key'>> = {
   purchase_suggestions_v1: {
-    version: 0,
+    version: 1,
     content: `You are a purchasing advisor for a fashion wholesale company. Analyze the in-season sales data and produce structured purchase order suggestions grouped by supplier.
 
 ## Context
 {{context}}
+
+## Purchase Level Info
+{{purchase_level}}
 
 ## Supplier Master Data
 {{suppliers}}
@@ -46,17 +49,32 @@ const DEFAULT_PROMPTS: Record<PromptKey, Omit<PromptConfig, 'key'>> = {
 ## Previous Feedback (Learning from past runs)
 {{feedback}}
 
+## CRITICAL RULES FOR QUANTITY SUGGESTIONS
+1. **Suggested quantities should generally EXCEED current sales** because:
+   - Current sales only represent orders received SO FAR
+   - Many customers haven't ordered yet (see customer visit rate)
+   - You're purchasing for the ENTIRE season, not just current orders
+   
+2. **Calculate suggested qty using this formula:**
+   - Base qty = current_sold_qty × (100 / visit_rate_percent)
+   - Example: 900 sold with 6% visit rate → 900 × (100/6) = 15,000 projected
+   - Then adjust by 0.8-1.2x based on trend strength
+   
+3. **Adjust based on purchase level:**
+   - OPENING/EARLY (run 1-2): Be aggressive, order 100-150% of projected need
+   - MIDDLE (run 3-4): Order to fill gaps, typically 60-80% of remaining need
+   - CLOSING (run 5+): Be conservative, only order proven sellers at 30-50%
+
+4. **Never suggest LESS than current sold qty** unless:
+   - The style is clearly underperforming vs last year
+   - Customer coverage is already very high (>80% visited)
+
 ## Instructions
-Consider ALL available data when making recommendations:
-- If aggregated index is below 100%, be more conservative with order quantities
+- If aggregated YoY index is below 100%, factor this into projections
 - Factor in nulled customers (lost potential) when projecting total demand
 - Consider remaining potential from customers not yet visited
-- Flag styles with NO SALES YET - these may need attention (new styles, slow starters, or potential duds)
-- For no-sales styles: recommend small initial orders or skip if season is too far along
-1. For each supplier, recommend which styles/colors to order and in what quantities.
-2. Consider MOQ (minimum order quantity) and lead times.
-3. Factor in sales velocity, customer coverage, and year-over-year indices.
-4. Output MUST be valid JSON matching the schema.
+- Flag styles with NO SALES YET - recommend small initial orders or skip
+- Output MUST be valid JSON matching the schema
 
 ## Output Schema
 \`\`\`json
@@ -72,7 +90,9 @@ Consider ALL available data when making recommendations:
         {
           "style_no": "string",
           "color": "string",
+          "current_sold": number,
           "suggested_qty": number,
+          "projection_basis": "string (e.g., 'visit rate extrapolation', 'YoY trend')",
           "reasoning": "string (1 sentence)",
           "priority": "high" | "medium" | "low"
         }
@@ -88,7 +108,7 @@ Consider ALL available data when making recommendations:
 \`\`\``,
     model: 'gpt-4o-mini',
     temperature: 0.3,
-    maxTokens: 4000,
+    maxTokens: 8000,
   },
 };
 
