@@ -732,9 +732,10 @@ export default function SeasonDetailPage() {
 
       let customerId: string;
 
-      if (existingCustomers && existingCustomers.length > 0) {
+      const firstCustomer = existingCustomers?.[0];
+      if (firstCustomer) {
         // Use existing customer
-        customerId = existingCustomers[0].customer_id;
+        customerId = firstCustomer.customer_id;
         console.log('[addToOldEntries] Found existing customer:', customerId);
       } else {
         // Create new customer for this salesperson
