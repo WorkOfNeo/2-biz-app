@@ -1176,65 +1176,75 @@ This is a CLOSING/LATE purchase run. Be CONSERVATIVE.
       console.log('[AI Suggestions] Enriched output with', Object.keys(styleNameMap).length, 'style names and size breakdowns');
       
       // ═══════════════════════════════════════════════════════════════════════
-      // VALIDATE: Fix AI suggestions that are TOO LOW
-      // If AI suggests less than sold qty, override with proper projection
+      // VALIDATE: Only for EARLY rounds - don't override CLOSING round suggestions
+      // The AI makes conservative suggestions for CLOSING - that's CORRECT
       // ═══════════════════════════════════════════════════════════════════════
       
-      // Calculate multiplier based on visit rate
-      const visitRateForValidation = yoyAnalysis?.currentSeason?.visitRate 
-        ? parseFloat(yoyAnalysis.currentSeason.visitRate) / 100 
-        : 0.1;
-      const projectionMultiplier = visitRateForValidation > 0 ? Math.min(1 / visitRateForValidation, 15) : 10;
-      
       console.log('═══════════════════════════════════════════════════════════');
-      console.log('[VALIDATE] Checking AI suggestions against sold qty');
-      console.log('[VALIDATE] Visit rate:', yoyAnalysis?.currentSeason?.visitRate, '→ multiplier:', projectionMultiplier.toFixed(2));
+      console.log('[VALIDATE] Purchase round:', purchaseRunNumber);
       
-      let fixedCount = 0;
-      for (const supplier of aiOutput.suppliers) {
-        for (const line of (supplier.lines || [])) {
-          const soldQty = (line as any).current_sold || 0;
-          const suggestedQty = line.suggested_qty || 0;
-          
-          // If AI suggested less than sold, that's wrong - fix it
-          if (soldQty > 0 && suggestedQty < soldQty) {
-            const correctedQty = Math.max(soldQty, Math.round((soldQty * projectionMultiplier) / 10) * 10);
-            console.log(`[VALIDATE] FIXED: ${line.style_no}/${line.color}: ${soldQty} sold, AI said ${suggestedQty} → corrected to ${correctedQty}`);
+      // Only validate/fix for EARLY rounds (1-2)
+      // For MID (3-4) and CLOSING (5+), trust the AI's conservative suggestions
+      if (purchaseRunNumber <= 2) {
+        // Calculate multiplier based on visit rate - only for EARLY rounds
+        const visitRateForValidation = yoyAnalysis?.currentSeason?.visitRate 
+          ? parseFloat(yoyAnalysis.currentSeason.visitRate) / 100 
+          : 0.1;
+        // For early rounds, use modest multiplier (1.2-1.5x, not full projection)
+        const projectionMultiplier = Math.min(1.5, visitRateForValidation > 0 ? 1 / visitRateForValidation : 1.5);
+        
+        console.log('[VALIDATE] EARLY ROUND - checking suggestions');
+        console.log('[VALIDATE] Visit rate:', yoyAnalysis?.currentSeason?.visitRate, '→ multiplier:', projectionMultiplier.toFixed(2));
+        
+        let fixedCount = 0;
+        for (const supplier of aiOutput.suppliers) {
+          for (const line of (supplier.lines || [])) {
+            const soldQty = (line as any).current_sold || 0;
+            const suggestedQty = line.suggested_qty || 0;
             
-            // Update the suggestion
-            const originalQty = line.suggested_qty;
-            line.suggested_qty = correctedQty;
-            (line as any).notes = `AI suggested ${originalQty}, corrected to ${correctedQty} (must be >= sold qty × projection)`;
-            (line as any).projection_basis = `Sold ${soldQty} × ${projectionMultiplier.toFixed(1)}x = ${correctedQty}`;
-            
-            // Update supplier total
-            supplier.total_units = (supplier.total_units || 0) - originalQty + correctedQty;
-            
-            // Recalculate size quantities if we have size data
-            const sizeData = (line as any).sold_sizes;
-            if (sizeData && Object.keys(sizeData).length > 0) {
-              const totalSold = Object.values(sizeData).reduce((sum: number, v) => sum + ((v as number) || 0), 0);
-              if (totalSold > 0) {
-                const newSizeQty: Record<string, number> = {};
-                for (const [size, qty] of Object.entries(sizeData)) {
-                  const ratio = ((qty as number) || 0) / totalSold;
-                  newSizeQty[size] = Math.round(correctedQty * ratio);
+            // Only fix if suggested is MUCH lower than sold (less than 80%)
+            if (soldQty > 0 && suggestedQty < soldQty * 0.8) {
+              // For early rounds: suggest sold + 20-30% buffer, NOT sold × multiplier
+              const correctedQty = Math.round((soldQty * 1.3) / 10) * 10;
+              console.log(`[VALIDATE] FIXED: ${line.style_no}/${line.color}: ${soldQty} sold, AI said ${suggestedQty} → corrected to ${correctedQty}`);
+              
+              // Update the suggestion
+              const originalQty = line.suggested_qty;
+              line.suggested_qty = correctedQty;
+              (line as any).notes = `AI suggested ${originalQty}, adjusted to ${correctedQty} (early round buffer)`;
+              (line as any).projection_basis = `Sold ${soldQty} + 30% buffer = ${correctedQty}`;
+              
+              // Update supplier total
+              supplier.total_units = (supplier.total_units || 0) - originalQty + correctedQty;
+              
+              // Recalculate size quantities if we have size data
+              const sizeData = (line as any).sold_sizes;
+              if (sizeData && Object.keys(sizeData).length > 0) {
+                const totalSold = Object.values(sizeData).reduce((sum: number, v) => sum + ((v as number) || 0), 0);
+                if (totalSold > 0) {
+                  const newSizeQty: Record<string, number> = {};
+                  for (const [size, qty] of Object.entries(sizeData)) {
+                    const ratio = ((qty as number) || 0) / totalSold;
+                    newSizeQty[size] = Math.round(correctedQty * ratio);
+                  }
+                  (line as any).size_quantities = newSizeQty;
                 }
-                (line as any).size_quantities = newSizeQty;
               }
+              
+              fixedCount++;
             }
-            
-            fixedCount++;
           }
         }
-      }
-      
-      if (fixedCount > 0) {
-        // Update total units
-        aiOutput.total_units = aiOutput.suppliers.reduce((sum, s) => sum + (s.total_units || 0), 0);
-        console.log('[VALIDATE] Fixed', fixedCount, 'suggestions. New total:', aiOutput.total_units);
+        
+        if (fixedCount > 0) {
+          aiOutput.total_units = aiOutput.suppliers.reduce((sum, s) => sum + (s.total_units || 0), 0);
+          console.log('[VALIDATE] Fixed', fixedCount, 'suggestions. New total:', aiOutput.total_units);
+        } else {
+          console.log('[VALIDATE] All AI suggestions were valid');
+        }
       } else {
-        console.log('[VALIDATE] All AI suggestions were valid (>= sold qty)');
+        // MID or CLOSING round - trust AI's conservative suggestions
+        console.log('[VALIDATE] MID/CLOSING ROUND - trusting AI suggestions (no overrides)');
       }
       console.log('═══════════════════════════════════════════════════════════');
       
@@ -1281,14 +1291,23 @@ This is a CLOSING/LATE purchase run. Be CONSERVATIVE.
       if (missingStyles.length > 0) {
         console.log('═══════════════════════════════════════════════════════════');
         console.log('[BACKFILL] Adding', missingStyles.length, 'styles that AI missed');
+        console.log('[BACKFILL] Purchase round:', purchaseRunNumber);
         
-        // Calculate visit rate for quantity projection
-        const visitRateNum = yoyAnalysis?.currentSeason?.visitRate 
-          ? parseFloat(yoyAnalysis.currentSeason.visitRate) / 100 
-          : 0.1; // Default 10% if unknown
-        const multiplier = visitRateNum > 0 ? Math.min(1 / visitRateNum, 15) : 10; // Cap at 15x
-        
-        console.log('[BACKFILL] Visit rate:', yoyAnalysis?.currentSeason?.visitRate, '→ multiplier:', multiplier.toFixed(2));
+        // Multiplier depends on purchase round!
+        let multiplier: number;
+        if (purchaseRunNumber <= 2) {
+          // EARLY: sold + 30% buffer
+          multiplier = 1.3;
+          console.log('[BACKFILL] EARLY ROUND - using 1.3x multiplier');
+        } else if (purchaseRunNumber <= 4) {
+          // MID: match sold or slightly above
+          multiplier = 1.1;
+          console.log('[BACKFILL] MID ROUND - using 1.1x multiplier');
+        } else {
+          // CLOSING: conservative, suggest less than sold
+          multiplier = 0.5;
+          console.log('[BACKFILL] CLOSING ROUND - using 0.5x multiplier (conservative)');
+        }
         
         // Group missing by supplier
         const missingBySupplier: Record<string, typeof missingStyles> = {};
@@ -1323,7 +1342,11 @@ This is a CLOSING/LATE purchase run. Be CONSERVATIVE.
           
           for (const m of styles) {
             // Project quantity: sold × multiplier, rounded to nearest 10
-            const projectedQty = Math.max(m.soldQty, Math.round((m.soldQty * multiplier) / 10) * 10);
+            // For CLOSING, don't enforce minimum - can suggest less than sold
+            const rawProjected = Math.round((m.soldQty * multiplier) / 10) * 10;
+            const projectedQty = purchaseRunNumber >= 5 
+              ? rawProjected  // CLOSING: can be less than sold
+              : Math.max(m.soldQty, rawProjected);  // EARLY/MID: at least sold qty
             
             // Build size quantities
             let sizeQuantities: Record<string, number> | undefined = undefined;
