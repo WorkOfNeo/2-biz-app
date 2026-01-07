@@ -134,11 +134,13 @@ export default function StatisticsDashboardPage() {
   function toggleStockListOverall(name: string) {
     setSelectedStockListsOverall((prev) => { const n = new Set(prev); if (n.has(name)) n.delete(name); else n.add(name); return n; });
   }
-
+  
   // Stock List Schedules
   const [schedules, setSchedules] = React.useState<StockListSchedule[]>([]);
   const [sheetOpen, setSheetOpen] = React.useState(false);
   const [editingSchedule, setEditingSchedule] = React.useState<StockListSchedule | null>(null);
+  const [viewingSchedule, setViewingSchedule] = React.useState<StockListSchedule | null>(null);
+  const [viewSheetOpen, setViewSheetOpen] = React.useState(false);
   const [savingSchedules, setSavingSchedules] = React.useState(false);
   const [sendingScheduleId, setSendingScheduleId] = React.useState<string | null>(null);
 
@@ -187,6 +189,7 @@ export default function StatisticsDashboardPage() {
   }
 
   function openEditSchedule(schedule: StockListSchedule) {
+    setViewSheetOpen(false); // Close view sheet if open
     setEditingSchedule(schedule);
     setFormName(schedule.name);
     setFormStockLists(new Set(schedule.stockLists));
@@ -197,6 +200,11 @@ export default function StatisticsDashboardPage() {
     setFormEmailBody(schedule.emailBody);
     setFormEnabled(schedule.enabled);
     setSheetOpen(true);
+  }
+
+  function openViewSchedule(schedule: StockListSchedule) {
+    setViewingSchedule(schedule);
+    setViewSheetOpen(true);
   }
 
   function handleSaveSchedule() {
@@ -657,7 +665,7 @@ export default function StatisticsDashboardPage() {
         </TabsList>
 
         <TabsContent value="mailing" className="space-y-6">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             {/* Box #1 - Salesmen Statistics */}
             <Card>
               <CardHeader>
@@ -669,29 +677,29 @@ export default function StatisticsDashboardPage() {
                   <Toggle
                     checked={Object.values(selected).every(Boolean) && Object.keys(selected).length > 0}
                     onChange={() => {
-                      const allOn = !Object.values(selected).every(Boolean);
-                      const next: Record<string, boolean> = {};
-                      for (const sp of (salespersons ?? [])) next[sp.id] = allOn;
-                      setSelected(next);
-                    }}
+                  const allOn = !Object.values(selected).every(Boolean);
+                  const next: Record<string, boolean> = {};
+                  for (const sp of (salespersons ?? [])) next[sp.id] = allOn;
+                  setSelected(next);
+                }}
                     label="Select all"
                   />
-                </div>
+            </div>
 
                 <div className="max-h-56 overflow-auto rounded-md border">
                   <Table>
                     <TableBody>
-                      {(salespersons ?? []).map((sp) => (
+                {(salespersons ?? []).map((sp) => (
                         <TableRow key={sp.id}>
                           <TableCell className="w-14">
-                            <button
-                              type="button"
-                              onClick={() => toggleSp(sp.id)}
+                      <button
+                        type="button"
+                        onClick={() => toggleSp(sp.id)}
                               className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${selected[sp.id] ? 'bg-slate-900' : 'bg-slate-200'}`}
-                              aria-pressed={!!selected[sp.id]}
-                            >
+                        aria-pressed={!!selected[sp.id]}
+                      >
                               <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${selected[sp.id] ? 'translate-x-4' : 'translate-x-0.5'}`} />
-                            </button>
+                      </button>
                           </TableCell>
                           <TableCell className="font-medium">{sp.name}</TableCell>
                           <TableCell className="text-gray-500">{sp.email || '—'}</TableCell>
@@ -699,7 +707,7 @@ export default function StatisticsDashboardPage() {
                       ))}
                     </TableBody>
                   </Table>
-                </div>
+          </div>
 
                 <div className="space-y-2">
                   <Toggle checked={includeCountries} onChange={() => setIncludeCountries((v) => !v)} label="Include Countries" />
@@ -711,8 +719,8 @@ export default function StatisticsDashboardPage() {
                     <div className="text-xs text-gray-600 mb-2">Stock Lists</div>
                     <div className="flex flex-wrap gap-1.5">
                       {availableStockLists.map((l) => {
-                        const on = selectedStockListsSalesmen.has(l.name);
-                        return (
+                const on = selectedStockListsSalesmen.has(l.name);
+                return (
                           <Badge
                             key={l.id}
                             className={`cursor-pointer select-none transition-colors ${on ? 'bg-slate-900 text-white border-slate-900' : 'bg-white hover:bg-slate-50'}`}
@@ -720,13 +728,13 @@ export default function StatisticsDashboardPage() {
                           >
                             {l.name}
                           </Badge>
-                        );
-                      })}
-                    </div>
-                  </div>
+                );
+              })}
+            </div>
+          </div>
                 )}
 
-                <div>
+          <div>
                   <div className="text-xs text-gray-600 mb-1">Email body</div>
                   <textarea
                     className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-offset-2 h-24 resize-none"
@@ -734,7 +742,7 @@ export default function StatisticsDashboardPage() {
                     value={salesmenBodyText}
                     onChange={(e) => setSalesmenBodyText(e.target.value)}
                   />
-                </div>
+          </div>
 
                 <div className="flex gap-2">
                   <Button variant="outline" size="sm" disabled={savingSalesmenPrefs} onClick={saveSalesmenPrefs}>
@@ -743,7 +751,7 @@ export default function StatisticsDashboardPage() {
                   <Button size="sm" disabled={sendingSp} onClick={sendSalespersonEmails}>
                     {sendingSp ? 'Sending…' : 'Send'}
                   </Button>
-                </div>
+        </div>
               </CardContent>
             </Card>
 
@@ -763,10 +771,10 @@ export default function StatisticsDashboardPage() {
                 />
 
                 <div className="space-y-2">
-                  {[
-                    { key: 'all', label: 'All salespeople' },
-                    { key: 'countries', label: 'Countries' },
-                    { key: 'top10overall', label: 'Top 15 - Overall' }
+            {[
+              { key: 'all', label: 'All salespeople' },
+              { key: 'countries', label: 'Countries' },
+              { key: 'top10overall', label: 'Top 15 - Overall' }
                   ].map((opt) => (
                     <Toggle
                       key={opt.key}
@@ -782,8 +790,8 @@ export default function StatisticsDashboardPage() {
                     <div className="text-xs text-gray-600 mb-2">Stock Lists</div>
                     <div className="flex flex-wrap gap-1.5">
                       {availableStockLists.map((l) => {
-                        const on = selectedStockListsOverall.has(l.name);
-                        return (
+                const on = selectedStockListsOverall.has(l.name);
+                return (
                           <Badge
                             key={l.id}
                             className={`cursor-pointer select-none transition-colors ${on ? 'bg-slate-900 text-white border-slate-900' : 'bg-white hover:bg-slate-50'}`}
@@ -791,10 +799,10 @@ export default function StatisticsDashboardPage() {
                           >
                             {l.name}
                           </Badge>
-                        );
-                      })}
-                    </div>
-                  </div>
+                );
+              })}
+            </div>
+          </div>
                 )}
 
                 <div>
@@ -805,7 +813,7 @@ export default function StatisticsDashboardPage() {
                     value={bodyText}
                     onChange={(e) => setBodyText(e.target.value)}
                   />
-                </div>
+          </div>
 
                 <div className="flex gap-2">
                   <Button variant="outline" size="sm" disabled={savingOverallPrefs} onClick={saveOverallPrefs}>
@@ -814,10 +822,10 @@ export default function StatisticsDashboardPage() {
                   <Button size="sm" disabled={sendingOverall} onClick={sendOverall}>
                     {sendingOverall ? 'Sending…' : 'Send'}
                   </Button>
-                </div>
+        </div>
               </CardContent>
             </Card>
-          </div>
+      </div>
 
           {/* Box #3 - Stock List Schedules */}
           <Card>
@@ -852,8 +860,12 @@ export default function StatisticsDashboardPage() {
                     </TableHeader>
                     <TableBody>
                       {schedules.map((schedule) => (
-                        <TableRow key={schedule.id}>
-                          <TableCell>
+                        <TableRow 
+                          key={schedule.id} 
+                          className="cursor-pointer hover:bg-slate-50"
+                          onClick={() => openViewSchedule(schedule)}
+                        >
+                          <TableCell onClick={(e) => e.stopPropagation()}>
                             <Toggle
                               checked={schedule.enabled}
                               onChange={() => handleToggleEnabled(schedule.id)}
@@ -869,7 +881,7 @@ export default function StatisticsDashboardPage() {
                               {schedule.stockLists.length > 2 && (
                                 <Badge className="text-[10px] py-0 bg-slate-100">+{schedule.stockLists.length - 2}</Badge>
                               )}
-                            </div>
+          </div>
                           </TableCell>
                           <TableCell>
                             <span className="text-xs text-gray-600">{schedule.recipients.length} recipient{schedule.recipients.length !== 1 ? 's' : ''}</span>
@@ -878,12 +890,12 @@ export default function StatisticsDashboardPage() {
                             <div className="flex items-center gap-1 text-xs text-gray-600">
                               <Clock className="h-3 w-3" />
                               {formatSchedule(schedule)}
-                            </div>
+        </div>
                           </TableCell>
                           <TableCell>
                             <span className="text-xs text-gray-500">{formatLastRun(schedule.lastRun)}</span>
                           </TableCell>
-                          <TableCell>
+                          <TableCell onClick={(e) => e.stopPropagation()}>
                             <div className="flex items-center gap-1">
                               <Button
                                 variant="ghost"
@@ -913,13 +925,13 @@ export default function StatisticsDashboardPage() {
                               >
                                 <Trash2 className="h-3.5 w-3.5" />
                               </Button>
-                            </div>
+        </div>
                           </TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
                   </Table>
-                </div>
+      </div>
               )}
 
               {availableStockLists.length === 0 && (
@@ -930,8 +942,8 @@ export default function StatisticsDashboardPage() {
             </CardContent>
           </Card>
 
-          {/* Info / Errors */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      {/* Info / Errors */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle>Info</CardTitle>
@@ -943,7 +955,7 @@ export default function StatisticsDashboardPage() {
                   ) : (
                     <span>—</span>
                   )}
-                </div>
+        </div>
               </CardContent>
             </Card>
 
@@ -952,18 +964,18 @@ export default function StatisticsDashboardPage() {
                 <CardTitle>Errors</CardTitle>
               </CardHeader>
               <CardContent>
-                {(missingDgList && missingDgList.length > 0) ? (
+            {(missingDgList && missingDgList.length > 0) ? (
                   <div className="text-xs">
                     <div className="font-medium text-slate-700 mb-1">Missing DG in Top 15 (Current Season):</div>
                     <ul className="list-disc pl-5 text-slate-600 space-y-0.5">
                       {missingDgList.map((row) => (
                         <li key={row.style_no}>{row.style_no}{row.name ? ` — ${row.name}` : ''}</li>
                       ))}
-                    </ul>
-                  </div>
-                ) : (
+                </ul>
+              </div>
+            ) : (
                   <div className="text-xs text-gray-500">No errors</div>
-                )}
+            )}
               </CardContent>
             </Card>
           </div>
@@ -992,14 +1004,14 @@ export default function StatisticsDashboardPage() {
           {/* Schedule Name */}
           <div>
             <label className="text-sm text-gray-600 block mb-1">Schedule Name</label>
-            <input
+          <input 
               type="text"
               className="w-full h-9 rounded-md border border-slate-200 bg-white px-3 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-offset-2"
               placeholder="e.g., Weekly Customer Update"
               value={formName}
               onChange={(e) => setFormName(e.target.value)}
             />
-          </div>
+        </div>
 
           {/* Stock Lists */}
           <div>
@@ -1007,10 +1019,10 @@ export default function StatisticsDashboardPage() {
             {availableStockLists.length === 0 ? (
               <div className="text-xs text-gray-500">No stock lists with exports available</div>
             ) : (
-              <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-2">
                 {availableStockLists.map((l) => {
                   const on = formStockLists.has(l.name);
-                  return (
+              return (
                     <Badge
                       key={l.id}
                       className={`cursor-pointer select-none transition-colors ${on ? 'bg-slate-900 text-white border-slate-900' : 'bg-white hover:bg-slate-50'}`}
@@ -1025,11 +1037,11 @@ export default function StatisticsDashboardPage() {
                     >
                       {l.name}
                     </Badge>
-                  );
-                })}
-              </div>
-            )}
+              );
+            })}
           </div>
+            )}
+        </div>
 
           {/* Recipients */}
           <EmailPillsInput
@@ -1058,8 +1070,8 @@ export default function StatisticsDashboardPage() {
               >
                 Weekly
               </Button>
-            </div>
-          </div>
+        </div>
+      </div>
 
           {/* Days (for weekly) */}
           {formScheduleType === 'weekly' && (
@@ -1086,12 +1098,12 @@ export default function StatisticsDashboardPage() {
                     </button>
                   );
                 })}
-              </div>
+        </div>
             </div>
           )}
 
           {/* Time */}
-          <div>
+              <div>
             <label className="text-sm text-gray-600 block mb-1">Time</label>
             <input
               type="time"
@@ -1099,7 +1111,7 @@ export default function StatisticsDashboardPage() {
               value={formTime}
               onChange={(e) => setFormTime(e.target.value)}
             />
-          </div>
+              </div>
 
           {/* Email Body */}
           <div>
@@ -1128,6 +1140,116 @@ export default function StatisticsDashboardPage() {
               {savingSchedules ? 'Saving…' : editingSchedule ? 'Update Schedule' : 'Create Schedule'}
             </Button>
           </div>
+        </SheetContent>
+      </Sheet>
+
+      {/* Schedule View Sheet */}
+      <Sheet open={viewSheetOpen} onOpenChange={setViewSheetOpen}>
+        <SheetClose onClick={() => setViewSheetOpen(false)} />
+        <SheetHeader>
+          <SheetTitle className="flex items-center gap-2">
+            {viewingSchedule?.name}
+            {viewingSchedule && (
+              <Badge className={viewingSchedule.enabled ? 'bg-green-100 text-green-700 border-green-200' : 'bg-gray-100 text-gray-500'}>
+                {viewingSchedule.enabled ? 'Active' : 'Disabled'}
+              </Badge>
+            )}
+          </SheetTitle>
+        </SheetHeader>
+        <SheetContent className="space-y-6">
+          {viewingSchedule && (
+            <>
+              {/* Schedule Info */}
+              <div className="flex items-center gap-2 text-sm text-gray-600">
+                <Calendar className="h-4 w-4" />
+                <span>{formatSchedule(viewingSchedule)}</span>
+                {viewingSchedule.lastRun && (
+                  <span className="text-gray-400">· Last sent {formatLastRun(viewingSchedule.lastRun)}</span>
+            )}
+          </div>
+
+              {/* What is sent */}
+              <div>
+                <h3 className="text-sm font-medium text-slate-900 mb-3">What is sent</h3>
+                <div className="space-y-2">
+                  {viewingSchedule.stockLists.map((listName) => {
+                    const exp = latestStockListByName.get(listName);
+                    return (
+                      <div key={listName} className="flex items-center justify-between p-3 rounded-md border bg-slate-50">
+                        <div className="flex items-center gap-3">
+                          <div className="h-8 w-8 rounded bg-slate-200 flex items-center justify-center">
+                            <svg className="h-4 w-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                            </svg>
+        </div>
+                          <div>
+                            <div className="text-sm font-medium text-slate-900">{listName}</div>
+                            <div className="text-xs text-gray-500">{listName} - Lagerliste.pdf</div>
+      </div>
+      </div>
+                        {exp?.public_url ? (
+                          <Badge className="bg-green-100 text-green-700 border-green-200 text-[10px]">Ready</Badge>
+                        ) : (
+                          <Badge className="bg-amber-100 text-amber-700 border-amber-200 text-[10px]">No export</Badge>
+                        )}
+    </div>
+  );
+                  })}
+                </div>
+              </div>
+
+              {/* Recipients */}
+              <div>
+                <h3 className="text-sm font-medium text-slate-900 mb-3">Recipients ({viewingSchedule.recipients.length})</h3>
+                <div className="space-y-1 max-h-48 overflow-auto">
+                  {viewingSchedule.recipients.map((email) => (
+                    <div key={email} className="flex items-center gap-2 py-2 px-3 rounded-md border bg-white">
+                      <div className="h-6 w-6 rounded-full bg-slate-200 flex items-center justify-center text-[10px] font-medium text-slate-600 uppercase">
+                        {email.charAt(0)}
+                      </div>
+                      <span className="text-sm text-slate-700">{email}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Email Body Preview */}
+              <div>
+                <h3 className="text-sm font-medium text-slate-900 mb-2">Email Message</h3>
+                <div className="p-3 rounded-md border bg-slate-50 text-sm text-slate-600 whitespace-pre-wrap">
+                  {viewingSchedule.emailBody || 'Hermed lagerliste :)'}
+                </div>
+              </div>
+
+              {/* Actions */}
+              <div className="flex gap-2 pt-4 border-t">
+                <Button variant="outline" onClick={() => setViewSheetOpen(false)}>
+                  Close
+                </Button>
+                <Button 
+                  variant="outline" 
+                  onClick={() => {
+                    if (viewingSchedule) openEditSchedule(viewingSchedule);
+                  }}
+                >
+                  <Pencil className="h-4 w-4 mr-1" />
+                  Edit
+                </Button>
+                <Button 
+                  onClick={() => {
+                    if (viewingSchedule) {
+                      handleSendNow(viewingSchedule);
+                      setViewSheetOpen(false);
+                    }
+                  }}
+                  disabled={sendingScheduleId === viewingSchedule?.id}
+                >
+                  <Send className="h-4 w-4 mr-1" />
+                  {sendingScheduleId === viewingSchedule?.id ? 'Sending…' : 'Send Now'}
+                </Button>
+              </div>
+            </>
+          )}
         </SheetContent>
       </Sheet>
     </div>
