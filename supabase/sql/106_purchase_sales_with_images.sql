@@ -3,11 +3,12 @@
 
 -- =============================================================================
 -- 1. AGGREGATION VIEW WITH IMAGES (for AI input and UI display)
+-- NOTE: Uses s.supplier from styles table, NOT psr.supplier from CSV (which is empty)
 -- =============================================================================
 create or replace view public.purchase_sales_summary_with_images as
 select
   psr.import_id,
-  psr.supplier,
+  coalesce(s.supplier, psr.supplier) as supplier,  -- Prefer styles.supplier, fallback to CSV
   psr.style_no,
   psr.color,
   s.style_name,
@@ -23,7 +24,7 @@ select
   max(psr.date) as last_sale_date
 from public.purchase_sales_rows psr
 left join public.styles s on s.style_no = psr.style_no
-group by psr.import_id, psr.supplier, psr.style_no, psr.color, s.style_name, s.image_url;
+group by psr.import_id, s.supplier, psr.supplier, psr.style_no, psr.color, s.style_name, s.image_url;
 
 -- =============================================================================
 -- 2. ADD SIZE COLUMN TO PURCHASE_SALES_ROWS IF NOT EXISTS
@@ -35,18 +36,20 @@ create index if not exists idx_purchase_sales_rows_size on public.purchase_sales
 
 -- =============================================================================
 -- 3. SIZE-LEVEL SUMMARY VIEW (for detailed size breakdown)
+-- NOTE: Uses s.supplier from styles table, NOT psr.supplier from CSV (which is empty)
 -- =============================================================================
 create or replace view public.purchase_sales_size_summary as
 select
-  import_id,
-  supplier,
-  style_no,
-  color,
-  size,
-  sum(qty) as total_qty,
-  sum(net_amount) as total_amount,
-  count(distinct customer_ref) as customer_count
-from public.purchase_sales_rows
-where size is not null
-group by import_id, supplier, style_no, color, size;
+  psr.import_id,
+  coalesce(s.supplier, psr.supplier) as supplier,  -- Prefer styles.supplier
+  psr.style_no,
+  psr.color,
+  psr.size,
+  sum(psr.qty) as total_qty,
+  sum(psr.net_amount) as total_amount,
+  count(distinct psr.customer_ref) as customer_count
+from public.purchase_sales_rows psr
+left join public.styles s on s.style_no = psr.style_no
+where psr.size is not null
+group by psr.import_id, s.supplier, psr.supplier, psr.style_no, psr.color, psr.size;
 

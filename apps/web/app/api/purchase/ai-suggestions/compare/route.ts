@@ -124,25 +124,38 @@ export async function POST(req: Request) {
       s.replace(/^="?|"?$/g, '').trim()
     );
     
-    // Build style name lookup map
+    // Build style name and supplier lookup maps
     const styleNameMap: Record<string, string> = {};
+    const styleSupplierMap: Record<string, string> = {};
     if (cleanedStyleNos.length > 0) {
       const { data: stylesData, error: stylesError } = await supabase
         .from('styles')
-        .select('style_no, style_name')
+        .select('style_no, style_name, supplier')
         .in('style_no', cleanedStyleNos);
       
       if (stylesError) {
         console.error('[Compare API] Error fetching styles:', stylesError);
       } else {
         for (const style of (stylesData || [])) {
-          if (style.style_no && style.style_name) {
-            styleNameMap[style.style_no] = style.style_name;
+          if (style.style_no) {
+            if (style.style_name) {
+              styleNameMap[style.style_no] = style.style_name;
+            }
+            if (style.supplier) {
+              styleSupplierMap[style.style_no] = style.supplier;
+            }
           }
         }
         console.log('[Compare API] Found style names for', Object.keys(styleNameMap).length, 'styles');
+        console.log('[Compare API] Found suppliers for', Object.keys(styleSupplierMap).length, 'styles');
       }
     }
+    
+    // Helper to get supplier from style_no
+    const getSupplier = (styleNo: string): string => {
+      const cleaned = styleNo.replace(/^="?|"?$/g, '').trim();
+      return styleSupplierMap[cleaned] || 'Unknown';
+    };
     
     // Helper to get style name
     const getStyleName = (styleNo: string): string => {
@@ -624,10 +637,10 @@ export async function POST(req: Request) {
       ? ((currentAmount / lastYearToDateProxyAmount) * 100).toFixed(1) + '%'
       : 'N/A';
 
-    // By Supplier aggregation
+    // By Supplier aggregation (using looked-up supplier from styles table)
     const supplierAgg: Record<string, { qty: number; amount: number; styles: Set<string> }> = {};
     for (const row of rows) {
-      const supplier = row.supplier || 'Unknown';
+      const supplier = getSupplier(row.style_no);
       if (!supplierAgg[supplier]) {
         supplierAgg[supplier] = { qty: 0, amount: 0, styles: new Set() };
       }

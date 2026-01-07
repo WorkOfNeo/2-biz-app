@@ -59,7 +59,23 @@ export async function POST(req: Request) {
 
     const rows = salesRows || [];
 
-    // 3. Analyze supplier coverage
+    // 3. First, look up all styles in the database to get their suppliers
+    // This is critical - the CSV doesn't have supplier, we must look it up from styles table
+    const uniqueStyleNos = [...new Set(rows.map(r => r.style_no).filter(Boolean))];
+    console.log('[Preview API] Looking up', uniqueStyleNos.length, 'unique style numbers in database');
+    
+    const { data: dbStyles } = await supabase
+      .from('styles')
+      .select('style_no, style_name, supplier')
+      .in('style_no', uniqueStyleNos);
+
+    const dbStyleMap = new Map((dbStyles || []).map(s => [s.style_no, s]));
+    console.log('[Preview API] Found', dbStyleMap.size, 'styles in database');
+    console.log('[Preview API] Sample style mappings:', 
+      Array.from(dbStyleMap.entries()).slice(0, 5).map(([k, v]) => `${k} → ${v.supplier || '(no supplier)'}`)
+    );
+
+    // 4. Now analyze supplier coverage using the looked-up suppliers
     const supplierAnalysis: Record<string, { 
       styleCount: number; 
       qty: number; 
@@ -69,7 +85,10 @@ export async function POST(req: Request) {
     }> = {};
     
     for (const row of rows) {
-      const supplier = row.supplier || '(No Supplier)';
+      // Look up the supplier from the styles table, NOT from the CSV row
+      const dbStyle = dbStyleMap.get(row.style_no);
+      const supplier = dbStyle?.supplier || '(Unknown)';
+      
       if (!supplierAnalysis[supplier]) {
         supplierAnalysis[supplier] = { 
           styleCount: 0, 
@@ -96,18 +115,9 @@ export async function POST(req: Request) {
         qty: data.qty,
         amount: Math.round(data.amount),
         customerCount: data.customers.size,
-        hasSupplier: name !== '(No Supplier)',
+        hasSupplier: name !== '(Unknown)',
       }))
       .sort((a, b) => b.qty - a.qty);
-
-    // 4. Check which styles exist in the database
-    const uniqueStyleNos = [...new Set(rows.map(r => r.style_no).filter(Boolean))];
-    const { data: dbStyles } = await supabase
-      .from('styles')
-      .select('style_no, style_name, supplier')
-      .in('style_no', uniqueStyleNos);
-
-    const dbStyleMap = new Map((dbStyles || []).map(s => [s.style_no, s]));
     
     const stylesInDb = uniqueStyleNos.filter(sn => dbStyleMap.has(sn));
     const stylesNotInDb = uniqueStyleNos.filter(sn => !dbStyleMap.has(sn));
@@ -249,12 +259,12 @@ export async function POST(req: Request) {
     const warnings: string[] = [];
     const errors: string[] = [];
 
-    if (supplierBreakdown.find(s => s.name === '(No Supplier)')) {
-      const noSupplierData = supplierBreakdown.find(s => s.name === '(No Supplier)')!;
-      if (noSupplierData.styleCount === supplierBreakdown.reduce((sum, s) => sum + s.styleCount, 0)) {
-        errors.push(`All ${noSupplierData.styleCount} styles have no supplier. Check if styles exist in the database.`);
+    if (supplierBreakdown.find(s => s.name === '(Unknown)')) {
+      const unknownData = supplierBreakdown.find(s => s.name === '(Unknown)')!;
+      if (unknownData.styleCount === supplierBreakdown.reduce((sum, s) => sum + s.styleCount, 0)) {
+        errors.push(`All ${unknownData.styleCount} style/colors have unknown supplier. Check if styles exist in the database with supplier field set.`);
       } else {
-        warnings.push(`${noSupplierData.styleCount} styles have no supplier assigned.`);
+        warnings.push(`${unknownData.styleCount} style/colors have unknown supplier (style not in DB or missing supplier field).`);
       }
     }
 
