@@ -41,6 +41,17 @@ interface StockListSchedule {
   lastRun?: string;
 }
 
+interface PendingSend {
+  id: string;
+  scheduleId: string;
+  scheduleName: string;
+  listName: string;
+  listUrl: string;
+  recipients: string[];
+  emailBody: string;
+  createdAt: string;
+}
+
 /** Parse receivers from legacy stored string (supports comma, semicolon, whitespace) */
 function parseReceivers(raw: string | undefined | null): string[] {
   if (!raw) return [];
@@ -161,6 +172,69 @@ export default function StatisticsDashboardPage() {
     if (val.schedules) setSchedules(val.schedules);
     return data;
   });
+
+  // Poll for pending sends (queued by cron job)
+  const [pendingSends, setPendingSends] = React.useState<PendingSend[]>([]);
+  const [processingPending, setProcessingPending] = React.useState(false);
+
+  useSWR('dashboard:pending_sends', async () => {
+    const { data } = await supabase.from('app_settings').select('id, value').eq('key', 'pending_stock_list_sends').maybeSingle();
+    const val = ((data?.value as any) || {}) as { pending?: PendingSend[] };
+    setPendingSends(val.pending || []);
+    return data;
+  }, { refreshInterval: 10000 }); // Poll every 10 seconds
+
+  async function processPendingSends() {
+    if (processingPending || pendingSends.length === 0) return;
+    setProcessingPending(true);
+    
+    try {
+      let successCount = 0;
+      const processedIds: string[] = [];
+      
+      for (const pending of pendingSends) {
+        const subject = `${pending.listName} - Lagerliste`;
+        const filename = `${pending.listName} - Lagerliste.pdf`;
+        
+        const dynamicParams: Record<string, string> = {
+          stock_list_1_url: pending.listUrl,
+          stock_list_1_name: pending.listName,
+          stock_list_1_filename: filename,
+        };
+        
+        try {
+          await sendEmailJs(pending.recipients, subject, pending.emailBody, undefined, dynamicParams, true);
+          successCount++;
+          processedIds.push(pending.id);
+        } catch (err) {
+          console.error(`[pending] Failed to send ${pending.listName}:`, err);
+        }
+      }
+      
+      // Clear processed pending sends
+      if (processedIds.length > 0) {
+        const remaining = pendingSends.filter(p => !processedIds.includes(p.id));
+        const { data: existing } = await supabase.from('app_settings').select('id').eq('key', 'pending_stock_list_sends').maybeSingle();
+        if (existing?.id) {
+          await supabase.from('app_settings').update({ value: { pending: remaining } }).eq('id', existing.id);
+        }
+        setPendingSends(remaining);
+      }
+      
+      if (successCount > 0) {
+        alert(`${successCount} scheduled email(s) sent successfully!`);
+      }
+    } finally {
+      setProcessingPending(false);
+    }
+  }
+
+  // Auto-process pending sends when they appear
+  React.useEffect(() => {
+    if (pendingSends.length > 0 && !processingPending) {
+      processPendingSends();
+    }
+  }, [pendingSends.length]);
 
   async function saveSchedules(newSchedules: StockListSchedule[]) {
     setSavingSchedules(true);
@@ -948,7 +1022,24 @@ export default function StatisticsDashboardPage() {
               <CardHeader className="pb-2">
                 <CardTitle>Info</CardTitle>
               </CardHeader>
-              <CardContent>
+              <CardContent className="space-y-2">
+                {/* Pending sends indicator */}
+                {pendingSends.length > 0 && (
+                  <div className="flex items-center gap-2 p-2 rounded-md bg-blue-50 border border-blue-200">
+                    <div className="animate-pulse h-2 w-2 rounded-full bg-blue-500" />
+                    <span className="text-xs text-blue-700">
+                      {processingPending 
+                        ? `Sending ${pendingSends.length} scheduled email(s)...`
+                        : `${pendingSends.length} scheduled email(s) pending`
+                      }
+                    </span>
+                    {!processingPending && (
+                      <Button size="sm" variant="ghost" className="h-6 px-2 text-xs text-blue-700" onClick={processPendingSends}>
+                        Send now
+                      </Button>
+                    )}
+                  </div>
+                )}
                 <div className="text-xs text-gray-500">
                   {availableStockLists.length > 0 ? (
                     <span>{availableStockLists.length} stock list{availableStockLists.length !== 1 ? 's' : ''} with exports available</span>

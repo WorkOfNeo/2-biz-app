@@ -1,9 +1,8 @@
-// Stock List Schedule Cron Job - sends scheduled emails automatically
+// Stock List Schedule Cron Job - queues pending sends for browser-based delivery
 // Times are compared in Europe/Copenhagen timezone
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
-const EMAILJS_ENDPOINT = 'https://api.emailjs.com/api/v1.0/email/send';
 const TIMEZONE = 'Europe/Copenhagen';
 
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -19,6 +18,17 @@ interface StockListSchedule {
   emailBody: string;
   enabled: boolean;
   lastRun?: string;
+}
+
+interface PendingSend {
+  id: string;
+  scheduleId: string;
+  scheduleName: string;
+  listName: string;
+  listUrl: string;
+  recipients: string[];
+  emailBody: string;
+  createdAt: string;
 }
 
 interface ScheduleCheckResult {
@@ -155,27 +165,14 @@ async function handle(req: Request) {
 
   const supabase = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } });
 
-  // Get EmailJS config (try both server-side and NEXT_PUBLIC_ variants)
-  const serviceId = process.env.EMAILJS_SERVICE_ID || process.env.EMAILJS_SERVICE_KEY || process.env.NEXT_PUBLIC_EMAILJS_SERVICE_ID || process.env.NEXT_PUBLIC_EMAILJS_SERVICE_KEY || '';
-  const templateId = process.env.EMAILJS_TEMPLATE_ID || process.env.NEXT_PUBLIC_EMAILJS_TEMPLATE_ID || '';
-  const publicKey = process.env.EMAILJS_PUBLIC_KEY || process.env.NEXT_PUBLIC_EMAILJS_PUBLIC_KEY || '';
-  // Private key is REQUIRED for server-side EmailJS calls
-  const privateKey = process.env.EMAILJS_PRIVATE_KEY || '';
-  const fromEmail = process.env.EMAILJS_FROM_EMAIL || process.env.NEXT_PUBLIC_EMAILJS_FROM_EMAIL || '';
-  const fromName = process.env.EMAILJS_FROM_NAME || process.env.NEXT_PUBLIC_EMAILJS_FROM_NAME || '2-BIZ';
-
-  if (!serviceId || !templateId || !publicKey || !privateKey) {
-    return new Response(JSON.stringify({ 
-      error: 'EmailJS env missing',
-      missing: {
-        serviceId: !serviceId,
-        templateId: !templateId,
-        publicKey: !publicKey,
-        privateKey: !privateKey,
-      },
-      hint: 'For server-side EmailJS, you need EMAILJS_PRIVATE_KEY (from EmailJS dashboard > Account > API Keys > Private Key)'
-    }), { status: 500 });
-  }
+  // Load existing pending sends
+  const { data: pendingRow } = await supabase
+    .from('app_settings')
+    .select('id, value')
+    .eq('key', 'pending_stock_list_sends')
+    .maybeSingle();
+  
+  const existingPending: PendingSend[] = (pendingRow?.value as any)?.pending || [];
 
   // Load schedules
   const { data: settingsRow } = await supabase
@@ -208,8 +205,9 @@ async function handle(req: Request) {
 
   const now = new Date();
   const cph = getCopenhagenTime(now);
-  const results: Array<{ scheduleId: string; scheduleName: string; sent: number; error?: string }> = [];
+  const results: Array<{ scheduleId: string; scheduleName: string; queued: number; error?: string }> = [];
   const updatedSchedules: StockListSchedule[] = [...schedules];
+  const newPendingSends: PendingSend[] = [];
 
   // Check all schedules and collect debug info
   const scheduleChecks: Array<{
@@ -238,65 +236,39 @@ async function handle(req: Request) {
 
     if (!willRun) continue;
 
-    try {
-      let sentCount = 0;
-
-      for (const listName of schedule.stockLists) {
-        const exp = latestStockListByName.get(listName);
-        if (!exp?.public_url) {
-          if (debug) console.log(`[cron:stock-list-schedules] No export for list "${listName}"`);
-          continue;
-        }
-
-        const subject = `${listName} - Lagerliste`;
-        const filename = `${listName} - Lagerliste.pdf`;
-
-        // Send to all recipients (as BCC if multiple)
-        // For server-side EmailJS, we need accessToken (private key)
-        const payload = {
-          service_id: serviceId,
-          template_id: templateId,
-          user_id: publicKey,
-          accessToken: privateKey, // Required for server-side calls
-          template_params: {
-            to_email: schedule.recipients[0] || '',
-            bcc_email: schedule.recipients.slice(1).join(','),
-            subject,
-            message_html: schedule.emailBody || 'Hermed lagerliste :)',
-            from_name: fromName,
-            from_email: fromEmail,
-            stock_list_1_url: exp.public_url,
-            stock_list_1_name: listName,
-            stock_list_1_filename: filename,
-          },
-        };
-
-        const res = await fetch(EMAILJS_ENDPOINT, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
-
-        if (res.ok) {
-          sentCount++;
-          if (debug) console.log(`[cron:stock-list-schedules] Sent "${listName}" to ${schedule.recipients.length} recipients`);
-        } else {
-          const errText = await res.text();
-          console.error(`[cron:stock-list-schedules] Failed to send "${listName}": ${errText}`);
-        }
+    // Queue pending sends for each stock list (browser will send them)
+    let queuedCount = 0;
+    for (const listName of schedule.stockLists) {
+      const exp = latestStockListByName.get(listName);
+      if (!exp?.public_url) {
+        if (debug) console.log(`[cron:stock-list-schedules] No export for list "${listName}"`);
+        continue;
       }
 
-      // Update lastRun
-      const idx = updatedSchedules.findIndex(s => s.id === schedule.id);
-      const existing = updatedSchedules[idx];
-      if (idx !== -1 && existing) {
-        updatedSchedules[idx] = { ...existing, lastRun: now.toISOString() };
-      }
-
-      results.push({ scheduleId: schedule.id, scheduleName: schedule.name, sent: sentCount });
-    } catch (err: any) {
-      results.push({ scheduleId: schedule.id, scheduleName: schedule.name, sent: 0, error: err?.message || String(err) });
+      // Create pending send entry
+      const pendingSend: PendingSend = {
+        id: `${schedule.id}-${listName}-${now.getTime()}`,
+        scheduleId: schedule.id,
+        scheduleName: schedule.name,
+        listName,
+        listUrl: exp.public_url,
+        recipients: schedule.recipients,
+        emailBody: schedule.emailBody || 'Hermed lagerliste :)',
+        createdAt: now.toISOString(),
+      };
+      
+      newPendingSends.push(pendingSend);
+      queuedCount++;
     }
+
+    // Update lastRun
+    const idx = updatedSchedules.findIndex(s => s.id === schedule.id);
+    const existingSchedule = updatedSchedules[idx];
+    if (idx !== -1 && existingSchedule) {
+      updatedSchedules[idx] = { ...existingSchedule, lastRun: now.toISOString() };
+    }
+
+    results.push({ scheduleId: schedule.id, scheduleName: schedule.name, queued: queuedCount });
   }
 
   // Save updated schedules (with new lastRun times)
@@ -307,12 +279,30 @@ async function handle(req: Request) {
       .eq('id', settingsRow.id);
   }
 
-  const totalSent = results.reduce((sum, r) => sum + r.sent, 0);
+  // Save pending sends
+  const allPending = [...existingPending, ...newPendingSends];
+  if (newPendingSends.length > 0) {
+    if (pendingRow?.id) {
+      await supabase
+        .from('app_settings')
+        .update({ value: { pending: allPending } })
+        .eq('id', pendingRow.id);
+    } else {
+      await supabase
+        .from('app_settings')
+        .insert({ key: 'pending_stock_list_sends', value: { pending: allPending } } as any);
+    }
+  }
+
+  const totalQueued = results.reduce((sum, r) => sum + (r.queued || 0), 0);
 
   // Build response
   const response: Record<string, any> = {
-    message: results.length > 0 ? `Processed ${results.length} schedule(s)` : 'No schedules due to run',
-    sent: totalSent,
+    message: results.length > 0 
+      ? `Queued ${totalQueued} email(s) from ${results.length} schedule(s)` 
+      : 'No schedules due to run',
+    queued: totalQueued,
+    pendingTotal: allPending.length,
     serverTime: {
       utc: now.toISOString(),
       copenhagen: cph.formatted,
@@ -337,7 +327,8 @@ async function handle(req: Request) {
       willRun: s.willRun,
       minutesUntilNext: s.check.minutesUntilNext,
     }));
-    response.sendResults = results;
+    response.queueResults = results;
+    response.pendingSends = allPending;
   }
 
   return new Response(JSON.stringify(response, null, debug ? 2 : 0), {
