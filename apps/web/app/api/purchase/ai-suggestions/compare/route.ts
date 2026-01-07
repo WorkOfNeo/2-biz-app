@@ -109,17 +109,20 @@ export async function POST(req: Request) {
     
     console.log('[Compare API] Total rows in DB for this import:', totalRowCount);
 
-    // Fetch ALL rows using pagination to guarantee we get everything
-    const PAGE_SIZE = 5000;
+    // Fetch ALL rows using pagination - Supabase has a hard 1000 row limit per request!
+    const PAGE_SIZE = 1000;  // Match Supabase's limit
     let allRows: any[] = [];
     let offset = 0;
     let hasMore = true;
+    let pageNum = 0;
 
     while (hasMore) {
+      pageNum++;
       const { data: pageRows, error: pageError } = await supabase
         .from('purchase_sales_rows')
         .select('*')
         .eq('import_id', importId)
+        .order('id', { ascending: true })  // Ensure consistent ordering for pagination
         .range(offset, offset + PAGE_SIZE - 1);
 
       if (pageError) {
@@ -129,17 +132,23 @@ export async function POST(req: Request) {
 
       const fetched = pageRows || [];
       allRows = allRows.concat(fetched);
-      console.log('[Compare API] Fetched page:', fetched.length, 'rows (offset:', offset, ', total so far:', allRows.length, ')');
+      console.log('[Compare API] Page', pageNum, ':', fetched.length, 'rows (offset:', offset, ', total:', allRows.length, ')');
 
       if (fetched.length < PAGE_SIZE) {
         hasMore = false;
       } else {
         offset += PAGE_SIZE;
       }
+      
+      // Safety: prevent infinite loop
+      if (pageNum > 100) {
+        console.error('[Compare API] Too many pages, breaking loop');
+        break;
+      }
     }
 
     const rows = allRows;
-    console.log('[Compare API] Total fetched:', rows.length, 'rows (expected:', totalRowCount, ')');
+    console.log('[Compare API] FINAL: Fetched', rows.length, 'of', totalRowCount, 'rows in', pageNum, 'pages');
 
     // Get unique style numbers and fetch style names
     const uniqueStyleNos = [...new Set(rows.map(r => r.style_no).filter(Boolean))];

@@ -55,17 +55,20 @@ export async function POST(req: Request) {
     
     console.log('[Preview API] Total rows in DB for this import:', totalRowCount);
 
-    // 3. Fetch ALL rows using pagination to guarantee we get everything
-    const PAGE_SIZE = 5000;
+    // 3. Fetch ALL rows using pagination - Supabase has a hard 1000 row limit per request!
+    const PAGE_SIZE = 1000;
     let allRows: any[] = [];
     let offset = 0;
     let hasMore = true;
+    let pageNum = 0;
 
     while (hasMore) {
+      pageNum++;
       const { data: pageRows, error: pageError } = await supabase
         .from('purchase_sales_rows')
         .select('*')
         .eq('import_id', importId)
+        .order('id', { ascending: true })
         .range(offset, offset + PAGE_SIZE - 1);
 
       if (pageError) {
@@ -81,10 +84,12 @@ export async function POST(req: Request) {
       } else {
         offset += PAGE_SIZE;
       }
+      
+      if (pageNum > 100) break;  // Safety
     }
 
     const rows = allRows;
-    console.log('[Preview API] Total fetched:', rows.length, 'rows (expected:', totalRowCount, ')');
+    console.log('[Preview API] FINAL: Fetched', rows.length, 'of', totalRowCount, 'rows in', pageNum, 'pages');
 
     // 3. First, look up all styles in the database to get their suppliers
     // This is critical - the CSV doesn't have supplier, we must look it up from styles table
