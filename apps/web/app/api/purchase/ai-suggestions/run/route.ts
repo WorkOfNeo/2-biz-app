@@ -967,6 +967,18 @@ This is a CLOSING/LATE purchase run. Be CONSERVATIVE.
         console.log('[AI Response] Warnings:', aiOutput.warnings || 'none');
         console.log('[AI Response] Suppliers:', aiOutput.suppliers?.length || 0);
         
+        // Count total lines from AI
+        let totalAILines = 0;
+        for (const supplier of (aiOutput.suppliers || [])) {
+          totalAILines += (supplier.lines?.length || 0);
+        }
+        console.log('[AI Response] TOTAL STYLE/COLOR LINES FROM AI:', totalAILines);
+        console.log('[AI Response] INPUT: We sent', totalStylesSent, 'styles to AI');
+        if (totalAILines < totalStylesSent) {
+          console.warn('[AI Response] WARNING: AI returned fewer styles than we sent!', 
+            `Missing ${totalStylesSent - totalAILines} styles`);
+        }
+        
         // Log per-supplier summary
         for (const supplier of (aiOutput.suppliers || [])) {
           const topLines = (supplier.lines || []).slice(0, 3);
@@ -990,11 +1002,12 @@ This is a CLOSING/LATE purchase run. Be CONSERVATIVE.
 
     const durationMs = Date.now() - startTime;
 
-    // Enrich AI output with style_name, image_url, and size data from sales summary
+    // Enrich AI output with style_name, image_url, sold qty, and size data from sales summary
     if (aiOutput && aiOutput.suppliers) {
       // Build lookup maps from sales summary
       const styleNameMap: Record<string, string> = {};
       const imageUrlMap: Record<string, string> = {};
+      const soldQtyMap: Record<string, number> = {};  // key: style_no|color → sold qty
       
       for (const row of (salesSummary || [])) {
         if (row.style_no && row.style_name) {
@@ -1003,7 +1016,12 @@ This is a CLOSING/LATE purchase run. Be CONSERVATIVE.
         if (row.style_no && row.image_url) {
           imageUrlMap[row.style_no] = row.image_url;
         }
+        // Build sold qty lookup
+        const key = `${row.style_no}|${row.color}`;
+        soldQtyMap[key] = (soldQtyMap[key] || 0) + (Number(row.total_qty) || 0);
       }
+      
+      console.log('[AI Suggestions] Built sold qty lookup for', Object.keys(soldQtyMap).length, 'style/color combinations');
       
       // Add style_name from season styles if not in sales summary
       for (const style of seasonStyles) {
@@ -1025,6 +1043,9 @@ This is a CLOSING/LATE purchase run. Be CONSERVATIVE.
             if (line.style_no && imageUrlMap[line.style_no]) {
               (line as any).image_url = imageUrlMap[line.style_no];
             }
+            // Add current sold qty from our data (don't rely on AI returning it)
+            const soldQty = soldQtyMap[key] || 0;
+            (line as any).current_sold = soldQty;
             // Add size info and sales data
             if (sizeData) {
               (line as any).available_sizes = sizeData.sizes;
