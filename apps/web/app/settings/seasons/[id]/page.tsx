@@ -21,6 +21,25 @@ type MappingState = {
   price: string;
 };
 
+/**
+ * Parse a number that may use European formatting (. as thousands separator)
+ * "46.238" -> 46238 (not 46.238)
+ * "1.234.567" -> 1234567
+ * Strips all dots and commas, then parses as integer
+ */
+function parseEuroNumber(value: string | number | null | undefined): number {
+  if (value === null || value === undefined) return 0;
+  if (typeof value === 'number') return Math.round(value);
+  
+  // Remove all dots and commas (treat as thousands separators)
+  const cleaned = String(value).replace(/[.,\s]/g, '').trim();
+  
+  // Remove any non-digit characters except minus
+  const digitsOnly = cleaned.replace(/[^\d-]/g, '');
+  
+  return parseInt(digitsOnly, 10) || 0;
+}
+
 export default function SeasonDetailPage() {
   const params = useParams<{ id: string }>();
   const id = params.id;
@@ -199,11 +218,12 @@ export default function SeasonDetailPage() {
 
     try {
       // Parse rows according to mapping
+      // Use parseEuroNumber to handle European number formatting (46.238 = 46238)
       const parsedRows: ParsedRow[] = uploadedRows.map(row => ({
         name: String(row[mapping.name] || '').trim(),
         city: String(row[mapping.city] || '').trim(),
-        qty: Number(row[mapping.qty] || 0) || 0,
-        price: Number(row[mapping.price] || 0) || 0,
+        qty: parseEuroNumber(row[mapping.qty]),
+        price: parseEuroNumber(row[mapping.price]),
         originalRow: row
       })).filter(r => r.name && (r.qty || r.price)); // Filter out empty rows
 
@@ -424,13 +444,14 @@ export default function SeasonDetailPage() {
       const hasHeader = firstLine.includes('name') || firstLine.includes('customer') || firstLine.includes('qty');
       const dataLines = hasHeader ? lines.slice(1) : lines;
 
+      // Use parseEuroNumber to handle European number formatting (46.238 = 46238)
       const excelRows = dataLines.map(line => {
         const parts = line.split('\t');
         return {
           name: (parts[0] || '').trim(),
           city: (parts[1] || '').trim(),
-          qty: Number((parts[2] || '0').replace(/[^\d.-]/g, '')) || 0,
-          price: Number((parts[3] || '0').replace(/[^\d.-]/g, '')) || 0,
+          qty: parseEuroNumber(parts[2]),
+          price: parseEuroNumber(parts[3]),
         };
       }).filter(r => r.name && (r.qty || r.price));
 
