@@ -244,17 +244,20 @@ async function handle(req: Request) {
         emailBody: schedule.emailBody || 'Hermed lagerliste :)',
       };
 
-      const { error: insertError } = await supabase.from('jobs').insert({
+      const { error: insertError, data: insertedJob } = await supabase.from('jobs').insert({
         type: 'send_stock_list_email',
         payload: jobPayload,
         status: 'pending',
         queue: 'default',
-      });
+      }).select('id');
 
       if (insertError) {
         console.error(`[cron:stock-list-schedules] Failed to insert job for ${listName}:`, insertError);
+        // Store error to include in results
+        (schedule as any)._insertError = `${listName}: ${insertError.message}`;
       } else {
         queuedCount++;
+        if (debug) console.log(`[cron:stock-list-schedules] Inserted job ${insertedJob?.[0]?.id} for ${listName}`);
       }
     }
 
@@ -265,7 +268,13 @@ async function handle(req: Request) {
       updatedSchedules[idx] = { ...existingSchedule, lastRun: now.toISOString() };
     }
 
-    results.push({ scheduleId: schedule.id, scheduleName: schedule.name, queued: queuedCount });
+    const insertError = (schedule as any)._insertError;
+    results.push({ 
+      scheduleId: schedule.id, 
+      scheduleName: schedule.name, 
+      queued: queuedCount,
+      ...(insertError ? { error: insertError } : {})
+    });
   }
 
   // Save updated schedules (with new lastRun times)
