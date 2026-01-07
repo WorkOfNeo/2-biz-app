@@ -71,10 +71,12 @@ See {{purchase_level}} section. This is CRITICAL:
 - Only add styles that still has more sales than purchases, and are not maxed out.
 
 **CLOSING (Run 5+, final 10-20% of season)**:
-- Sold 900, already purchased 600 → suggest just to cover, or UNDER
-- NEVER gamble on late-season purchases
-- Only reorder proven bestsellers, and conservatively
-- Example: Sold 900, purchased 600 → suggest 250-300 (not 1500!)
+- Buy EXACTLY to match sold amount, OR skip entirely
+- Key constraint: MOQ (Minimum Order Qty) and lead time for deliveries
+- If remaining qty needed doesn't meet supplier MOQ → suggest 0 (skip)
+- Example: Sold 600, already purchased 550 → remaining need is 50, but if MOQ is 100 → skip (suggest 0)
+- Example: Sold 900, already purchased 600 → need 300, if MOQ is 200 → suggest 300 to cover exactly
+- NEVER gamble on late-season purchases - only proven bestsellers
 
 ### Rule 3: Customer Potential per Rep
 - Check how many customers each rep has LEFT to visit
@@ -151,7 +153,7 @@ Examples:
 \`\`\``,
     model: 'gpt-4o',  // Using gpt-4o for better instruction following
     temperature: 0.3,
-    maxTokens: 32000,  // Increased to handle 100+ styles with size breakdowns
+    maxTokens: 16384,  // gpt-4o max completion tokens
   },
 };
 

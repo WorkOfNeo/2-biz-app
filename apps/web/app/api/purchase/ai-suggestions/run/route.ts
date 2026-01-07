@@ -920,10 +920,12 @@ This is a MID-SEASON purchase run.
 - Be cautious with slow sellers`;
     } else {
       purchaseLevelInfo = `PURCHASE LEVEL: CLOSING (Run ${purchaseRunNumber}+)
-This is a CLOSING/LATE purchase run. Be CONSERVATIVE.
-- Order only 30-50% of remaining need
-- Only reorder proven bestsellers
-- Avoid new or slow styles`;
+This is a CLOSING/LATE purchase run. Two options only:
+- BUY EXACTLY to match sold qty (if MOQ is met and delivery is viable)
+- OR SKIP ENTIRELY (if remaining qty < MOQ or lead time too long)
+- Example: Sold 600, purchased 550 → need 50, but MOQ=100 → SKIP (suggest 0)
+- Example: Sold 900, purchased 600 → need 300, MOQ=200 → suggest 300 exactly
+- NO buffer quantities, NO gambling on late-season`;
     }
     console.log('[AI Suggestions] Purchase level info:', purchaseLevelInfo.split('\n')[0]);
 
@@ -1346,6 +1348,7 @@ This is a CLOSING/LATE purchase run. Be CONSERVATIVE.
         
         // Multiplier depends on purchase round!
         let multiplier: number;
+        let isClosingRound = false;
         if (purchaseRunNumber <= 2) {
           // EARLY: sold + 30% buffer
           multiplier = 1.3;
@@ -1355,9 +1358,10 @@ This is a CLOSING/LATE purchase run. Be CONSERVATIVE.
           multiplier = 1.1;
           console.log('[BACKFILL] MID ROUND - using 1.1x multiplier');
         } else {
-          // CLOSING: conservative, suggest less than sold
-          multiplier = 0.5;
-          console.log('[BACKFILL] CLOSING ROUND - using 0.5x multiplier (conservative)');
+          // CLOSING: match exactly to sold amount, user will skip if MOQ not met
+          multiplier = 1.0;
+          isClosingRound = true;
+          console.log('[BACKFILL] CLOSING ROUND - using 1.0x (exact match, check MOQ)');
         }
         
         // Group missing by supplier
@@ -1428,14 +1432,20 @@ This is a CLOSING/LATE purchase run. Be CONSERVATIVE.
               style_name: m.style_name,
               image_url: m.image_url,
               skip_reason: null,
-              notes: 'Backfilled - AI did not include this style',
-              projection_basis: `Sold ${m.soldQty} × ${multiplier.toFixed(1)}x = ${projectedQty}`,
+              notes: isClosingRound 
+                ? 'Backfilled - CLOSING round: match sold qty exactly, skip if MOQ not met'
+                : 'Backfilled - AI did not include this style',
+              projection_basis: isClosingRound
+                ? `Closing: exact match to sold ${m.soldQty} (verify MOQ)`
+                : `Sold ${m.soldQty} × ${multiplier.toFixed(1)}x = ${projectedQty}`,
               available_sizes: m.sizeData?.sizes || [],
               sold_sizes: m.sizeData?.sizeQty || {},
               total_sold: m.soldQty,
               size_quantities: sizeQuantities,
-              reasoning: 'System backfill based on sold qty projection',
-              priority: 'medium' as const,
+              reasoning: isClosingRound
+                ? 'Closing round: buy to cover exactly, or skip if MOQ/lead time not viable'
+                : 'System backfill based on sold qty projection',
+              priority: isClosingRound ? 'low' as const : 'medium' as const,
             };
             
             supplierOutput.lines!.push(backfillLine);
