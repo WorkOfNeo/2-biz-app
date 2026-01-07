@@ -36,6 +36,16 @@ export async function sendStockListEmail(
   const fromEmail = process.env.EMAILJS_FROM_EMAIL || '';
   const fromName = process.env.EMAILJS_FROM_NAME || '2-BIZ';
 
+  // Debug: log key info (lengths and prefixes only, not full values)
+  await log('info', 'EmailJS config check', {
+    serviceId: serviceId ? `${serviceId.substring(0, 8)}... (${serviceId.length} chars)` : 'MISSING',
+    templateId: templateId ? `${templateId.substring(0, 8)}... (${templateId.length} chars)` : 'MISSING',
+    publicKey: publicKey ? `${publicKey.substring(0, 6)}... (${publicKey.length} chars)` : 'MISSING',
+    privateKey: privateKey ? `${privateKey.substring(0, 6)}... (${privateKey.length} chars)` : 'MISSING',
+    fromEmail,
+    fromName,
+  });
+
   if (!serviceId || !templateId || !publicKey || !privateKey) {
     await log('error', 'EmailJS configuration missing', {
       hasServiceId: !!serviceId,
@@ -77,6 +87,19 @@ export async function sendStockListEmail(
     },
   };
 
+  // Debug: log request structure (without sensitive values)
+  await log('info', 'EmailJS request payload structure', {
+    endpoint: EMAILJS_ENDPOINT,
+    hasAccessToken: !!emailPayload.accessToken,
+    accessTokenLength: emailPayload.accessToken?.length || 0,
+    templateParams: {
+      to_email: emailPayload.template_params.to_email,
+      bcc_count: emailPayload.template_params.bcc_email?.split(',').filter(Boolean).length || 0,
+      subject: emailPayload.template_params.subject,
+      hasStockListUrl: !!emailPayload.template_params.stock_list_1_url,
+    },
+  });
+
   try {
     const res = await fetch(EMAILJS_ENDPOINT, {
       method: 'POST',
@@ -84,10 +107,13 @@ export async function sendStockListEmail(
       body: JSON.stringify(emailPayload),
     });
 
+    const responseText = await res.text();
+    
     if (res.ok) {
       await log('info', `Successfully sent ${listName} to ${recipients.length} recipient(s)`, {
         listName,
         recipientCount: recipients.length,
+        responseStatus: res.status,
       });
       return {
         success: true,
@@ -95,15 +121,16 @@ export async function sendStockListEmail(
         data: { listName, recipientCount: recipients.length },
       };
     } else {
-      const errText = await res.text();
-      await log('error', `Failed to send ${listName}: ${errText}`, {
+      await log('error', `Failed to send ${listName}: ${responseText}`, {
         listName,
         status: res.status,
-        error: errText,
+        statusText: res.statusText,
+        error: responseText,
+        headers: Object.fromEntries(res.headers.entries()),
       });
       return {
         success: false,
-        message: `EmailJS error: ${res.status} - ${errText}`,
+        message: `EmailJS error: ${res.status} - ${responseText}`,
       };
     }
   } catch (err: any) {
