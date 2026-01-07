@@ -226,6 +226,7 @@ async function handle(req: Request) {
     if (!willRun) continue;
 
     // Queue jobs for Railway worker to send emails
+    // One job per recipient per stock list (so each person gets their own email)
     let queuedCount = 0;
     for (const listName of schedule.stockLists) {
       const exp = latestStockListByName.get(listName);
@@ -234,30 +235,31 @@ async function handle(req: Request) {
         continue;
       }
 
-      // Insert job for the Railway worker
-      const jobPayload = {
-        scheduleId: schedule.id,
-        scheduleName: schedule.name,
-        listName,
-        listUrl: exp.public_url,
-        recipients: schedule.recipients,
-        emailBody: schedule.emailBody || 'Hermed lagerliste :)',
-      };
+      // Create one job per recipient
+      for (const recipient of schedule.recipients) {
+        const jobPayload = {
+          scheduleId: schedule.id,
+          scheduleName: schedule.name,
+          listName,
+          listUrl: exp.public_url,
+          recipient, // Single recipient per job
+          emailBody: schedule.emailBody || 'Hermed lagerliste :)',
+        };
 
-      const { error: insertError, data: insertedJob } = await supabase.from('jobs').insert({
-        type: 'send_stock_list_email',
-        payload: jobPayload,
-        status: 'queued',
-        queue: 'default',
-      }).select('id');
+        const { error: insertError, data: insertedJob } = await supabase.from('jobs').insert({
+          type: 'send_stock_list_email',
+          payload: jobPayload,
+          status: 'queued',
+          queue: 'default',
+        }).select('id');
 
-      if (insertError) {
-        console.error(`[cron:stock-list-schedules] Failed to insert job for ${listName}:`, insertError);
-        // Store error to include in results
-        (schedule as any)._insertError = `${listName}: ${insertError.message}`;
-      } else {
-        queuedCount++;
-        if (debug) console.log(`[cron:stock-list-schedules] Inserted job ${insertedJob?.[0]?.id} for ${listName}`);
+        if (insertError) {
+          console.error(`[cron:stock-list-schedules] Failed to insert job for ${listName} -> ${recipient}:`, insertError);
+          (schedule as any)._insertError = `${listName} -> ${recipient}: ${insertError.message}`;
+        } else {
+          queuedCount++;
+          if (debug) console.log(`[cron:stock-list-schedules] Inserted job ${insertedJob?.[0]?.id} for ${listName} -> ${recipient}`);
+        }
       }
     }
 

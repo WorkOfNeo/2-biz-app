@@ -7,7 +7,7 @@ interface SendStockListEmailPayload {
   scheduleName: string;
   listName: string;
   listUrl: string;
-  recipients: string[];
+  recipient: string; // Single recipient per job
   emailBody: string;
 }
 
@@ -26,7 +26,7 @@ export async function sendStockListEmail(
   payload: SendStockListEmailPayload,
   log: (level: 'info' | 'error' | 'progress', msg: string, data?: Record<string, any>) => Promise<void>
 ): Promise<JobResult> {
-  const { scheduleId, scheduleName, listName, listUrl, recipients, emailBody } = payload;
+  const { scheduleId, scheduleName, listName, listUrl, recipient, emailBody } = payload;
 
   // Get EmailJS config from environment
   const serviceId = process.env.EMAILJS_SERVICE_ID || '';
@@ -59,10 +59,10 @@ export async function sendStockListEmail(
     };
   }
 
-  await log('info', `Sending stock list email: ${listName}`, {
+  await log('info', `Sending stock list email: ${listName} to ${recipient}`, {
     scheduleName,
     listName,
-    recipientCount: recipients.length,
+    recipient,
   });
 
   const subject = `${listName} - Lagerliste`;
@@ -75,8 +75,7 @@ export async function sendStockListEmail(
     user_id: publicKey,
     accessToken: privateKey,
     template_params: {
-      to_email: recipients[0] || '',
-      bcc_email: recipients.slice(1).join(','),
+      to_email: recipient,
       subject,
       message_html: emailBody || 'Hermed lagerliste :)',
       from_name: fromName,
@@ -89,15 +88,11 @@ export async function sendStockListEmail(
 
   // Debug: log request structure (without sensitive values)
   await log('info', 'EmailJS request payload structure', {
-    endpoint: EMAILJS_ENDPOINT,
     hasAccessToken: !!emailPayload.accessToken,
     accessTokenLength: emailPayload.accessToken?.length || 0,
-    templateParams: {
-      to_email: emailPayload.template_params.to_email,
-      bcc_count: emailPayload.template_params.bcc_email?.split(',').filter(Boolean).length || 0,
-      subject: emailPayload.template_params.subject,
-      hasStockListUrl: !!emailPayload.template_params.stock_list_1_url,
-    },
+    to_email: emailPayload.template_params.to_email,
+    subject: emailPayload.template_params.subject,
+    hasStockListUrl: !!emailPayload.template_params.stock_list_1_url,
   });
 
   try {
@@ -110,15 +105,15 @@ export async function sendStockListEmail(
     const responseText = await res.text();
     
     if (res.ok) {
-      await log('info', `Successfully sent ${listName} to ${recipients.length} recipient(s)`, {
+      await log('info', `Successfully sent ${listName} to ${recipient}`, {
         listName,
-        recipientCount: recipients.length,
+        recipient,
         responseStatus: res.status,
       });
       return {
         success: true,
-        message: `Sent ${listName} to ${recipients.length} recipient(s)`,
-        data: { listName, recipientCount: recipients.length },
+        message: `Sent ${listName} to ${recipient}`,
+        data: { listName, recipient },
       };
     } else {
       await log('error', `Failed to send ${listName}: ${responseText}`, {
