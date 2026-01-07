@@ -88,7 +88,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'importId is required' }, { status: 400 });
     }
 
-    console.log('[Compare API] Starting comparison for import:', importId);
+    console.log('[Compare API] v2.0 - Starting comparison for import:', importId);
 
     // Fetch import details
     const { data: importData, error: importError } = await supabase
@@ -101,20 +101,45 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Import not found' }, { status: 404 });
     }
 
-    // Fetch ALL rows from the import - Supabase defaults to 1000 which truncates data!
-    const { data: salesRows, error: rowsError } = await supabase
+    // First, get count of rows to verify we fetch everything
+    const { count: totalRowCount } = await supabase
       .from('purchase_sales_rows')
-      .select('*')
-      .eq('import_id', importId)
-      .limit(100000);  // Must override default 1000 limit
+      .select('*', { count: 'exact', head: true })
+      .eq('import_id', importId);
+    
+    console.log('[Compare API] Total rows in DB for this import:', totalRowCount);
 
-    if (rowsError) {
-      console.error('[Compare API] Failed to fetch rows:', rowsError);
-      return NextResponse.json({ error: 'Failed to fetch sales data' }, { status: 500 });
+    // Fetch ALL rows using pagination to guarantee we get everything
+    const PAGE_SIZE = 5000;
+    let allRows: any[] = [];
+    let offset = 0;
+    let hasMore = true;
+
+    while (hasMore) {
+      const { data: pageRows, error: pageError } = await supabase
+        .from('purchase_sales_rows')
+        .select('*')
+        .eq('import_id', importId)
+        .range(offset, offset + PAGE_SIZE - 1);
+
+      if (pageError) {
+        console.error('[Compare API] Failed to fetch rows at offset', offset, ':', pageError);
+        return NextResponse.json({ error: 'Failed to fetch sales data' }, { status: 500 });
+      }
+
+      const fetched = pageRows || [];
+      allRows = allRows.concat(fetched);
+      console.log('[Compare API] Fetched page:', fetched.length, 'rows (offset:', offset, ', total so far:', allRows.length, ')');
+
+      if (fetched.length < PAGE_SIZE) {
+        hasMore = false;
+      } else {
+        offset += PAGE_SIZE;
+      }
     }
 
-    const rows = salesRows || [];
-    console.log('[Compare API] Fetched', rows.length, 'rows');
+    const rows = allRows;
+    console.log('[Compare API] Total fetched:', rows.length, 'rows (expected:', totalRowCount, ')');
 
     // Get unique style numbers and fetch style names
     const uniqueStyleNos = [...new Set(rows.map(r => r.style_no).filter(Boolean))];

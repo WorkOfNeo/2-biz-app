@@ -34,7 +34,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'importId is required' }, { status: 400 });
     }
 
-    console.log('[Preview API] Starting preview for import:', importId);
+    console.log('[Preview API] v2.0 - Starting preview for import:', importId);
 
     // 1. Fetch import details
     const { data: importData, error: importError } = await supabase
@@ -47,18 +47,44 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Import not found' }, { status: 404 });
     }
 
-    // 2. Fetch all rows from the import (no limit - default is 1000!)
-    const { data: salesRows, error: rowsError } = await supabase
+    // 2. Get count first to verify
+    const { count: totalRowCount } = await supabase
       .from('purchase_sales_rows')
-      .select('*')
-      .eq('import_id', importId)
-      .limit(50000);  // Override default 1000 limit
+      .select('*', { count: 'exact', head: true })
+      .eq('import_id', importId);
+    
+    console.log('[Preview API] Total rows in DB for this import:', totalRowCount);
 
-    if (rowsError) {
-      return NextResponse.json({ error: 'Failed to fetch sales data' }, { status: 500 });
+    // 3. Fetch ALL rows using pagination to guarantee we get everything
+    const PAGE_SIZE = 5000;
+    let allRows: any[] = [];
+    let offset = 0;
+    let hasMore = true;
+
+    while (hasMore) {
+      const { data: pageRows, error: pageError } = await supabase
+        .from('purchase_sales_rows')
+        .select('*')
+        .eq('import_id', importId)
+        .range(offset, offset + PAGE_SIZE - 1);
+
+      if (pageError) {
+        console.error('[Preview API] Failed to fetch rows at offset', offset, ':', pageError);
+        return NextResponse.json({ error: 'Failed to fetch sales data' }, { status: 500 });
+      }
+
+      const fetched = pageRows || [];
+      allRows = allRows.concat(fetched);
+
+      if (fetched.length < PAGE_SIZE) {
+        hasMore = false;
+      } else {
+        offset += PAGE_SIZE;
+      }
     }
 
-    const rows = salesRows || [];
+    const rows = allRows;
+    console.log('[Preview API] Total fetched:', rows.length, 'rows (expected:', totalRowCount, ')');
 
     // 3. First, look up all styles in the database to get their suppliers
     // This is critical - the CSV doesn't have supplier, we must look it up from styles table
