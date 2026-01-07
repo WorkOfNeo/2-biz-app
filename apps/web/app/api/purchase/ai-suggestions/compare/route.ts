@@ -101,11 +101,12 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Import not found' }, { status: 404 });
     }
 
-    // Fetch all rows from the import
+    // Fetch all rows from the import (no limit - default is 1000!)
     const { data: salesRows, error: rowsError } = await supabase
       .from('purchase_sales_rows')
       .select('*')
-      .eq('import_id', importId);
+      .eq('import_id', importId)
+      .limit(50000);  // Override default 1000 limit
 
     if (rowsError) {
       console.error('[Compare API] Failed to fetch rows:', rowsError);

@@ -87,18 +87,21 @@ export async function POST(req: Request) {
 
     // Fetch aggregated sales data by supplier/style/color (with images)
     // Try the enhanced view first, fall back to basic view
+    // IMPORTANT: Override default 1000 row limit!
     let salesSummary: any[] = [];
     const { data: salesWithImages, error: summaryErrorImages } = await supabase
       .from('purchase_sales_summary_with_images')
       .select('*')
-      .eq('import_id', importId);
+      .eq('import_id', importId)
+      .limit(50000);  // Override default 1000 limit
 
     if (summaryErrorImages) {
       console.warn('[AI Suggestions] Could not fetch from purchase_sales_summary_with_images, falling back:', summaryErrorImages.message);
       const { data: salesBasic, error: summaryError } = await supabase
         .from('purchase_sales_summary')
         .select('*')
-        .eq('import_id', importId);
+        .eq('import_id', importId)
+        .limit(50000);  // Override default 1000 limit
       
       if (summaryError) {
         console.error('[AI Suggestions] Failed to fetch sales summary:', summaryError);
@@ -114,7 +117,8 @@ export async function POST(req: Request) {
     const { data: sizeSummary, error: sizeError } = await supabase
       .from('purchase_sales_size_summary')
       .select('*')
-      .eq('import_id', importId);
+      .eq('import_id', importId)
+      .limit(50000);  // Override default 1000 limit
 
     if (sizeError) {
       console.warn('[AI Suggestions] Could not fetch size summary:', sizeError.message);
@@ -138,7 +142,8 @@ export async function POST(req: Request) {
     const { data: customerSummary, error: customerError } = await supabase
       .from('purchase_customer_summary')
       .select('*')
-      .eq('import_id', importId);
+      .eq('import_id', importId)
+      .limit(50000);  // Override default 1000 limit
 
     if (customerError) {
       console.error('[AI Suggestions] Failed to fetch customer summary:', customerError);
