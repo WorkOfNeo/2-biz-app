@@ -269,20 +269,26 @@ export default function StatisticsDashboardPage() {
     setSendingScheduleId(schedule.id);
     try {
       const bodyHtml = schedule.emailBody || 'Hermed lagerliste :)';
+      let emailCount = 0;
       
+      // Send one email per recipient per stock list (same as cron)
       for (const listName of schedule.stockLists) {
         const exp = latestStockListByName.get(listName);
         if (!exp?.public_url) continue;
         
         const subject = `${listName} - Lagerliste`;
         const filename = `${listName} - Lagerliste.pdf`;
-        const dynamicParams: Record<string, string> = {
-          stock_list_1_url: exp.public_url,
-          stock_list_1_name: listName,
-          stock_list_1_filename: filename,
-        };
         
-        await sendEmailJs(schedule.recipients, subject, bodyHtml, undefined, dynamicParams, true);
+        for (const recipient of schedule.recipients) {
+          const dynamicParams: Record<string, string> = {
+            stock_list_1_url: exp.public_url,
+            stock_list_1_name: listName,
+            stock_list_1_filename: filename,
+          };
+          
+          await sendEmailJs([recipient], subject, bodyHtml, undefined, dynamicParams, false);
+          emailCount++;
+        }
       }
       
       // Update lastRun
@@ -291,7 +297,7 @@ export default function StatisticsDashboardPage() {
       );
       await saveSchedules(newSchedules);
       
-      alert(`${schedule.stockLists.length} email(s) sent`);
+      alert(`${emailCount} email(s) sent to ${schedule.recipients.length} recipient(s)`);
     } finally {
       setSendingScheduleId(null);
     }
