@@ -737,12 +737,12 @@ export async function exportOverview(ctx: Ctx) {
           Cell('Kunde', '25%', 'left', styles.headerCell),
           Cell('By', '12%', 'left', styles.headerCell),
           Cell('Kommentar', '10%', 'left', styles.headerCell),
-          Cell('Stk', '7%', 'center', styles.headerCell),
-          Cell('Oms', '10%', 'center', styles.headerCell),
-          Cell('Stk', '7%', 'center', styles.headerCell),
-          Cell('Oms', '10%', 'center', styles.headerCell),
-          Cell('Stk', '6%', 'center', styles.headerCell),
-          Cell('Oms', '7%', 'center', styles.headerCell)
+          Cell('Stk', '7%', 'right', styles.headerCell),
+          Cell('Oms', '10%', 'right', styles.headerCell),
+          Cell('Stk', '7%', 'right', styles.headerCell),
+          Cell('Oms', '10%', 'right', styles.headerCell),
+          Cell('Stk', '6%', 'right', styles.headerCell),
+          Cell('Oms', '7%', 'right', styles.headerCell)
         );
         // Respect group_name: sort by group then company, and add a subtotal row at the end of each group
         const sorted = [...rows].sort((a,b) => {

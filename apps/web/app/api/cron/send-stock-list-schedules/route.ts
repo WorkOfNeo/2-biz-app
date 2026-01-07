@@ -1,3 +1,4 @@
+// Stock List Schedule Cron Job - sends scheduled emails automatically
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
