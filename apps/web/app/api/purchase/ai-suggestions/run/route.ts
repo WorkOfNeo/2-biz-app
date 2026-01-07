@@ -595,12 +595,7 @@ export async function POST(req: Request) {
           }
         }
 
-        // Calculate index
-        const aggregatedIndex = lastSeasonTotalQty > 0 
-          ? ((currentSeasonTotalQty / lastSeasonTotalQty) * 100).toFixed(1)
-          : 'N/A';
-
-        // Also get stats from uploaded CSV for accurate current season numbers
+        // Get stats from uploaded CSV for accurate current season numbers
         const uploadedTotalQty = (salesSummary || []).reduce((sum, r) => sum + (Number(r.total_qty) || 0), 0);
         const uploadedTotalAmount = (salesSummary || []).reduce((sum, r) => sum + (Number(r.total_amount) || 0), 0);
         const uploadedCustomers = new Set((customerSummary || []).map(c => c.customer_ref)).size;
@@ -610,8 +605,14 @@ export async function POST(req: Request) {
           ? ((uploadedCustomers / customersFromLastSeason) * 100).toFixed(1)
           : 'N/A';
         
+        // Calculate index using UPLOADED data, not empty season_statistics
+        const aggregatedIndex = lastSeasonTotalQty > 0 
+          ? ((uploadedTotalQty / lastSeasonTotalQty) * 100).toFixed(1)
+          : 'N/A';
+        
         console.log('[YoY Analysis] Uploaded CSV stats: qty=', uploadedTotalQty, 'customers=', uploadedCustomers);
         console.log('[YoY Analysis] Actual visit rate based on CSV:', actualVisitRate, '%');
+        console.log('[YoY Analysis] Aggregated Index:', aggregatedIndex, '% (current', uploadedTotalQty, '/ last', lastSeasonTotalQty, ')');
         
         yoyAnalysis = {
           comparisonSeasonId,
@@ -1112,6 +1113,69 @@ This is a CLOSING/LATE purchase run. Be CONSERVATIVE.
       }
       
       console.log('[AI Suggestions] Enriched output with', Object.keys(styleNameMap).length, 'style names and size breakdowns');
+      
+      // ═══════════════════════════════════════════════════════════════════════
+      // VALIDATE: Fix AI suggestions that are TOO LOW
+      // If AI suggests less than sold qty, override with proper projection
+      // ═══════════════════════════════════════════════════════════════════════
+      
+      // Calculate multiplier based on visit rate
+      const visitRateForValidation = yoyAnalysis?.currentSeason?.visitRate 
+        ? parseFloat(yoyAnalysis.currentSeason.visitRate) / 100 
+        : 0.1;
+      const projectionMultiplier = visitRateForValidation > 0 ? Math.min(1 / visitRateForValidation, 15) : 10;
+      
+      console.log('═══════════════════════════════════════════════════════════');
+      console.log('[VALIDATE] Checking AI suggestions against sold qty');
+      console.log('[VALIDATE] Visit rate:', yoyAnalysis?.currentSeason?.visitRate, '→ multiplier:', projectionMultiplier.toFixed(2));
+      
+      let fixedCount = 0;
+      for (const supplier of aiOutput.suppliers) {
+        for (const line of (supplier.lines || [])) {
+          const soldQty = (line as any).current_sold || 0;
+          const suggestedQty = line.suggested_qty || 0;
+          
+          // If AI suggested less than sold, that's wrong - fix it
+          if (soldQty > 0 && suggestedQty < soldQty) {
+            const correctedQty = Math.max(soldQty, Math.round((soldQty * projectionMultiplier) / 10) * 10);
+            console.log(`[VALIDATE] FIXED: ${line.style_no}/${line.color}: ${soldQty} sold, AI said ${suggestedQty} → corrected to ${correctedQty}`);
+            
+            // Update the suggestion
+            const originalQty = line.suggested_qty;
+            line.suggested_qty = correctedQty;
+            (line as any).notes = `AI suggested ${originalQty}, corrected to ${correctedQty} (must be >= sold qty × projection)`;
+            (line as any).projection_basis = `Sold ${soldQty} × ${projectionMultiplier.toFixed(1)}x = ${correctedQty}`;
+            
+            // Update supplier total
+            supplier.total_units = (supplier.total_units || 0) - originalQty + correctedQty;
+            
+            // Recalculate size quantities if we have size data
+            const sizeData = (line as any).sold_sizes;
+            if (sizeData && Object.keys(sizeData).length > 0) {
+              const totalSold = Object.values(sizeData).reduce((sum: number, v) => sum + ((v as number) || 0), 0);
+              if (totalSold > 0) {
+                const newSizeQty: Record<string, number> = {};
+                for (const [size, qty] of Object.entries(sizeData)) {
+                  const ratio = ((qty as number) || 0) / totalSold;
+                  newSizeQty[size] = Math.round(correctedQty * ratio);
+                }
+                (line as any).size_quantities = newSizeQty;
+              }
+            }
+            
+            fixedCount++;
+          }
+        }
+      }
+      
+      if (fixedCount > 0) {
+        // Update total units
+        aiOutput.total_units = aiOutput.suppliers.reduce((sum, s) => sum + (s.total_units || 0), 0);
+        console.log('[VALIDATE] Fixed', fixedCount, 'suggestions. New total:', aiOutput.total_units);
+      } else {
+        console.log('[VALIDATE] All AI suggestions were valid (>= sold qty)');
+      }
+      console.log('═══════════════════════════════════════════════════════════');
       
       // ═══════════════════════════════════════════════════════════════════════
       // BACKFILL: Add missing styles that AI didn't include

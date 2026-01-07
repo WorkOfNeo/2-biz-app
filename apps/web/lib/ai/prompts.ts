@@ -121,9 +121,9 @@ Unless BOTH of these are true:
   "warnings": ["string"]
 }
 \`\`\``,
-    model: 'gpt-4o-mini',
+    model: 'gpt-4o',  // Using gpt-4o for better instruction following
     temperature: 0.3,
-    maxTokens: 16000,  // Increased to handle more styles
+    maxTokens: 32000,  // Increased to handle 100+ styles with size breakdowns
   },
 };
 
