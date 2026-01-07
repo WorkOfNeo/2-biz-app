@@ -247,7 +247,7 @@ async function handle(req: Request) {
       const { error: insertError, data: insertedJob } = await supabase.from('jobs').insert({
         type: 'send_stock_list_email',
         payload: jobPayload,
-        status: 'pending',
+        status: 'queued',
         queue: 'default',
       }).select('id');
 
