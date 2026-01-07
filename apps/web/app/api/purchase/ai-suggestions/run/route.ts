@@ -723,23 +723,32 @@ export async function POST(req: Request) {
       ? JSON.stringify(yoyAnalysis, null, 2)
       : 'No comparison season selected - YoY analysis not available.';
 
+    // Get run number for this season (used for purchase level and labeling)
+    let purchaseRunNumber = Number(body.runNumber) || 1;
+    if (seasonId && !body.runNumber) {
+      // If not provided in body, get from DB
+      const { data: runNumResult } = await supabase.rpc('get_next_purchase_run_number', { p_season_id: seasonId });
+      if (runNumResult) {
+        purchaseRunNumber = runNumResult;
+      }
+    }
+    
     // Build purchase level info based on run number
-    const runNumber = Number(body.runNumber) || 1;
     let purchaseLevelInfo = '';
-    if (runNumber <= 2) {
-      purchaseLevelInfo = `PURCHASE LEVEL: OPENING/EARLY (Run ${runNumber})
+    if (purchaseRunNumber <= 2) {
+      purchaseLevelInfo = `PURCHASE LEVEL: OPENING/EARLY (Run ${purchaseRunNumber})
 This is an EARLY purchase run. Be AGGRESSIVE with quantities.
 - Order 100-150% of projected seasonal need
 - Better to over-order popular styles than miss sales
 - New styles should get healthy initial orders`;
-    } else if (runNumber <= 4) {
-      purchaseLevelInfo = `PURCHASE LEVEL: MIDDLE (Run ${runNumber})
+    } else if (purchaseRunNumber <= 4) {
+      purchaseLevelInfo = `PURCHASE LEVEL: MIDDLE (Run ${purchaseRunNumber})
 This is a MID-SEASON purchase run.
 - Order 60-80% of remaining projected need
 - Focus on proven performers
 - Be cautious with slow sellers`;
     } else {
-      purchaseLevelInfo = `PURCHASE LEVEL: CLOSING (Run ${runNumber}+)
+      purchaseLevelInfo = `PURCHASE LEVEL: CLOSING (Run ${purchaseRunNumber}+)
 This is a CLOSING/LATE purchase run. Be CONSERVATIVE.
 - Order only 30-50% of remaining need
 - Only reorder proven bestsellers
@@ -806,15 +815,8 @@ This is a CLOSING/LATE purchase run. Be CONSERVATIVE.
 
     const aiRunId = aiRun.id;
 
-    // Get next run number for this season
-    let runNumber = 1;
-    if (seasonId) {
-      const { data: runNumResult } = await supabase.rpc('get_next_purchase_run_number', { p_season_id: seasonId });
-      if (runNumResult) {
-        runNumber = runNumResult;
-      }
-    }
-    const runLabel = `Round_${runNumber}`;
+    // Use the run number we already computed earlier
+    const runLabel = `Round_${purchaseRunNumber}`;
 
     // Build computed features snapshot for reproducibility
     const computedFeaturesSnapshot = {
@@ -848,7 +850,7 @@ This is a CLOSING/LATE purchase run. Be CONSERVATIVE.
         import_id: importId,
         comparison_season_id: comparisonSeasonId || null,
         run_label: runLabel,
-        run_number: runNumber,
+        run_number: purchaseRunNumber,
         comparison_mode: comparisonSeasonId ? 'csv_to_season_totals' : 'csv_only',
         computed_features_snapshot: computedFeaturesSnapshot,
         run_started_at: new Date().toISOString(),
@@ -865,7 +867,7 @@ This is a CLOSING/LATE purchase run. Be CONSERVATIVE.
       console.error('[AI Suggestions] Failed to create purchase_ai_runs:', purchaseRunError);
     }
     
-    console.log('[AI Suggestions] Created purchase run:', runLabel, '(run #' + runNumber + ')');
+    console.log('[AI Suggestions] Created purchase run:', runLabel, '(run #' + purchaseRunNumber + ')');
 
     // Call OpenAI
     const openai = new OpenAI({ apiKey: openaiApiKey });
@@ -1090,7 +1092,7 @@ This is a CLOSING/LATE purchase run. Be CONSERVATIVE.
         promptKey: promptConfig.key,
         promptVersion: promptConfig.version,
         runLabel,
-        runNumber,
+        runNumber: purchaseRunNumber,
         model: promptConfig.model,
         temperature: promptConfig.temperature,
         computedFeatures: computedFeaturesSnapshot,
