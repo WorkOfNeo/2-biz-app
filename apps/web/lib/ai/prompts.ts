@@ -8,7 +8,7 @@
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { cookies } from 'next/headers';
 
-export type PromptKey = 'purchase_suggestions_v1';
+export type PromptKey = 'purchase_suggestions_v1' | 'purchase_single_supplier_v1';
 
 export type PromptConfig = {
   key: PromptKey;
@@ -172,6 +172,44 @@ Examples:
     model: 'gpt-4o',  // Using gpt-4o for better instruction following
     temperature: 0.3,
     maxTokens: 16384,  // gpt-4o max completion tokens
+  },
+  
+  // Compact prompt for processing one supplier at a time (chunked approach)
+  purchase_single_supplier_v1: {
+    version: 1,
+    content: `You are a purchasing advisor. Generate purchase suggestions for ONE supplier.
+
+## Supplier: {{supplier_name}}
+MOQ: {{supplier_moq}} | Lead Time: {{supplier_lead_time}} days
+
+## Purchase Round
+{{purchase_level}}
+
+## Styles (CURRENT_SOLD = already sold this season)
+{{styles_data}}
+
+## Rules
+1. **INCLUDE ALL STYLES** - every style in input must appear in output
+2. **Round to full numbers**: <100→nearest 25, 100-500→nearest 50, >500→nearest 100
+3. **Skip low sales**: If CURRENT_SOLD < 65% of MOQ in early rounds → qty:0 with skip_reason
+4. **EARLY (Run 1-2)**: Suggest 1.0-1.3x of CURRENT_SOLD (buffer for growth)
+5. **MID (Run 3-4)**: Match CURRENT_SOLD or slightly above
+6. **CLOSING (Run 5+)**: Exact match to CURRENT_SOLD, or skip if < MOQ
+7. **Never exceed last year** (if provided) unless style is 150%+ vs last year
+
+## Output (valid JSON, no markdown):
+{
+  "supplier_name": "{{supplier_name}}",
+  "lines": [
+    {"style_no":"X","color":"Y","qty":N,"sold":N,"skip_reason":null,"reason":"brief"}
+  ],
+  "total_units": N,
+  "moq_status": "met|under|n/a",
+  "summary": "1-2 sentences"
+}`,
+    model: 'gpt-4o',
+    temperature: 0.2,  // Lower temp for more consistent output
+    maxTokens: 4096,   // Smaller - one supplier shouldn't need more
   },
 };
 

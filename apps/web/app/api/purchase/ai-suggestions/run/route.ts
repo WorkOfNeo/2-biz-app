@@ -58,6 +58,21 @@ function roundToFullQty(qty: number): number {
   }
 }
 
+/**
+ * Compress styles data to minimal format for AI input
+ * Reduces token usage significantly
+ */
+function compressStylesForAI(styles: any[]): string {
+  // Format: style_no|color|sold|sizes_json
+  const lines = styles.map(s => {
+    const sizes = s.size_breakdown && Object.keys(s.size_breakdown).length > 0 
+      ? JSON.stringify(s.size_breakdown)
+      : '';
+    return `${s.style_no}|${s.color}|${s.CURRENT_SOLD_QTY || s.total_qty}${sizes ? '|' + sizes : ''}`;
+  });
+  return lines.join('\n');
+}
+
 export async function POST(req: Request) {
   const startTime = Date.now();
   
@@ -1060,97 +1075,238 @@ This is a CLOSING/LATE purchase run. Two options only:
     
     console.log('[AI Suggestions] Created purchase run:', runLabel, '(run #' + purchaseRunNumber + ')');
 
-    // Call OpenAI
+    // Call OpenAI - use CHUNKED approach if we have many styles
     const openai = new OpenAI({ apiKey: openaiApiKey });
     
     let aiOutput: AIOutput | null = null;
     let rawResponse = '';
     let usage: any = null;
     let aiError: string | null = null;
+    
+    // Decide: use chunked (per-supplier) mode if we have many styles
+    const USE_CHUNKED_MODE = totalStylesSent > 30;
+    const supplierNames = Object.keys(limitedSalesBySupplier);
+    
+    console.log('═══════════════════════════════════════════════════════════');
+    console.log('[AI Mode]', USE_CHUNKED_MODE ? 'CHUNKED (per-supplier)' : 'SINGLE CALL');
+    console.log('[AI Mode] Total styles:', totalStylesSent, '| Suppliers:', supplierNames.length);
+    console.log('═══════════════════════════════════════════════════════════');
 
-    try {
-      console.log('[AI Suggestions] Calling OpenAI...', {
-        model: promptConfig.model,
-        promptLength: finalPrompt.length,
+    if (USE_CHUNKED_MODE) {
+      // CHUNKED MODE: Process each supplier separately for better completeness
+      console.log('[AI Chunked] Processing', supplierNames.length, 'suppliers in parallel...');
+      
+      const supplierPromises = supplierNames.map(async (supplierName) => {
+        const supplierStyles = limitedSalesBySupplier[supplierName] || [];
+        const supplierData = supplierMap[supplierName] || {};
+        
+        // Build compact prompt for this supplier
+        const stylesData = compressStylesForAI(supplierStyles);
+        const singleSupplierPrompt = `You are a purchasing advisor. Generate purchase suggestions for ONE supplier.
+
+## Supplier: ${supplierName}
+MOQ: ${supplierData.moq || 0} | Lead Time: ${supplierData.lead_time_days || 0} days
+
+## Purchase Round
+${purchaseLevelInfo}
+
+## Styles (format: style_no|color|sold|sizes_json)
+${stylesData}
+
+## Rules
+1. **INCLUDE ALL STYLES** - every style in input MUST appear in output (${supplierStyles.length} total)
+2. **Round to full numbers**: <100→nearest 25, 100-500→nearest 50, >500→nearest 100
+3. **Skip low sales**: If sold < ${Math.round((supplierData.moq || 0) * 0.65)} (65% of MOQ) in early rounds → qty:0, skip_reason:"Below MOQ threshold"
+4. **EARLY (Run 1-2)**: Suggest 1.0-1.3x of sold (buffer for growth)
+5. **MID (Run 3-4)**: Match sold or slightly above
+6. **CLOSING (Run 5+)**: Exact match to sold, or skip if remaining < MOQ
+7. **Never exceed last year** unless style is 150%+ vs last year
+
+## Output (valid JSON only, no markdown):
+{
+  "supplier_name": "${supplierName}",
+  "lines": [
+    {"style_no":"X","color":"Y","qty":N,"sold":N,"skip_reason":null,"reason":"brief"}
+  ],
+  "total_units": N,
+  "moq_status": "met|under|n/a",
+  "summary": "1-2 sentences"
+}`;
+
+        try {
+          const completion = await openai.chat.completions.create({
+            model: 'gpt-4o',
+            messages: [
+              { role: 'system', content: 'Respond with valid JSON only. No markdown.' },
+              { role: 'user', content: singleSupplierPrompt },
+            ],
+            max_tokens: 4096,
+            temperature: 0.2,
+            response_format: { type: 'json_object' },
+          });
+          
+          const response = completion.choices[0]?.message?.content || '';
+          const parsed = JSON.parse(response);
+          
+          console.log(`[AI Chunked] ${supplierName}: ${parsed.lines?.length || 0} lines, ${parsed.total_units || 0} units`);
+          
+          return {
+            success: true,
+            supplierName,
+            data: parsed,
+            usage: completion.usage,
+          };
+        } catch (e: any) {
+          console.error(`[AI Chunked] ${supplierName} FAILED:`, e.message);
+          return {
+            success: false,
+            supplierName,
+            error: e.message,
+          };
+        }
       });
-
-      const completion = await openai.chat.completions.create({
-        model: promptConfig.model,
-        messages: [
-          {
-            role: 'system',
-            content: 'You are a purchasing advisor. Always respond with valid JSON matching the specified schema. Do not include markdown code blocks in your response.',
-          },
-          {
-            role: 'user',
-            content: finalPrompt,
-          },
-        ],
-        max_tokens: promptConfig.maxTokens,
-        temperature: promptConfig.temperature,
-        response_format: { type: 'json_object' },
-      });
-
-      rawResponse = completion.choices[0]?.message?.content || '';
-      usage = completion.usage;
-
-      console.log('[AI Suggestions] OpenAI response received', {
-        tokensUsed: usage?.total_tokens,
-        responseLength: rawResponse.length,
-      });
-
-      // Parse JSON response
-      try {
-        aiOutput = JSON.parse(rawResponse) as AIOutput;
-        
-        // Build sold qty lookup FIRST so we can use it in logging
-        const soldQtyMapForLog: Record<string, number> = {};
-        for (const row of (salesSummary || [])) {
-          const key = `${row.style_no}|${row.color}`;
-          soldQtyMapForLog[key] = (soldQtyMapForLog[key] || 0) + (Number(row.total_qty) || 0);
+      
+      // Run all in parallel (or use batches for rate limiting)
+      const results = await Promise.all(supplierPromises);
+      
+      // Combine results into AIOutput format
+      const combinedSuppliers: SupplierSuggestion[] = [];
+      let totalTokens = 0;
+      let successCount = 0;
+      let failCount = 0;
+      
+      for (const result of results) {
+        if (result.success && result.data) {
+          successCount++;
+          totalTokens += result.usage?.total_tokens || 0;
+          
+          // Convert chunked response to our SupplierSuggestion format
+          const lines = (result.data.lines || []).map((l: any) => ({
+            style_no: l.style_no,
+            color: l.color,
+            suggested_qty: l.qty || 0,
+            reasoning: l.reason || '',
+            priority: l.skip_reason ? 'skip' as const : 'medium' as const,
+            skip_reason: l.skip_reason || null,
+            current_sold: l.sold || 0,
+          }));
+          
+          combinedSuppliers.push({
+            supplier_name: result.supplierName,
+            supplier_id: supplierMap[result.supplierName]?.id || '',
+            recommendation_summary: result.data.summary || '',
+            total_units: result.data.total_units || 0,
+            total_value_estimate: 0,
+            lines,
+            moq_status: result.data.moq_status || 'n/a',
+          });
+        } else {
+          failCount++;
         }
-        
-        // Log AI response summary
-        console.log('═══════════════════════════════════════════════════════════');
-        console.log('[AI Response] SUMMARY:');
-        console.log('[AI Response] Overall:', aiOutput.overall_summary);
-        console.log('[AI Response] Total units suggested:', aiOutput.total_units);
-        console.log('[AI Response] Warnings:', aiOutput.warnings || 'none');
-        console.log('[AI Response] Suppliers:', aiOutput.suppliers?.length || 0);
-        
-        // Count total lines from AI
-        let totalAILines = 0;
-        for (const supplier of (aiOutput.suppliers || [])) {
-          totalAILines += (supplier.lines?.length || 0);
-        }
-        console.log('[AI Response] TOTAL STYLE/COLOR LINES FROM AI:', totalAILines);
-        console.log('[AI Response] INPUT: We sent', totalStylesSent, 'styles to AI');
-        if (totalAILines < totalStylesSent) {
-          console.warn('[AI Response] WARNING: AI returned fewer styles than we sent!', 
-            `Missing ${totalStylesSent - totalAILines} styles`);
-        }
-        
-        // Log per-supplier summary (with actual sold qty from our data)
-        for (const supplier of (aiOutput.suppliers || [])) {
-          const topLines = (supplier.lines || []).slice(0, 3);
-          console.log(`[AI Response] ${supplier.supplier_name}:`);
-          console.log(`  - ${supplier.lines?.length || 0} lines, ${supplier.total_units} total units`);
-          console.log(`  - Top suggestions:`, topLines.map(l => {
-            const key = `${l.style_no}|${l.color}`;
-            const soldQty = soldQtyMapForLog[key] || 0;
-            return `${l.style_no}/${l.color}: ${soldQty} sold → ${l.suggested_qty} suggested`;
-          }).join(', '));
-        }
-        console.log('═══════════════════════════════════════════════════════════');
-        
-      } catch (parseError) {
-        console.error('[AI Suggestions] Failed to parse AI response as JSON:', parseError);
-        console.error('[AI Suggestions] Raw response (first 1000 chars):', rawResponse.substring(0, 1000));
-        aiError = 'Failed to parse AI response as JSON';
       }
-    } catch (openaiError: any) {
-      console.error('[AI Suggestions] OpenAI API error:', openaiError);
-      aiError = openaiError?.message || 'OpenAI API error';
+      
+      aiOutput = {
+        suppliers: combinedSuppliers,
+        overall_summary: `Processed ${successCount} suppliers in chunked mode. ${failCount > 0 ? `${failCount} failed.` : ''}`,
+        total_units: combinedSuppliers.reduce((sum, s) => sum + s.total_units, 0),
+        warnings: failCount > 0 ? [`${failCount} suppliers failed to process`] : [],
+      };
+      
+      usage = { total_tokens: totalTokens };
+      rawResponse = JSON.stringify(aiOutput);
+      
+      console.log('═══════════════════════════════════════════════════════════');
+      console.log('[AI Chunked] COMPLETE:', successCount, 'succeeded,', failCount, 'failed');
+      console.log('[AI Chunked] Total tokens used:', totalTokens);
+      console.log('[AI Chunked] Total units:', aiOutput.total_units);
+      console.log('═══════════════════════════════════════════════════════════');
+      
+    } else {
+      // SINGLE CALL MODE: Use original approach for smaller datasets
+      try {
+        console.log('[AI Suggestions] Calling OpenAI (single call)...', {
+          model: promptConfig.model,
+          promptLength: finalPrompt.length,
+        });
+
+        const completion = await openai.chat.completions.create({
+          model: promptConfig.model,
+          messages: [
+            {
+              role: 'system',
+              content: 'You are a purchasing advisor. Always respond with valid JSON matching the specified schema. Do not include markdown code blocks in your response.',
+            },
+            {
+              role: 'user',
+              content: finalPrompt,
+            },
+          ],
+          max_tokens: promptConfig.maxTokens,
+          temperature: promptConfig.temperature,
+          response_format: { type: 'json_object' },
+        });
+
+        rawResponse = completion.choices[0]?.message?.content || '';
+        usage = completion.usage;
+
+        console.log('[AI Suggestions] OpenAI response received', {
+          tokensUsed: usage?.total_tokens,
+          responseLength: rawResponse.length,
+        });
+
+        // Parse JSON response
+        try {
+          aiOutput = JSON.parse(rawResponse) as AIOutput;
+          
+          // Build sold qty lookup FIRST so we can use it in logging
+          const soldQtyMapForLog: Record<string, number> = {};
+          for (const row of (salesSummary || [])) {
+            const key = `${row.style_no}|${row.color}`;
+            soldQtyMapForLog[key] = (soldQtyMapForLog[key] || 0) + (Number(row.total_qty) || 0);
+          }
+          
+          // Log AI response summary
+          console.log('═══════════════════════════════════════════════════════════');
+          console.log('[AI Response] SUMMARY:');
+          console.log('[AI Response] Overall:', aiOutput.overall_summary);
+          console.log('[AI Response] Total units suggested:', aiOutput.total_units);
+          console.log('[AI Response] Warnings:', aiOutput.warnings || 'none');
+          console.log('[AI Response] Suppliers:', aiOutput.suppliers?.length || 0);
+          
+          // Count total lines from AI
+          let totalAILines = 0;
+          for (const supplier of (aiOutput.suppliers || [])) {
+            totalAILines += (supplier.lines?.length || 0);
+          }
+          console.log('[AI Response] TOTAL STYLE/COLOR LINES FROM AI:', totalAILines);
+          console.log('[AI Response] INPUT: We sent', totalStylesSent, 'styles to AI');
+          if (totalAILines < totalStylesSent) {
+            console.warn('[AI Response] WARNING: AI returned fewer styles than we sent!', 
+              `Missing ${totalStylesSent - totalAILines} styles`);
+          }
+          
+          // Log per-supplier summary (with actual sold qty from our data)
+          for (const supplier of (aiOutput.suppliers || [])) {
+            const topLines = (supplier.lines || []).slice(0, 3);
+            console.log(`[AI Response] ${supplier.supplier_name}:`);
+            console.log(`  - ${supplier.lines?.length || 0} lines, ${supplier.total_units} total units`);
+            console.log(`  - Top suggestions:`, topLines.map(l => {
+              const key = `${l.style_no}|${l.color}`;
+              const soldQty = soldQtyMapForLog[key] || 0;
+              return `${l.style_no}/${l.color}: ${soldQty} sold → ${l.suggested_qty} suggested`;
+            }).join(', '));
+          }
+          console.log('═══════════════════════════════════════════════════════════');
+          
+        } catch (parseError) {
+          console.error('[AI Suggestions] Failed to parse AI response as JSON:', parseError);
+          console.error('[AI Suggestions] Raw response (first 1000 chars):', rawResponse.substring(0, 1000));
+          aiError = 'Failed to parse AI response as JSON';
+        }
+      } catch (openaiError: any) {
+        console.error('[AI Suggestions] OpenAI API error:', openaiError);
+        aiError = openaiError?.message || 'OpenAI API error';
+      }
     }
 
     const durationMs = Date.now() - startTime;
