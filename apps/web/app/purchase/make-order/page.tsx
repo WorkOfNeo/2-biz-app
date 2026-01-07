@@ -603,21 +603,32 @@ function sortSizes(sizes: string[]): string[] {
   });
 }
 
+type LineFeedback = {
+  verdict: 'correct' | 'incorrect' | null;
+  originalQty: number;
+  correctedQty?: number;
+  reason?: string;
+};
+
 function SupplierReviewCard({
   supplier,
   onApprove,
   onSkip,
   isActive,
+  purchaseRunId,
 }: {
   supplier: SupplierSuggestion;
   onApprove: (data: SupplierCommitData) => void;
   onSkip: () => void;
   isActive: boolean;
+  purchaseRunId?: string;
 }) {
   const [adjustments, setAdjustments] = useState<Record<string, number>>({});
   const [sizeAdjustments, setSizeAdjustments] = useState<SizeAdjustments>({});
   const [notes, setNotes] = useState('');
   const [expandedLines, setExpandedLines] = useState<Set<string>>(new Set());
+  const [lineFeedback, setLineFeedback] = useState<Record<string, LineFeedback>>({});
+  const [savingFeedback, setSavingFeedback] = useState<string | null>(null);
   
   // Get all unique sizes from all lines
   const allSizes = useMemo(() => {
@@ -668,11 +679,70 @@ function SupplierReviewCard({
       const next = new Set(prev);
       if (next.has(key)) {
         next.delete(key);
-    } else {
+      } else {
         next.add(key);
       }
       return next;
     });
+  };
+  
+  // Handle feedback rating
+  const handleFeedback = async (line: any, verdict: 'correct' | 'incorrect') => {
+    const key = `${line.style_no}|${line.color}`;
+    const currentQty = getLineTotal(line);
+    
+    setLineFeedback(prev => ({
+      ...prev,
+      [key]: {
+        verdict,
+        originalQty: line.suggested_qty,
+        correctedQty: verdict === 'incorrect' ? currentQty : undefined,
+        reason: undefined,
+      }
+    }));
+    
+    // Auto-expand if incorrect to show correction UI
+    if (verdict === 'incorrect') {
+      setExpandedLines(prev => new Set([...prev, key]));
+    }
+  };
+  
+  // Save feedback to database
+  const saveFeedback = async (line: any, reason: string) => {
+    const key = `${line.style_no}|${line.color}`;
+    const feedback = lineFeedback[key];
+    if (!feedback || !purchaseRunId) return;
+    
+    setSavingFeedback(key);
+    
+    try {
+      const res = await fetch('/api/purchase/ai-suggestions/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          purchaseRunId,
+          supplierName: supplier.supplier_name,
+          styleNo: line.style_no,
+          color: line.color,
+          suggestedQty: line.suggested_qty,
+          adjustedQty: feedback.correctedQty || getLineTotal(line),
+          verdict: feedback.verdict === 'incorrect' ? 'adjusted' : 'approved',
+          reason,
+        }),
+      });
+      
+      if (res.ok) {
+        // Update feedback state to show saved
+        setLineFeedback(prev => ({
+          ...prev,
+          [key]: { ...prev[key], reason, saved: true } as any
+        }));
+      }
+    } catch (err) {
+      console.error('Failed to save feedback:', err);
+    } finally {
+      setSavingFeedback(null);
+    }
   };
   
   const getLineTotal = (line: SupplierSuggestion['lines'][0]) => {
@@ -820,33 +890,137 @@ function SupplierReviewCard({
                         </Badge>
                       </td>
                     </tr>
-                    {/* Size breakdown row - horizontal layout with label on top */}
-                    {isExpanded && hasSizes && (
+                    {/* Expanded row - AI reasoning, sizes, and feedback */}
+                    {isExpanded && (
                       <tr className="bg-[#F5F3F0]/50">
                         <td colSpan={7} className="px-4 py-3">
-                          <div className="flex gap-1 items-end overflow-x-auto pb-1">
-                            {sizes.map(size => {
-                              const soldQty = line.sold_sizes?.[size] ?? 0;
-                      return (
-                                <div key={size} className="flex flex-col items-center min-w-[52px]">
-                                  <span className="text-[10px] font-semibold text-slate-600 mb-1">{size}</span>
-                                  <Input
-                                    type="number"
-                                    min={0}
-                                    value={getSizeQty(line, size)}
-                                    onChange={e => handleSizeQtyChange(key, size, e.target.value)}
-                                    className="w-12 text-center h-7 text-xs px-1"
-                                  />
-                                  <span className="text-[9px] text-slate-400 mt-0.5">
-                                    {soldQty > 0 ? `(${soldQty})` : '-'}
+                          {/* AI Reasoning */}
+                          {(line.reasoning || (line as any).notes || (line as any).projection_basis) && (
+                            <div className="mb-3 p-2 bg-white rounded border border-slate-200">
+                              <div className="text-xs font-medium text-slate-500 mb-1">💡 AI Reasoning</div>
+                              <div className="text-sm text-slate-700">
+                                {line.reasoning || (line as any).notes || 'No specific reasoning provided'}
+                              </div>
+                              {(line as any).projection_basis && (
+                                <div className="text-xs text-slate-500 mt-1 font-mono">
+                                  📊 {(line as any).projection_basis}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                          
+                          {/* Size inputs */}
+                          {hasSizes && (
+                            <div className="flex gap-1 items-end overflow-x-auto pb-2">
+                              {sizes.map(size => {
+                                const soldQty = line.sold_sizes?.[size] ?? 0;
+                                const feedback = lineFeedback[key];
+                                const isLocked = feedback?.verdict === 'incorrect' && !(feedback as any).saved;
+                                return (
+                                  <div key={size} className="flex flex-col items-center min-w-[52px]">
+                                    <span className="text-[10px] font-semibold text-slate-600 mb-1">{size}</span>
+                                    <Input
+                                      type="number"
+                                      min={0}
+                                      value={getSizeQty(line, size)}
+                                      onChange={e => handleSizeQtyChange(key, size, e.target.value)}
+                                      className={`w-12 text-center h-7 text-xs px-1 ${isLocked ? 'border-amber-400 bg-amber-50' : ''}`}
+                                      disabled={(feedback as any)?.saved}
+                                    />
+                                    <span className="text-[9px] text-slate-400 mt-0.5">
+                                      {soldQty > 0 ? `(${soldQty})` : '-'}
+                                    </span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                          
+                          {/* Feedback Section */}
+                          <div className="mt-3 pt-3 border-t border-slate-200">
+                            {!lineFeedback[key]?.verdict ? (
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs text-slate-500">Rate this suggestion:</span>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => handleFeedback(line, 'correct')}
+                                  className="h-7 text-xs text-green-600 border-green-200 hover:bg-green-50"
+                                >
+                                  ✓ Correct
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => handleFeedback(line, 'incorrect')}
+                                  className="h-7 text-xs text-amber-600 border-amber-200 hover:bg-amber-50"
+                                >
+                                  ✗ Incorrect
+                                </Button>
+                              </div>
+                            ) : lineFeedback[key].verdict === 'correct' ? (
+                              <div className="flex items-center gap-2 text-green-600">
+                                <span className="text-xs">✓ Marked as correct</span>
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={() => setLineFeedback(prev => { const n = {...prev}; delete n[key]; return n; })}
+                                  className="h-6 text-xs text-slate-400"
+                                >
+                                  undo
+                                </Button>
+                              </div>
+                            ) : (
+                              <div className="space-y-2">
+                                <div className="flex items-center gap-2 text-amber-600 text-xs">
+                                  <span>✗ Marked as incorrect</span>
+                                  <span className="text-slate-400">|</span>
+                                  <span className="text-slate-500">
+                                    Original: <span className="font-mono">{lineFeedback[key].originalQty}</span> → 
+                                    Corrected: <span className="font-mono font-semibold">{getLineTotal(line)}</span>
                                   </span>
                                 </div>
-                      );
-                    })}
-                  </div>
+                                {!(lineFeedback[key] as any).saved ? (
+                                  <div className="flex gap-2 items-center">
+                                    <Input
+                                      placeholder="Why is this incorrect? (helps AI learn)"
+                                      className="h-7 text-xs flex-1"
+                                      id={`feedback-reason-${key}`}
+                                    />
+                                    <Button
+                                      size="sm"
+                                      onClick={() => {
+                                        const input = document.getElementById(`feedback-reason-${key}`) as HTMLInputElement;
+                                        saveFeedback(line, input?.value || '');
+                                      }}
+                                      disabled={savingFeedback === key}
+                                      className="h-7 text-xs bg-amber-500 hover:bg-amber-600"
+                                    >
+                                      {savingFeedback === key ? '...' : 'Save'}
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      onClick={() => setLineFeedback(prev => { const n = {...prev}; delete n[key]; return n; })}
+                                      className="h-7 text-xs text-slate-400"
+                                    >
+                                      Cancel
+                                    </Button>
+                                  </div>
+                                ) : (
+                                  <div className="text-xs text-green-600">
+                                    ✓ Feedback saved - AI will learn from this
+                                    {lineFeedback[key].reason && (
+                                      <span className="text-slate-400 ml-2">"{lineFeedback[key].reason}"</span>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
                         </td>
                       </tr>
-                )}
+                    )}
                   </React.Fragment>
             );
           })}
@@ -2191,6 +2365,7 @@ export default function PurchaseMakeOrderPage() {
                   onApprove={handleSupplierApprove}
                   onSkip={handleSupplierSkip}
                   isActive={currentSupplierIdx === idx}
+                  purchaseRunId={purchaseRunId}
                 />
               ))}
             </div>
