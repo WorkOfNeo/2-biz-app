@@ -159,13 +159,64 @@ function parseCSVLine(line: string, delimiter: string): string[] {
   return result;
 }
 
+// Helper to split CSV text into logical rows, handling multiline quoted fields
+function splitCSVIntoRows(text: string): string[] {
+  const rows: string[] = [];
+  let currentRow = '';
+  let inQuotes = false;
+  
+  // Split by lines but rejoin lines that are inside quotes
+  const lines = text.split(/\r?\n/);
+  
+  for (const line of lines) {
+    if (!currentRow && !line.trim()) continue; // Skip empty lines at start
+    
+    if (currentRow) {
+      // We're continuing a multiline field
+      currentRow += '\n' + line;
+    } else {
+      currentRow = line;
+    }
+    
+    // Count unescaped quotes to see if we're still inside a quoted field
+    let quoteCount = 0;
+    for (let i = 0; i < currentRow.length; i++) {
+      if (currentRow[i] === '"') {
+        // Check if it's escaped (doubled)
+        if (i + 1 < currentRow.length && currentRow[i + 1] === '"') {
+          i++; // Skip the escaped quote
+        } else {
+          quoteCount++;
+        }
+      }
+    }
+    
+    // If even number of quotes, we have a complete row
+    if (quoteCount % 2 === 0) {
+      if (currentRow.trim()) {
+        rows.push(currentRow);
+      }
+      currentRow = '';
+    }
+    // Otherwise continue accumulating (we're inside a multiline quoted field)
+  }
+  
+  // Don't forget last row if any
+  if (currentRow.trim()) {
+    rows.push(currentRow);
+  }
+  
+  return rows;
+}
+
 // CSV Parser - handles size-level rows and aggregates to customer/style/color
 function parseCSV(text: string): CSVRow[] {
   console.log('═══════════════════════════════════════════════════════════');
   console.log('[CSV Parser] Starting parse...');
   
-  const lines = text.split(/\r?\n/).filter(l => l.trim());
-  console.log(`[CSV Parser] Total lines (including header): ${lines.length}`);
+  // Use smart splitter that handles multiline quoted fields (like Description with newlines)
+  const lines = splitCSVIntoRows(text);
+  console.log(`[CSV Parser] Total logical rows (including header): ${lines.length}`);
   
   if (lines.length < 2) {
     console.log('[CSV Parser] ERROR: Less than 2 lines, returning empty');
@@ -339,7 +390,7 @@ function parseCSV(text: string): CSVRow[] {
   
   // Calculate overlap - rows missing BOTH style and color vs just one
   const skippedBoth = skippedNoStyle + skippedNoColor - (lines.length - 1 - rawRows.length);
-  console.log(`[CSV Parser] Rows parsed: ${rawRows.length} valid out of ${lines.length - 1} data rows`);
+  console.log(`[CSV Parser] Rows parsed: ${rawRows.length} valid out of ${lines.length - 1} logical data rows`);
   console.log(`[CSV Parser] Skipped breakdown: ${skippedNoStyle} missing style_no, ${skippedNoColor} missing color`);
   console.log(`[CSV Parser] Total qty from valid rows: ${totalQtyParsed}`);
   console.log(`[CSV Parser] Total amount from valid rows: ${totalAmountParsed.toFixed(2)}`);
