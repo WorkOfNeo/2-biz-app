@@ -541,9 +541,10 @@ export async function POST(req: Request) {
             if (currentSeasonStats.length > 0) {
               const totalQty = currentSeasonStats.reduce((sum, r) => sum + (Number(r.qty) || 0), 0);
               const totalAmt = currentSeasonStats.reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
-              console.log(`[YoY Analysis] Current season totals: ${totalQty} pcs, ${totalAmt.toFixed(0)} amount`);
+              console.log(`[YoY Analysis] Current season (from DB): ${totalQty} pcs, ${totalAmt.toFixed(0)} amount`);
             } else {
-              console.warn('[YoY Analysis] WARNING: No data found for current season!');
+              // This is expected - current season data comes from uploaded CSV, not DB
+              console.log('[YoY Analysis] No DB data for current season (using uploaded CSV instead)');
             }
           }
         } else {
@@ -927,40 +928,66 @@ export async function POST(req: Request) {
       ? JSON.stringify(yoyAnalysis, null, 2)
       : 'No comparison season selected - YoY analysis not available.';
 
-    // Get run number for this season (used for purchase level and labeling)
+    // ═══════════════════════════════════════════════════════════════════════
+    // PURCHASE STAGE based on VISIT RATE (% of customers visited)
+    // ═══════════════════════════════════════════════════════════════════════
+    // Instead of arbitrary "round numbers", we use actual progress:
+    // - EARLY: < 40% of customers visited (plenty of room to grow)
+    // - MID: 40-75% of customers visited (moderate remaining potential)
+    // - CLOSING: > 75% of customers visited (most customers seen, wrapping up)
+    
+    // Get visit rate from YoY analysis (or default to EARLY if no data)
+    let visitRatePercent = 0;
+    if (yoyAnalysis?.currentSeason?.visitRate) {
+      visitRatePercent = parseFloat(yoyAnalysis.currentSeason.visitRate) || 0;
+    }
+    
+    // Determine purchase stage based on visit rate
+    let purchaseStage: 'EARLY' | 'MID' | 'CLOSING' = 'EARLY';
+    if (visitRatePercent >= 75) {
+      purchaseStage = 'CLOSING';
+    } else if (visitRatePercent >= 40) {
+      purchaseStage = 'MID';
+    } else {
+      purchaseStage = 'EARLY';
+    }
+    
+    // Keep run number for logging/labeling only
     let purchaseRunNumber = Number(body.runNumber) || 1;
     if (seasonId && !body.runNumber) {
-      // If not provided in body, get from DB
       const { data: runNumResult } = await supabase.rpc('get_next_purchase_run_number', { p_season_id: seasonId });
       if (runNumResult) {
         purchaseRunNumber = runNumResult;
       }
     }
     
-    // Build purchase level info based on run number
+    // Build purchase level info based on VISIT RATE
     let purchaseLevelInfo = '';
-    if (purchaseRunNumber <= 2) {
-      purchaseLevelInfo = `PURCHASE LEVEL: OPENING/EARLY (Run ${purchaseRunNumber})
-This is an EARLY purchase run. Be AGGRESSIVE with quantities.
-- Order 100-150% of projected seasonal need
+    if (purchaseStage === 'EARLY') {
+      purchaseLevelInfo = `PURCHASE STAGE: EARLY (${visitRatePercent.toFixed(0)}% of customers visited)
+We're at the beginning of the season - lots of customers left to visit.
+- Be AGGRESSIVE with quantities - order 100-150% of projected seasonal need
 - Better to over-order popular styles than miss sales
-- New styles should get healthy initial orders`;
-    } else if (purchaseRunNumber <= 4) {
-      purchaseLevelInfo = `PURCHASE LEVEL: MIDDLE (Run ${purchaseRunNumber})
-This is a MID-SEASON purchase run.
-- Order 60-80% of remaining projected need
-- Focus on proven performers
-- Be cautious with slow sellers`;
+- New styles should get healthy initial orders
+- Remaining potential: ${100 - visitRatePercent}% of customers not yet visited`;
+    } else if (purchaseStage === 'MID') {
+      purchaseLevelInfo = `PURCHASE STAGE: MID-SEASON (${visitRatePercent.toFixed(0)}% of customers visited)
+About half the season is complete.
+- Order 80-100% of remaining projected need
+- Focus on proven performers that are selling well
+- Be cautious with slow sellers
+- Remaining potential: ${100 - visitRatePercent}% of customers not yet visited`;
     } else {
-      purchaseLevelInfo = `PURCHASE LEVEL: CLOSING (Run ${purchaseRunNumber}+)
-This is a CLOSING/LATE purchase run. Two options only:
+      purchaseLevelInfo = `PURCHASE STAGE: CLOSING (${visitRatePercent.toFixed(0)}% of customers visited)
+Most customers have been visited - wrapping up the season. Two options only:
 - BUY EXACTLY to match sold qty (if MOQ is met and delivery is viable)
 - OR SKIP ENTIRELY (if remaining qty < MOQ or lead time too long)
 - Example: Sold 600, purchased 550 → need 50, but MOQ=100 → SKIP (suggest 0)
 - Example: Sold 900, purchased 600 → need 300, MOQ=200 → suggest 300 exactly
-- NO buffer quantities, NO gambling on late-season`;
+- NO buffer quantities, NO gambling on late-season
+- Remaining potential: only ${100 - visitRatePercent}% of customers left`;
     }
-    console.log('[AI Suggestions] Purchase level info:', purchaseLevelInfo.split('\n')[0]);
+    console.log('[AI Suggestions] Purchase stage:', purchaseStage, `(${visitRatePercent.toFixed(1)}% visited)`);
 
     // Interpolate prompt
     const finalPrompt = interpolatePrompt(promptConfig.content, {
@@ -1107,7 +1134,7 @@ This is a CLOSING/LATE purchase run. Two options only:
 ## Supplier: ${supplierName}
 MOQ: ${supplierData.moq || 0} | Lead Time: ${supplierData.lead_time_days || 0} days
 
-## Purchase Round
+## Purchase Stage (based on ${visitRatePercent.toFixed(0)}% of customers visited)
 ${purchaseLevelInfo}
 
 ## Styles (format: style_no|color|sold|sizes_json)
@@ -1116,10 +1143,10 @@ ${stylesData}
 ## Rules
 1. **INCLUDE ALL STYLES** - every style in input MUST appear in output (${supplierStyles.length} total)
 2. **Round to full numbers**: <100→nearest 25, 100-500→nearest 50, >500→nearest 100
-3. **Skip low sales**: If sold < ${Math.round((supplierData.moq || 0) * 0.65)} (65% of MOQ) in early rounds → qty:0, skip_reason:"Below MOQ threshold"
-4. **EARLY (Run 1-2)**: Suggest 1.0-1.3x of sold (buffer for growth)
-5. **MID (Run 3-4)**: Match sold or slightly above
-6. **CLOSING (Run 5+)**: Exact match to sold, or skip if remaining < MOQ
+3. **Skip low sales**: If sold < ${Math.round((supplierData.moq || 0) * 0.65)} (65% of MOQ) in EARLY stage → qty:0, skip_reason:"Below MOQ threshold"
+4. **EARLY (<40% visited)**: Suggest 1.0-1.3x of sold (buffer for growth)
+5. **MID (40-75% visited)**: Match sold or slightly above
+6. **CLOSING (>75% visited)**: Exact match to sold, or skip if remaining < MOQ
 7. **Never exceed last year** unless style is 150%+ vs last year
 
 ## Output (valid JSON only, no markdown):
@@ -1403,25 +1430,21 @@ ${stylesData}
       console.log('[AI Suggestions] Enriched output with', Object.keys(styleNameMap).length, 'style names and size breakdowns');
       
       // ═══════════════════════════════════════════════════════════════════════
-      // VALIDATE: Only for EARLY rounds - don't override CLOSING round suggestions
+      // VALIDATE: Only for EARLY stage - don't override CLOSING stage suggestions
       // The AI makes conservative suggestions for CLOSING - that's CORRECT
       // ═══════════════════════════════════════════════════════════════════════
       
       console.log('═══════════════════════════════════════════════════════════');
-      console.log('[VALIDATE] Purchase round:', purchaseRunNumber);
+      console.log('[VALIDATE] Purchase stage:', purchaseStage, `(${visitRatePercent.toFixed(1)}% visited)`);
       
-      // Only validate/fix for EARLY rounds (1-2)
-      // For MID (3-4) and CLOSING (5+), trust the AI's conservative suggestions
-      if (purchaseRunNumber <= 2) {
-        // Calculate multiplier based on visit rate - only for EARLY rounds
-        const visitRateForValidation = yoyAnalysis?.currentSeason?.visitRate 
-          ? parseFloat(yoyAnalysis.currentSeason.visitRate) / 100 
-          : 0.1;
-        // For early rounds, use modest multiplier (1.2-1.5x, not full projection)
-        const projectionMultiplier = Math.min(1.5, visitRateForValidation > 0 ? 1 / visitRateForValidation : 1.5);
+      // Only validate/fix for EARLY stage (<40% visited)
+      // For MID and CLOSING, trust the AI's suggestions
+      if (purchaseStage === 'EARLY') {
+        // For early stage, use modest multiplier (1.2-1.5x, not full projection)
+        const projectionMultiplier = Math.min(1.5, visitRatePercent > 0 ? 100 / visitRatePercent : 1.5);
         
-        console.log('[VALIDATE] EARLY ROUND - checking suggestions');
-        console.log('[VALIDATE] Visit rate:', yoyAnalysis?.currentSeason?.visitRate, '→ multiplier:', projectionMultiplier.toFixed(2));
+        console.log('[VALIDATE] EARLY STAGE - checking suggestions');
+        console.log('[VALIDATE] Visit rate:', visitRatePercent.toFixed(1), '% → multiplier:', projectionMultiplier.toFixed(2));
         
         let fixedCount = 0;
         for (const supplier of aiOutput.suppliers) {
@@ -1438,8 +1461,8 @@ ${stylesData}
               // Update the suggestion
               const originalQty = line.suggested_qty;
               line.suggested_qty = correctedQty;
-              (line as any).notes = `AI suggested ${originalQty}, adjusted to ${correctedQty} (early round buffer)`;
-              (line as any).projection_basis = `Sold ${soldQty} + 30% buffer = ${correctedQty}`;
+              (line as any).notes = `AI suggested ${originalQty}, adjusted to ${correctedQty} (early stage buffer)`;
+              (line as any).projection_basis = `Sold ${soldQty} + 30% buffer = ${correctedQty} (${visitRatePercent.toFixed(0)}% visited)`;
               
               // Update supplier total
               supplier.total_units = (supplier.total_units || 0) - originalQty + correctedQty;
@@ -1470,8 +1493,8 @@ ${stylesData}
           console.log('[VALIDATE] All AI suggestions were valid');
         }
       } else {
-        // MID or CLOSING round - trust AI's conservative suggestions
-        console.log('[VALIDATE] MID/CLOSING ROUND - trusting AI suggestions (no overrides)');
+        // MID or CLOSING stage - trust AI's conservative suggestions
+        console.log(`[VALIDATE] ${purchaseStage} STAGE - trusting AI suggestions (no overrides)`);
       }
       console.log('═══════════════════════════════════════════════════════════');
       
@@ -1518,24 +1541,24 @@ ${stylesData}
       if (missingStyles.length > 0) {
         console.log('═══════════════════════════════════════════════════════════');
         console.log('[BACKFILL] Adding', missingStyles.length, 'styles that AI missed');
-        console.log('[BACKFILL] Purchase round:', purchaseRunNumber);
+        console.log('[BACKFILL] Purchase stage:', purchaseStage, `(${visitRatePercent.toFixed(1)}% visited)`);
         
-        // Multiplier depends on purchase round!
+        // Multiplier depends on purchase stage!
         let multiplier: number;
-        let isClosingRound = false;
-        if (purchaseRunNumber <= 2) {
-          // EARLY: sold + 30% buffer
+        let isClosingStage = false;
+        if (purchaseStage === 'EARLY') {
+          // EARLY (<40% visited): sold + 30% buffer
           multiplier = 1.3;
-          console.log('[BACKFILL] EARLY ROUND - using 1.3x multiplier');
-        } else if (purchaseRunNumber <= 4) {
-          // MID: match sold or slightly above
+          console.log('[BACKFILL] EARLY STAGE - using 1.3x multiplier');
+        } else if (purchaseStage === 'MID') {
+          // MID (40-75% visited): match sold or slightly above
           multiplier = 1.1;
-          console.log('[BACKFILL] MID ROUND - using 1.1x multiplier');
+          console.log('[BACKFILL] MID STAGE - using 1.1x multiplier');
         } else {
-          // CLOSING: match exactly to sold amount, user will skip if MOQ not met
+          // CLOSING (>75% visited): match exactly to sold amount
           multiplier = 1.0;
-          isClosingRound = true;
-          console.log('[BACKFILL] CLOSING ROUND - using 1.0x (exact match, check MOQ)');
+          isClosingStage = true;
+          console.log('[BACKFILL] CLOSING STAGE - using 1.0x (exact match, check MOQ)');
         }
         
         // Group missing by supplier
@@ -1575,20 +1598,20 @@ ${stylesData}
           
           for (const m of styles) {
             // Check if sales are too low vs MOQ (skip if below 65% of MOQ)
-            // Only applies to EARLY rounds - we'll catch them in next purchase round
+            // Only applies to EARLY stage - we'll catch them in next purchase
             const moqThreshold = 0.65; // 65% of MOQ
             const isBelowMoqThreshold = supplierMoq > 0 && 
               m.soldQty < (supplierMoq * moqThreshold) && 
-              purchaseRunNumber <= 2; // Only skip in early rounds
+              purchaseStage === 'EARLY'; // Only skip in early stage
             
             // Project quantity: sold × multiplier, then round to "full" numbers
             const rawProjected = m.soldQty * multiplier;
             let projectedQty: number;
             
             if (isBelowMoqThreshold) {
-              // Skip this style - below MOQ threshold for early round
+              // Skip this style - below MOQ threshold for early stage
               projectedQty = 0;
-            } else if (isClosingRound) {
+            } else if (isClosingStage) {
               // CLOSING: match sold exactly, rounded to full numbers
               projectedQty = roundToFullQty(m.soldQty);
             } else {
@@ -1739,6 +1762,9 @@ ${stylesData}
         promptVersion: promptConfig.version,
         runLabel,
         runNumber: purchaseRunNumber,
+        purchaseStage,
+        visitRatePercent: visitRatePercent.toFixed(1),
+        stageExplanation: `${purchaseStage} stage (${visitRatePercent.toFixed(0)}% of customers visited)`,
         model: promptConfig.model,
         temperature: promptConfig.temperature,
         computedFeatures: computedFeaturesSnapshot,

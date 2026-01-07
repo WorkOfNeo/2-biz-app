@@ -10,3 +10,4 @@ COMMENT ON COLUMN seasons.is_frozen IS 'When true, scrape_statistics jobs will s
 COMMENT ON COLUMN seasons.frozen_at IS 'Timestamp when the season was marked frozen.';
 COMMENT ON COLUMN seasons.frozen_by IS 'Email or identifier of user who froze the season.';
 
+

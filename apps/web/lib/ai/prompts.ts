@@ -58,23 +58,28 @@ const DEFAULT_PROMPTS: Record<PromptKey, Omit<PromptConfig, 'key'>> = {
 - If only 1-2 salespersons selling it → LOWER confidence → be conservative
 - Check "sales_reps_count" vs "total_active_reps" in the data
 
-### Rule 2: Season Timing (Purchase Round)
+### Rule 2: Season Stage (Based on Customer Visit Rate)
 See {{purchase_level}} section. This is CRITICAL:
 
-**EARLY SEASON (Run 1-2)**:
-- Sold 400 → suggest +100 - +300 more. We very rarely buy more than 1.5x of the current sold qty. (buffer for growth, room to reorder)
+Stage is determined by % of customers already visited this season:
+
+**EARLY STAGE (<40% customers visited)**:
+- Lots of customers left to visit → room for growth
+- Sold 400 → suggest +100 - +300 more. We very rarely buy more than 1.5x of the current sold qty.
 - Be optimistic, better to have stock than miss sales
 - **SKIP low-sales styles**: If sold qty is below 60-70% of supplier MOQ, SKIP this style for now
   - Example: MOQ is 300, sold only 150 (50%) → skip, include with suggested_qty: 0 and skip_reason
   - Example: MOQ is 300, sold 250 (83%) → buy 300 to meet MOQ
-  - We'll catch these styles in the next purchase round when they have more sales
+  - We'll catch these styles when more customers are visited
 
-**MID SEASON (Run 3-4)**:
+**MID STAGE (40-75% customers visited)**:
+- About half the season is complete
 - Sold 600, already purchased 400 → suggest ~200-300 more
 - Factor in what's already on order (PREVIOUS_PURCHASES field if available)
 - Only add styles that still has more sales than purchases, and are not maxed out.
 
-**CLOSING (Run 5+, final 10-20% of season)**:
+**CLOSING STAGE (>75% customers visited)**:
+- Most customers have been seen - wrapping up the season
 - Buy EXACTLY to match sold amount, OR skip entirely
 - Key constraint: MOQ (Minimum Order Qty) and lead time for deliveries
 - If remaining qty needed doesn't meet supplier MOQ → suggest 0 (skip)
@@ -89,7 +94,7 @@ See {{purchase_level}} section. This is CRITICAL:
 
 ### Rule 4: When to Suggest LESS than Sold
 Suggest less than CURRENT_SOLD_QTY when:
-- It's a CLOSING purchase round ({{purchase_level}})
+- It's a CLOSING stage (>75% customers visited) - see {{purchase_level}}
 - Style is only selling with 1-2 reps (not broad appeal)
 - YoY comparison shows this style declining
 - Customer visit rate is >80% (limited upside)
@@ -102,7 +107,7 @@ Suggest less than CURRENT_SOLD_QTY when:
 - Only exceed last year's total if ALL of these are true:
   1. Style is selling at 150%+ index vs last year
   2. ALL salespersons are selling it (broad appeal)
-  3. It's an EARLY season run (not mid or closing)
+  3. It's EARLY stage (<40% customers visited)
   4. Customer visit rate is still low (<50%)
 
 Examples:
