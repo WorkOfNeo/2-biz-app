@@ -696,6 +696,134 @@ export default function SeasonDetailPage() {
     }
   }
 
+  // Add unmatched entries to "Z. ÆLDRE POSTERINGER" (old entries) customer
+  const OLD_ENTRIES_CUSTOMER_NAME = 'Z. ÆLDRE POSTERINGER';
+  
+  async function addToOldEntries() {
+    if (!id || !compareSalespersonId || !compareResults?.notInDb.length) return;
+
+    // Get entries that couldn't be matched
+    const unmatchedEntries = compareResults.notInDb.filter(e => !e.matchedCustomerId);
+    
+    if (unmatchedEntries.length === 0) {
+      alert('No unmatched entries to add. All entries either matched or can be added individually.');
+      return;
+    }
+
+    // Calculate totals
+    const totalQty = unmatchedEntries.reduce((sum, e) => sum + e.qty, 0);
+    const totalPrice = unmatchedEntries.reduce((sum, e) => sum + e.price, 0);
+
+    if (!confirm(`Add ${unmatchedEntries.length} unmatched entries to "${OLD_ENTRIES_CUSTOMER_NAME}"?\n\nTotal Qty: ${totalQty.toLocaleString()}\nTotal Price: ${totalPrice.toLocaleString()}\n\nThis will create the customer if it doesn't exist for this salesperson.`)) {
+      return;
+    }
+
+    setIsFixing(true);
+    setFixResult(null);
+
+    try {
+      // Check if the old entries customer exists for this salesperson
+      const { data: existingCustomers } = await supabase
+        .from('customers')
+        .select('customer_id, company, salesperson_id')
+        .eq('salesperson_id', compareSalespersonId)
+        .ilike('company', OLD_ENTRIES_CUSTOMER_NAME)
+        .limit(1);
+
+      let customerId: string;
+
+      if (existingCustomers && existingCustomers.length > 0) {
+        // Use existing customer
+        customerId = existingCustomers[0].customer_id;
+        console.log('[addToOldEntries] Found existing customer:', customerId);
+      } else {
+        // Create new customer for this salesperson
+        // Generate a unique customer_id
+        const timestamp = Date.now().toString(36).toUpperCase();
+        const newCustomerId = `OLD-${compareSalespersonId.slice(0, 8)}-${timestamp}`;
+        
+        const salesperson = salespersons?.find(sp => sp.id === compareSalespersonId);
+        
+        const { error: insertError } = await supabase
+          .from('customers')
+          .insert({
+            customer_id: newCustomerId,
+            company: OLD_ENTRIES_CUSTOMER_NAME,
+            city: 'Diverse',
+            salesperson_id: compareSalespersonId,
+            nulled: false,
+            excluded: false,
+            permanently_closed: false
+          });
+
+        if (insertError) {
+          throw new Error(`Failed to create customer: ${insertError.message}`);
+        }
+
+        customerId = newCustomerId;
+        console.log('[addToOldEntries] Created new customer:', customerId, 'for salesperson:', salesperson?.name);
+      }
+
+      // Now add/update the sales_stats entry for this customer + season
+      const { data: existingStats } = await supabase
+        .from('sales_stats')
+        .select('id, qty, price')
+        .eq('season_id', id)
+        .eq('account_no', customerId)
+        .maybeSingle();
+
+      if (existingStats) {
+        // Update existing entry by adding to it
+        const newQty = (existingStats.qty || 0) + totalQty;
+        const newPrice = (existingStats.price || 0) + totalPrice;
+        
+        const { error: updateError } = await supabase
+          .from('sales_stats')
+          .update({ qty: newQty, price: newPrice })
+          .eq('id', existingStats.id);
+
+        if (updateError) throw new Error(updateError.message);
+        
+        console.log('[addToOldEntries] Updated existing stats:', { oldQty: existingStats.qty, oldPrice: existingStats.price, newQty, newPrice });
+      } else {
+        // Insert new entry
+        const { error: insertError } = await supabase
+          .from('sales_stats')
+          .insert({
+            season_id: id,
+            account_no: customerId,
+            customer_name: OLD_ENTRIES_CUSTOMER_NAME,
+            city: 'Diverse',
+            qty: totalQty,
+            price: totalPrice,
+            salesperson_id: compareSalespersonId,
+            currency: 'DKK',
+            frozen: false
+          });
+
+        if (insertError) throw new Error(insertError.message);
+        
+        console.log('[addToOldEntries] Inserted new stats entry');
+      }
+
+      setFixResult({
+        success: true,
+        message: `Added ${unmatchedEntries.length} entries to "${OLD_ENTRIES_CUSTOMER_NAME}" (Qty: ${totalQty.toLocaleString()}, Price: ${totalPrice.toLocaleString()})`
+      });
+
+      // Re-run comparison to show updated state
+      await runComparison();
+    } catch (err: any) {
+      console.error('[addToOldEntries] Error:', err);
+      setFixResult({
+        success: false,
+        message: err?.message || 'Failed to add to old entries'
+      });
+    } finally {
+      setIsFixing(false);
+    }
+  }
+
   const canRunMatching = mapping.name && mapping.city && mapping.qty && mapping.price && uploadedRows.length > 0;
   
   // Count importable rows
@@ -1300,18 +1428,32 @@ export default function SeasonDetailPage() {
                 <summary className="px-3 py-2 bg-amber-50 cursor-pointer font-medium text-xs text-amber-800">
                   Not in DB ({compareResults.notInDb.length}) — in Excel but not found in database
                 </summary>
-                {compareResults.notInDb.filter(e => e.matchedCustomerId).length > 0 && (
-                  <div className="px-3 py-2 border-b bg-amber-50/50 flex items-center gap-2">
-                    <button
-                      onClick={addMissingEntries}
-                      disabled={isFixing}
-                      className="rounded-md bg-amber-600 text-white px-3 py-1 text-xs hover:bg-amber-700 disabled:opacity-50"
-                    >
-                      {isFixing ? 'Adding...' : `Add Matched (${compareResults.notInDb.filter(e => e.matchedCustomerId).length})`}
-                    </button>
-                    <span className="text-xs text-amber-700">Add entries with matched customers to DB</span>
-                  </div>
-                )}
+                <div className="px-3 py-2 border-b bg-amber-50/50 flex flex-wrap items-center gap-2">
+                  {compareResults.notInDb.filter(e => e.matchedCustomerId).length > 0 && (
+                    <>
+                      <button
+                        onClick={addMissingEntries}
+                        disabled={isFixing}
+                        className="rounded-md bg-amber-600 text-white px-3 py-1 text-xs hover:bg-amber-700 disabled:opacity-50"
+                      >
+                        {isFixing ? 'Adding...' : `Add Matched (${compareResults.notInDb.filter(e => e.matchedCustomerId).length})`}
+                      </button>
+                      <span className="text-xs text-amber-700 mr-4">Add entries with matched customers</span>
+                    </>
+                  )}
+                  {compareResults.notInDb.filter(e => !e.matchedCustomerId).length > 0 && (
+                    <>
+                      <button
+                        onClick={addToOldEntries}
+                        disabled={isFixing}
+                        className="rounded-md bg-gray-600 text-white px-3 py-1 text-xs hover:bg-gray-700 disabled:opacity-50"
+                      >
+                        {isFixing ? 'Adding...' : `Add to "Z. ÆLDRE POSTERINGER" (${compareResults.notInDb.filter(e => !e.matchedCustomerId).length})`}
+                      </button>
+                      <span className="text-xs text-gray-600">Collect unmatched as old entries</span>
+                    </>
+                  )}
+                </div>
                 <div className="max-h-48 overflow-auto">
                   <table className="w-full text-xs">
                     <thead className="bg-gray-50 sticky top-0">
