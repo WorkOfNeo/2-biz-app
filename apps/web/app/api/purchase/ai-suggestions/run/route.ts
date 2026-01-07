@@ -3,6 +3,7 @@ import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 import OpenAI from 'openai';
 import { getPromptConfig, interpolatePrompt } from '../../../../../lib/ai/prompts';
+import { pseudonymizeSalesRep, pseudonymizeCountry, createPseudonymContext } from '../../../../../lib/ai/pseudonymize';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -362,7 +363,31 @@ export async function POST(req: Request) {
     console.log('[Supplier Grouping] Limited to top', topNPerSupplier, 'items per supplier');
     console.log('═══════════════════════════════════════════════════════════');
 
-    // Build customer analysis summary
+    // Build customer analysis summary WITH PSEUDONYMIZATION for AI
+    // Collect all sales reps for pseudonymization context
+    const allSalesReps = [...new Set((customerSummary || []).map(c => c.sales_rep).filter(Boolean))];
+    const pseudonymContext = createPseudonymContext(allSalesReps);
+    
+    console.log('[Privacy] Pseudonymizing', allSalesReps.length, 'sales reps for AI');
+    
+    // Build stats with pseudonymized data for AI
+    const customerStatsForAI = {
+      totalCustomers: new Set((customerSummary || []).map(c => c.customer_ref)).size,
+      byRegion: {} as Record<string, number>,  // Pseudonymized countries → regions
+      bySalesRep: {} as Record<string, number>,  // Pseudonymized rep IDs
+      topCustomers: (customerSummary || [])
+        .sort((a, b) => (b.total_qty || 0) - (a.total_qty || 0))
+        .slice(0, 20)
+        .map(c => ({
+          ref: c.customer_ref,  // Already pseudonymized as C_xxxxx
+          region: pseudonymizeCountry(c.country),  // Country → Region
+          sales_rep: pseudonymContext.salesRepMap.get(c.sales_rep) || 'Rep_Unknown',
+          total_qty: c.total_qty,
+          style_count: c.style_count,
+        })),
+    };
+    
+    // Keep original stats for internal use (not sent to AI)
     const customerStats = {
       totalCustomers: new Set((customerSummary || []).map(c => c.customer_ref)).size,
       byCountry: {} as Record<string, number>,
@@ -382,9 +407,13 @@ export async function POST(req: Request) {
     for (const c of (customerSummary || [])) {
       if (c.country) {
         customerStats.byCountry[c.country] = (customerStats.byCountry[c.country] || 0) + 1;
+        const region = pseudonymizeCountry(c.country);
+        customerStatsForAI.byRegion[region] = (customerStatsForAI.byRegion[region] || 0) + 1;
       }
       if (c.sales_rep) {
         customerStats.bySalesRep[c.sales_rep] = (customerStats.bySalesRep[c.sales_rep] || 0) + 1;
+        const pseudoRep = pseudonymContext.salesRepMap.get(c.sales_rep) || 'Rep_Unknown';
+        customerStatsForAI.bySalesRep[pseudoRep] = (customerStatsForAI.bySalesRep[pseudoRep] || 0) + 1;
       }
     }
 
@@ -691,8 +720,9 @@ export async function POST(req: Request) {
     // Build sales by supplier string (aggregated)
     const salesBySupplierStr = JSON.stringify(limitedSalesBySupplier, null, 2);
 
-    // Build customer analysis string
-    const customerAnalysisStr = JSON.stringify(customerStats, null, 2);
+    // Build customer analysis string - USE PSEUDONYMIZED VERSION for AI!
+    const customerAnalysisStr = JSON.stringify(customerStatsForAI, null, 2);
+    console.log('[Privacy] Customer stats pseudonymized: countries→regions, sales_reps→Rep_XXXX');
 
     // Fetch recent feedback from past runs to improve suggestions
     let feedbackStr = 'No previous feedback available.';

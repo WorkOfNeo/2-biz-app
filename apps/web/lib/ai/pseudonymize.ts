@@ -66,3 +66,63 @@ export function createPseudonymLookup(
   return lookup;
 }
 
+/**
+ * Pseudonymize a sales rep name
+ * Returns a stable identifier like "Rep_A", "Rep_B", etc.
+ */
+export function pseudonymizeSalesRep(salesRep: string): string {
+  if (!salesRep) return 'Rep_Unknown';
+  
+  const hmac = createHmac('sha256', PSEUDONYM_SECRET);
+  hmac.update(`salesrep:${salesRep.toLowerCase().trim()}`);
+  const hash = hmac.digest('hex');
+  
+  return `Rep_${hash.slice(0, 4).toUpperCase()}`;
+}
+
+/**
+ * Pseudonymize country to region
+ * Countries are aggregated to regions for privacy
+ */
+export function pseudonymizeCountry(country: string): string {
+  if (!country) return 'Region_Unknown';
+  
+  const normalized = country.toLowerCase().trim();
+  
+  // Map to broad regions (still useful for AI analysis but not identifying)
+  const nordicCountries = ['denmark', 'sweden', 'norway', 'finland', 'iceland'];
+  const euCountries = ['germany', 'france', 'italy', 'spain', 'netherlands', 'belgium', 'austria', 'poland'];
+  
+  if (nordicCountries.includes(normalized)) return 'Nordic';
+  if (euCountries.includes(normalized)) return 'EU_Central';
+  if (normalized === 'uk' || normalized === 'united kingdom') return 'UK';
+  
+  return 'Other';
+}
+
+/**
+ * Create a complete pseudonymization context for AI requests
+ * Returns both the pseudonymized data and lookup maps for de-pseudonymization
+ */
+export interface PseudonymContext {
+  salesRepMap: Map<string, string>;  // original -> pseudonym
+  salesRepReverse: Map<string, string>;  // pseudonym -> original
+}
+
+export function createPseudonymContext(
+  salesReps: string[]
+): PseudonymContext {
+  const salesRepMap = new Map<string, string>();
+  const salesRepReverse = new Map<string, string>();
+  
+  for (const rep of salesReps) {
+    if (rep && !salesRepMap.has(rep)) {
+      const pseudonym = pseudonymizeSalesRep(rep);
+      salesRepMap.set(rep, pseudonym);
+      salesRepReverse.set(pseudonym, rep);
+    }
+  }
+  
+  return { salesRepMap, salesRepReverse };
+}
+
