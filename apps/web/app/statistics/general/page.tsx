@@ -14,6 +14,7 @@ export default function StatisticsGeneralPage() {
   const {
     ready,
     seasons,
+    mutateSeasons,
     s1,
     s2,
     setS1,
@@ -167,6 +168,41 @@ export default function StatisticsGeneralPage() {
     const s = (seasons ?? []).find((x) => x.id === seasonId);
     if (!s) return '';
     return `${s.name}${s.year ? ' ' + s.year : ''}`;
+  }
+
+  // Get the selected s1 season object for freeze state
+  const s1Season = useMemo(() => {
+    if (!s1 || !seasons) return null;
+    return (seasons ?? []).find((x) => x.id === s1) ?? null;
+  }, [s1, seasons]);
+  const isS1Frozen = s1Season?.is_frozen ?? false;
+
+  // Toggle freeze state for Season 1
+  const [togglingFreeze, setTogglingFreeze] = useState(false);
+  async function toggleS1Freeze() {
+    if (!s1 || !s1Season) return alert('Select Season 1 first');
+    const action = isS1Frozen ? 'unmark' : 'mark';
+    const confirmed = confirm(
+      isS1Frozen
+        ? `Unmark "${getSeasonLabel(s1)}" as Complete?\n\nThis will allow scrape jobs to write data to this season again.`
+        : `Mark "${getSeasonLabel(s1)}" as Complete?\n\nThis will prevent any scrape jobs (cron or manual) from overwriting data for this season.`
+    );
+    if (!confirmed) return;
+    try {
+      setTogglingFreeze(true);
+      const { data: { session } } = await supabase.auth.getSession();
+      const email = session?.user?.email ?? null;
+      const updates = isS1Frozen
+        ? { is_frozen: false, frozen_at: null, frozen_by: null }
+        : { is_frozen: true, frozen_at: new Date().toISOString(), frozen_by: email };
+      const { error } = await supabase.from('seasons').update(updates).eq('id', s1);
+      if (error) throw new Error(error.message);
+      await mutateSeasons();
+    } catch (e: any) {
+      alert(e?.message || 'Failed to update freeze state');
+    } finally {
+      setTogglingFreeze(false);
+    }
   }
 
   async function handleUpdateStatistic() {
@@ -1157,7 +1193,14 @@ export default function StatisticsGeneralPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-lg font-semibold tracking-tight text-balance text-slate-700">General statistics</h1>
-          <div className="mt-1 text-2xl sm:text-3xl font-bold tracking-tight">{getSeasonLabel(s1) || 'Season 1'} vs {getSeasonLabel(s2) || 'Season 2'}</div>
+          <div className="mt-1 flex items-center gap-3">
+            <span className="text-2xl sm:text-3xl font-bold tracking-tight">{getSeasonLabel(s1) || 'Season 1'} vs {getSeasonLabel(s2) || 'Season 2'}</span>
+            {isS1Frozen && (
+              <span className="inline-flex items-center rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-medium text-green-800">
+                S1 Complete
+              </span>
+            )}
+          </div>
         </div>
         <div className="flex items-center gap-2">
           <button
@@ -1370,6 +1413,18 @@ export default function StatisticsGeneralPage() {
                   onClick={() => { setManualOpen(true); }}
                 >Add manual entry</button>
                 <button className="block w-full px-3 py-2 text-left hover:bg-gray-50" onClick={() => { setNullByInputText(''); setNullByInputResult(null); setNullByInputOpen(true); }}>Null Customers by Input</button>
+                <div className="border-t my-1" />
+                <button
+                  className="block w-full px-3 py-2 text-left hover:bg-gray-50 disabled:opacity-50"
+                  disabled={!s1 || togglingFreeze}
+                  onClick={toggleS1Freeze}
+                >
+                  {!s1
+                    ? 'Mark Season 1 as Complete (select first)'
+                    : isS1Frozen
+                      ? `Unmark ${getSeasonLabel(s1)} as Complete`
+                      : `Mark ${getSeasonLabel(s1)} as Complete`}
+                </button>
               </div>
             </div>
           </details>

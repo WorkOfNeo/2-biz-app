@@ -4,7 +4,15 @@ import React, { createContext, useContext, useEffect, useMemo, useRef, useState 
 import useSWR from 'swr';
 import { supabase } from '../../../lib/supabaseClient';
 
-export type Season = { id: string; name: string; year: number | null; is_current?: boolean | null };
+export type Season = {
+  id: string;
+  name: string;
+  year: number | null;
+  is_current?: boolean | null;
+  is_frozen?: boolean | null;
+  frozen_at?: string | null;
+  frozen_by?: string | null;
+};
 export type SeasonCompareSetting = { id: string; key: string; value: { s1?: string; s2?: string } } | null;
 export type Salesperson = { id: string; name: string; currency?: string | null; sort_index?: number | null };
 export type Customer = {
@@ -53,6 +61,7 @@ export type InvoiceRow = {
 type StatisticsData = {
   seasons: Season[] | undefined;
   savedCompare: SeasonCompareSetting | undefined;
+  mutateSeasons: () => Promise<Season[] | undefined>;
 
   s1: string;
   s2: string;
@@ -97,12 +106,12 @@ export function StatisticsDataProvider({ children }: { children: React.ReactNode
     []
   );
 
-  const { data: seasons } = useSWR(
+  const { data: seasons, mutate: mutateSeasons } = useSWR(
     'statistics:seasons',
     async () => {
       const { data, error } = await supabase
         .from('seasons')
-        .select('id, name, year, is_current')
+        .select('id, name, year, is_current, is_frozen, frozen_at, frozen_by')
         .order('created_at', { ascending: false });
       if (error) throw new Error(error.message);
       return (data ?? []) as Season[];
@@ -307,6 +316,7 @@ export function StatisticsDataProvider({ children }: { children: React.ReactNode
       ({
         seasons,
         savedCompare,
+        mutateSeasons,
         s1,
         s2,
         setS1,
@@ -328,6 +338,7 @@ export function StatisticsDataProvider({ children }: { children: React.ReactNode
     [
       seasons,
       savedCompare,
+      mutateSeasons,
       s1,
       s2,
       salespersons,

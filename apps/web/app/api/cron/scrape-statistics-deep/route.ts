@@ -31,6 +31,22 @@ async function handle(req: Request) {
     const { data: setting } = await supabase.from('app_settings').select('value').eq('key', 'season_compare').maybeSingle();
     seasonId = (setting?.value as any)?.s1 as string | undefined;
   } catch {}
+
+  // Check if the target season is frozen (marked complete) - skip if so
+  if (seasonId) {
+    try {
+      const { data: seasonRow } = await supabase
+        .from('seasons')
+        .select('is_frozen')
+        .eq('id', seasonId)
+        .maybeSingle();
+      if ((seasonRow as any)?.is_frozen) {
+        const res = { skipped: true, reason: 'season is frozen (marked complete)', seasonId };
+        return new Response(JSON.stringify(debug ? { ...res, debug: true } : res), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+    } catch {}
+  }
+
   const insertBody = {
     type: 'scrape_statistics',
     payload: { requestedBy: 'cron', toggles: { deep: true }, ...(seasonId ? { seasonId } : {}) },

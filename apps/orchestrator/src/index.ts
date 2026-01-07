@@ -215,16 +215,21 @@ app.post('/enqueue', async (c) => {
     const body = enqueueSchema.parse(await c.req.json<EnqueueRequestBody>());
 
     // Safety: do not allow deep General scrape without spy_season_id on target season
+    // Also block if the season is frozen (marked complete)
     try {
       if (body.type === 'scrape_statistics') {
         const toggles = (body.payload?.toggles as any) || {};
         const isDeep = Boolean(toggles.deep);
         const seasonId = (body.payload as any)?.seasonId as string | undefined;
         if (isDeep && seasonId) {
-          const { data: s } = await supabase.from('seasons').select('spy_season_id').eq('id', seasonId).maybeSingle();
+          const { data: s } = await supabase.from('seasons').select('spy_season_id, is_frozen').eq('id', seasonId).maybeSingle();
           const spy = (s as any)?.spy_season_id;
           if (!spy || String(spy).trim().length === 0) {
             return c.json({ error: 'Selected season has no SPY season id. Set it in Settings → Seasons before running deep scrape.' }, 400);
+          }
+          // Block if frozen
+          if ((s as any)?.is_frozen) {
+            return c.json({ error: 'Season is marked as Complete. Unmark it in Statistics → General before running scrape.', skipped: true, reason: 'season is frozen' }, 400);
           }
         }
       }
@@ -361,6 +366,21 @@ app.post('/cron/enqueue', async (c) => {
       if (s1 && s1.trim().length > 0) seasonId = s1.trim();
     }
   } catch {}
+
+  // Check if the target season is frozen (marked complete) - skip if so
+  if (seasonId) {
+    try {
+      const { data: seasonRow } = await supabase
+        .from('seasons')
+        .select('is_frozen')
+        .eq('id', seasonId)
+        .maybeSingle();
+      if ((seasonRow as any)?.is_frozen) {
+        logRequest('/cron/enqueue skipped', c, { reason: 'season is frozen', seasonId });
+        return c.json({ skipped: true, reason: 'season is frozen (marked complete)', seasonId });
+      }
+    } catch {}
+  }
 
   const { data, error } = await supabase
     .from('jobs')

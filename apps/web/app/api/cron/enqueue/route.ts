@@ -59,6 +59,19 @@ async function handle(req: Request) {
   }
   const seasonId = (setting?.value as any)?.s1 as string | undefined;
 
+  // Check if the target season is frozen (marked complete) - skip if so
+  if (seasonId) {
+    const { data: seasonRow, error: seasonErr } = await supabase
+      .from('seasons')
+      .select('is_frozen')
+      .eq('id', seasonId)
+      .maybeSingle();
+    if (!seasonErr && (seasonRow as any)?.is_frozen) {
+      const res = { skipped: true, reason: 'season is frozen (marked complete)', seasonId };
+      return new Response(JSON.stringify(debug ? { ...res, debug: true } : res), { status: 200 });
+    }
+  }
+
   const insertBody = {
     type: 'scrape_statistics',
     payload: { toggles: { deep: true }, requestedBy: 'cron', seasonId },

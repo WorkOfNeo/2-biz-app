@@ -198,6 +198,7 @@ export default function SeasonsSettingsPage() {
               <th className="text-left p-2 border-b">Stats</th>
               <th className="text-left p-2 border-b">Display Currency</th>
               <th className="text-left p-2 border-b">Current</th>
+              <th className="text-left p-2 border-b">Complete</th>
               <th className="text-left p-2 border-b">Created</th>
               <th className="text-left p-2 border-b">Hide</th>
               <th className="text-left p-2 border-b">Edit</th>
@@ -319,6 +320,29 @@ export default function SeasonsSettingsPage() {
                     }}
                     disabled={settingCurrentId === s.id}
                   >{(s as any).is_current ? 'Current' : (settingCurrentId === s.id ? 'Setting…' : 'Set current')}</button>
+                </td>
+                <td className="p-2 border-b">
+                  <div className="flex flex-col gap-1">
+                    <button
+                      className={"rounded px-2 py-1 text-xs " + ((s as any).is_frozen ? 'bg-green-600 text-white' : 'border')}
+                      onClick={async () => {
+                        const isFrozen = (s as any).is_frozen ?? false;
+                        const { data: { session } } = await supabase.auth.getSession();
+                        const email = session?.user?.email ?? null;
+                        const updates = isFrozen
+                          ? { is_frozen: false, frozen_at: null, frozen_by: null }
+                          : { is_frozen: true, frozen_at: new Date().toISOString(), frozen_by: email };
+                        const { error } = await supabase.from('seasons').update(updates).eq('id', s.id);
+                        if (!error) { mutate(); showNotice(isFrozen ? 'Season unmarked as complete' : 'Season marked as complete'); }
+                      }}
+                    >{(s as any).is_frozen ? 'Complete' : 'Mark complete'}</button>
+                    {(s as any).is_frozen && (s as any).frozen_at && (
+                      <div className="text-[10px] text-gray-500">
+                        {new Date((s as any).frozen_at).toLocaleDateString()}
+                        {(s as any).frozen_by && ` by ${(s as any).frozen_by.split('@')[0]}`}
+                      </div>
+                    )}
+                  </div>
                 </td>
                 <td className="p-2 border-b">{new Date(s.created_at).toLocaleString()}</td>
                 <td className="p-2 border-b">

@@ -1629,6 +1629,21 @@ async function runJob(job: JobRow) {
 
       if (!targetSeasonId) throw new Error('seasonId could not be determined');
 
+      // Check if the target season is frozen (marked complete) - skip all writes if so
+      {
+        const { data: seasonCheck } = await supabase
+          .from('seasons')
+          .select('is_frozen')
+          .eq('id', targetSeasonId)
+          .maybeSingle();
+        if ((seasonCheck as any)?.is_frozen) {
+          await log(job.id, 'info', 'STEP:skipped_frozen_season', { seasonId: targetSeasonId, reason: 'Season is marked as Complete. No writes performed.' });
+          await saveResult(job.id, 'Skipped: season is frozen (marked complete)', { seasonId: targetSeasonId });
+          await setJobSucceeded(job.id);
+          return;
+        }
+      }
+
       const stdTableSel = 'table.standardList';
       await page.waitForSelector(stdTableSel, { timeout: 60_000 });
       // Success criteria: tbody has at least 3 rows
