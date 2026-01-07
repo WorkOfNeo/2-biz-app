@@ -178,8 +178,14 @@ async function handle(req: Request) {
     .limit(50);
 
   const latestStockListByName = new Map<string, any>();
+  const exportDebugInfo: Array<{ name: string; hasUrl: boolean; meta: any }> = [];
   for (const row of (exportsData ?? [])) {
     const name = String(row?.meta?.list || row?.title || '').replace(/^Stock List ·\s*/i, '');
+    exportDebugInfo.push({ 
+      name, 
+      hasUrl: !!row?.public_url,
+      meta: row?.meta 
+    });
     if (name && !latestStockListByName.has(name)) {
       latestStockListByName.set(name, row);
     }
@@ -304,6 +310,8 @@ async function handle(req: Request) {
       minutesUntilNext: s.check.minutesUntilNext,
     }));
     response.queueResults = results;
+    response.availableExports = Array.from(latestStockListByName.keys());
+    response.exportDebug = exportDebugInfo.slice(0, 10); // First 10 exports for debugging
   }
 
   return new Response(JSON.stringify(response, null, debug ? 2 : 0), {
