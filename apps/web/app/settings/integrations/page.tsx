@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { Suspense, useState, useEffect } from 'react';
 import { useSearchParams } from 'next/navigation';
 import useSWR from 'swr';
 import { supabase } from '../../../lib/supabaseClient';
@@ -17,7 +17,7 @@ type GraphToken = {
   updated_at: string;
 };
 
-export default function IntegrationsPage() {
+function IntegrationsContent() {
   const searchParams = useSearchParams();
   const [notification, setNotification] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [isDisconnecting, setIsDisconnecting] = useState(false);
@@ -248,3 +248,18 @@ export default function IntegrationsPage() {
   );
 }
 
+export default function IntegrationsPage() {
+  return (
+    <Suspense fallback={
+      <div className="max-w-3xl mx-auto py-8 px-4">
+        <div className="animate-pulse">
+          <div className="h-8 bg-slate-200 rounded w-1/3 mb-2"></div>
+          <div className="h-4 bg-slate-100 rounded w-1/2 mb-8"></div>
+          <div className="h-64 bg-slate-100 rounded"></div>
+        </div>
+      </div>
+    }>
+      <IntegrationsContent />
+    </Suspense>
+  );
+}
