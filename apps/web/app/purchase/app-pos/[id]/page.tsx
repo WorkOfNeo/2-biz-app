@@ -102,18 +102,19 @@ export default function AppPoDetailPage() {
     }
   );
 
-  // Fetch seasons for dropdown
+  // Fetch seasons for dropdown (include NOOS and exclude hidden)
   const { data: seasons } = useSWR(
-    'seasons',
+    'seasons:push-order',
     async () => {
       const { data, error } = await supabase
         .from('seasons')
-        .select('id, name, year')
-        .order('year', { ascending: false })
+        .select('id, name, year, hidden')
+        .or('hidden.is.null,hidden.eq.false')
+        .order('year', { ascending: false, nullsFirst: true })
         .order('name', { ascending: false });
       
       if (error) throw error;
-      return data as Array<{ id: string; name: string; year: number | null }>;
+      return data as Array<{ id: string; name: string; year: number | null; hidden?: boolean }>;
     }
   );
 
@@ -415,8 +416,59 @@ export default function AppPoDetailPage() {
     }
   );
 
-  // Helper to get sold data for a style/color
+  // Helper to get stock and sold data for a style/color
+  const getStockSoldData = (style_no: string, color: string) => {
+    if (!stockData) return { sizes: [], stock: [], sold: [], salesPressure: [] };
+    
+    const rows = stockData.filter(
+      r => r.style_no === style_no && r.color.toLowerCase() === color.toLowerCase()
+    );
+    
+    if (rows.length === 0) return { sizes: [], stock: [], sold: [], salesPressure: [] };
+    
+    // Get latest row per section
+    const latestBySection = new Map<string, StockRow>();
+    for (const r of rows) {
+      const key = `${r.section}|${r.row_label ?? ''}`;
+      const current = latestBySection.get(key);
+      if (!current || new Date(r.scraped_at) > new Date(current.scraped_at)) {
+        latestBySection.set(key, r);
+      }
+    }
+    
+    const latestRows = Array.from(latestBySection.values());
+    const stockRow = latestRows.find(r => r.section === 'Stock');
+    const soldRows = latestRows.filter(r => r.section === 'Sold');
+    
+    const sizes = stockRow?.sizes || soldRows[0]?.sizes || [];
+    const num = sizes.length;
+    
+    const ensureNums = (arr: any[], len: number): number[] =>
+      Array.from({ length: len }, (_, i) => Number(arr?.[i] ?? 0) || 0);
+    
+    const stock = stockRow ? ensureNums(stockRow.values, num) : Array(num).fill(0);
+    const sold = soldRows.reduce((acc, r) => {
+      const vals = ensureNums(r.values, num);
+      return acc.map((v, i) => v + (vals[i] || 0));
+    }, Array(num).fill(0) as number[]);
+    
+    // Calculate sales pressure (percentage of each size)
+    const totalSold = sold.reduce((a, b) => a + b, 0);
+    const salesPressure = totalSold > 0 
+      ? sold.map(s => (s / totalSold) * 100) 
+      : sizes.map(() => 0);
+    
+    return { sizes, stock, sold, salesPressure };
+  };
+
+  // Legacy helper for backward compatibility
   const getSoldData = (style_no: string, color: string) => {
+    const data = getStockSoldData(style_no, color);
+    return { sizes: data.sizes, sold: data.sold };
+  };
+  
+  // Original helper to get sold data for a style/color (for reference)
+  const getSoldDataLegacy = (style_no: string, color: string) => {
     if (!stockData) return { sizes: [], sold: [] };
     
     const rows = stockData.filter(
@@ -805,7 +857,7 @@ export default function AppPoDetailPage() {
                 {/* Items grouped by style */}
                 {items.map((item) => {
                   const meta = styleMetas?.get(item.style_no);
-                  const { sizes, sold } = getSoldData(item.style_no, item.color);
+                  const { sizes, stock, sold, salesPressure } = getStockSoldData(item.style_no, item.color);
                   const key = `${item.style_no}|${item.color}`.toLowerCase();
                   const otherPoItems = otherPos?.get(key) || [];
                   
@@ -814,11 +866,12 @@ export default function AppPoDetailPage() {
                     return acc.map((v, i) => v + (opi.quantities[i] || 0));
                   }, Array(item.quantities.length).fill(0));
                   
-                  // Calculate Net Need: -Sold + This PO + Other PO's
+                  // Calculate Net Need: Stock - Sold + This PO + Other PO's
                   const netNeed = item.quantities.map((qty, i) => {
+                    const stockVal = stock[i] || 0;
                     const soldVal = sold[i] || 0;
                     const otherVal = otherPoTotals[i] || 0;
-                    return -soldVal + qty + otherVal;
+                    return stockVal - soldVal + qty + otherVal;
                   });
                   
                   const sum = (arr: number[]) => arr.reduce((a, b) => a + b, 0);
@@ -876,6 +929,21 @@ export default function AppPoDetailPage() {
                             </tr>
                           </thead>
                           <tbody>
+                            {/* Stock Row */}
+                            <tr className="border-t border-slate-300 bg-slate-50">
+                              <td className="p-2 font-medium border-r border-slate-300 bg-slate-100">
+                                Stock
+                              </td>
+                              {item.quantities.map((_, i) => (
+                                <td key={i} className="p-2 text-center border-r border-slate-300 text-slate-700 font-semibold">
+                                  {stock[i] || 0}
+                                </td>
+                              ))}
+                              <td className="p-2 text-center font-bold text-slate-700">
+                                {sum(stock)}
+                              </td>
+                            </tr>
+
                             {/* Sold Row */}
                             <tr className="border-t border-slate-300 bg-red-50">
                               <td className="p-2 font-medium border-r border-slate-300 bg-red-100">
@@ -888,6 +956,21 @@ export default function AppPoDetailPage() {
                               ))}
                               <td className="p-2 text-center font-bold text-red-700">
                                 {sum(sold)}
+                              </td>
+                            </tr>
+                            
+                            {/* Sales Pressure Row */}
+                            <tr className="border-t border-slate-300 bg-red-50/50">
+                              <td className="p-2 font-medium border-r border-slate-300 bg-red-50 text-red-600 text-xs">
+                                Sales %
+                              </td>
+                              {item.quantities.map((_, i) => (
+                                <td key={i} className="p-2 text-center border-r border-slate-300 text-red-600 text-xs">
+                                  {(salesPressure[i] || 0).toFixed(1)}%
+                                </td>
+                              ))}
+                              <td className="p-2 text-center font-bold text-red-600 text-xs">
+                                100%
                               </td>
                             </tr>
 
