@@ -3,6 +3,18 @@ import type { JobRow } from '@shared/types';
 import React from 'react';
 import { pdf, Document, Page as PdfPage, Text, StyleSheet, View, Image } from '@react-pdf/renderer';
 
+/** Get formatted timestamp in Copenhagen timezone: DD/MM/YYYY - HH:MM */
+function getCopenhagenTimestamp(): string {
+  const now = new Date();
+  const copenhagenTime = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Copenhagen' }));
+  const dd = copenhagenTime.getDate().toString().padStart(2, '0');
+  const mm = (copenhagenTime.getMonth() + 1).toString().padStart(2, '0');
+  const yyyy = copenhagenTime.getFullYear();
+  const hh = copenhagenTime.getHours().toString().padStart(2, '0');
+  const min = copenhagenTime.getMinutes().toString().padStart(2, '0');
+  return `${dd}/${mm}/${yyyy} - ${hh}:${min}`;
+}
+
 type Ctx = {
   job: JobRow;
   page: Page;
@@ -63,9 +75,12 @@ export async function exportTopStyles(ctx: Ctx) {
       } catch {}
       await log(job.id, 'info', 'STEP:top_styles_export_suppliers_resolved', { mapped: supplierByStyle.size });
     }
+    const timestampStr = getCopenhagenTimestamp();
     const styles = StyleSheet.create({
       page: { padding: 16, fontSize: 9, color: '#0f172a' },
-      h1: { fontSize: 16, marginBottom: 2 },
+      headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 2 },
+      h1: { fontSize: 16 },
+      timestamp: { fontSize: 8, color: '#94a3b8' },
       sub: { fontSize: 10, color: '#64748b', marginBottom: 6 },
       header: { flexDirection: 'row', backgroundColor: '#1d4ed8', color: '#ffffff' },
       cell: { padding: 4, fontSize: 8 },
@@ -92,7 +107,10 @@ export async function exportTopStyles(ctx: Ctx) {
       React.createElement(
         PdfPage,
         { size: 'A4', style: styles.page },
-        React.createElement(Text, { style: styles.h1 }, 'Top 15 Styles — Salesmen'),
+        React.createElement(View, { style: styles.headerRow },
+          React.createElement(Text, { style: styles.h1 }, 'Top 15 Styles — Salesmen'),
+          React.createElement(Text, { style: styles.timestamp }, timestampStr)
+        ),
         React.createElement(Text, { style: styles.sub }, seasonName),
         HeadSalesmen,
         ...bodySalesmen
@@ -141,7 +159,10 @@ export async function exportTopStyles(ctx: Ctx) {
       React.createElement(
         PdfPage,
         { size: 'A4', style: styles.page },
-        React.createElement(Text, { style: styles.h1 }, 'Top 15 Styles — Overall'),
+        React.createElement(View, { style: styles.headerRow },
+          React.createElement(Text, { style: styles.h1 }, 'Top 15 Styles — Overall'),
+          React.createElement(Text, { style: styles.timestamp }, timestampStr)
+        ),
         React.createElement(Text, { style: styles.sub }, seasonName),
         HeadOverall,
         ...bodyOverall

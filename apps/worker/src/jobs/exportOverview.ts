@@ -5,6 +5,18 @@ import { pdf, Document, Page as PdfPage, Text, StyleSheet, View, Svg, Circle, Pa
 import JSZip from 'jszip';
 // Use ArrayBuffer slices from Node Buffers for uploads and normalize React-PDF outputs
 
+/** Get formatted timestamp in Copenhagen timezone: DD/MM/YYYY - HH:MM */
+function getCopenhagenTimestamp(): string {
+  const now = new Date();
+  const copenhagenTime = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Copenhagen' }));
+  const dd = copenhagenTime.getDate().toString().padStart(2, '0');
+  const mm = (copenhagenTime.getMonth() + 1).toString().padStart(2, '0');
+  const yyyy = copenhagenTime.getFullYear();
+  const hh = copenhagenTime.getHours().toString().padStart(2, '0');
+  const min = copenhagenTime.getMinutes().toString().padStart(2, '0');
+  return `${dd}/${mm}/${yyyy} - ${hh}:${min}`;
+}
+
 type Ctx = {
   job: JobRow;
   page: Page;
@@ -641,7 +653,9 @@ export async function exportOverview(ctx: Ctx) {
         
         const styles = StyleSheet.create({
           page: { padding: 16, fontSize: 8, color: '#0f172a' },
-          h1: { fontSize: 14, marginBottom: 2, color: '#0f172a' },
+          headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 2 },
+          h1: { fontSize: 14, color: '#0f172a' },
+          timestamp: { fontSize: 8, color: '#94a3b8' },
           small: { fontSize: 8, color: '#64748b', marginBottom: 6, fontWeight: 700 },
           kpiSection: { marginTop: 8, marginBottom: 10 },
           kpiRow: { flexDirection: 'row', marginBottom: 6, gap: 6 },
@@ -854,8 +868,12 @@ export async function exportOverview(ctx: Ctx) {
             Cell(((totalsDkk.s1 - totalsDkk.s2) > 0 ? '+' : '') + fmt(totalsDkk.s1 - totalsDkk.s2), '13%', 'right')
           )
         );
+        const timestampStr = getCopenhagenTimestamp();
         const pageEl = React.createElement(PdfPage, { size: 'A4', orientation: 'landscape', style: styles.page },
-          React.createElement(Text, { style: styles.h1 }, `${sp.name}`),
+          React.createElement(View, { style: styles.headerRow },
+            React.createElement(Text, { style: styles.h1 }, `${sp.name}`),
+            React.createElement(Text, { style: styles.timestamp }, timestampStr)
+          ),
           React.createElement(Text, { style: styles.small }, `${s1Name ?? 'S1'} vs ${s2Name ?? 'S2'}`),
           kpiSection,
           groupHeader,
@@ -1049,10 +1067,12 @@ export async function exportOverview(ctx: Ctx) {
       // Styling (20% smaller overall vs previous)
       const SCALE = 0.64;
       const s = (n: number) => Math.max(0.5, n * SCALE);
-      const styles = StyleSheet.create({
+      const countriesStyles = StyleSheet.create({
         page: { padding: s(16), fontSize: s(12), color: '#0f172a' },
+        pageHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: s(8) },
         h1: { fontSize: s(14), marginBottom: s(10), textAlign: 'center' as any },
-        docHeader: { fontSize: s(10), color: '#6b7280', textAlign: 'center' as any, marginBottom: s(8) },
+        docHeader: { fontSize: s(10), color: '#6b7280' },
+        timestamp: { fontSize: s(8), color: '#94a3b8' },
         row: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: s(8) },
         section: { flexDirection: 'row', gap: s(10) },
         box: { width: '50%' as any, padding: s(8), alignItems: 'center' as any },
@@ -1121,7 +1141,7 @@ export async function exportOverview(ctx: Ctx) {
         const T = (txt: string, w: string, align: 'left' | 'right' = 'left', bold = false) =>
           React.createElement(Text, { style: [{ width: w, textAlign: align }, bold ? { fontWeight: 700 as any } : {}] }, txt);
         // Single-level header for salesperson table (season codes shown only once at top of document)
-        const spHeaderBottom = React.createElement(View, { style: styles.row },
+        const spHeaderBottom = React.createElement(View, { style: countriesStyles.row },
           T('','34%','left',false),
           T('Stk','11%','right',true),
           T('Oms','22%','right',true),
@@ -1130,7 +1150,7 @@ export async function exportOverview(ctx: Ctx) {
         );
         const spTable = React.createElement(View, { style: { marginTop: s(6) } },
           spHeaderBottom,
-          ...spRows.map(r => React.createElement(View, { style: styles.row },
+          ...spRows.map(r => React.createElement(View, { style: countriesStyles.row },
             T(r.name,'34%','left'),
             T(String(r.s1Qty),'11%','right'),
             T(fmt(r.s1Price),'22%','right'),
@@ -1140,16 +1160,16 @@ export async function exportOverview(ctx: Ctx) {
         );
         // Country block with bottom separator
         return React.createElement(View, { style: { flexDirection: 'column', gap: s(6), marginBottom: s(10), paddingBottom: s(8), borderBottomWidth: s(1), borderBottomColor: '#e5e7eb' } },
-          React.createElement(Text, { style: styles.h1 }, `${cName}`),
+          React.createElement(Text, { style: countriesStyles.h1 }, `${cName}`),
           React.createElement(View, { style: { flexDirection: 'row', gap: s(16) } },
             React.createElement(View, { style: { width: '24%' as any, alignItems: 'center' as any } },
-              React.createElement(Text, { style: styles.boxTitle }, 'Antal stk'),
-              React.createElement(Text, { style: styles.boxNums }, `${row.s1Qty} vs ${row.s2Qty}`),
+              React.createElement(Text, { style: countriesStyles.boxTitle }, 'Antal stk'),
+              React.createElement(Text, { style: countriesStyles.boxNums }, `${row.s1Qty} vs ${row.s2Qty}`),
               React.createElement(Donut as any, { pct: qtyPct, label: 'Stk' })
             ),
             React.createElement(View, { style: { width: '24%' as any, alignItems: 'center' as any } },
-              React.createElement(Text, { style: styles.boxTitle }, 'Omsætning (DKK)'),
-              React.createElement(Text, { style: styles.boxNums }, `${fmt(row.s1Price)} DKK vs ${fmt(row.s2Price)} DKK`),
+              React.createElement(Text, { style: countriesStyles.boxTitle }, 'Omsætning (DKK)'),
+              React.createElement(Text, { style: countriesStyles.boxNums }, `${fmt(row.s1Price)} DKK vs ${fmt(row.s2Price)} DKK`),
               React.createElement(Donut as any, { pct: pricePct, label: 'Omsætning' })
             ),
             React.createElement(View, { style: { width: '52%' as any } },
@@ -1159,10 +1179,14 @@ export async function exportOverview(ctx: Ctx) {
         );
       });
       // Single page document; react-pdf will flow to additional pages if needed, but we don't create a page per country manually
+      const countriesTimestamp = getCopenhagenTimestamp();
       const combined = React.createElement(Document, null,
-        React.createElement(PdfPage, { size: 'A4', orientation: 'landscape', style: styles.page },
+        React.createElement(PdfPage, { size: 'A4', orientation: 'landscape', style: countriesStyles.page },
+          React.createElement(View, { style: countriesStyles.pageHeader },
+            React.createElement(Text, { style: countriesStyles.docHeader }, `${s1Code} vs ${s2Code}`),
+            React.createElement(Text, { style: countriesStyles.timestamp }, countriesTimestamp)
+          ),
           React.createElement(View, { style: { flexDirection: 'column', gap: s(6) } },
-            React.createElement(Text, { style: styles.docHeader }, `${s1Code} vs ${s2Code}`),
             ...sections
           )
         )

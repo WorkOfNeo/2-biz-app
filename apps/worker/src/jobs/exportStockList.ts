@@ -464,22 +464,17 @@ function formatRelativeTimeDa(iso?: string | null): string {
   if (!iso) return 'Ikke opdateret endnu';
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return 'Ikke opdateret endnu';
-  const diffMs = Date.now() - date.getTime();
-  if (diffMs < 0) return 'Opdateret netop nu';
-  if (diffMs < 60000) return 'Opdateret for under et minut siden';
-  const diffMins = Math.floor(diffMs / 60000);
-  if (diffMins < 60) return `Opdateret for ${diffMins} min siden`;
-  const diffHours = Math.floor(diffMins / 60);
-  if (diffHours < 24) {
-    const label = diffHours === 1 ? 'time' : 'timer';
-    return `Opdateret for ${diffHours} ${label} siden`;
-  }
-  const diffDays = Math.floor(diffHours / 24);
-  if (diffDays < 7) {
-    const label = diffDays === 1 ? 'dag' : 'dage';
-    return `Opdateret for ${diffDays} ${label} siden`;
-  }
-  return `Opdateret ${date.toLocaleDateString('da-DK')}`;
+  // Convert to Copenhagen time
+  const copenhagenTime = new Date(date.toLocaleString('en-US', { timeZone: 'Europe/Copenhagen' }));
+  const hh = copenhagenTime.getHours().toString().padStart(2, '0');
+  const mm = copenhagenTime.getMinutes().toString().padStart(2, '0');
+  const now = new Date();
+  const isToday = copenhagenTime.toDateString() === new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Copenhagen' })).toDateString();
+  if (isToday) return `Opdateret kl. ${hh}:${mm}`;
+  // Show date for older updates
+  const day = copenhagenTime.getDate().toString().padStart(2, '0');
+  const month = (copenhagenTime.getMonth() + 1).toString().padStart(2, '0');
+  return `Opdateret ${day}/${month} kl. ${hh}:${mm}`;
 }
 
 
