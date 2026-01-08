@@ -69,15 +69,15 @@ function formatSchedule(schedule: StockListSchedule): string {
 function formatLastRun(iso: string | undefined): string {
   if (!iso) return '—';
   const d = new Date(iso);
+  const hh = d.getHours().toString().padStart(2, '0');
+  const mm = d.getMinutes().toString().padStart(2, '0');
   const now = new Date();
-  const diffMs = now.getTime() - d.getTime();
-  const diffMins = Math.floor(diffMs / 60000);
-  if (diffMins < 1) return 'Just now';
-  if (diffMins < 60) return `${diffMins}m ago`;
-  const diffHours = Math.floor(diffMins / 60);
-  if (diffHours < 24) return `${diffHours}h ago`;
-  const diffDays = Math.floor(diffHours / 24);
-  return `${diffDays}d ago`;
+  const isToday = d.toDateString() === now.toDateString();
+  if (isToday) return `Opdateret kl. ${hh}:${mm}`;
+  // Show date for older runs
+  const day = d.getDate().toString().padStart(2, '0');
+  const month = (d.getMonth() + 1).toString().padStart(2, '0');
+  return `Opdateret ${day}/${month} kl. ${hh}:${mm}`;
 }
 
 export default function StatisticsDashboardPage() {
