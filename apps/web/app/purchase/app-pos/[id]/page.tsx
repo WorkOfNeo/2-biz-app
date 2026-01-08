@@ -8,7 +8,7 @@ import { Input } from '../../../../components/ui/input';
 import { Button } from '../../../../components/ui/button';
 import { Badge } from '../../../../components/ui/badge';
 import { SearchSelect } from '../../../../components/SearchSelect';
-import { Trash2, Check, FileText, FileSpreadsheet, Download } from 'lucide-react';
+import { Trash2, Check, FileText, FileSpreadsheet, Download, Mail, Send, RefreshCw, MessageSquare } from 'lucide-react';
 
 type AppPo = {
   id: number;
@@ -88,6 +88,16 @@ export default function AppPoDetailPage() {
   const [showPoNotFoundDialog, setShowPoNotFoundDialog] = React.useState(false);
   const [isRemovingSpyPo, setIsRemovingSpyPo] = React.useState(false);
 
+  // Conversation state
+  const [showDraftModal, setShowDraftModal] = React.useState(false);
+  const [draftType, setDraftType] = React.useState<'initial' | 'followup_2weeks' | 'followup_1week' | 'followup_etd'>('initial');
+  const [draftSubject, setDraftSubject] = React.useState('');
+  const [draftBody, setDraftBody] = React.useState('');
+  const [draftBodyHtml, setDraftBodyHtml] = React.useState('');
+  const [supplierEmail, setSupplierEmail] = React.useState('');
+  const [isGeneratingDraft, setIsGeneratingDraft] = React.useState(false);
+  const [isSendingEmail, setIsSendingEmail] = React.useState(false);
+
   const { data: po, error, isLoading, mutate: mutatePo } = useSWR(
     id ? ['app-po', id] : null,
     async () => {
@@ -137,11 +147,42 @@ export default function AppPoDetailPage() {
     async () => {
       const { data, error } = await supabase
         .from('suppliers')
-        .select('id, name, lead_time_days, travel_time_days')
+        .select('id, name, lead_time_days, travel_time_days, notes')
         .eq('name', po!.supplier)
         .maybeSingle();
       if (error) console.error('Error fetching supplier:', error);
-      return data as { id: string; name: string; lead_time_days: number; travel_time_days: number } | null;
+      return data as { id: string; name: string; lead_time_days: number; travel_time_days: number; notes?: string } | null;
+    }
+  );
+
+  // Fetch conversation for this PO
+  const { data: conversation, mutate: mutateConversation } = useSWR(
+    id ? ['conversation', id] : null,
+    async () => {
+      const { data: conv, error: convError } = await supabase
+        .from('conversations')
+        .select('*')
+        .eq('app_po_id', id)
+        .maybeSingle();
+      
+      if (convError) {
+        console.error('Error fetching conversation:', convError);
+        return null;
+      }
+      
+      if (!conv) return null;
+
+      // Get messages for this conversation
+      const { data: messages } = await supabase
+        .from('conversation_messages')
+        .select('*')
+        .eq('conversation_id', conv.id)
+        .order('sent_at', { ascending: true });
+
+      return {
+        ...conv,
+        messages: messages || [],
+      };
     }
   );
 
@@ -206,6 +247,84 @@ export default function AppPoDetailPage() {
     const currentEta = po?.eta?.split('T')[0] || '';
     return etdInput !== currentEtd || etaInput !== currentEta;
   }, [po?.etd, po?.eta, etdInput, etaInput]);
+
+  // Generate email draft
+  const handleGenerateDraft = async (type: 'initial' | 'followup_2weeks' | 'followup_1week' | 'followup_etd') => {
+    if (!po) return;
+    setDraftType(type);
+    setIsGeneratingDraft(true);
+    setShowDraftModal(true);
+    setDraftSubject('');
+    setDraftBody('');
+    setDraftBodyHtml('');
+
+    try {
+      const res = await fetch('/api/conversations/draft', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ app_po_id: po.id, type }),
+      });
+      const data = await res.json();
+      
+      if (data.success && data.draft) {
+        setDraftSubject(data.draft.subject);
+        setDraftBody(data.draft.body_text);
+        setDraftBodyHtml(data.draft.body_html);
+      } else {
+        throw new Error(data.error || 'Failed to generate draft');
+      }
+    } catch (err: any) {
+      console.error('Failed to generate draft:', err);
+      alert('Failed to generate draft: ' + err.message);
+      setShowDraftModal(false);
+    } finally {
+      setIsGeneratingDraft(false);
+    }
+  };
+
+  // Send email
+  const handleSendEmail = async () => {
+    if (!po || !supplierEmail || !draftSubject || !draftBodyHtml) return;
+    
+    setIsSendingEmail(true);
+    try {
+      // Get attachments from po.meta.spy_files
+      const attachments = (po.meta?.spy_files || [])
+        .filter((f: any) => f.path)
+        .map((f: any) => ({
+          name: f.path.split('/').pop() || `${po.spy_po_no || po.po_no}_${f.type}`,
+          path: f.path,
+        }));
+
+      const res = await fetch('/api/conversations/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          app_po_id: po.id,
+          to_email: supplierEmail,
+          subject: draftSubject,
+          body_html: draftBodyHtml,
+          body_text: draftBody,
+          attachments,
+        }),
+      });
+      
+      const data = await res.json();
+      
+      if (data.success) {
+        alert('Email sent successfully!');
+        setShowDraftModal(false);
+        mutateConversation();
+      } else {
+        throw new Error(data.error || 'Failed to send email');
+      }
+    } catch (err: any) {
+      console.error('Failed to send email:', err);
+      alert('Failed to send email: ' + err.message);
+    } finally {
+      setIsSendingEmail(false);
+    }
+  };
 
   // Generate signed URLs for files stored in Supabase
   const { data: fileUrls } = useSWR(
@@ -1273,37 +1392,49 @@ export default function AppPoDetailPage() {
                                 {followup.note}
                               </div>
                             )}
+                            {/* Draft Email button for follow-ups with draftType */}
+                            {!isCompleted && followup.draftType && (
+                              <button
+                                onClick={() => handleGenerateDraft(followup.draftType)}
+                                className="mt-2 flex items-center gap-1 text-xs text-[#8FA894] hover:text-[#8FA894]/80 font-medium"
+                              >
+                                <Mail className="w-3 h-3" />
+                                Draft Email
+                              </button>
+                            )}
                           </div>
-                          {!isCompleted && (
-                            <button
-                              onClick={async () => {
-                                const note = prompt('Add a note (optional):');
-                                const updatedFollowups = [...po.meta.followups];
-                                updatedFollowups[idx] = {
-                                  ...followup,
-                                  completed: true,
-                                  completedAt: new Date().toISOString(),
-                                  note: note || undefined,
-                                };
-                                
-                                try {
-                                  await supabase
-                                    .from('app_pos')
-                                    .update({ 
-                                      meta: { ...po.meta, followups: updatedFollowups } 
-                                    })
-                                    .eq('id', id);
-                                  mutatePo();
-                                } catch (err) {
-                                  console.error('Failed to update followup:', err);
-                                }
-                              }}
-                              className="p-1.5 rounded-full hover:bg-green-100 text-green-600 transition-colors"
-                              title="Mark as done"
-                            >
-                              <Check className="w-4 h-4" />
-                            </button>
-                          )}
+                          <div className="flex flex-col gap-1">
+                            {!isCompleted && (
+                              <button
+                                onClick={async () => {
+                                  const note = prompt('Add a note (optional):');
+                                  const updatedFollowups = [...po.meta.followups];
+                                  updatedFollowups[idx] = {
+                                    ...followup,
+                                    completed: true,
+                                    completedAt: new Date().toISOString(),
+                                    note: note || undefined,
+                                  };
+                                  
+                                  try {
+                                    await supabase
+                                      .from('app_pos')
+                                      .update({ 
+                                        meta: { ...po.meta, followups: updatedFollowups } 
+                                      })
+                                      .eq('id', id);
+                                    mutatePo();
+                                  } catch (err) {
+                                    console.error('Failed to update followup:', err);
+                                  }
+                                }}
+                                className="p-1.5 rounded-full hover:bg-green-100 text-green-600 transition-colors"
+                                title="Mark as done"
+                              >
+                                <Check className="w-4 h-4" />
+                              </button>
+                            )}
+                          </div>
                         </div>
                       </div>
                     );
@@ -1321,6 +1452,146 @@ export default function AppPoDetailPage() {
                       </div>
                     </div>
                   )}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+          
+          {/* Conversations Card */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <MessageSquare className="w-4 h-4" />
+                Conversation
+                {conversation?.status && (
+                  <Badge className={`text-xs ${
+                    conversation.status === 'confirmed' ? 'bg-green-100 text-green-700' :
+                    conversation.status === 'active' ? 'bg-blue-100 text-blue-700' :
+                    'bg-slate-100 text-slate-700'
+                  }`}>
+                    {conversation.status}
+                  </Badge>
+                )}
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {conversation && conversation.messages?.length > 0 ? (
+                <div className="space-y-3">
+                  {/* Message Thread */}
+                  <div className="max-h-64 overflow-y-auto space-y-2">
+                    {conversation.messages.slice(-5).map((msg: any) => (
+                      <div
+                        key={msg.id}
+                        className={`p-2 rounded-lg text-sm ${
+                          msg.direction === 'outbound'
+                            ? 'bg-[#C5D5CA]/30 ml-4'
+                            : 'bg-blue-50 mr-4'
+                        }`}
+                      >
+                        <div className="flex justify-between items-start mb-1">
+                          <span className={`text-xs font-medium ${
+                            msg.direction === 'outbound' ? 'text-[#8FA894]' : 'text-blue-600'
+                          }`}>
+                            {msg.direction === 'outbound' ? 'You' : po.supplier}
+                          </span>
+                          <span className="text-[10px] text-slate-400">
+                            {new Date(msg.sent_at).toLocaleDateString('en-US', { 
+                              month: 'short', 
+                              day: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit'
+                            })}
+                          </span>
+                        </div>
+                        <div className="text-slate-700 text-xs line-clamp-3">
+                          {msg.body_text?.slice(0, 150) || '(No preview)'}
+                          {msg.body_text?.length > 150 && '...'}
+                        </div>
+                        {msg.ai_analysis && (
+                          <div className="mt-1 flex gap-1 flex-wrap">
+                            {msg.ai_analysis.confirmed && (
+                              <Badge className="bg-green-100 text-green-700 text-[10px]">Confirmed</Badge>
+                            )}
+                            {msg.ai_analysis.action_needed && (
+                              <Badge className="bg-amber-100 text-amber-700 text-[10px]">Action Needed</Badge>
+                            )}
+                            {msg.ai_analysis.questions?.length > 0 && (
+                              <Badge className="bg-purple-100 text-purple-700 text-[10px]">
+                                {msg.ai_analysis.questions.length} Question(s)
+                              </Badge>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  
+                  {/* AI Summary */}
+                  {conversation.ai_summary && (
+                    <div className="text-xs bg-slate-50 rounded p-2 border">
+                      <span className="font-medium text-slate-600">AI Summary: </span>
+                      {conversation.ai_summary}
+                    </div>
+                  )}
+                  
+                  {/* Quick Actions */}
+                  <div className="flex gap-2 pt-2 border-t">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => handleGenerateDraft('initial')}
+                      className="flex-1 text-xs"
+                    >
+                      <Mail className="w-3 h-3 mr-1" />
+                      New Email
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="text-center py-4 text-slate-500 text-sm">
+                    <Mail className="w-8 h-8 mx-auto mb-2 opacity-30" />
+                    <p>No conversation started yet</p>
+                    <p className="text-xs mt-1 text-slate-400">
+                      Draft an email to the supplier to begin tracking
+                    </p>
+                  </div>
+                  
+                  {/* Draft Email Options */}
+                  <div className="space-y-2">
+                    <Button
+                      size="sm"
+                      onClick={() => handleGenerateDraft('initial')}
+                      className="w-full bg-[#8FA894] hover:bg-[#8FA894]/90"
+                      disabled={isGeneratingDraft}
+                    >
+                      <Mail className="w-4 h-4 mr-2" />
+                      Draft Order Confirmation Email
+                    </Button>
+                    
+                    {po.etd && (
+                      <div className="grid grid-cols-2 gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleGenerateDraft('followup_2weeks')}
+                          className="text-xs"
+                          disabled={isGeneratingDraft}
+                        >
+                          2 Week Follow-up
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleGenerateDraft('followup_1week')}
+                          className="text-xs"
+                          disabled={isGeneratingDraft}
+                        >
+                          1 Week Follow-up
+                        </Button>
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
             </CardContent>
@@ -1647,6 +1918,156 @@ export default function AppPoDetailPage() {
               >
                 Cancel
               </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Draft Email Modal */}
+      {showDraftModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-hidden flex flex-col">
+            <div className="p-6 border-b">
+              <h2 className="text-xl font-semibold flex items-center gap-2">
+                <Mail className="w-5 h-5" />
+                {draftType === 'initial' ? 'Order Confirmation Email' : 
+                 draftType === 'followup_2weeks' ? '2-Week Follow-up' :
+                 draftType === 'followup_1week' ? '1-Week Follow-up' :
+                 'ETD Follow-up'}
+              </h2>
+              <p className="text-sm text-slate-600 mt-1">
+                Review and send the email to the supplier
+              </p>
+            </div>
+            
+            <div className="p-6 overflow-y-auto flex-1 space-y-4">
+              {isGeneratingDraft ? (
+                <div className="flex items-center justify-center py-12">
+                  <div className="text-center">
+                    <RefreshCw className="w-8 h-8 animate-spin mx-auto text-[#8FA894]" />
+                    <p className="text-sm text-slate-600 mt-3">Generating draft...</p>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  {/* To Email */}
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">
+                      To
+                    </label>
+                    <Input
+                      type="email"
+                      value={supplierEmail}
+                      onChange={(e) => setSupplierEmail(e.target.value)}
+                      placeholder="supplier@example.com"
+                      className="w-full"
+                    />
+                    {supplierData?.notes && (
+                      <p className="text-xs text-slate-500 mt-1">
+                        Supplier notes: {supplierData.notes}
+                      </p>
+                    )}
+                  </div>
+                  
+                  {/* Subject */}
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">
+                      Subject
+                    </label>
+                    <Input
+                      value={draftSubject}
+                      onChange={(e) => setDraftSubject(e.target.value)}
+                      placeholder="Email subject"
+                      className="w-full"
+                    />
+                  </div>
+                  
+                  {/* Body */}
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">
+                      Message
+                    </label>
+                    <textarea
+                      value={draftBody}
+                      onChange={(e) => {
+                        setDraftBody(e.target.value);
+                        // Convert to HTML
+                        setDraftBodyHtml(
+                          e.target.value
+                            .split('\n\n')
+                            .map(para => `<p>${para.replace(/\n/g, '<br>')}</p>`)
+                            .join('')
+                        );
+                      }}
+                      className="w-full min-h-[200px] border rounded-md p-3 text-sm"
+                      placeholder="Email body..."
+                    />
+                  </div>
+                  
+                  {/* Attachments Preview */}
+                  {po.meta?.spy_files && po.meta.spy_files.length > 0 && (
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1">
+                        Attachments
+                      </label>
+                      <div className="flex gap-2 flex-wrap">
+                        {po.meta.spy_files.filter((f: any) => f.path).map((file: any, idx: number) => (
+                          <div
+                            key={idx}
+                            className="flex items-center gap-2 px-3 py-2 bg-slate-50 rounded-lg text-sm"
+                          >
+                            {file.type === 'pdf' ? (
+                              <FileText className="w-4 h-4 text-red-600" />
+                            ) : (
+                              <FileSpreadsheet className="w-4 h-4 text-green-600" />
+                            )}
+                            <span>{file.path.split('/').pop()}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+            
+            <div className="p-6 border-t flex justify-between gap-3">
+              <Button
+                variant="outline"
+                onClick={() => setShowDraftModal(false)}
+              >
+                Cancel
+              </Button>
+              
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    navigator.clipboard.writeText(draftBody);
+                    alert('Email copied to clipboard!');
+                  }}
+                  disabled={isGeneratingDraft || !draftBody}
+                >
+                  Copy to Clipboard
+                </Button>
+                <Button
+                  onClick={handleSendEmail}
+                  disabled={isGeneratingDraft || isSendingEmail || !supplierEmail || !draftSubject}
+                  className="bg-[#8FA894] hover:bg-[#8FA894]/90"
+                >
+                  {isSendingEmail ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                      Sending...
+                    </>
+                  ) : (
+                    <>
+                      <Send className="w-4 h-4 mr-2" />
+                      Send Email
+                    </>
+                  )}
+                </Button>
+              </div>
             </div>
           </div>
         </div>

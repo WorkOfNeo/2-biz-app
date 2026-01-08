@@ -37,60 +37,78 @@ function generatePoNo(): string {
 }
 
 /**
- * Calculate follow-up reminder dates based on supplier lead time and deadline
+ * Calculate follow-up reminder dates based on supplier lead time
+ * 
+ * Follow-up strategy:
+ * 1. Initial confirmation (2 days after order) - Send order confirmation request
+ * 2. 2 weeks before ETD - Check production status
+ * 3. 1 week before ETD - Confirm everything on track
+ * 4. ETD day - Request shipping confirmation
  */
 function calculateFollowups(
   leadTimeDays: number,
   travelTimeDays: number,
   deadline?: string
-): { type: string; date: string; description: string }[] {
-  const followups: { type: string; date: string; description: string }[] = [];
+): { type: string; date: string; description: string; draftType?: string }[] {
+  const followups: { type: string; date: string; description: string; draftType?: string }[] = [];
   const now = new Date();
   
-  // Calculate expected dates
-  const totalLeadTime = leadTimeDays + travelTimeDays;
+  // Calculate ETD (Ex-Factory Date = today + leadTimeDays)
+  const etd = new Date(now);
+  etd.setDate(etd.getDate() + leadTimeDays);
   
-  // Reminder 1: After placing order (1-2 days)
-  const orderPlaced = new Date(now);
-  orderPlaced.setDate(orderPlaced.getDate() + 2);
+  // 1. Initial confirmation (2 days after order placed)
+  const initialConfirm = new Date(now);
+  initialConfirm.setDate(initialConfirm.getDate() + 2);
   followups.push({
     type: 'order_confirmation',
-    date: orderPlaced.toISOString().split('T')[0] || '',
-    description: 'Confirm order receipt with supplier',
+    date: initialConfirm.toISOString().split('T')[0] || '',
+    description: 'Send order confirmation request to supplier',
+    draftType: 'initial',
   });
   
-  // Reminder 2: Mid-production check (at ~40% of lead time)
-  const midProduction = new Date(now);
-  midProduction.setDate(midProduction.getDate() + Math.floor(leadTimeDays * 0.4));
-  if (midProduction > orderPlaced) {
+  // 2. 2 weeks before ETD
+  const twoWeeksBefore = new Date(etd);
+  twoWeeksBefore.setDate(twoWeeksBefore.getDate() - 14);
+  if (twoWeeksBefore > initialConfirm) {
     followups.push({
-      type: 'production_check',
-      date: midProduction.toISOString().split('T')[0] || '',
-      description: 'Check production status with supplier',
+      type: 'followup_2weeks',
+      date: twoWeeksBefore.toISOString().split('T')[0] || '',
+      description: '2 weeks before ETD - Check production status',
+      draftType: 'followup_2weeks',
     });
   }
   
-  // Reminder 3: Pre-shipment (at ~80% of lead time)
-  const preShipment = new Date(now);
-  preShipment.setDate(preShipment.getDate() + Math.floor(leadTimeDays * 0.8));
-  if (preShipment > midProduction) {
+  // 3. 1 week before ETD
+  const oneWeekBefore = new Date(etd);
+  oneWeekBefore.setDate(oneWeekBefore.getDate() - 7);
+  if (oneWeekBefore > initialConfirm && oneWeekBefore > twoWeeksBefore) {
     followups.push({
-      type: 'pre_shipment',
-      date: preShipment.toISOString().split('T')[0] || '',
-      description: 'Confirm shipment date and details',
+      type: 'followup_1week',
+      date: oneWeekBefore.toISOString().split('T')[0] || '',
+      description: '1 week before ETD - Confirm on track',
+      draftType: 'followup_1week',
     });
   }
   
-  // Reminder 4: Expected arrival (lead time + travel time)
-  const expectedArrival = new Date(now);
-  expectedArrival.setDate(expectedArrival.getDate() + totalLeadTime);
+  // 4. ETD day - Shipping confirmation
+  followups.push({
+    type: 'followup_etd',
+    date: etd.toISOString().split('T')[0] || '',
+    description: 'ETD - Request shipping confirmation',
+    draftType: 'followup_etd',
+  });
+  
+  // 5. ETA (Expected arrival)
+  const eta = new Date(etd);
+  eta.setDate(eta.getDate() + travelTimeDays);
   followups.push({
     type: 'expected_arrival',
-    date: expectedArrival.toISOString().split('T')[0] || '',
+    date: eta.toISOString().split('T')[0] || '',
     description: 'Expected delivery date',
   });
   
-  // If deadline provided, add deadline-based reminder
+  // If deadline provided, add reminder 7 days before
   if (deadline) {
     const deadlineDate = new Date(deadline);
     const reminderBeforeDeadline = new Date(deadlineDate);

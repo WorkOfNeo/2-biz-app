@@ -25,6 +25,7 @@ import { syncAppPoFromSpy } from './jobs/syncAppPoFromSpy.js';
 import { createSpyStockOrder } from './jobs/createSpyStockOrder.js';
 import { scrapeStyleRawCosts } from './jobs/scrapeStyleRawCosts.js';
 import { sendEmail } from './jobs/sendEmail.js';
+import { analyzeConversationMessage } from './jobs/analyzeConversationMessage.js';
 // (imported with .js extension above)
 
 const SUPABASE_URL = process.env.SUPABASE_URL!;
@@ -2227,6 +2228,21 @@ async function runJob(job: JobRow) {
       await log(job.id, 'info', 'STEP:complete');
     }
       return; // scrape_statistics handled successfully
+    }
+
+    // Handle analyze_conversation_message job (AI analysis of supplier replies)
+    if ((job.type as any) === 'analyze_conversation_message') {
+      const result = await analyzeConversationMessage(
+        supabase,
+        job.payload as any,
+        async (level, msg, data) => log(job.id, level, msg, data)
+      );
+      if (result.success) {
+        await setJobSucceeded(job.id);
+      } else {
+        await setJobFailedOrRequeue(job, result.error || 'Failed to analyze message');
+      }
+      return;
     }
 
     // Handle send_email job (generic email sending)
