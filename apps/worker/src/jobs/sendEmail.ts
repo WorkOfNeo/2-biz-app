@@ -10,7 +10,7 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { sendEmailCore, sendStockListEmail, type SendEmailPayload, type EmailResult } from './emails/index.js';
+import { sendEmailCore, sendStockListEmail, sendSalesmenEmail, type SendEmailPayload, type EmailResult } from './emails/index.js';
 
 /**
  * Main entry point for send_email jobs from the worker.
@@ -28,6 +28,9 @@ export async function sendEmail(
     case 'stock_list':
     case 'stock_list_schedule':
       return sendStockListEmail(payload, log);
+    
+    case 'salesmen_schedule':
+      return sendSalesmenEmail(payload, log);
     
     default:
       // Use core sender for unknown/generic emails

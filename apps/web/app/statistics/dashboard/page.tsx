@@ -41,6 +41,21 @@ interface StockListSchedule {
   lastRun?: string;
 }
 
+interface SalesmenSchedule {
+  id: string;
+  name: string;
+  salespersonIds: string[]; // which salespersons to include
+  includeCountries: boolean;
+  includeTop15: boolean;
+  stockLists: string[]; // optional stock lists to attach
+  scheduleType: 'daily' | 'weekly';
+  time: string;
+  days: number[];
+  emailBody: string;
+  enabled: boolean;
+  lastRun?: string;
+}
+
 
 /** Parse receivers from legacy stored string (supports comma, semicolon, whitespace) */
 function parseReceivers(raw: string | undefined | null): string[] {
@@ -55,7 +70,7 @@ function generateId(): string {
   return Math.random().toString(36).substring(2, 9);
 }
 
-function formatSchedule(schedule: StockListSchedule): string {
+function formatSchedule(schedule: StockListSchedule | SalesmenSchedule): string {
   if (schedule.scheduleType === 'daily') {
     return `Daily at ${schedule.time}`;
   }
@@ -163,6 +178,213 @@ export default function StatisticsDashboardPage() {
     return data;
   });
 
+  // Salesmen Schedules
+  const [salesmenSchedules, setSalesmenSchedules] = React.useState<SalesmenSchedule[]>([]);
+  const [salesmenSheetOpen, setSalesmenSheetOpen] = React.useState(false);
+  const [editingSalesmenSchedule, setEditingSalesmenSchedule] = React.useState<SalesmenSchedule | null>(null);
+  const [viewingSalesmenSchedule, setViewingSalesmenSchedule] = React.useState<SalesmenSchedule | null>(null);
+  const [viewSalesmenSheetOpen, setViewSalesmenSheetOpen] = React.useState(false);
+  const [savingSalesmenSchedules, setSavingSalesmenSchedules] = React.useState(false);
+  const [sendingSalesmenScheduleId, setSendingSalesmenScheduleId] = React.useState<string | null>(null);
+
+  // Form state for salesmen schedule editor
+  const [smFormName, setSmFormName] = React.useState('');
+  const [smFormSalespersons, setSmFormSalespersons] = React.useState<Set<string>>(new Set());
+  const [smFormIncludeCountries, setSmFormIncludeCountries] = React.useState(true);
+  const [smFormIncludeTop15, setSmFormIncludeTop15] = React.useState(true);
+  const [smFormStockLists, setSmFormStockLists] = React.useState<Set<string>>(new Set());
+  const [smFormScheduleType, setSmFormScheduleType] = React.useState<'daily' | 'weekly'>('weekly');
+  const [smFormTime, setSmFormTime] = React.useState('09:00');
+  const [smFormDays, setSmFormDays] = React.useState<Set<number>>(new Set([1]));
+  const [smFormEmailBody, setSmFormEmailBody] = React.useState('Hermed statistik :)');
+  const [smFormEnabled, setSmFormEnabled] = React.useState(true);
+
+  // Load salesmen schedules from app_settings
+  useSWR('dashboard:salesmen_schedules', async () => {
+    const { data } = await supabase.from('app_settings').select('id, value').eq('key', 'salesmen_schedules').maybeSingle();
+    const val = ((data?.value as any) || {}) as { schedules?: SalesmenSchedule[] };
+    if (val.schedules) setSalesmenSchedules(val.schedules);
+    return data;
+  });
+
+  async function saveSalesmenSchedules(newSchedules: SalesmenSchedule[]) {
+    setSavingSalesmenSchedules(true);
+    try {
+      const value = { schedules: newSchedules };
+      const { data: existing } = await supabase.from('app_settings').select('id').eq('key', 'salesmen_schedules').maybeSingle();
+      if (existing?.id) await supabase.from('app_settings').update({ value }).eq('id', existing.id);
+      else await supabase.from('app_settings').insert({ key: 'salesmen_schedules', value } as any);
+      setSalesmenSchedules(newSchedules);
+    } finally {
+      setSavingSalesmenSchedules(false);
+    }
+  }
+
+  function openNewSalesmenSchedule() {
+    setEditingSalesmenSchedule(null);
+    setSmFormName('');
+    setSmFormSalespersons(new Set());
+    setSmFormIncludeCountries(true);
+    setSmFormIncludeTop15(true);
+    setSmFormStockLists(new Set());
+    setSmFormScheduleType('weekly');
+    setSmFormTime('09:00');
+    setSmFormDays(new Set([1]));
+    setSmFormEmailBody('Hermed statistik :)');
+    setSmFormEnabled(true);
+    setSalesmenSheetOpen(true);
+  }
+
+  function openEditSalesmenSchedule(schedule: SalesmenSchedule) {
+    setViewSalesmenSheetOpen(false);
+    setEditingSalesmenSchedule(schedule);
+    setSmFormName(schedule.name);
+    setSmFormSalespersons(new Set(schedule.salespersonIds));
+    setSmFormIncludeCountries(schedule.includeCountries);
+    setSmFormIncludeTop15(schedule.includeTop15);
+    setSmFormStockLists(new Set(schedule.stockLists));
+    setSmFormScheduleType(schedule.scheduleType);
+    setSmFormTime(schedule.time);
+    setSmFormDays(new Set(schedule.days));
+    setSmFormEmailBody(schedule.emailBody);
+    setSmFormEnabled(schedule.enabled);
+    setSalesmenSheetOpen(true);
+  }
+
+  function openViewSalesmenSchedule(schedule: SalesmenSchedule) {
+    setViewingSalesmenSchedule(schedule);
+    setViewSalesmenSheetOpen(true);
+  }
+
+  function handleSaveSalesmenSchedule() {
+    if (!smFormName.trim()) {
+      alert('Please enter a schedule name');
+      return;
+    }
+    if (smFormSalespersons.size === 0) {
+      alert('Please select at least one salesperson');
+      return;
+    }
+    if (smFormScheduleType === 'weekly' && smFormDays.size === 0) {
+      alert('Please select at least one day');
+      return;
+    }
+
+    const newSchedule: SalesmenSchedule = {
+      id: editingSalesmenSchedule?.id || generateId(),
+      name: smFormName.trim(),
+      salespersonIds: Array.from(smFormSalespersons),
+      includeCountries: smFormIncludeCountries,
+      includeTop15: smFormIncludeTop15,
+      stockLists: Array.from(smFormStockLists),
+      scheduleType: smFormScheduleType,
+      time: smFormTime,
+      days: Array.from(smFormDays),
+      emailBody: smFormEmailBody,
+      enabled: smFormEnabled,
+      lastRun: editingSalesmenSchedule?.lastRun,
+    };
+
+    let newSchedules: SalesmenSchedule[];
+    if (editingSalesmenSchedule) {
+      newSchedules = salesmenSchedules.map(s => s.id === editingSalesmenSchedule.id ? newSchedule : s);
+    } else {
+      newSchedules = [...salesmenSchedules, newSchedule];
+    }
+
+    saveSalesmenSchedules(newSchedules);
+    setSalesmenSheetOpen(false);
+  }
+
+  function handleDeleteSalesmenSchedule(id: string) {
+    if (!confirm('Delete this schedule?')) return;
+    const newSchedules = salesmenSchedules.filter(s => s.id !== id);
+    saveSalesmenSchedules(newSchedules);
+  }
+
+  function handleToggleSalesmenEnabled(id: string) {
+    const newSchedules = salesmenSchedules.map(s => 
+      s.id === id ? { ...s, enabled: !s.enabled } : s
+    );
+    saveSalesmenSchedules(newSchedules);
+  }
+
+  async function handleSendSalesmenNow(schedule: SalesmenSchedule) {
+    if (sendingSalesmenScheduleId) return;
+    setSendingSalesmenScheduleId(schedule.id);
+    try {
+      const spExport = latestByKind.get('general_salesmen_pdfs');
+      const top15Salesmen = latestByKind.get('top_styles_pdf_salesmen');
+      const countries = latestByKind.get('countries_pdf');
+      
+      if (!spExport) {
+        alert('No salesperson PDFs found. Please run exports first.');
+        return;
+      }
+      
+      const files = (spExport.meta?.files as Array<{ name: string; path: string; publicUrl?: string | null; salesperson_id?: string }>) || [];
+      const byId: Record<string, { name: string; email?: string | null }> = Object.fromEntries((salespersons ?? []).map(s => [s.id, { name: s.name, email: s.email }]));
+      
+      let emailCount = 0;
+      
+      for (const spId of schedule.salespersonIds) {
+        const sp = (salespersons ?? []).find(s => s.id === spId);
+        if (!sp) continue;
+        
+        const my = files.find((f) => f.salesperson_id === spId);
+        if (!my || !my.publicUrl) continue;
+        
+        const recipient = sp.email;
+        if (!recipient) continue;
+        
+        const dynamicParams: Record<string, string> = {
+          salesman_pdf: my.publicUrl || '',
+          countries_pdf_url: '',
+          top15_salesmen_pdf: ''
+        };
+        
+        if (schedule.includeCountries && countries?.public_url) {
+          dynamicParams.countries_pdf_url = countries.public_url;
+        }
+        if (schedule.includeTop15 && top15Salesmen?.public_url) {
+          dynamicParams.top15_salesmen_pdf = top15Salesmen.public_url;
+        }
+        
+        // Add stock lists
+        if (schedule.stockLists.length > 0) {
+          let idx = 1;
+          for (const listName of schedule.stockLists) {
+            const exp = latestStockListByName.get(listName);
+            if (exp?.public_url) {
+              dynamicParams[`stock_list_${idx}_url`] = exp.public_url;
+              dynamicParams[`stock_list_${idx}_name`] = listName;
+              idx++;
+            }
+          }
+        }
+        
+        const fullName = String(byId[spId]?.name || '');
+        const toTitleCase = (str: string) => str.toLowerCase().split(' ').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
+        const firstName = fullName ? toTitleCase(fullName).split(' ')[0] : '';
+        const hej = firstName ? `Hej ${firstName},` : 'Hej,';
+        const bodyHtml = `${hej}\n\n${schedule.emailBody || 'Hermed statistik :)'}`;
+        const subject = 'Din statistik';
+        
+        await sendEmailJs([recipient], subject, bodyHtml, undefined, dynamicParams, false);
+        emailCount++;
+      }
+      
+      // Update lastRun
+      const newSchedules = salesmenSchedules.map(s => 
+        s.id === schedule.id ? { ...s, lastRun: new Date().toISOString() } : s
+      );
+      await saveSalesmenSchedules(newSchedules);
+      
+      alert(`${emailCount} email(s) sent to salespersons`);
+    } finally {
+      setSendingSalesmenScheduleId(null);
+    }
+  }
 
   async function saveSchedules(newSchedules: StockListSchedule[]) {
     setSavingSchedules(true);
@@ -950,6 +1172,122 @@ export default function StatisticsDashboardPage() {
             </CardContent>
           </Card>
 
+          {/* Box #4 - Salesmen Schedules */}
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between">
+              <div>
+                <CardTitle>Salesmen Schedules</CardTitle>
+                <CardDescription>Configure automated salesperson statistics emails</CardDescription>
+              </div>
+              <Button size="sm" onClick={openNewSalesmenSchedule}>
+                <Plus className="h-4 w-4 mr-1" />
+                New Schedule
+              </Button>
+            </CardHeader>
+            <CardContent>
+              {salesmenSchedules.length === 0 ? (
+                <div className="text-center py-8 text-gray-500 text-sm">
+                  No salesmen schedules configured yet. Create one to get started.
+                </div>
+              ) : (
+                <div className="rounded-md border overflow-hidden">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-12">On</TableHead>
+                        <TableHead>Name</TableHead>
+                        <TableHead>Salespersons</TableHead>
+                        <TableHead>Options</TableHead>
+                        <TableHead>Schedule</TableHead>
+                        <TableHead>Last Run</TableHead>
+                        <TableHead className="w-28">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {salesmenSchedules.map((schedule) => (
+                        <TableRow 
+                          key={schedule.id} 
+                          className="cursor-pointer hover:bg-slate-50"
+                          onClick={() => openViewSalesmenSchedule(schedule)}
+                        >
+                          <TableCell onClick={(e) => e.stopPropagation()}>
+                            <Toggle
+                              checked={schedule.enabled}
+                              onChange={() => handleToggleSalesmenEnabled(schedule.id)}
+                              size="sm"
+                            />
+                          </TableCell>
+                          <TableCell className="font-medium">{schedule.name}</TableCell>
+                          <TableCell>
+                            <span className="text-xs text-gray-600">
+                              {schedule.salespersonIds.length} salesperson{schedule.salespersonIds.length !== 1 ? 's' : ''}
+                            </span>
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex flex-wrap gap-1">
+                              {schedule.includeCountries && <Badge className="text-[10px] py-0">Countries</Badge>}
+                              {schedule.includeTop15 && <Badge className="text-[10px] py-0">Top 15</Badge>}
+                              {schedule.stockLists.length > 0 && (
+                                <Badge className="text-[10px] py-0 bg-slate-100">{schedule.stockLists.length} list{schedule.stockLists.length !== 1 ? 's' : ''}</Badge>
+                              )}
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex items-center gap-1 text-xs text-gray-600">
+                              <Clock className="h-3 w-3" />
+                              {formatSchedule(schedule)}
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <span className="text-xs text-gray-500">{formatLastRun(schedule.lastRun)}</span>
+                          </TableCell>
+                          <TableCell onClick={(e) => e.stopPropagation()}>
+                            <div className="flex items-center gap-1">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 w-7 p-0"
+                                onClick={() => handleSendSalesmenNow(schedule)}
+                                disabled={sendingSalesmenScheduleId === schedule.id}
+                                title="Send now"
+                              >
+                                <Send className="h-3.5 w-3.5" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 w-7 p-0"
+                                onClick={() => openEditSalesmenSchedule(schedule)}
+                                title="Edit"
+                              >
+                                <Pencil className="h-3.5 w-3.5" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 w-7 p-0 text-red-600 hover:text-red-700 hover:bg-red-50"
+                                onClick={() => handleDeleteSalesmenSchedule(schedule.id)}
+                                title="Delete"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+
+              {(salespersons ?? []).length === 0 && (
+                <div className="mt-4 p-3 rounded-md bg-amber-50 border border-amber-200 text-amber-800 text-xs">
+                  No salespersons found. Add salespersons first to create schedules.
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
       {/* Info / Errors */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <Card>
@@ -1254,6 +1592,317 @@ export default function StatisticsDashboardPage() {
                 >
                   <Send className="h-4 w-4 mr-1" />
                   {sendingScheduleId === viewingSchedule?.id ? 'Sending…' : 'Send Now'}
+                </Button>
+              </div>
+            </>
+          )}
+        </SheetContent>
+      </Sheet>
+
+      {/* Salesmen Schedule Editor Sheet */}
+      <Sheet open={salesmenSheetOpen} onOpenChange={setSalesmenSheetOpen}>
+        <SheetClose onClick={() => setSalesmenSheetOpen(false)} />
+        <SheetHeader>
+          <SheetTitle>{editingSalesmenSchedule ? 'Edit Salesmen Schedule' : 'New Salesmen Schedule'}</SheetTitle>
+        </SheetHeader>
+        <SheetContent className="space-y-6">
+          {/* Schedule Name */}
+          <div>
+            <label className="text-sm text-gray-600 block mb-1">Schedule Name</label>
+            <input 
+              type="text"
+              className="w-full h-9 rounded-md border border-slate-200 bg-white px-3 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-offset-2"
+              placeholder="e.g., Weekly Salesperson Stats"
+              value={smFormName}
+              onChange={(e) => setSmFormName(e.target.value)}
+            />
+          </div>
+
+          {/* Salespersons Selection */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-sm text-gray-600">Salespersons</label>
+              <button
+                type="button"
+                onClick={() => {
+                  const allIds = (salespersons ?? []).filter(sp => sp.email).map(sp => sp.id);
+                  const allSelected = allIds.every(id => smFormSalespersons.has(id));
+                  if (allSelected) {
+                    setSmFormSalespersons(new Set());
+                  } else {
+                    setSmFormSalespersons(new Set(allIds));
+                  }
+                }}
+                className="text-xs text-slate-600 hover:text-slate-900"
+              >
+                {(salespersons ?? []).filter(sp => sp.email).every(sp => smFormSalespersons.has(sp.id)) ? 'Deselect all' : 'Select all'}
+              </button>
+            </div>
+            <div className="max-h-40 overflow-auto rounded-md border">
+              <Table>
+                <TableBody>
+                  {(salespersons ?? []).map((sp) => {
+                    const hasEmail = Boolean(sp.email);
+                    const on = smFormSalespersons.has(sp.id);
+                    return (
+                      <TableRow 
+                        key={sp.id} 
+                        className={!hasEmail ? 'opacity-50' : 'cursor-pointer'}
+                        onClick={() => {
+                          if (!hasEmail) return;
+                          setSmFormSalespersons(prev => {
+                            const n = new Set(prev);
+                            if (n.has(sp.id)) n.delete(sp.id);
+                            else n.add(sp.id);
+                            return n;
+                          });
+                        }}
+                      >
+                        <TableCell className="w-10">
+                          <div className={`h-4 w-4 rounded border ${on ? 'bg-slate-900 border-slate-900' : 'bg-white border-slate-300'} flex items-center justify-center`}>
+                            {on && <span className="text-white text-[10px]">✓</span>}
+                          </div>
+                        </TableCell>
+                        <TableCell className="font-medium text-sm">{sp.name}</TableCell>
+                        <TableCell className="text-xs text-gray-500">{sp.email || '(no email)'}</TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+          </div>
+
+          {/* Include Options */}
+          <div className="space-y-2">
+            <label className="text-sm text-gray-600 block">Include in email</label>
+            <Toggle
+              checked={smFormIncludeCountries}
+              onChange={() => setSmFormIncludeCountries(v => !v)}
+              label="Countries PDF"
+            />
+            <Toggle
+              checked={smFormIncludeTop15}
+              onChange={() => setSmFormIncludeTop15(v => !v)}
+              label="Top 15 Salesmen PDF"
+            />
+          </div>
+
+          {/* Stock Lists */}
+          {availableStockLists.length > 0 && (
+            <div>
+              <label className="text-sm text-gray-600 block mb-2">Stock Lists (optional)</label>
+              <div className="flex flex-wrap gap-2">
+                {availableStockLists.map((l) => {
+                  const on = smFormStockLists.has(l.name);
+                  return (
+                    <Badge
+                      key={l.id}
+                      className={`cursor-pointer select-none transition-colors ${on ? 'bg-slate-900 text-white border-slate-900' : 'bg-white hover:bg-slate-50'}`}
+                      onClick={() => {
+                        setSmFormStockLists(prev => {
+                          const n = new Set(prev);
+                          if (n.has(l.name)) n.delete(l.name);
+                          else n.add(l.name);
+                          return n;
+                        });
+                      }}
+                    >
+                      {l.name}
+                    </Badge>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Schedule Type */}
+          <div>
+            <label className="text-sm text-gray-600 block mb-2">Frequency</label>
+            <div className="flex gap-2">
+              <Button
+                variant={smFormScheduleType === 'daily' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setSmFormScheduleType('daily')}
+              >
+                Daily
+              </Button>
+              <Button
+                variant={smFormScheduleType === 'weekly' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setSmFormScheduleType('weekly')}
+              >
+                Weekly
+              </Button>
+            </div>
+          </div>
+
+          {/* Days (for weekly) */}
+          {smFormScheduleType === 'weekly' && (
+            <div>
+              <label className="text-sm text-gray-600 block mb-2">Days</label>
+              <div className="flex gap-1">
+                {DAYS_OF_WEEK.map((day) => {
+                  const on = smFormDays.has(day.value);
+                  return (
+                    <button
+                      key={day.value}
+                      type="button"
+                      onClick={() => {
+                        setSmFormDays(prev => {
+                          const n = new Set(prev);
+                          if (n.has(day.value)) n.delete(day.value);
+                          else n.add(day.value);
+                          return n;
+                        });
+                      }}
+                      className={`h-9 w-10 rounded-md text-xs font-medium transition-colors ${on ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}
+                    >
+                      {day.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Time */}
+          <div>
+            <label className="text-sm text-gray-600 block mb-1">Time</label>
+            <input
+              type="time"
+              className="h-9 rounded-md border border-slate-200 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-offset-2"
+              value={smFormTime}
+              onChange={(e) => setSmFormTime(e.target.value)}
+            />
+          </div>
+
+          {/* Email Body */}
+          <div>
+            <label className="text-sm text-gray-600 block mb-1">Email Body</label>
+            <textarea
+              className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-offset-2 h-24 resize-none"
+              placeholder="Write your message…"
+              value={smFormEmailBody}
+              onChange={(e) => setSmFormEmailBody(e.target.value)}
+            />
+            <p className="text-xs text-gray-400 mt-1">Salesperson's first name will be used for greeting automatically</p>
+          </div>
+
+          {/* Enabled */}
+          <Toggle
+            checked={smFormEnabled}
+            onChange={() => setSmFormEnabled(v => !v)}
+            label="Schedule enabled"
+          />
+
+          {/* Actions */}
+          <div className="flex gap-2 pt-4 border-t">
+            <Button variant="outline" onClick={() => setSalesmenSheetOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleSaveSalesmenSchedule} disabled={savingSalesmenSchedules}>
+              {savingSalesmenSchedules ? 'Saving…' : editingSalesmenSchedule ? 'Update Schedule' : 'Create Schedule'}
+            </Button>
+          </div>
+        </SheetContent>
+      </Sheet>
+
+      {/* Salesmen Schedule View Sheet */}
+      <Sheet open={viewSalesmenSheetOpen} onOpenChange={setViewSalesmenSheetOpen}>
+        <SheetClose onClick={() => setViewSalesmenSheetOpen(false)} />
+        <SheetHeader>
+          <SheetTitle className="flex items-center gap-2">
+            {viewingSalesmenSchedule?.name}
+            {viewingSalesmenSchedule && (
+              <Badge className={viewingSalesmenSchedule.enabled ? 'bg-green-100 text-green-700 border-green-200' : 'bg-gray-100 text-gray-500'}>
+                {viewingSalesmenSchedule.enabled ? 'Active' : 'Disabled'}
+              </Badge>
+            )}
+          </SheetTitle>
+        </SheetHeader>
+        <SheetContent className="space-y-6">
+          {viewingSalesmenSchedule && (
+            <>
+              {/* Schedule Info */}
+              <div className="flex items-center gap-2 text-sm text-gray-600">
+                <Calendar className="h-4 w-4" />
+                <span>{formatSchedule(viewingSalesmenSchedule)}</span>
+                {viewingSalesmenSchedule.lastRun && (
+                  <span className="text-gray-400">· Last sent {formatLastRun(viewingSalesmenSchedule.lastRun)}</span>
+                )}
+              </div>
+
+              {/* Options included */}
+              <div>
+                <h3 className="text-sm font-medium text-slate-900 mb-2">Includes</h3>
+                <div className="flex flex-wrap gap-2">
+                  <Badge className="bg-slate-100">Personal PDF</Badge>
+                  {viewingSalesmenSchedule.includeCountries && <Badge className="bg-slate-100">Countries</Badge>}
+                  {viewingSalesmenSchedule.includeTop15 && <Badge className="bg-slate-100">Top 15</Badge>}
+                  {viewingSalesmenSchedule.stockLists.map(name => (
+                    <Badge key={name} className="bg-slate-100">{name}</Badge>
+                  ))}
+                </div>
+              </div>
+
+              {/* Salespersons who will receive */}
+              <div>
+                <h3 className="text-sm font-medium text-slate-900 mb-2">
+                  Recipients ({viewingSalesmenSchedule.salespersonIds.length} salesperson{viewingSalesmenSchedule.salespersonIds.length !== 1 ? 's' : ''})
+                </h3>
+                <div className="space-y-1 max-h-48 overflow-auto">
+                  {viewingSalesmenSchedule.salespersonIds.map((spId) => {
+                    const sp = (salespersons ?? []).find(s => s.id === spId);
+                    if (!sp) return null;
+                    return (
+                      <div key={spId} className="flex items-center gap-2 py-2 px-3 rounded-md border bg-white">
+                        <div className="h-6 w-6 rounded-full bg-slate-200 flex items-center justify-center text-[10px] font-medium text-slate-600 uppercase">
+                          {sp.name.charAt(0)}
+                        </div>
+                        <div className="flex-1">
+                          <span className="text-sm text-slate-700 font-medium">{sp.name}</span>
+                          <span className="text-xs text-slate-400 ml-2">{sp.email || '(no email)'}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Email Body Preview */}
+              <div>
+                <h3 className="text-sm font-medium text-slate-900 mb-2">Email Message</h3>
+                <div className="p-3 rounded-md border bg-slate-50 text-sm text-slate-600 whitespace-pre-wrap">
+                  Hej [First Name],{'\n\n'}{viewingSalesmenSchedule.emailBody || 'Hermed statistik :)'}
+                </div>
+              </div>
+
+              {/* Actions */}
+              <div className="flex gap-2 pt-4 border-t">
+                <Button variant="outline" onClick={() => setViewSalesmenSheetOpen(false)}>
+                  Close
+                </Button>
+                <Button 
+                  variant="outline" 
+                  onClick={() => {
+                    if (viewingSalesmenSchedule) openEditSalesmenSchedule(viewingSalesmenSchedule);
+                  }}
+                >
+                  <Pencil className="h-4 w-4 mr-1" />
+                  Edit
+                </Button>
+                <Button 
+                  onClick={() => {
+                    if (viewingSalesmenSchedule) {
+                      handleSendSalesmenNow(viewingSalesmenSchedule);
+                      setViewSalesmenSheetOpen(false);
+                    }
+                  }}
+                  disabled={sendingSalesmenScheduleId === viewingSalesmenSchedule?.id}
+                >
+                  <Send className="h-4 w-4 mr-1" />
+                  {sendingSalesmenScheduleId === viewingSalesmenSchedule?.id ? 'Sending…' : 'Send Now'}
                 </Button>
               </div>
             </>

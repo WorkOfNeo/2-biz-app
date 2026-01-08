@@ -1,0 +1,396 @@
+// Salesmen Schedule Cron Job - queues pending sends for Railway worker
+// Times are compared in Europe/Copenhagen timezone
+export const dynamic = 'force-dynamic';
+export const runtime = 'nodejs';
+
+const TIMEZONE = 'Europe/Copenhagen';
+
+const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+interface SalesmenSchedule {
+  id: string;
+  name: string;
+  salespersonIds: string[];
+  includeCountries: boolean;
+  includeTop15: boolean;
+  stockLists: string[];
+  scheduleType: 'daily' | 'weekly';
+  time: string; // "HH:MM"
+  days: number[]; // 0-6 (0=Sunday)
+  emailBody: string;
+  enabled: boolean;
+  lastRun?: string;
+}
+
+interface ScheduleCheckResult {
+  shouldRun: boolean;
+  reason: string;
+  currentTime: string;
+  scheduledTime: string;
+  currentDay: string;
+  scheduledDays: string;
+  lastRun: string | null;
+  minutesUntilNext: number | null;
+}
+
+/**
+ * Get current time in Copenhagen timezone
+ */
+function getCopenhagenTime(date: Date): { day: number; hour: number; minute: number; formatted: string } {
+  const formatter = new Intl.DateTimeFormat('en-GB', {
+    timeZone: TIMEZONE,
+    weekday: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+  const parts = formatter.formatToParts(date);
+  const weekday = parts.find(p => p.type === 'weekday')?.value || '';
+  const hour = parseInt(parts.find(p => p.type === 'hour')?.value || '0', 10);
+  const minute = parseInt(parts.find(p => p.type === 'minute')?.value || '0', 10);
+  
+  const dayMap: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  const day = dayMap[weekday] ?? 0;
+  
+  return { 
+    day, 
+    hour, 
+    minute, 
+    formatted: `${weekday} ${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}` 
+  };
+}
+
+/**
+ * Check if a schedule should run now and return detailed info
+ */
+function checkSchedule(schedule: SalesmenSchedule, now: Date): ScheduleCheckResult {
+  const cph = getCopenhagenTime(now);
+  const currentDay = cph.day;
+  const currentHour = cph.hour;
+  const currentMinute = cph.minute;
+
+  // Parse scheduled time
+  const timeParts = schedule.time.split(':').map(Number);
+  const schedHour = timeParts[0] ?? 0;
+  const schedMinute = timeParts[1] ?? 0;
+
+  const scheduledDays = schedule.scheduleType === 'daily' 
+    ? 'Every day' 
+    : schedule.days.map(d => DAY_NAMES[d]).join(', ');
+
+  const result: ScheduleCheckResult = {
+    shouldRun: false,
+    reason: '',
+    currentTime: `${currentHour.toString().padStart(2, '0')}:${currentMinute.toString().padStart(2, '0')}`,
+    scheduledTime: schedule.time,
+    currentDay: DAY_NAMES[currentDay] || '',
+    scheduledDays,
+    lastRun: schedule.lastRun || null,
+    minutesUntilNext: null,
+  };
+
+  if (!schedule.enabled) {
+    result.reason = 'Schedule is disabled';
+    return result;
+  }
+
+  // Check day match
+  if (schedule.scheduleType === 'weekly') {
+    if (!schedule.days.includes(currentDay)) {
+      result.reason = `Today (${DAY_NAMES[currentDay]}) not in scheduled days`;
+      return result;
+    }
+  }
+
+  // Check time match (within 10 minute window)
+  const scheduledMinutes = schedHour * 60 + schedMinute;
+  const currentMinutes = currentHour * 60 + currentMinute;
+  const diff = currentMinutes - scheduledMinutes;
+  const absDiff = Math.abs(diff);
+  
+  if (absDiff > 10 && absDiff < (24 * 60 - 10)) {
+    if (diff < 0) {
+      result.minutesUntilNext = -diff;
+      result.reason = `${-diff} minutes until scheduled time`;
+    } else {
+      result.reason = `${diff} minutes past scheduled time (window closed)`;
+    }
+    return result;
+  }
+
+  // Check if already ran recently (within 50 minutes)
+  if (schedule.lastRun) {
+    const lastRunTime = new Date(schedule.lastRun).getTime();
+    const fiftyMinutesAgo = now.getTime() - 50 * 60 * 1000;
+    if (lastRunTime > fiftyMinutesAgo) {
+      const minsAgo = Math.round((now.getTime() - lastRunTime) / 60000);
+      result.reason = `Already ran ${minsAgo} minutes ago`;
+      return result;
+    }
+  }
+
+  result.shouldRun = true;
+  result.reason = 'Ready to send';
+  return result;
+}
+
+async function handle(req: Request) {
+  const urlObj = new URL(req.url);
+  const debug = urlObj.searchParams.get('debug') === '1';
+  const forceId = urlObj.searchParams.get('force');
+  const testMode = urlObj.searchParams.get('test') === '1';
+
+  const { createClient } = await import('@supabase/supabase-js');
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const serviceKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVER_ROLE_KEY || '').trim();
+
+  if (!supabaseUrl || !serviceKey) {
+    return new Response(JSON.stringify({ 
+      error: 'Supabase env missing',
+      hint: 'Set NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY'
+    }), { status: 500 });
+  }
+
+  const supabase = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } });
+
+  // Load schedules
+  const { data: settingsRow } = await supabase
+    .from('app_settings')
+    .select('id, value')
+    .eq('key', 'salesmen_schedules')
+    .maybeSingle();
+
+  const schedules: SalesmenSchedule[] = (settingsRow?.value as any)?.schedules || [];
+
+  if (schedules.length === 0) {
+    return new Response(JSON.stringify({ message: 'No salesmen schedules configured', queued: 0 }), { status: 200 });
+  }
+
+  // Load salespersons
+  const { data: salespersonsData } = await supabase
+    .from('salespersons')
+    .select('id, name, email')
+    .order('sort_index', { ascending: true });
+
+  const salespersons = (salespersonsData ?? []) as Array<{ id: string; name: string; email?: string | null }>;
+  const salespersonById = new Map(salespersons.map(sp => [sp.id, sp]));
+
+  // Load latest exports
+  const { data: exportsData } = await supabase
+    .from('exports')
+    .select('id, kind, title, path, public_url, meta, created_at')
+    .in('kind', ['general_salesmen_pdfs', 'top_styles_pdf_salesmen', 'countries_pdf', 'stock_list_pdf'])
+    .order('created_at', { ascending: false })
+    .limit(100);
+
+  // Build lookup maps
+  let salesmenExport: any = null;
+  let top15SalesmenExport: any = null;
+  let countriesExport: any = null;
+  const stockListByName = new Map<string, any>();
+
+  for (const row of (exportsData ?? [])) {
+    if (row.kind === 'general_salesmen_pdfs' && !salesmenExport) {
+      salesmenExport = row;
+    }
+    if (row.kind === 'top_styles_pdf_salesmen' && !top15SalesmenExport) {
+      top15SalesmenExport = row;
+    }
+    if (row.kind === 'countries_pdf' && !countriesExport) {
+      countriesExport = row;
+    }
+    if (row.kind === 'stock_list_pdf') {
+      const name = String(row?.meta?.list || row?.title || '').replace(/^Stock List ·\s*/i, '');
+      if (name && !stockListByName.has(name)) {
+        stockListByName.set(name, row);
+      }
+    }
+  }
+
+  const salesmenFiles = (salesmenExport?.meta?.files as Array<{ name: string; path: string; publicUrl?: string | null; salesperson_id?: string }>) || [];
+
+  const now = new Date();
+  const cph = getCopenhagenTime(now);
+  const results: Array<{ scheduleId: string; scheduleName: string; queued: number; error?: string }> = [];
+  const updatedSchedules: SalesmenSchedule[] = [...schedules];
+
+  // Check all schedules
+  const scheduleChecks: Array<{
+    id: string;
+    name: string;
+    enabled: boolean;
+    salespersonCount: number;
+    check: ScheduleCheckResult;
+    willRun: boolean;
+  }> = [];
+
+  for (const schedule of schedules) {
+    const check = checkSchedule(schedule, now);
+    const willRun = (testMode && schedule.enabled) || forceId === schedule.id || check.shouldRun;
+    
+    scheduleChecks.push({
+      id: schedule.id,
+      name: schedule.name,
+      enabled: schedule.enabled,
+      salespersonCount: schedule.salespersonIds.length,
+      check,
+      willRun,
+    });
+
+    if (!willRun) continue;
+
+    // Queue jobs for each salesperson
+    let queuedCount = 0;
+    for (const spId of schedule.salespersonIds) {
+      const sp = salespersonById.get(spId);
+      if (!sp || !sp.email) {
+        if (debug) console.log(`[cron:salesmen-schedules] Skipping ${spId}: no email`);
+        continue;
+      }
+
+      // Find their personal PDF
+      const myFile = salesmenFiles.find(f => f.salesperson_id === spId);
+      if (!myFile || !myFile.publicUrl) {
+        if (debug) console.log(`[cron:salesmen-schedules] Skipping ${sp.name}: no personal PDF`);
+        continue;
+      }
+
+      // Build template params
+      const templateParams: Record<string, string> = {
+        salesman_pdf: myFile.publicUrl,
+        countries_pdf_url: '',
+        top15_salesmen_pdf: '',
+      };
+
+      if (schedule.includeCountries && countriesExport?.public_url) {
+        templateParams.countries_pdf_url = countriesExport.public_url;
+      }
+      if (schedule.includeTop15 && top15SalesmenExport?.public_url) {
+        templateParams.top15_salesmen_pdf = top15SalesmenExport.public_url;
+      }
+
+      // Add stock lists
+      let idx = 1;
+      for (const listName of schedule.stockLists) {
+        const exp = stockListByName.get(listName);
+        if (exp?.public_url) {
+          templateParams[`stock_list_${idx}_url`] = exp.public_url;
+          templateParams[`stock_list_${idx}_name`] = listName;
+          idx++;
+        }
+      }
+
+      // Build personalized greeting
+      const toTitleCase = (str: string) => str.toLowerCase().split(' ').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
+      const firstName = sp.name ? toTitleCase(sp.name).split(' ')[0] : '';
+      const hej = firstName ? `Hej ${firstName},` : 'Hej,';
+      const bodyHtml = `${hej}\n\n${schedule.emailBody || 'Hermed statistik :)'}`;
+
+      const jobPayload = {
+        recipient: sp.email,
+        subject: 'Din statistik',
+        body: bodyHtml,
+        context: 'salesmen_schedule',
+        contextId: schedule.id,
+        contextName: schedule.name,
+        templateParams,
+      };
+
+      const { error: insertError } = await supabase.from('jobs').insert({
+        type: 'send_email',
+        payload: jobPayload,
+        status: 'queued',
+        queue: 'default',
+      });
+
+      if (insertError) {
+        console.error(`[cron:salesmen-schedules] Failed to insert job for ${sp.name}:`, insertError);
+      } else {
+        queuedCount++;
+        if (debug) console.log(`[cron:salesmen-schedules] Queued job for ${sp.name} (${sp.email})`);
+      }
+    }
+
+    // Update lastRun
+    const idx = updatedSchedules.findIndex(s => s.id === schedule.id);
+    const existingSchedule = updatedSchedules[idx];
+    if (idx !== -1 && existingSchedule) {
+      updatedSchedules[idx] = { ...existingSchedule, lastRun: now.toISOString() };
+    }
+
+    results.push({ scheduleId: schedule.id, scheduleName: schedule.name, queued: queuedCount });
+  }
+
+  // Save updated schedules
+  if (results.length > 0 && settingsRow?.id) {
+    await supabase
+      .from('app_settings')
+      .update({ value: { schedules: updatedSchedules } })
+      .eq('id', settingsRow.id);
+  }
+
+  const totalQueued = results.reduce((sum, r) => sum + (r.queued || 0), 0);
+
+  const response: Record<string, any> = {
+    message: results.length > 0 
+      ? `Queued ${totalQueued} job(s) for ${results.length} schedule(s)` 
+      : 'No salesmen schedules due to run',
+    queued: totalQueued,
+    testMode,
+    serverTime: {
+      utc: now.toISOString(),
+      copenhagen: cph.formatted,
+      timezone: TIMEZONE,
+    },
+  };
+
+  if (debug) {
+    response.schedules = scheduleChecks.map(s => ({
+      id: s.id,
+      name: s.name,
+      enabled: s.enabled,
+      salespersonCount: s.salespersonCount,
+      scheduledTime: s.check.scheduledTime,
+      scheduledDays: s.check.scheduledDays,
+      currentTime: s.check.currentTime,
+      currentDay: s.check.currentDay,
+      lastRun: s.check.lastRun,
+      status: s.check.reason,
+      willRun: s.willRun,
+      minutesUntilNext: s.check.minutesUntilNext,
+    }));
+    response.queueResults = results;
+    response.hasSalesmenExport = !!salesmenExport;
+    response.hasCountriesExport = !!countriesExport;
+    response.hasTop15Export = !!top15SalesmenExport;
+    response.salespersonCount = salespersons.length;
+  }
+
+  return new Response(JSON.stringify(response, null, debug ? 2 : 0), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' }
+  });
+}
+
+export async function POST(req: Request) {
+  try {
+    return await handle(req);
+  } catch (err: any) {
+    console.error('[cron:send-salesmen-schedules] Error:', err);
+    return new Response(JSON.stringify({ error: err?.message || 'Cron error' }), { status: 500 });
+  }
+}
+
+export async function GET(req: Request) {
+  try {
+    return await handle(req);
+  } catch (err: any) {
+    console.error('[cron:send-salesmen-schedules] Error:', err);
+    return new Response(JSON.stringify({ error: err?.message || 'Cron error' }), { status: 500 });
+  }
+}
+
+export async function OPTIONS() {
+  return new Response(null, { status: 204 });
+}
+

@@ -9,7 +9,8 @@
     { "path": "/api/cron/exports-after-deep", "schedule": "30 2 * * *" },
     { "path": "/api/cron/exports-after-deep", "schedule": "0 5 * * *" },
     { "path": "/api/cron/cleanup-job-logs", "schedule": "0 2 */14 * *" },
-    { "path": "/api/cron/send-stock-list-schedules", "schedule": "*/5 * * * *" }
+    { "path": "/api/cron/send-stock-list-schedules", "schedule": "*/5 * * * *" },
+    { "path": "/api/cron/send-salesmen-schedules", "schedule": "*/5 * * * *" }
   ]
 }
 
