@@ -53,11 +53,25 @@ export async function POST(req: Request) {
       .eq('name', po.supplier)
       .maybeSingle();
 
-    // Format items for the prompt
-    const items = (po.meta?.items || []) as Array<{ style_no: string; color: string; total: number }>;
-    const itemsList = items.map(item => 
-      `${item.style_no} - ${item.color}: ${item.total} pcs`
-    ).join('\n');
+    // Format items for the prompt - fetch style names
+    const items = (po.meta?.items || []) as Array<{ style_no: string; style_name?: string; color: string; total: number }>;
+    const styleNos = [...new Set(items.map(item => item.style_no))];
+    
+    // Fetch style names from styles table
+    const { data: styles } = await supabase
+      .from('styles')
+      .select('style_no, style_name')
+      .in('style_no', styleNos);
+    
+    const styleNameMap = new Map<string, string>();
+    (styles || []).forEach(s => {
+      if (s.style_name) styleNameMap.set(s.style_no, s.style_name);
+    });
+    
+    const itemsList = items.map(item => {
+      const styleName = item.style_name || styleNameMap.get(item.style_no) || item.style_no;
+      return `${styleName} - ${item.color}: ${item.total} pcs`;
+    }).join('\n');
 
     // Build the prompt based on type
     let prompt = '';
