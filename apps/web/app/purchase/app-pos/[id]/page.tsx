@@ -964,18 +964,172 @@ export default function AppPoDetailPage() {
       </Card>
         </div>
 
-        {/* Right Column: Conversation */}
-        <div className="lg:col-span-1">
+        {/* Right Column: Follow-ups & Info */}
+        <div className="lg:col-span-1 space-y-4">
+          {/* Follow-up Reminders */}
           <Card className="sticky top-4">
             <CardHeader>
-              <CardTitle>Conversation</CardTitle>
+              <CardTitle className="flex items-center gap-2">
+                Follow-ups
+                {po.meta?.followups?.length > 0 && (
+                  <Badge className="bg-[#B8A8D8]/20 text-[#B8A8D8]">
+                    {po.meta.followups.filter((f: any) => !f.completed).length} pending
+                  </Badge>
+                )}
+              </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-center py-8 text-slate-500">
-                Conversation feature coming soon
-              </div>
+              {po.meta?.followups && po.meta.followups.length > 0 ? (
+                <div className="space-y-3">
+                  {po.meta.followups.map((followup: any, idx: number) => {
+                    const isCompleted = followup.completed;
+                    const isPast = new Date(followup.date) < new Date();
+                    const isToday = new Date(followup.date).toDateString() === new Date().toDateString();
+                    
+                    return (
+                      <div
+                        key={idx}
+                        className={`
+                          p-3 rounded-lg border transition-all
+                          ${isCompleted 
+                            ? 'bg-green-50/50 border-green-200 opacity-60' 
+                            : isPast 
+                              ? 'bg-amber-50 border-amber-200' 
+                              : isToday
+                                ? 'bg-blue-50 border-blue-200'
+                                : 'bg-slate-50 border-slate-200'
+                          }
+                        `}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className={`text-xs font-medium ${
+                                isCompleted 
+                                  ? 'text-green-700' 
+                                  : isPast 
+                                    ? 'text-amber-700' 
+                                    : 'text-slate-700'
+                              }`}>
+                                {new Date(followup.date).toLocaleDateString('en-US', { 
+                                  month: 'short', 
+                                  day: 'numeric',
+                                  year: 'numeric'
+                                })}
+                              </span>
+                              {isToday && !isCompleted && (
+                                <Badge className="bg-blue-500 text-white text-[10px]">Today</Badge>
+                              )}
+                              {isPast && !isCompleted && (
+                                <Badge className="bg-amber-500 text-white text-[10px]">Overdue</Badge>
+                              )}
+                            </div>
+                            <div className="text-sm text-slate-700">{followup.description}</div>
+                            <div className="text-xs text-slate-500 mt-1 capitalize">
+                              {followup.type.replace(/_/g, ' ')}
+                            </div>
+                            {followup.note && (
+                              <div className="text-xs text-slate-600 mt-2 p-2 bg-white/50 rounded border">
+                                {followup.note}
+                              </div>
+                            )}
+                          </div>
+                          {!isCompleted && (
+                            <button
+                              onClick={async () => {
+                                const note = prompt('Add a note (optional):');
+                                const updatedFollowups = [...po.meta.followups];
+                                updatedFollowups[idx] = {
+                                  ...followup,
+                                  completed: true,
+                                  completedAt: new Date().toISOString(),
+                                  note: note || undefined,
+                                };
+                                
+                                try {
+                                  await supabase
+                                    .from('app_pos')
+                                    .update({ 
+                                      meta: { ...po.meta, followups: updatedFollowups } 
+                                    })
+                                    .eq('id', id);
+                                  mutatePo();
+                                } catch (err) {
+                                  console.error('Failed to update followup:', err);
+                                }
+                              }}
+                              className="p-1.5 rounded-full hover:bg-green-100 text-green-600 transition-colors"
+                              title="Mark as done"
+                            >
+                              <Check className="w-4 h-4" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="text-center py-6 text-slate-500 text-sm">
+                  {po.meta?.source === 'smart_draft' ? (
+                    'No follow-up reminders set'
+                  ) : (
+                    <div className="space-y-2">
+                      <div>No follow-up reminders</div>
+                      <div className="text-xs text-slate-400">
+                        Orders created via Smart Draft include automatic follow-up suggestions
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </CardContent>
           </Card>
+          
+          {/* Order Info Card */}
+          {(po.meta?.deadline || po.meta?.notes || po.meta?.source === 'smart_draft') && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Order Info</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {po.meta?.source === 'smart_draft' && (
+                  <div className="flex items-center gap-2">
+                    <Badge className="bg-[#B8A8D8]/20 text-[#B8A8D8]">Smart Draft</Badge>
+                  </div>
+                )}
+                {po.meta?.deadline && (
+                  <div>
+                    <div className="text-xs text-slate-500 mb-1">Deadline</div>
+                    <div className="text-sm font-medium">
+                      {new Date(po.meta.deadline).toLocaleDateString('en-US', {
+                        month: 'long',
+                        day: 'numeric',
+                        year: 'numeric'
+                      })}
+                    </div>
+                  </div>
+                )}
+                {po.meta?.supplier_lead_time_days && (
+                  <div>
+                    <div className="text-xs text-slate-500 mb-1">Lead Time</div>
+                    <div className="text-sm">
+                      {po.meta.supplier_lead_time_days} days production
+                      {po.meta?.supplier_travel_time_days && (
+                        <span className="text-slate-500"> + {po.meta.supplier_travel_time_days} days travel</span>
+                      )}
+                    </div>
+                  </div>
+                )}
+                {po.meta?.notes && (
+                  <div>
+                    <div className="text-xs text-slate-500 mb-1">Notes</div>
+                    <div className="text-sm text-slate-700">{po.meta.notes}</div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
         </div>
       </div>
 
