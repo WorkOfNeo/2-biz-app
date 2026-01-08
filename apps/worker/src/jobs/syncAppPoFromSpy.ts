@@ -156,10 +156,44 @@ export async function syncAppPoFromSpy(ctx: Ctx) {
       
       for (const file of revisedFiles) {
         try {
-          // Download file
-          const fileContext = await page.context();
-          const fileResponse = await fileContext.request.get(file.url);
-          const fileBuffer = await fileResponse.body();
+          await log(job.id, 'info', 'STEP:sync_file_downloading', { type: file.type, url: file.url });
+          
+          let fileBuffer: Buffer;
+          
+          // For Excel files, trigger the download via click and capture it
+          if (file.type === 'excel') {
+            // Set up download listener before clicking
+            const downloadPromise = page.waitForEvent('download', { timeout: 30_000 });
+            
+            // Click the Excel link to trigger download
+            await page.evaluate((excelUrl: string) => {
+              const link = document.querySelector(`a[href="${excelUrl}"]`) as HTMLAnchorElement;
+              if (link) link.click();
+            }, file.url);
+            
+            try {
+              const download = await downloadPromise;
+              const downloadPath = await download.path();
+              if (downloadPath) {
+                const fs = await import('fs');
+                fileBuffer = fs.readFileSync(downloadPath);
+                await log(job.id, 'info', 'STEP:sync_excel_captured', { size: fileBuffer.length });
+              } else {
+                throw new Error('Download path not available');
+              }
+            } catch (downloadErr: any) {
+              // Fallback to direct request if download event fails
+              await log(job.id, 'info', 'STEP:sync_excel_fallback', { reason: downloadErr.message });
+              const fileContext = await page.context();
+              const fileResponse = await fileContext.request.get(file.url);
+              fileBuffer = await fileResponse.body();
+            }
+          } else {
+            // For PDF, use direct request (usually works)
+            const fileContext = await page.context();
+            const fileResponse = await fileContext.request.get(file.url);
+            fileBuffer = await fileResponse.body();
+          }
           
           // Generate filename
           const extension = file.type === 'pdf' ? 'pdf' : 'xlsx';
@@ -187,7 +221,8 @@ export async function syncAppPoFromSpy(ctx: Ctx) {
             });
             await log(job.id, 'info', 'STEP:sync_file_uploaded', { 
               type: file.type, 
-              path: filePath 
+              path: filePath,
+              size: fileBuffer.length
             });
           }
         } catch (fileError: any) {
