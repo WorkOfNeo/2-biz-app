@@ -178,18 +178,27 @@ export default function SupplierDetailPage() {
   };
 
   const updateContact = (idx: number, updates: Partial<SupplierContact>) => {
-    const newContacts = [...form.contacts];
-    newContacts[idx] = { ...newContacts[idx], ...updates };
-    setForm(prev => ({ ...prev, contacts: newContacts }));
+    setForm(prev => ({
+      ...prev,
+      contacts: prev.contacts.map((contact, i) => 
+        i === idx ? { ...contact, ...updates } : contact
+      ),
+    }));
   };
 
   const removeContact = (idx: number) => {
-    const newContacts = form.contacts.filter((_, i) => i !== idx);
-    // If removed contact was primary, make first one primary
-    if (form.contacts[idx]?.primary && newContacts.length > 0) {
-      newContacts[0] = { ...newContacts[0], primary: true };
-    }
-    setForm(prev => ({ ...prev, contacts: newContacts }));
+    setForm(prev => {
+      const removedWasPrimary = prev.contacts[idx]?.primary;
+      const newContacts = prev.contacts.filter((_, i) => i !== idx);
+      // If removed contact was primary, make first one primary
+      if (removedWasPrimary && newContacts.length > 0) {
+        return {
+          ...prev,
+          contacts: newContacts.map((c, i) => i === 0 ? { ...c, primary: true } : c),
+        };
+      }
+      return { ...prev, contacts: newContacts };
+    });
   };
 
   const setPrimaryContact = (idx: number) => {
