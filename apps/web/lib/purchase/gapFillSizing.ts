@@ -63,6 +63,92 @@ export function normalizeWeights(weights: number[]): number[] {
 }
 
 /**
+ * Round a number to "clean" values based on the ones digit:
+ * - 1-4: round down to 0 (e.g., 13 → 10, 14 → 10)
+ * - 5: keep as 5 (e.g., 15 → 15, 5 → 5)
+ * - 6-7: round down to 5 (e.g., 16 → 15, 17 → 15)
+ * - 8-9: round up to next 10 (e.g., 18 → 20, 29 → 30)
+ */
+export function roundToClean(n: number): number {
+  if (n <= 0) return 0;
+  
+  const ones = n % 10;
+  const base = n - ones;
+  
+  if (ones >= 1 && ones <= 4) {
+    return base; // round down to 0
+  } else if (ones === 5) {
+    return base + 5; // keep as 5
+  } else if (ones >= 6 && ones <= 7) {
+    return base + 5; // round down to 5
+  } else {
+    // ones is 8 or 9
+    return base + 10; // round up
+  }
+}
+
+/**
+ * Apply clean rounding to an array of buy quantities while preserving the total.
+ * After rounding, adjusts to ensure sum equals targetBuy.
+ */
+export function roundBuyArrayToClean(buyBySize: number[], targetBuy: number): number[] {
+  if (buyBySize.length === 0 || targetBuy <= 0) return buyBySize;
+  
+  // Round each value
+  const rounded = buyBySize.map(roundToClean);
+  
+  // Calculate difference from target
+  let currentSum = rounded.reduce((a, b) => a + b, 0);
+  let diff = targetBuy - currentSum;
+  
+  // Adjust to hit target - add/remove in increments of 5 from sizes with largest quantities
+  const indices = rounded
+    .map((v, i) => ({ i, v }))
+    .sort((a, b) => b.v - a.v); // sort by quantity descending
+  
+  // If we need to add
+  while (diff >= 5) {
+    for (const item of indices) {
+      if (diff < 5) break;
+      rounded[item.i] = (rounded[item.i] || 0) + 5;
+      diff -= 5;
+    }
+  }
+  
+  // If we need to remove
+  while (diff <= -5) {
+    for (const item of indices) {
+      if (diff > -5) break;
+      const current = rounded[item.i] || 0;
+      if (current >= 5) {
+        rounded[item.i] = current - 5;
+        diff += 5;
+      }
+    }
+  }
+  
+  // Handle small remainders (less than 5) by adding to largest size
+  if (diff > 0 && indices.length > 0) {
+    const largestIdx = indices[0]?.i;
+    if (largestIdx !== undefined) {
+      rounded[largestIdx] = (rounded[largestIdx] || 0) + diff;
+    }
+  } else if (diff < 0 && indices.length > 0) {
+    // Find a size we can reduce
+    for (const item of indices) {
+      const current = rounded[item.i] || 0;
+      if (current >= Math.abs(diff)) {
+        rounded[item.i] = current + diff; // diff is negative
+        diff = 0;
+        break;
+      }
+    }
+  }
+  
+  return rounded;
+}
+
+/**
  * Gap-fill sizing: allocate targetBuy units across sizes so that
  * (base + buy) matches the normalized weight distribution as closely as possible.
  * 
@@ -156,12 +242,15 @@ export function gapFillSizing(input: GapFillInput): GapFillResult {
     }
   }
   
-  // Final distribution
-  const finalDistribution = base.map((b, i) => b + (clampedBuy[i] || 0));
+  // Apply clean rounding to buy quantities
+  const cleanedBuy = roundBuyArrayToClean(clampedBuy, targetBuy);
+  
+  // Final distribution (using cleaned buy values)
+  const finalDistribution = base.map((b, i) => b + (cleanedBuy[i] || 0));
   const finalTotal = finalDistribution.reduce((a, b) => a + b, 0);
   
   return {
-    buyBySize: clampedBuy,
+    buyBySize: cleanedBuy,
     normalizedWeights: normalizedP,
     finalDistribution,
     finalTotal,
