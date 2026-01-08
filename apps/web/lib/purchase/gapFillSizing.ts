@@ -150,7 +150,8 @@ export function gapFillSizing(input: GapFillInput): GapFillResult {
     for (const item of reducible) {
       if (remainder <= 0) break;
       const canReduce = Math.min(item.buy, remainder);
-      clampedBuy[item.i] -= canReduce;
+      const currentVal = clampedBuy[item.i] || 0;
+      clampedBuy[item.i] = currentVal - canReduce;
       remainder -= canReduce;
     }
   }
