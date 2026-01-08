@@ -158,21 +158,21 @@ export async function POST(req: Request) {
       const soldRows = latestRows.filter(r => r.section === 'Sold');
       const sold = soldRows.reduce((acc, r) => {
         const vals = parseRow(r);
-        return acc.map((v, i) => v + vals[i]);
+        return acc.map((v, i) => v + (vals[i] || 0));
       }, Array(num).fill(0) as number[]);
 
       // Aggregate purchase rows
       const purchaseRows = latestRows.filter(r => r.section === 'Purchase');
       const purchase = purchaseRows.reduce((acc, r) => {
         const vals = parseRow(r);
-        return acc.map((v, i) => v + vals[i]);
+        return acc.map((v, i) => v + (vals[i] || 0));
       }, Array(num).fill(0) as number[]);
 
       // Incoming (if separate from purchase)
       const incomingRows = latestRows.filter(r => r.section === 'Incoming');
       const incoming = incomingRows.reduce((acc, r) => {
         const vals = parseRow(r);
-        return acc.map((v, i) => v + vals[i]);
+        return acc.map((v, i) => v + (vals[i] || 0));
       }, Array(num).fill(0) as number[]);
 
       // Net Need = Stock - Sold + Purchase + Incoming
