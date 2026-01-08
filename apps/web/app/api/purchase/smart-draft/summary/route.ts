@@ -161,8 +161,8 @@ export async function POST(req: Request) {
         return acc.map((v, i) => v + (vals[i] || 0));
       }, Array(num).fill(0) as number[]);
 
-      // Aggregate purchase rows
-      const purchaseRows = latestRows.filter(r => r.section === 'Purchase');
+      // Aggregate purchase rows (section is 'Purchase (Running + Shipped)')
+      const purchaseRows = latestRows.filter(r => r.section === 'Purchase (Running + Shipped)');
       const purchase = purchaseRows.reduce((acc, r) => {
         const vals = parseRow(r);
         return acc.map((v, i) => v + (vals[i] || 0));
