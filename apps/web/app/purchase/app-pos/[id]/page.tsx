@@ -131,6 +131,107 @@ export default function AppPoDetailPage() {
     });
   }, [seasons]);
 
+  // Fetch supplier data for ETD/ETA calculation
+  const { data: supplierData } = useSWR(
+    po?.supplier ? ['supplier:lead-times', po.supplier] : null,
+    async () => {
+      const { data, error } = await supabase
+        .from('suppliers')
+        .select('id, name, lead_time_days, travel_time_days')
+        .eq('name', po!.supplier)
+        .maybeSingle();
+      if (error) console.error('Error fetching supplier:', error);
+      return data as { id: string; name: string; lead_time_days: number; travel_time_days: number } | null;
+    }
+  );
+
+  // ETD/ETA state - initialize from po or calculate from supplier
+  const [etdInput, setEtdInput] = React.useState('');
+  const [etaInput, setEtaInput] = React.useState('');
+  const [isSavingDates, setIsSavingDates] = React.useState(false);
+
+  // Calculate default dates from supplier lead times
+  React.useEffect(() => {
+    if (!po) return;
+    
+    // If po already has ETD/ETA, use those
+    if (po.etd) {
+      setEtdInput(po.etd.split('T')[0] || '');
+    } else if (supplierData?.lead_time_days) {
+      // Calculate default ETD from supplier lead time
+      const today = new Date();
+      const etdDate = new Date(today);
+      etdDate.setDate(today.getDate() + supplierData.lead_time_days);
+      setEtdInput(etdDate.toISOString().split('T')[0] || '');
+    }
+    
+    if (po.eta) {
+      setEtaInput(po.eta.split('T')[0] || '');
+    } else if (supplierData?.lead_time_days && supplierData?.travel_time_days) {
+      // Calculate default ETA from ETD + travel time
+      const today = new Date();
+      const etdDate = new Date(today);
+      etdDate.setDate(today.getDate() + supplierData.lead_time_days);
+      const etaDate = new Date(etdDate);
+      etaDate.setDate(etdDate.getDate() + supplierData.travel_time_days);
+      setEtaInput(etaDate.toISOString().split('T')[0] || '');
+    }
+  }, [po?.etd, po?.eta, supplierData]);
+
+  // Save ETD/ETA to database
+  const handleSaveDates = async () => {
+    if (!po) return;
+    setIsSavingDates(true);
+    try {
+      const { error } = await supabase
+        .from('app_pos')
+        .update({ 
+          etd: etdInput || null, 
+          eta: etaInput || null 
+        })
+        .eq('id', po.id);
+      if (error) throw error;
+      mutatePo();
+    } catch (err: any) {
+      console.error('Failed to save dates:', err);
+      alert('Failed to save dates: ' + err.message);
+    } finally {
+      setIsSavingDates(false);
+    }
+  };
+
+  // Check if dates have changed
+  const datesChanged = React.useMemo(() => {
+    const currentEtd = po?.etd?.split('T')[0] || '';
+    const currentEta = po?.eta?.split('T')[0] || '';
+    return etdInput !== currentEtd || etaInput !== currentEta;
+  }, [po?.etd, po?.eta, etdInput, etaInput]);
+
+  // Generate signed URLs for files stored in Supabase
+  const { data: fileUrls } = useSWR(
+    po?.meta?.spy_files?.length ? ['file-urls', po.id, po.meta.spy_files.map((f: any) => f.path).join(',')] : null,
+    async () => {
+      const files = po!.meta.spy_files as Array<{ type: string; path?: string; url?: string }>;
+      const urls: Record<string, string> = {};
+      
+      for (const file of files) {
+        if (file.path) {
+          // Generate signed URL from Supabase storage
+          const { data } = await supabase.storage
+            .from('documents')
+            .createSignedUrl(file.path, 3600); // 1 hour expiry
+          
+          if (data?.signedUrl) {
+            urls[file.path] = data.signedUrl;
+          }
+        }
+      }
+      
+      return urls;
+    },
+    { revalidateOnFocus: false }
+  );
+
   // Poll job progress
   React.useEffect(() => {
     if (!jobId || isComplete || jobError) return;
@@ -801,6 +902,52 @@ export default function AppPoDetailPage() {
                 </div>
               </div>
               
+              {/* ETD/ETA Inputs */}
+              <div className="pt-3 border-t">
+                <div className="flex items-center justify-between mb-3">
+                  <label className="text-sm font-medium text-slate-700">
+                    Shipping Dates
+                  </label>
+                  {supplierData && (
+                    <span className="text-xs text-slate-500">
+                      Based on {supplierData.name}: {supplierData.lead_time_days}d lead + {supplierData.travel_time_days}d travel
+                    </span>
+                  )}
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-xs text-slate-500 block mb-1">ETD (Ex-Factory)</label>
+                    <Input
+                      type="date"
+                      value={etdInput}
+                      onChange={(e) => setEtdInput(e.target.value)}
+                      className="h-9"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-slate-500 block mb-1">ETA (Arrival)</label>
+                    <Input
+                      type="date"
+                      value={etaInput}
+                      onChange={(e) => setEtaInput(e.target.value)}
+                      className="h-9"
+                    />
+                  </div>
+                </div>
+                {datesChanged && (
+                  <div className="mt-3">
+                    <Button
+                      size="sm"
+                      onClick={handleSaveDates}
+                      disabled={isSavingDates}
+                      className="bg-[#8FA894] hover:bg-[#8FA894]/90"
+                    >
+                      {isSavingDates ? 'Saving...' : 'Save Dates'}
+                    </Button>
+                  </div>
+                )}
+              </div>
+              
               {/* File Downloads */}
               {po.meta?.spy_files && po.meta.spy_files.length > 0 && (
                 <div className="pt-2 border-t">
@@ -808,25 +955,35 @@ export default function AppPoDetailPage() {
                     Documents
                   </label>
                   <div className="flex gap-2">
-                    {po.meta.spy_files.map((file: any, idx: number) => (
-                      <a
-                        key={idx}
-                        href={file.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="flex items-center gap-2 px-3 py-2 border rounded-lg hover:bg-slate-50 transition-colors"
-                      >
-                        {file.type === 'pdf' ? (
-                          <FileText className="w-5 h-5 text-red-600" />
-                        ) : (
-                          <FileSpreadsheet className="w-5 h-5 text-green-600" />
-                        )}
-                        <span className="text-sm font-medium">
-                          {file.type === 'pdf' ? 'PDF' : 'Excel'}
-                        </span>
-                        <Download className="w-4 h-4 text-slate-400" />
-                      </a>
-                    ))}
+                    {po.meta.spy_files.map((file: any, idx: number) => {
+                      // Use signed URL from Supabase if available, otherwise fall back to external URL
+                      const downloadUrl = file.path && fileUrls?.[file.path] 
+                        ? fileUrls[file.path] 
+                        : file.url;
+                      
+                      if (!downloadUrl) return null;
+                      
+                      return (
+                        <a
+                          key={idx}
+                          href={downloadUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          download
+                          className="flex items-center gap-2 px-3 py-2 border rounded-lg hover:bg-slate-50 transition-colors"
+                        >
+                          {file.type === 'pdf' ? (
+                            <FileText className="w-5 h-5 text-red-600" />
+                          ) : (
+                            <FileSpreadsheet className="w-5 h-5 text-green-600" />
+                          )}
+                          <span className="text-sm font-medium">
+                            {file.type === 'pdf' ? 'PDF' : 'Excel'}
+                          </span>
+                          <Download className="w-4 h-4 text-slate-400" />
+                        </a>
+                      );
+                    })}
                   </div>
                 </div>
               )}

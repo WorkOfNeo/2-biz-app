@@ -23,6 +23,9 @@ type OrderItem = {
 type AppPo = {
   id: number;
   po_no: string;
+  etd: string | null;
+  eta: string | null;
+  supplier: string | null;
   meta: {
     items: OrderItem[];
   };
@@ -34,8 +37,33 @@ type StyleMeta = {
   supplier: string | null;
 };
 
-// Calculate ETD (7 weeks from now) and ETA (4 days after ETD, next weekday)
-function calculateDates(): { etd: string; eta: string } {
+// Format date as MM/DD/YYYY for SPY form
+function formatDateForSpy(d: Date): string {
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  const year = d.getFullYear();
+  return `${month}/${day}/${year}`;
+}
+
+// Get ETD/ETA from app_pos record or calculate defaults
+function getDates(po: AppPo): { etd: string; eta: string } {
+  // If dates exist in app_pos, use those
+  if (po.etd) {
+    const etdDate = new Date(po.etd);
+    const etaDate = po.eta ? new Date(po.eta) : new Date(etdDate);
+    
+    // If no ETA, default to ETD + 4 days
+    if (!po.eta) {
+      etaDate.setDate(etaDate.getDate() + 4);
+    }
+    
+    return {
+      etd: formatDateForSpy(etdDate),
+      eta: formatDateForSpy(etaDate)
+    };
+  }
+  
+  // Fallback: Calculate defaults (7 weeks ETD, +4 days ETA)
   const now = new Date();
   
   // ETD = 7 weeks from now
@@ -54,17 +82,9 @@ function calculateDates(): { etd: string; eta: string } {
     eta.setDate(eta.getDate() + 2);
   }
   
-  // Format as MM/DD/YYYY
-  const formatDate = (d: Date) => {
-    const month = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    const year = d.getFullYear();
-    return `${month}/${day}/${year}`;
-  };
-  
   return {
-    etd: formatDate(etd),
-    eta: formatDate(eta)
+    etd: formatDateForSpy(etd),
+    eta: formatDateForSpy(eta)
   };
 }
 
@@ -180,9 +200,9 @@ export async function pushAppPoToSpy(ctx: Ctx) {
     const suppliers = Array.from(itemsBySupplier.keys());
     await log(job.id, 'progress', 'STAGE:init', { total_suppliers: suppliers.length });
     
-    // Calculate dates
-    const { etd, eta } = calculateDates();
-    await log(job.id, 'info', 'STEP:push_po_dates', { etd, eta });
+    // Get dates from app_pos or calculate defaults
+    const { etd, eta } = getDates(po);
+    await log(job.id, 'info', 'STEP:push_po_dates', { etd, eta, from_record: !!po.etd });
     
     const spyPoNumbers: string[] = [];
     
@@ -637,6 +657,27 @@ export async function pushAppPoToSpy(ctx: Ctx) {
       spy_po_numbers: spyPoNumbers,
       suppliers_processed: suppliers.length
     });
+    
+    // Auto-enqueue sync job to fetch files and verify order
+    if (spyPoNumbers.length > 0) {
+      const firstSpyPoNo = spyPoNumbers[0];
+      await log(job.id, 'info', 'STEP:enqueue_sync', { spy_po_no: firstSpyPoNo });
+      
+      const { error: syncEnqueueError } = await supabase
+        .from('jobs')
+        .insert({
+          type: 'sync_app_po_from_spy',
+          payload: { po_id: poId, spy_po_no: firstSpyPoNo },
+          status: 'pending'
+        });
+      
+      if (syncEnqueueError) {
+        await log(job.id, 'error', 'STEP:sync_enqueue_failed', { error: syncEnqueueError.message });
+      } else {
+        await log(job.id, 'info', 'STEP:sync_enqueued', { spy_po_no: firstSpyPoNo });
+      }
+    }
+    
     await setJobSucceeded(job.id);
     
   } catch (error: any) {
