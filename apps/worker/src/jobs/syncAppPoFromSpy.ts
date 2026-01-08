@@ -151,6 +151,29 @@ export async function syncAppPoFromSpy(ctx: Ctx) {
         files: revisedFiles.map((f: { type: string; url: string }) => f.type) 
       });
       
+      // Delete old files from storage before uploading new ones
+      const existingFiles = (appPO.meta as any)?.spy_files || [];
+      if (existingFiles.length > 0) {
+        await log(job.id, 'info', 'STEP:sync_deleting_old_files', { count: existingFiles.length });
+        
+        for (const oldFile of existingFiles) {
+          if (oldFile.path) {
+            const { error: deleteError } = await supabase.storage
+              .from('documents')
+              .remove([oldFile.path]);
+            
+            if (deleteError) {
+              await log(job.id, 'error', 'STEP:sync_delete_file_failed', { 
+                path: oldFile.path, 
+                error: deleteError.message 
+              });
+            } else {
+              await log(job.id, 'info', 'STEP:sync_file_deleted', { path: oldFile.path });
+            }
+          }
+        }
+      }
+      
       // Download files and store in Supabase storage
       const downloadedFiles: any[] = [];
       
