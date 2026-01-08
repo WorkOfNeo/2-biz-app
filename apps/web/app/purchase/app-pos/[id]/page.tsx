@@ -97,6 +97,7 @@ export default function AppPoDetailPage() {
   const [supplierEmail, setSupplierEmail] = React.useState('');
   const [isGeneratingDraft, setIsGeneratingDraft] = React.useState(false);
   const [isSendingEmail, setIsSendingEmail] = React.useState(false);
+  const [emailPreviewMode, setEmailPreviewMode] = React.useState(false);
 
   const { data: po, error, isLoading, mutate: mutatePo } = useSWR(
     id ? ['app-po', id] : null,
@@ -257,6 +258,7 @@ export default function AppPoDetailPage() {
     setDraftSubject('');
     setDraftBody('');
     setDraftBodyHtml('');
+    setEmailPreviewMode(false);
 
     try {
       const res = await fetch('/api/conversations/draft', {
@@ -1953,15 +1955,20 @@ export default function AppPoDetailPage() {
                   {/* To Email */}
                   <div>
                     <label className="block text-sm font-medium text-slate-700 mb-1">
-                      To
+                      To <span className="text-red-500">*</span>
                     </label>
                     <Input
                       type="email"
                       value={supplierEmail}
                       onChange={(e) => setSupplierEmail(e.target.value)}
                       placeholder="supplier@example.com"
-                      className="w-full"
+                      className={`w-full ${!supplierEmail ? 'border-amber-300 bg-amber-50/50' : ''}`}
                     />
+                    {!supplierEmail && (
+                      <p className="text-xs text-amber-600 mt-1">
+                        Enter the supplier's email address
+                      </p>
+                    )}
                     {supplierData?.notes && (
                       <p className="text-xs text-slate-500 mt-1">
                         Supplier notes: {supplierData.notes}
@@ -1978,55 +1985,102 @@ export default function AppPoDetailPage() {
                       value={draftSubject}
                       onChange={(e) => setDraftSubject(e.target.value)}
                       placeholder="Email subject"
-                      className="w-full"
+                      className="w-full font-medium"
                     />
                   </div>
                   
-                  {/* Body */}
+                  {/* Body with tabs for Edit/Preview */}
                   <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">
-                      Message
-                    </label>
-                    <textarea
-                      value={draftBody}
-                      onChange={(e) => {
-                        setDraftBody(e.target.value);
-                        // Convert to HTML
-                        setDraftBodyHtml(
-                          e.target.value
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-sm font-medium text-slate-700">
+                        Message
+                      </label>
+                      <div className="flex gap-1 bg-slate-100 rounded-md p-0.5">
+                        <button
+                          type="button"
+                          onClick={() => setEmailPreviewMode && setEmailPreviewMode(false)}
+                          className={`px-2 py-1 text-xs rounded ${!emailPreviewMode ? 'bg-white shadow-sm' : 'text-slate-600'}`}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setEmailPreviewMode && setEmailPreviewMode(true)}
+                          className={`px-2 py-1 text-xs rounded ${emailPreviewMode ? 'bg-white shadow-sm' : 'text-slate-600'}`}
+                        >
+                          Preview
+                        </button>
+                      </div>
+                    </div>
+                    
+                    {emailPreviewMode ? (
+                      <div 
+                        className="w-full min-h-[200px] border rounded-md p-4 bg-white text-sm prose prose-sm max-w-none"
+                        dangerouslySetInnerHTML={{ __html: draftBodyHtml || '<p class="text-slate-400">No content yet...</p>' }}
+                      />
+                    ) : (
+                      <textarea
+                        value={draftBody}
+                        onChange={(e) => {
+                          setDraftBody(e.target.value);
+                          // Convert to HTML with proper formatting
+                          const html = e.target.value
                             .split('\n\n')
-                            .map(para => `<p>${para.replace(/\n/g, '<br>')}</p>`)
-                            .join('')
-                        );
-                      }}
-                      className="w-full min-h-[200px] border rounded-md p-3 text-sm"
-                      placeholder="Email body..."
-                    />
+                            .map(para => {
+                              // Handle lists
+                              if (para.startsWith('- ')) {
+                                const items = para.split('\n').map(line => 
+                                  line.startsWith('- ') ? `<li>${line.slice(2)}</li>` : line
+                                );
+                                return `<ul>${items.join('')}</ul>`;
+                              }
+                              return `<p style="margin: 0 0 10px 0;">${para.replace(/\n/g, '<br>')}</p>`;
+                            })
+                            .join('');
+                          setDraftBodyHtml(html);
+                        }}
+                        className="w-full min-h-[200px] border rounded-md p-3 text-sm font-mono resize-y focus:ring-2 focus:ring-[#8FA894]/20 focus:border-[#8FA894]"
+                        placeholder="Hi,
+
+I have orders for you here...
+
+Thank you, have a nice day."
+                      />
+                    )}
                   </div>
                   
                   {/* Attachments Preview */}
                   {po.meta?.spy_files && po.meta.spy_files.length > 0 && (
                     <div>
-                      <label className="block text-sm font-medium text-slate-700 mb-1">
-                        Attachments
+                      <label className="block text-sm font-medium text-slate-700 mb-2">
+                        Attachments ({po.meta.spy_files.filter((f: any) => f.path).length})
                       </label>
                       <div className="flex gap-2 flex-wrap">
                         {po.meta.spy_files.filter((f: any) => f.path).map((file: any, idx: number) => (
                           <div
                             key={idx}
-                            className="flex items-center gap-2 px-3 py-2 bg-slate-50 rounded-lg text-sm"
+                            className="flex items-center gap-2 px-3 py-2 bg-slate-50 border rounded-lg text-sm"
                           >
                             {file.type === 'pdf' ? (
                               <FileText className="w-4 h-4 text-red-600" />
                             ) : (
                               <FileSpreadsheet className="w-4 h-4 text-green-600" />
                             )}
-                            <span>{file.path.split('/').pop()}</span>
+                            <span className="text-slate-700">{file.path.split('/').pop()}</span>
+                            <Check className="w-3 h-3 text-green-500" />
                           </div>
                         ))}
                       </div>
+                      <p className="text-xs text-slate-500 mt-1">
+                        These files will be attached to the email
+                      </p>
                     </div>
                   )}
+                  
+                  {/* Quick tips */}
+                  <div className="bg-blue-50 rounded-lg p-3 text-xs text-blue-700">
+                    <strong>Tip:</strong> Use blank lines to separate paragraphs. Start lines with "- " for bullet points.
+                  </div>
                 </>
               )}
             </div>
