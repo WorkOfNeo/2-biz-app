@@ -26,7 +26,7 @@ export async function POST(req: Request) {
     const supabase = createRouteHandlerClient({ cookies });
     const body = await req.json();
 
-    const { name, external_name, spy_id, lead_time_days, travel_time_days, moq, tags, notes, active } = body;
+    const { name, external_name, spy_id, lead_time_days, travel_time_days, moq, tags, notes, contacts, active } = body;
 
     if (!name || typeof name !== 'string') {
       return NextResponse.json({ error: 'name is required' }, { status: 400 });
@@ -43,6 +43,7 @@ export async function POST(req: Request) {
         moq: moq ?? 0,
         tags: tags || [],
         notes: notes?.trim() || null,
+        contacts: contacts || [],
         active: active ?? true
       })
       .select()
@@ -79,6 +80,7 @@ export async function PUT(req: Request) {
     if (updates.moq !== undefined) cleanUpdates.moq = updates.moq;
     if (updates.tags !== undefined) cleanUpdates.tags = updates.tags;
     if (updates.notes !== undefined) cleanUpdates.notes = updates.notes?.trim() || null;
+    if (updates.contacts !== undefined) cleanUpdates.contacts = updates.contacts;
     if (updates.active !== undefined) cleanUpdates.active = updates.active;
 
     const { data, error } = await supabase
