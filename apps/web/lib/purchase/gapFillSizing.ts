@@ -105,7 +105,7 @@ export function gapFillSizing(input: GapFillInput): GapFillResult {
   const desiredFinal = normalizedP.map(p => p * targetFinalTotal);
   
   // Compute ideal buy (can be negative if over-stocked)
-  const idealBuy = desiredFinal.map((d, i) => d - base[i]);
+  const idealBuy = desiredFinal.map((d, i) => d - (base[i] || 0));
   
   // Clamp negatives to 0 and floor positives
   const clampedBuy = idealBuy.map(b => Math.max(0, Math.floor(b)));
@@ -122,7 +122,7 @@ export function gapFillSizing(input: GapFillInput): GapFillResult {
       const floored = Math.max(0, Math.floor(ideal));
       const frac = ideal - floored;
       // Bonus for sizes that are under-stocked (negative base relative to desired)
-      const deficitBonus = Math.max(0, desiredFinal[i] - base[i]) / Math.max(1, targetFinalTotal);
+      const deficitBonus = Math.max(0, (desiredFinal[i] || 0) - (base[i] || 0)) / Math.max(1, targetFinalTotal);
       return { i, score: frac + deficitBonus };
     });
     
@@ -143,7 +143,7 @@ export function gapFillSizing(input: GapFillInput): GapFillResult {
   if (remainder > 0) {
     // Find sizes where we can reduce
     const reducible = clampedBuy
-      .map((buy, i) => ({ i, buy, surplus: (base[i] + buy) - desiredFinal[i] }))
+      .map((buy, i) => ({ i, buy, surplus: ((base[i] || 0) + buy) - (desiredFinal[i] || 0) }))
       .filter(x => x.buy > 0)
       .sort((a, b) => b.surplus - a.surplus);
     
@@ -156,7 +156,7 @@ export function gapFillSizing(input: GapFillInput): GapFillResult {
   }
   
   // Final distribution
-  const finalDistribution = base.map((b, i) => b + clampedBuy[i]);
+  const finalDistribution = base.map((b, i) => b + (clampedBuy[i] || 0));
   const finalTotal = finalDistribution.reduce((a, b) => a + b, 0);
   
   return {
