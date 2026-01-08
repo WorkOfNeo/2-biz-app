@@ -376,6 +376,16 @@ function DraftItemCard({
                         {summary.totalNetNeed}
                       </td>
                     </tr>
+                    {/* Target Weights Row - Show if weights are set */}
+                    {item.weights.length === sizes.length && (
+                      <tr className="bg-[#B8A8D8]/20">
+                        <td className="p-1.5 border font-medium text-[#8B7BB8] text-[10px]">Target %</td>
+                        {normalizedWeights.map((w, i) => (
+                          <td key={i} className="p-1.5 text-right border text-[#8B7BB8] text-[10px]">{w}%</td>
+                        ))}
+                        <td className="p-1.5 text-right border font-semibold text-[#8B7BB8] text-[10px] bg-slate-50">100%</td>
+                      </tr>
+                    )}
                     {/* New Purchase Row - Always show with editable cells */}
                     <tr className="bg-[#C5D5CA]/30">
                       <td className="p-1.5 border font-medium text-[#8FA894]">+ New Buy</td>
@@ -392,14 +402,31 @@ function DraftItemCard({
                       ))}
                       <td className="p-1.5 text-right border font-bold text-[#8FA894]">{totalBuy}</td>
                     </tr>
-                    {/* Final Pressure Row */}
+                    {/* New Net Need Row - Show total after new buy */}
                     {totalBuy > 0 && (
                       <tr className="bg-[#C5D5CA]/50">
-                        <td className="p-1.5 border font-medium text-[#6B8A70] text-[10px]">Final %</td>
+                        <td className="p-1.5 border font-medium text-[#6B8A70]">New Net</td>
+                        {sizes.map((_, i) => {
+                          const newNet = (summary.netNeed[i] || 0) + (item.buyBySize[i] || 0);
+                          return (
+                            <td key={i} className={`p-1.5 text-right border font-medium ${newNet < 0 ? 'text-red-700' : newNet > 0 ? 'text-[#6B8A70]' : ''}`}>
+                              {newNet}
+                            </td>
+                          );
+                        })}
+                        <td className={`p-1.5 text-right border font-bold ${(summary.totalNetNeed + totalBuy) < 0 ? 'text-red-700' : 'text-[#6B8A70]'}`}>
+                          {summary.totalNetNeed + totalBuy}
+                        </td>
+                      </tr>
+                    )}
+                    {/* Final Pressure Row */}
+                    {totalBuy > 0 && (
+                      <tr className="bg-[#C5D5CA]/70">
+                        <td className="p-1.5 border font-medium text-[#5A7A5F] text-[10px]">Final %</td>
                         {finalPressure.map((v, i) => (
-                          <td key={i} className="p-1.5 text-right border text-[#6B8A70] text-[10px]">{v.toFixed(1)}%</td>
+                          <td key={i} className="p-1.5 text-right border text-[#5A7A5F] text-[10px]">{v.toFixed(1)}%</td>
                         ))}
-                        <td className="p-1.5 text-right border font-semibold text-[#6B8A70] text-[10px] bg-slate-50">100%</td>
+                        <td className="p-1.5 text-right border font-semibold text-[#5A7A5F] text-[10px] bg-slate-50">100%</td>
                       </tr>
                     )}
                   </tbody>
