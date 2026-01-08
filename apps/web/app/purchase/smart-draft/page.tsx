@@ -24,7 +24,6 @@ type StyleColor = {
   id: string;
   style_id: string;
   color: string;
-  is_noos: boolean;
 };
 
 type Selection = {
@@ -168,7 +167,6 @@ function ColorBadge({
       `}
     >
       {color.color}
-      {color.is_noos && <span className="ml-1 text-[10px] opacity-75">(NOOS)</span>}
     </button>
   );
 }
@@ -539,7 +537,7 @@ export default function SmartDraftPage() {
       
       const { data: colors, error } = await supabase
         .from('style_colors')
-        .select('id, style_id, color, is_noos')
+        .select('id, style_id, color')
         .in('style_id', styleIds)
         .order('color');
       
