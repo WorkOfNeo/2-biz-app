@@ -197,7 +197,8 @@ export async function exportStockList(ctx: Ctx) {
       const styles = StyleSheet.create({
         page: { padding: s(16), fontSize: s(9), color: '#0f172a' },
         // Center title and add extra spacing before first style block
-        h1: { fontSize: s(14), marginBottom: s(20), textAlign: 'center' as any },
+        h1: { fontSize: s(14), marginBottom: s(4), textAlign: 'center' as any },
+        timestamp: { fontSize: s(10), marginBottom: s(16), textAlign: 'center' as any, color: '#64748b' },
         block: { marginBottom: s(10), borderBottom: 0.5, borderColor: '#e5e7eb', paddingBottom: s(6) },
         row: { flexDirection: 'row', gap: s(12) },
         left: { width: s(84) },
@@ -371,9 +372,20 @@ export async function exportStockList(ctx: Ctx) {
         )
       );
 
+      // Format creation timestamp: DD/MM/YYYY - HH:MM (Copenhagen time)
+      const now = new Date();
+      const copenhagenTime = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Copenhagen' }));
+      const dd = copenhagenTime.getDate().toString().padStart(2, '0');
+      const mm = (copenhagenTime.getMonth() + 1).toString().padStart(2, '0');
+      const yyyy = copenhagenTime.getFullYear();
+      const hh = copenhagenTime.getHours().toString().padStart(2, '0');
+      const min = copenhagenTime.getMinutes().toString().padStart(2, '0');
+      const timestampStr = `${dd}/${mm}/${yyyy} - ${hh}:${min}`;
+
       const doc = React.createElement(Document, null,
         React.createElement(PdfPage, { size: 'A4', orientation: 'portrait', style: styles.page },
           React.createElement(Text, { style: styles.h1 }, `Stock List · ${listName}`),
+          React.createElement(Text, { style: styles.timestamp }, timestampStr),
           kpiRow,
           ...blocks
         )
@@ -386,6 +398,7 @@ export async function exportStockList(ctx: Ctx) {
         const placeholder = React.createElement(Document, null,
           React.createElement(PdfPage, { size: 'A4', style: { padding: 24 } as any },
             React.createElement(Text, null, `Stock List · ${listName}`),
+            React.createElement(Text, { style: { fontSize: 10, textAlign: 'center', color: '#64748b', marginBottom: 16 } as any }, timestampStr),
             React.createElement(Text, null, 'No data available')
           )
         );
