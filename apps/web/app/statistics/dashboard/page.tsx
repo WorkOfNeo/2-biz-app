@@ -62,15 +62,6 @@ interface StatisticSchedule {
 }
 
 
-/** Parse receivers from legacy stored string (supports comma, semicolon, whitespace) */
-function parseReceivers(raw: string | undefined | null): string[] {
-  if (!raw) return [];
-  return raw
-    .split(/[,;\s\n]+/)
-    .map((t) => t.trim().toLowerCase())
-    .filter(Boolean);
-}
-
 function generateId(): string {
   return Math.random().toString(36).substring(2, 9);
 }
@@ -145,17 +136,6 @@ export default function StatisticsDashboardPage() {
     return (stockListsAll ?? []).filter(l => latestStockListByName.has(l.name));
   }, [stockListsAll, latestStockListByName]);
 
-  const [selectedStockListsSalesmen, setSelectedStockListsSalesmen] = React.useState<Set<string>>(new Set());
-  const [selectedStockListsOverall, setSelectedStockListsOverall] = React.useState<Set<string>>(new Set());
-  
-  function toggleStockListSalesmen(name: string) {
-    setSelectedStockListsSalesmen((prev) => { const n = new Set(prev); if (n.has(name)) n.delete(name); else n.add(name); return n; });
-  }
-  
-  function toggleStockListOverall(name: string) {
-    setSelectedStockListsOverall((prev) => { const n = new Set(prev); if (n.has(name)) n.delete(name); else n.add(name); return n; });
-  }
-  
   // Stock List Schedules
   const [schedules, setSchedules] = React.useState<StockListSchedule[]>([]);
   const [sheetOpen, setSheetOpen] = React.useState(false);
@@ -603,207 +583,6 @@ export default function StatisticsDashboardPage() {
     return out;
   }, [top10Current?.length, stylesForTop]);
 
-  // Box #1 - Salesperson Statistics
-  const [selected, setSelected] = React.useState<Record<string, boolean>>({});
-  const [includeCountries, setIncludeCountries] = React.useState(true);
-  const [includeTop15Salesmen, setIncludeTop15Salesmen] = React.useState(true);
-  
-  React.useEffect(() => {
-    if (salespersons && salespersons.length > 0 && Object.keys(selected).length === 0) {
-      const allSelected: Record<string, boolean> = {};
-      for (const sp of salespersons) {
-        allSelected[sp.id] = true;
-      }
-      setSelected(allSelected);
-    }
-  }, [salespersons, selected]);
-  const [sendingSp, setSendingSp] = React.useState(false);
-  const [salesmenBodyText, setSalesmenBodyText] = React.useState('Hermed statistik :)');
-  const [savingSalesmenPrefs, setSavingSalesmenPrefs] = React.useState(false);
-
-  useSWR('dashboard:salesmen_email', async () => {
-    const { data } = await supabase.from('app_settings').select('id, value').eq('key', 'dashboard_salesmen_email').maybeSingle();
-    const val = ((data?.value as any) || {}) as { body?: string };
-    if (val.body !== undefined) setSalesmenBodyText(val.body);
-    return data;
-  });
-
-  async function saveSalesmenPrefs() {
-    setSavingSalesmenPrefs(true);
-    try {
-      const value = { body: salesmenBodyText };
-      const { data: existing } = await supabase.from('app_settings').select('id').eq('key', 'dashboard_salesmen_email').maybeSingle();
-      if (existing?.id) await supabase.from('app_settings').update({ value }).eq('id', existing.id);
-      else await supabase.from('app_settings').insert({ key: 'dashboard_salesmen_email', value } as any);
-    } finally {
-      setSavingSalesmenPrefs(false);
-    }
-  }
-
-  function toggleSp(id: string) {
-    setSelected((p) => ({ ...p, [id]: !p[id] }));
-  }
-
-  async function sendSalespersonEmails() {
-    if (sendingSp) return;
-    setSendingSp(true);
-    try {
-      const spExport = latestByKind.get('general_salesmen_pdfs');
-      const top15Salesmen = latestByKind.get('top_styles_pdf_salesmen');
-      const stockListRows = (latestExports ?? []).filter((r: any) => r.kind === 'stock_list_pdf');
-      const seenLists = new Set<string>();
-      const latestStockLists: Array<any> = [];
-      for (const r of stockListRows) {
-        const listName = String(r?.meta?.list || '');
-        if (!listName || seenLists.has(listName)) continue;
-        seenLists.add(listName);
-        latestStockLists.push(r);
-      }
-      if (!spExport) { alert('No salesperson PDFs found. Please run exports first.'); return; }
-      const files = (spExport.meta?.files as Array<{ name: string; path: string; publicUrl?: string | null; salesperson_id?: string }>) || [];
-      const chosen = (salespersons ?? []).filter((s) => selected[s.id]);
-      if (chosen.length === 0) { alert('Select at least one salesperson.'); return; }
-
-      const byId: Record<string, { name: string; email?: string | null }> = Object.fromEntries((salespersons ?? []).map(s => [s.id, { name: s.name, email: s.email }]));
-      const countries = includeCountries ? latestByKind.get('countries_pdf') : null;
-      for (const sp of chosen) {
-        const my = files.find((f) => f.salesperson_id === sp.id);
-        if (!my || !my.publicUrl) continue;
-        const recipient = byId[sp.id]?.email || '';
-        if (!recipient) continue;
-        const dynamicParams: Record<string, string> = {
-          salesman_pdf: '',
-          countries_pdf_url: '',
-          top15_salesmen_pdf: ''
-        };
-        dynamicParams.salesman_pdf = my.publicUrl || '';
-        if (includeCountries && countries?.public_url) {
-          dynamicParams.countries_pdf_url = countries.public_url;
-        }
-        if (includeTop15Salesmen && top15Salesmen?.public_url) {
-          dynamicParams.top15_salesmen_pdf = top15Salesmen.public_url;
-        }
-        if (selectedStockListsSalesmen.size > 0) {
-          let idx = 1;
-          for (const name of Array.from(selectedStockListsSalesmen)) {
-            const exp = latestStockListByName.get(name);
-            if (exp?.public_url) {
-              dynamicParams[`stock_list_${idx}_url`] = exp.public_url;
-              dynamicParams[`stock_list_${idx}_name`] = name;
-              idx++;
-            }
-          }
-        }
-        try {
-          const summarize = (p: Record<string, string>) => Object.fromEntries(Object.entries(p).map(([k, v]) => [k, { len: (v || '').length, head: (v || '').slice(0, 32) }]));
-          console.log('[email:salesperson] prepared: using template params', {
-            recipient,
-            includeCountries: !!(includeCountries && countries?.public_url),
-            includeTop15Salesmen: !!(includeTop15Salesmen && top15Salesmen?.public_url),
-            params: summarize(dynamicParams)
-          });
-        } catch {}
-        const hasStockLists = Object.keys(dynamicParams).some(k => k.startsWith('stock_list_') && k.endsWith('_url'));
-        const anyParam =
-          Boolean(dynamicParams.salesman_pdf) ||
-          Boolean(dynamicParams.countries_pdf_url) ||
-          Boolean(dynamicParams.top15_salesmen_pdf) ||
-          hasStockLists;
-        if (!anyParam) continue;
-        const subject = 'Din statistik';
-        const fullName = String(byId[sp.id]?.name || '');
-        const toTitleCase = (str: string) => {
-          return str.toLowerCase().split(' ').map(word => 
-            word.charAt(0).toUpperCase() + word.slice(1)
-          ).join(' ');
-        };
-        const firstName = fullName ? toTitleCase(fullName).split(' ')[0] : '';
-        const hej = firstName ? `Hej ${firstName},` : 'Hej,';
-        const bodyHtml = `${hej}\n\n${salesmenBodyText || 'Hermed statistik :)'}`;
-        await sendEmailJs([recipient], subject, bodyHtml, undefined, dynamicParams);
-      }
-      alert('Emails queued for sending.');
-    } finally {
-      setSendingSp(false);
-    }
-  }
-
-  // Box #2 - Overall Statistics (receivers now an array)
-  const [receivers, setReceivers] = React.useState<string[]>([]);
-  const [bodyText, setBodyText] = React.useState('Hermed statistik :)');
-  const [overallOpts, setOverallOpts] = React.useState<{ all: boolean; countries: boolean; top10overall: boolean }>({ all: false, countries: true, top10overall: false });
-  const [sendingOverall, setSendingOverall] = React.useState(false);
-  const [savingOverallPrefs, setSavingOverallPrefs] = React.useState(false);
-
-  // Load/save Overall email prefs
-  useSWR('dashboard:overall_email', async () => {
-    const { data } = await supabase.from('app_settings').select('id, value').eq('key', 'dashboard_overall_email').maybeSingle();
-    const val = ((data?.value as any) || {}) as { receivers?: string; body?: string };
-    if (val.receivers !== undefined) setReceivers(parseReceivers(val.receivers));
-    if (val.body !== undefined) setBodyText(val.body);
-    return data;
-  });
-
-  async function saveOverallPrefs() {
-    setSavingOverallPrefs(true);
-    try {
-      const value = { receivers: receivers.join(', '), body: bodyText };
-      const { data: existing } = await supabase.from('app_settings').select('id').eq('key', 'dashboard_overall_email').maybeSingle();
-      if (existing?.id) await supabase.from('app_settings').update({ value }).eq('id', existing.id);
-      else await supabase.from('app_settings').insert({ key: 'dashboard_overall_email', value } as any);
-    } finally {
-      setSavingOverallPrefs(false);
-    }
-  }
-
-  async function sendOverall() {
-    if (sendingOverall) return;
-    setSendingOverall(true);
-    try {
-      if (receivers.length === 0) { alert('Enter at least one receiver email.'); return; }
-      const dynamicParams: Record<string, string> = { all_salesmen_pdf_url: '', countries_pdf_url: '', top15_overall_pdf: '' };
-      if (overallOpts.all) {
-        const salesmen = latestByKind.get('general_salesmen_pdfs');
-        const allUrl = salesmen?.meta?.all?.publicUrl || null;
-        if (allUrl) { dynamicParams.all_salesmen_pdf_url = allUrl; }
-      }
-      if (overallOpts.countries) {
-        const row = latestByKind.get('countries_pdf');
-        if (row?.public_url) { dynamicParams.countries_pdf_url = row.public_url; }
-      }
-      if (overallOpts.top10overall) {
-        const row = latestByKind.get('top_styles_pdf_overall');
-        if (row?.public_url) { dynamicParams.top15_overall_pdf = row.public_url; }
-      }
-      if (selectedStockListsOverall.size > 0) {
-        let idx = 1;
-        for (const name of Array.from(selectedStockListsOverall)) {
-          const exp = latestStockListByName.get(name);
-          if (exp?.public_url) {
-            dynamicParams[`stock_list_${idx}_url`] = exp.public_url;
-            dynamicParams[`stock_list_${idx}_name`] = name;
-            idx++;
-          }
-        }
-      }
-      const hasStockLists = Object.keys(dynamicParams).some(k => k.startsWith('stock_list_') && k.endsWith('_url'));
-      if (!overallOpts.all && !overallOpts.countries && !overallOpts.top10overall && !hasStockLists) { alert('No options selected.'); return; }
-      try {
-        const summarize = (p: Record<string, string>) => Object.fromEntries(Object.entries(p).map(([k, v]) => [k, { len: (v || '').length, head: (v || '').slice(0, 32) }]));
-        console.log('[email:overall] prepared', {
-          to: receivers,
-          include: { all: overallOpts.all, countries: overallOpts.countries, top10overall: overallOpts.top10overall, stockLists: Array.from(selectedStockListsOverall) },
-          params: summarize(dynamicParams)
-        });
-      } catch {}
-      const subject = 'Statistik opdatering';
-      const bodyHtml = bodyText || 'Hermed statistik :)';
-      await sendEmailJs(receivers, subject, bodyHtml, undefined, dynamicParams, true);
-      alert('Email sent');
-    } finally {
-      setSendingOverall(false);
-    }
-  }
 
   async function sendEmailJs(
     to: string[],
@@ -943,169 +722,7 @@ export default function StatisticsDashboardPage() {
         </TabsList>
 
         <TabsContent value="mailing" className="space-y-6">
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {/* Box #1 - Salesmen Statistics */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Salesmen Statistics</CardTitle>
-                <CardDescription>Send personalized stats to salespersons</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <Toggle
-                    checked={Object.values(selected).every(Boolean) && Object.keys(selected).length > 0}
-                    onChange={() => {
-                  const allOn = !Object.values(selected).every(Boolean);
-                  const next: Record<string, boolean> = {};
-                  for (const sp of (salespersons ?? [])) next[sp.id] = allOn;
-                  setSelected(next);
-                }}
-                    label="Select all"
-                  />
-            </div>
-
-                <div className="max-h-56 overflow-auto rounded-md border">
-                  <Table>
-                    <TableBody>
-                {(salespersons ?? []).map((sp) => (
-                        <TableRow key={sp.id}>
-                          <TableCell className="w-14">
-                      <button
-                        type="button"
-                        onClick={() => toggleSp(sp.id)}
-                              className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${selected[sp.id] ? 'bg-slate-900' : 'bg-slate-200'}`}
-                        aria-pressed={!!selected[sp.id]}
-                      >
-                              <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${selected[sp.id] ? 'translate-x-4' : 'translate-x-0.5'}`} />
-                      </button>
-                          </TableCell>
-                          <TableCell className="font-medium">{sp.name}</TableCell>
-                          <TableCell className="text-gray-500">{sp.email || '—'}</TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-          </div>
-
-                <div className="space-y-2">
-                  <Toggle checked={includeCountries} onChange={() => setIncludeCountries((v) => !v)} label="Include Countries" />
-                  <Toggle checked={includeTop15Salesmen} onChange={() => setIncludeTop15Salesmen((v) => !v)} label="Include Top 15 - Salesmen" />
-                </div>
-
-                {availableStockLists.length > 0 && (
-                  <div>
-                    <div className="text-xs text-gray-600 mb-2">Stock Lists</div>
-                    <div className="flex flex-wrap gap-1.5">
-                      {availableStockLists.map((l) => {
-                const on = selectedStockListsSalesmen.has(l.name);
-                return (
-                          <Badge
-                            key={l.id}
-                            className={`cursor-pointer select-none transition-colors ${on ? 'bg-slate-900 text-white border-slate-900' : 'bg-white hover:bg-slate-50'}`}
-                            onClick={() => toggleStockListSalesmen(l.name)}
-                          >
-                            {l.name}
-                          </Badge>
-                );
-              })}
-            </div>
-          </div>
-                )}
-
-          <div>
-                  <div className="text-xs text-gray-600 mb-1">Email body</div>
-                  <textarea
-                    className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-offset-2 h-24 resize-none"
-                    placeholder="Write your message…"
-                    value={salesmenBodyText}
-                    onChange={(e) => setSalesmenBodyText(e.target.value)}
-                  />
-          </div>
-
-                <div className="flex gap-2">
-                  <Button variant="outline" size="sm" disabled={savingSalesmenPrefs} onClick={saveSalesmenPrefs}>
-                    {savingSalesmenPrefs ? 'Saving…' : 'Save body'}
-                  </Button>
-                  <Button size="sm" disabled={sendingSp} onClick={sendSalespersonEmails}>
-                    {sendingSp ? 'Sending…' : 'Send'}
-                  </Button>
-        </div>
-              </CardContent>
-            </Card>
-
-            {/* Box #2 - Overall Statistics */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Overall Statistics</CardTitle>
-                <CardDescription>Send combined stats to specific recipients</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <EmailPillsInput
-                  label="Recipients"
-                  value={receivers}
-                  onChange={setReceivers}
-                  placeholder="Add email…"
-                  helpText="Press Enter or comma to add"
-                />
-
-                <div className="space-y-2">
-            {[
-              { key: 'all', label: 'All salespeople' },
-              { key: 'countries', label: 'Countries' },
-              { key: 'top10overall', label: 'Top 15 - Overall' }
-                  ].map((opt) => (
-                    <Toggle
-                      key={opt.key}
-                      checked={(overallOpts as any)[opt.key]}
-                      onChange={() => setOverallOpts((p) => ({ ...p, [opt.key]: !(p as any)[opt.key] }))}
-                      label={opt.label}
-                    />
-                  ))}
-                </div>
-
-                {availableStockLists.length > 0 && (
-                  <div>
-                    <div className="text-xs text-gray-600 mb-2">Stock Lists</div>
-                    <div className="flex flex-wrap gap-1.5">
-                      {availableStockLists.map((l) => {
-                const on = selectedStockListsOverall.has(l.name);
-                return (
-                          <Badge
-                            key={l.id}
-                            className={`cursor-pointer select-none transition-colors ${on ? 'bg-slate-900 text-white border-slate-900' : 'bg-white hover:bg-slate-50'}`}
-                            onClick={() => toggleStockListOverall(l.name)}
-                          >
-                            {l.name}
-                          </Badge>
-                );
-              })}
-            </div>
-          </div>
-                )}
-
-                <div>
-                  <div className="text-xs text-gray-600 mb-1">Email body</div>
-                  <textarea
-                    className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-offset-2 h-24 resize-none"
-                    placeholder="Write your message…"
-                    value={bodyText}
-                    onChange={(e) => setBodyText(e.target.value)}
-                  />
-          </div>
-
-                <div className="flex gap-2">
-                  <Button variant="outline" size="sm" disabled={savingOverallPrefs} onClick={saveOverallPrefs}>
-                    {savingOverallPrefs ? 'Saving…' : 'Save settings'}
-                  </Button>
-                  <Button size="sm" disabled={sendingOverall} onClick={sendOverall}>
-                    {sendingOverall ? 'Sending…' : 'Send'}
-                  </Button>
-        </div>
-              </CardContent>
-            </Card>
-      </div>
-
-          {/* Box #3 - Stock List Schedules */}
+          {/* Stock List Schedules */}
           <Card>
             <CardHeader className="flex flex-row items-center justify-between">
               <div>
@@ -1403,7 +1020,7 @@ export default function StatisticsDashboardPage() {
                     <Badge
                       key={l.id}
                       className={`cursor-pointer select-none transition-colors ${on ? 'bg-slate-900 text-white border-slate-900' : 'bg-white hover:bg-slate-50'}`}
-                      onClick={() => {
+                onClick={() => {
                         setFormStockLists(prev => {
                           const n = new Set(prev);
                           if (n.has(l.name)) n.delete(l.name);
@@ -1416,9 +1033,9 @@ export default function StatisticsDashboardPage() {
                     </Badge>
               );
             })}
-          </div>
+            </div>
             )}
-        </div>
+          </div>
 
           {/* Recipients */}
           <EmailPillsInput
@@ -1447,7 +1064,7 @@ export default function StatisticsDashboardPage() {
               >
                 Weekly
               </Button>
-        </div>
+          </div>
       </div>
 
           {/* Days (for weekly) */}
@@ -1458,9 +1075,9 @@ export default function StatisticsDashboardPage() {
                 {DAYS_OF_WEEK.map((day) => {
                   const on = formDays.has(day.value);
                   return (
-                    <button
+            <button
                       key={day.value}
-                      type="button"
+              type="button"
                       onClick={() => {
                         setFormDays(prev => {
                           const n = new Set(prev);
@@ -1472,7 +1089,7 @@ export default function StatisticsDashboardPage() {
                       className={`h-9 w-10 rounded-md text-xs font-medium transition-colors ${on ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}
                     >
                       {day.label}
-                    </button>
+            </button>
                   );
                 })}
         </div>
@@ -1551,7 +1168,7 @@ export default function StatisticsDashboardPage() {
                 <div className="space-y-2">
                   {viewingSchedule.stockLists.map((listName) => {
                     const exp = latestStockListByName.get(listName);
-                    return (
+                return (
                       <div key={listName} className="flex items-center justify-between p-3 rounded-md border bg-slate-50">
                         <div className="flex items-center gap-3">
                           <div className="h-8 w-8 rounded bg-slate-200 flex items-center justify-center">
@@ -1570,13 +1187,13 @@ export default function StatisticsDashboardPage() {
                           <Badge className="bg-amber-100 text-amber-700 border-amber-200 text-[10px]">No export</Badge>
                         )}
     </div>
-  );
-                  })}
-                </div>
-              </div>
+                );
+              })}
+            </div>
+          </div>
 
               {/* Recipients */}
-              <div>
+          <div>
                 <h3 className="text-sm font-medium text-slate-900 mb-3">Recipients ({viewingSchedule.recipients.length})</h3>
                 <div className="space-y-1 max-h-48 overflow-auto">
                   {viewingSchedule.recipients.map((email) => (
@@ -1587,8 +1204,8 @@ export default function StatisticsDashboardPage() {
                       <span className="text-sm text-slate-700">{email}</span>
                     </div>
                   ))}
-                </div>
-              </div>
+          </div>
+        </div>
 
               {/* Email Body Preview */}
               <div>
@@ -1653,8 +1270,8 @@ export default function StatisticsDashboardPage() {
           <div>
             <div className="flex items-center justify-between mb-2">
               <label className="text-sm text-gray-600">Salespersons (receive personal PDF)</label>
-              <button
-                type="button"
+                <button
+                  type="button"
                 onClick={() => {
                   const allIds = (salespersons ?? []).filter(sp => sp.email).map(sp => sp.id);
                   const allSelected = allIds.every(id => stFormSalespersons.has(id));
@@ -1667,15 +1284,15 @@ export default function StatisticsDashboardPage() {
                 className="text-xs text-slate-600 hover:text-slate-900"
               >
                 {(salespersons ?? []).filter(sp => sp.email).every(sp => stFormSalespersons.has(sp.id)) ? 'Deselect all' : 'Select all'}
-              </button>
-            </div>
+                </button>
+              </div>
             <div className="max-h-32 overflow-auto rounded-md border">
               <Table>
                 <TableBody>
                   {(salespersons ?? []).map((sp) => {
                     const hasEmail = Boolean(sp.email);
                     const on = stFormSalespersons.has(sp.id);
-                    return (
+                return (
                       <TableRow 
                         key={sp.id} 
                         className={!hasEmail ? 'opacity-50' : 'cursor-pointer'}
@@ -1697,8 +1314,8 @@ export default function StatisticsDashboardPage() {
                         <TableCell className="font-medium text-sm">{sp.name}</TableCell>
                         <TableCell className="text-xs text-gray-500">{sp.email || '(no email)'}</TableCell>
                       </TableRow>
-                    );
-                  })}
+                );
+              })}
                 </TableBody>
               </Table>
             </div>
@@ -1720,20 +1337,20 @@ export default function StatisticsDashboardPage() {
             <label className="text-sm text-gray-600 block">Files to include</label>
             <div className="space-y-2">
               <div className="flex items-center justify-between p-2 rounded-md border bg-slate-50">
-                <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2">
                   <Toggle
                     checked={stFormIncludeGeneralCombined}
                     onChange={() => setStFormIncludeGeneralCombined(v => !v)}
                     size="sm"
                   />
                   <span className="text-sm">General (all combined)</span>
-                </div>
+          </div>
                 {latestByKind.get('general_salesmen_pdfs')?.meta?.all?.publicUrl && (
                   <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setPreviewUrl(latestByKind.get('general_salesmen_pdfs')?.meta?.all?.publicUrl || null)}>
                     <Eye className="h-3 w-3 mr-1" />Preview
                   </Button>
                 )}
-              </div>
+        </div>
               <div className="flex items-center justify-between p-2 rounded-md border bg-slate-50">
                 <div className="flex items-center gap-2">
                   <Toggle
@@ -1742,7 +1359,7 @@ export default function StatisticsDashboardPage() {
                     size="sm"
                   />
                   <span className="text-sm">Countries</span>
-                </div>
+      </div>
                 {latestByKind.get('countries_pdf')?.public_url && (
                   <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setPreviewUrl(latestByKind.get('countries_pdf')?.public_url || null)}>
                     <Eye className="h-3 w-3 mr-1" />Preview
@@ -1801,11 +1418,11 @@ export default function StatisticsDashboardPage() {
           {availableStockLists.length > 0 && (
             <div>
               <label className="text-sm text-gray-600 block mb-2">Stock Lists (optional)</label>
-              <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-2">
                 {availableStockLists.map((l) => {
                   const on = stFormStockLists.has(l.name);
                   const exp = latestStockListByName.get(l.name);
-                  return (
+              return (
                     <div key={l.id} className="flex items-center gap-1">
                       <Badge
                         className={`cursor-pointer select-none transition-colors ${on ? 'bg-slate-900 text-white border-slate-900' : 'bg-white hover:bg-slate-50'}`}
@@ -1826,10 +1443,10 @@ export default function StatisticsDashboardPage() {
                         </Button>
                       )}
                     </div>
-                  );
-                })}
-              </div>
-            </div>
+              );
+            })}
+          </div>
+        </div>
           )}
 
           {/* Schedule Type */}
@@ -1850,8 +1467,8 @@ export default function StatisticsDashboardPage() {
               >
                 Weekly
               </Button>
-            </div>
-          </div>
+        </div>
+      </div>
 
           {/* Days (for weekly) */}
           {stFormScheduleType === 'weekly' && (
@@ -1878,12 +1495,12 @@ export default function StatisticsDashboardPage() {
                     </button>
                   );
                 })}
-              </div>
+        </div>
             </div>
           )}
 
           {/* Time */}
-          <div>
+              <div>
             <label className="text-sm text-gray-600 block mb-1">Time</label>
             <input
               type="time"
@@ -1891,7 +1508,7 @@ export default function StatisticsDashboardPage() {
               value={stFormTime}
               onChange={(e) => setStFormTime(e.target.value)}
             />
-          </div>
+              </div>
 
           {/* Email Body */}
           <div>
@@ -1968,8 +1585,8 @@ export default function StatisticsDashboardPage() {
                 <span>{formatSchedule(viewingStatisticSchedule)}</span>
                 {viewingStatisticSchedule.lastRun && (
                   <span className="text-gray-400">· Last sent {formatLastRun(viewingStatisticSchedule.lastRun)}</span>
-                )}
-              </div>
+            )}
+          </div>
 
               {/* Files included */}
               <div>
@@ -1984,8 +1601,8 @@ export default function StatisticsDashboardPage() {
                   {(viewingStatisticSchedule.stockLists || []).map(name => (
                     <Badge key={name} className="bg-slate-100">{name}</Badge>
                   ))}
-                </div>
-              </div>
+        </div>
+      </div>
 
               {/* Salespersons who will receive */}
               {viewingStatisticSchedule.salespersonIds.length > 0 && (
@@ -2005,9 +1622,9 @@ export default function StatisticsDashboardPage() {
                           <div className="flex-1">
                             <span className="text-sm text-slate-700 font-medium">{sp.name}</span>
                             <span className="text-xs text-slate-400 ml-2">{sp.email || '(no email)'}</span>
-                          </div>
-                        </div>
-                      );
+      </div>
+    </div>
+  );
                     })}
                   </div>
                 </div>
