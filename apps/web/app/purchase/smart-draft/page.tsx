@@ -182,8 +182,10 @@ function DraftItemCard({
   onRemove: () => void;
 }) {
   const [showPressureModal, setShowPressureModal] = useState(false);
+  const [showManualModal, setShowManualModal] = useState(false);
   const [weightsInput, setWeightsInput] = useState(item.weights.join(', '));
   const [localTargetBuy, setLocalTargetBuy] = useState(item.targetBuy.toString());
+  const [manualBuyInputs, setManualBuyInputs] = useState<string[]>([]);
   
   const summary = item.summary;
   const sizes = item.sizes;
@@ -197,6 +199,20 @@ function DraftItemCard({
       (summary.purchase[i] || 0) + (summary.incoming[i] || 0)
     );
   }, [summary, sizes]);
+  
+  // Calculate sales pressure (based on sold distribution)
+  const salesPressure = useMemo(() => {
+    if (!summary || summary.totalSold === 0) return sizes.map(() => 0);
+    return summary.sold.map(v => (v / summary.totalSold) * 100);
+  }, [summary, sizes]);
+  
+  // Calculate final pressure (after new buy) = (netNeed + newBuy) distribution
+  const finalPressure = useMemo(() => {
+    const final = sizes.map((_, i) => (base[i] || 0) + (item.buyBySize[i] || 0));
+    const totalFinal = sum(final);
+    if (totalFinal === 0) return sizes.map(() => 0);
+    return final.map(v => (v / totalFinal) * 100);
+  }, [base, item.buyBySize, sizes]);
   
   // Handle weight changes
   const handleApplyWeights = () => {
@@ -224,20 +240,33 @@ function DraftItemCard({
     setShowPressureModal(false);
   };
   
-  // Recalculate when target buy changes
-  const handleTargetBuyChange = (value: string) => {
-    setLocalTargetBuy(value);
-    const targetBuy = parseInt(value) || 0;
-    
-    if (item.weights.length === sizes.length && targetBuy > 0) {
-      const result = gapFillSizing({ weights: item.weights, base, targetBuy });
-      onUpdate({
-        targetBuy,
-        buyBySize: result.buyBySize,
-      });
-    } else {
-      onUpdate({ targetBuy });
-    }
+  // Handle manual buy input for a specific size
+  const handleBuySizeChange = (index: number, value: string) => {
+    const newBuyBySize = [...item.buyBySize];
+    newBuyBySize[index] = parseInt(value) || 0;
+    onUpdate({
+      buyBySize: newBuyBySize,
+      targetBuy: sum(newBuyBySize),
+    });
+  };
+  
+  // Open manual modal and initialize inputs
+  const openManualModal = () => {
+    setManualBuyInputs(item.buyBySize.length > 0 
+      ? item.buyBySize.map(v => v.toString())
+      : sizes.map(() => '0')
+    );
+    setShowManualModal(true);
+  };
+  
+  // Apply manual inputs
+  const handleApplyManual = () => {
+    const newBuyBySize = manualBuyInputs.map(v => parseInt(v) || 0);
+    onUpdate({
+      buyBySize: newBuyBySize,
+      targetBuy: sum(newBuyBySize),
+    });
+    setShowManualModal(false);
   };
   
   const normalizedWeights = useMemo(() => {
@@ -321,6 +350,14 @@ function DraftItemCard({
                       ))}
                       <td className="p-1.5 text-right border font-semibold text-red-700 bg-slate-50">-{summary.totalSold}</td>
                     </tr>
+                    {/* Sales Pressure Row */}
+                    <tr className="bg-red-50/50">
+                      <td className="p-1.5 border font-medium text-red-600 text-[10px]">Sales %</td>
+                      {salesPressure.map((v, i) => (
+                        <td key={i} className="p-1.5 text-right border text-red-600 text-[10px]">{v.toFixed(1)}%</td>
+                      ))}
+                      <td className="p-1.5 text-right border font-semibold text-red-600 text-[10px] bg-slate-50">100%</td>
+                    </tr>
                     <tr>
                       <td className="p-1.5 border font-medium text-blue-700">Purchase</td>
                       {summary.purchase.map((v, i) => (
@@ -339,14 +376,30 @@ function DraftItemCard({
                         {summary.totalNetNeed}
                       </td>
                     </tr>
-                    {/* New Purchase Row */}
+                    {/* New Purchase Row - Always show with editable cells */}
+                    <tr className="bg-[#C5D5CA]/30">
+                      <td className="p-1.5 border font-medium text-[#8FA894]">+ New Buy</td>
+                      {sizes.map((_, i) => (
+                        <td key={i} className="p-0.5 border">
+                          <input
+                            type="number"
+                            min={0}
+                            value={item.buyBySize[i] || 0}
+                            onChange={(e) => handleBuySizeChange(i, e.target.value)}
+                            className="w-full h-6 text-right text-xs font-medium text-[#8FA894] bg-transparent border-0 focus:ring-1 focus:ring-[#8FA894] rounded px-1"
+                          />
+                        </td>
+                      ))}
+                      <td className="p-1.5 text-right border font-bold text-[#8FA894]">{totalBuy}</td>
+                    </tr>
+                    {/* Final Pressure Row */}
                     {totalBuy > 0 && (
-                      <tr className="bg-[#C5D5CA]/30">
-                        <td className="p-1.5 border font-medium text-[#8FA894]">+ New Buy</td>
-                        {item.buyBySize.map((v, i) => (
-                          <td key={i} className="p-1.5 text-right border font-medium text-[#8FA894]">{v}</td>
+                      <tr className="bg-[#C5D5CA]/50">
+                        <td className="p-1.5 border font-medium text-[#6B8A70] text-[10px]">Final %</td>
+                        {finalPressure.map((v, i) => (
+                          <td key={i} className="p-1.5 text-right border text-[#6B8A70] text-[10px]">{v.toFixed(1)}%</td>
                         ))}
-                        <td className="p-1.5 text-right border font-bold text-[#8FA894]">{totalBuy}</td>
+                        <td className="p-1.5 text-right border font-semibold text-[#6B8A70] text-[10px] bg-slate-50">100%</td>
                       </tr>
                     )}
                   </tbody>
@@ -355,31 +408,35 @@ function DraftItemCard({
             )}
             
             {/* Pressure & Target Controls */}
-            <div className="flex items-center gap-4 flex-wrap">
+            <div className="flex items-center gap-3 flex-wrap">
               <Button
                 variant="outline"
                 size="sm"
                 onClick={() => setShowPressureModal(true)}
                 className="border-[#B8A8D8] text-[#B8A8D8] hover:bg-[#B8A8D8]/10"
               >
-                {item.weights.length > 0 ? 'Edit' : 'Set'} Sales Pressure
+                {item.weights.length > 0 ? 'Edit' : 'Calculate'} Pressure
               </Button>
               
-              <div className="flex items-center gap-2">
-                <label className="text-sm text-slate-600">Target Buy:</label>
-                <Input
-                  type="number"
-                  min={0}
-                  value={localTargetBuy}
-                  onChange={(e) => handleTargetBuyChange(e.target.value)}
-                  className="w-24 h-8"
-                />
-              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={openManualModal}
+                className="border-slate-400 text-slate-600 hover:bg-slate-100"
+              >
+                Manual Input
+              </Button>
               
               {item.weights.length > 0 && (
                 <div className="text-xs text-slate-500">
-                  Weights: {item.weights.join(', ')} → {normalizedWeights.map(w => `${w}%`).join(', ')}
+                  Target weights: {normalizedWeights.map((w, i) => `${sizes[i]}: ${w}%`).join(', ')}
                 </div>
+              )}
+              
+              {totalBuy > 0 && (
+                <Badge className="bg-[#8FA894] text-white">
+                  Total: {totalBuy} units
+                </Badge>
               )}
             </div>
           </div>
@@ -464,6 +521,53 @@ function DraftItemCard({
                   Cancel
                 </Button>
                 <Button onClick={handleApplyWeights} className="bg-[#8FA894] hover:bg-[#8FA894]/90">
+                  Apply
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+        
+        {/* Manual Input Modal */}
+        {showManualModal && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-lg shadow-xl max-w-lg w-full mx-4 p-6">
+              <h3 className="text-lg font-semibold mb-2">Manual Buy Input</h3>
+              <p className="text-sm text-slate-600 mb-4">
+                Enter the quantity to purchase for each size.
+              </p>
+              
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-4">
+                {sizes.map((size, i) => (
+                  <div key={i}>
+                    <label className="block text-xs font-medium text-slate-600 mb-1">{size}</label>
+                    <Input
+                      type="number"
+                      min={0}
+                      value={manualBuyInputs[i] || '0'}
+                      onChange={(e) => {
+                        const newInputs = [...manualBuyInputs];
+                        newInputs[i] = e.target.value;
+                        setManualBuyInputs(newInputs);
+                      }}
+                      className="h-9"
+                    />
+                  </div>
+                ))}
+              </div>
+              
+              <div className="mb-4 p-3 bg-slate-50 rounded-md">
+                <div className="flex justify-between text-sm">
+                  <span className="text-slate-600">Total:</span>
+                  <span className="font-semibold">{manualBuyInputs.reduce((a, b) => a + (parseInt(b) || 0), 0)} units</span>
+                </div>
+              </div>
+              
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setShowManualModal(false)}>
+                  Cancel
+                </Button>
+                <Button onClick={handleApplyManual} className="bg-[#8FA894] hover:bg-[#8FA894]/90">
                   Apply
                 </Button>
               </div>
