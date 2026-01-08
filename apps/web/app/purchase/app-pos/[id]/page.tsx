@@ -142,17 +142,24 @@ export default function AppPoDetailPage() {
     });
   }, [seasons]);
 
-  // Fetch supplier data for ETD/ETA calculation
+  // Fetch supplier data for ETD/ETA calculation and contacts
   const { data: supplierData } = useSWR(
     po?.supplier ? ['supplier:lead-times', po.supplier] : null,
     async () => {
       const { data, error } = await supabase
         .from('suppliers')
-        .select('id, name, lead_time_days, travel_time_days, notes')
+        .select('id, name, lead_time_days, travel_time_days, notes, contacts')
         .eq('name', po!.supplier)
         .maybeSingle();
       if (error) console.error('Error fetching supplier:', error);
-      return data as { id: string; name: string; lead_time_days: number; travel_time_days: number; notes?: string } | null;
+      return data as { 
+        id: string; 
+        name: string; 
+        lead_time_days: number; 
+        travel_time_days: number; 
+        notes?: string;
+        contacts?: Array<{ name: string; email: string; role?: string; primary?: boolean }>;
+      } | null;
     }
   );
 
@@ -259,6 +266,14 @@ export default function AppPoDetailPage() {
     setDraftBody('');
     setDraftBodyHtml('');
     setEmailPreviewMode(false);
+    
+    // Auto-select primary contact if available
+    const primaryContact = supplierData?.contacts?.find(c => c.primary);
+    if (primaryContact) {
+      setSupplierEmail(primaryContact.email);
+    } else if (supplierData?.contacts?.length) {
+      setSupplierEmail(supplierData.contacts[0]?.email || '');
+    }
 
     try {
       const res = await fetch('/api/conversations/draft', {
@@ -1085,24 +1100,24 @@ export default function AppPoDetailPage() {
                       if (!downloadUrl) return null;
                       
                       return (
-                        <a
-                          key={idx}
+                      <a
+                        key={idx}
                           href={downloadUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
+                        target="_blank"
+                        rel="noopener noreferrer"
                           download
-                          className="flex items-center gap-2 px-3 py-2 border rounded-lg hover:bg-slate-50 transition-colors"
-                        >
-                          {file.type === 'pdf' ? (
-                            <FileText className="w-5 h-5 text-red-600" />
-                          ) : (
-                            <FileSpreadsheet className="w-5 h-5 text-green-600" />
-                          )}
-                          <span className="text-sm font-medium">
-                            {file.type === 'pdf' ? 'PDF' : 'Excel'}
-                          </span>
-                          <Download className="w-4 h-4 text-slate-400" />
-                        </a>
+                        className="flex items-center gap-2 px-3 py-2 border rounded-lg hover:bg-slate-50 transition-colors"
+                      >
+                        {file.type === 'pdf' ? (
+                          <FileText className="w-5 h-5 text-red-600" />
+                        ) : (
+                          <FileSpreadsheet className="w-5 h-5 text-green-600" />
+                        )}
+                        <span className="text-sm font-medium">
+                          {file.type === 'pdf' ? 'PDF' : 'Excel'}
+                        </span>
+                        <Download className="w-4 h-4 text-slate-400" />
+                      </a>
                       );
                     })}
                   </div>
@@ -1384,7 +1399,7 @@ export default function AppPoDetailPage() {
                               {isPast && !isCompleted && (
                                 <Badge className="bg-amber-500 text-white text-[10px]">Overdue</Badge>
                               )}
-                            </div>
+              </div>
                             <div className="text-sm text-slate-700">{followup.description}</div>
                             <div className="text-xs text-slate-500 mt-1 capitalize">
                               {followup.type.replace(/_/g, ' ')}
@@ -1940,7 +1955,7 @@ export default function AppPoDetailPage() {
               <p className="text-sm text-slate-600 mt-1">
                 Review and send the email to the supplier
               </p>
-            </div>
+    </div>
             
             <div className="p-6 overflow-y-auto flex-1 space-y-4">
               {isGeneratingDraft ? (
@@ -1957,6 +1972,38 @@ export default function AppPoDetailPage() {
                     <label className="block text-sm font-medium text-slate-700 mb-1">
                       To <span className="text-red-500">*</span>
                     </label>
+                    
+                    {/* Contact person selector */}
+                    {supplierData?.contacts && supplierData.contacts.length > 0 && (
+                      <div className="mb-2">
+                        <div className="flex flex-wrap gap-2">
+                          {supplierData.contacts.map((contact, idx) => (
+                            <button
+                              key={idx}
+                              type="button"
+                              onClick={() => setSupplierEmail(contact.email)}
+                              className={`px-3 py-1.5 text-sm rounded-full border transition-all ${
+                                supplierEmail === contact.email
+                                  ? 'bg-[#8FA894] text-white border-[#8FA894]'
+                                  : 'bg-white text-slate-700 border-slate-200 hover:border-[#8FA894]'
+                              }`}
+                            >
+                              <span className="font-medium">{contact.name}</span>
+                              {contact.role && (
+                                <span className="text-xs opacity-75 ml-1">({contact.role})</span>
+                              )}
+                              {contact.primary && (
+                                <span className="ml-1 text-[10px] bg-white/20 px-1 rounded">★</span>
+                              )}
+                            </button>
+                          ))}
+                        </div>
+                        <p className="text-xs text-slate-500 mt-1">
+                          Click a contact or enter email manually below
+                        </p>
+                      </div>
+                    )}
+                    
                     <Input
                       type="email"
                       value={supplierEmail}
@@ -1964,7 +2011,7 @@ export default function AppPoDetailPage() {
                       placeholder="supplier@example.com"
                       className={`w-full ${!supplierEmail ? 'border-amber-300 bg-amber-50/50' : ''}`}
                     />
-                    {!supplierEmail && (
+                    {!supplierEmail && !supplierData?.contacts?.length && (
                       <p className="text-xs text-amber-600 mt-1">
                         Enter the supplier's email address
                       </p>

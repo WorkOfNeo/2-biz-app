@@ -7,6 +7,13 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../..
 import { Input } from '../../../components/ui/input';
 import { Badge } from '../../../components/ui/badge';
 
+type SupplierContact = {
+  name: string;
+  email: string;
+  role?: string;
+  primary?: boolean;
+};
+
 type Supplier = {
   id: string;
   name: string;
@@ -17,6 +24,7 @@ type Supplier = {
   moq: number;
   tags: string[];
   notes?: string;
+  contacts?: SupplierContact[];
   active: boolean;
   created_at: string;
   updated_at: string;
@@ -31,6 +39,7 @@ type SupplierFormData = {
   moq: number;
   tags: string[];
   notes: string;
+  contacts: SupplierContact[];
   active: boolean;
 };
 
@@ -43,6 +52,7 @@ const emptyForm: SupplierFormData = {
   moq: 0,
   tags: [],
   notes: '',
+  contacts: [],
   active: true,
 };
 
@@ -186,6 +196,93 @@ function SupplierForm({
             Add
           </Button>
         </div>
+      </div>
+
+      {/* Contacts Section */}
+      <div>
+        <label className="block text-sm font-medium text-slate-700 mb-2">
+          Contact Persons
+        </label>
+        <div className="space-y-2 mb-3">
+          {form.contacts.map((contact, idx) => (
+            <div key={idx} className="flex gap-2 items-start p-3 bg-slate-50 rounded-lg">
+              <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-2">
+                <Input
+                  value={contact.name}
+                  onChange={e => {
+                    const newContacts = [...form.contacts];
+                    newContacts[idx] = { ...contact, name: e.target.value };
+                    setForm(prev => ({ ...prev, contacts: newContacts }));
+                  }}
+                  placeholder="Name"
+                  className="text-sm"
+                />
+                <Input
+                  type="email"
+                  value={contact.email}
+                  onChange={e => {
+                    const newContacts = [...form.contacts];
+                    newContacts[idx] = { ...contact, email: e.target.value };
+                    setForm(prev => ({ ...prev, contacts: newContacts }));
+                  }}
+                  placeholder="Email"
+                  className="text-sm"
+                />
+                <Input
+                  value={contact.role || ''}
+                  onChange={e => {
+                    const newContacts = [...form.contacts];
+                    newContacts[idx] = { ...contact, role: e.target.value };
+                    setForm(prev => ({ ...prev, contacts: newContacts }));
+                  }}
+                  placeholder="Role (optional)"
+                  className="text-sm"
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="flex items-center gap-1 text-xs text-slate-600 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="primaryContact"
+                    checked={contact.primary || false}
+                    onChange={() => {
+                      const newContacts = form.contacts.map((c, i) => ({
+                        ...c,
+                        primary: i === idx,
+                      }));
+                      setForm(prev => ({ ...prev, contacts: newContacts }));
+                    }}
+                    className="w-3 h-3"
+                  />
+                  Primary
+                </label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const newContacts = form.contacts.filter((_, i) => i !== idx);
+                    setForm(prev => ({ ...prev, contacts: newContacts }));
+                  }}
+                  className="text-red-500 hover:text-red-700 p-1"
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => {
+            setForm(prev => ({
+              ...prev,
+              contacts: [...prev.contacts, { name: '', email: '', role: '', primary: prev.contacts.length === 0 }],
+            }));
+          }}
+        >
+          + Add Contact
+        </Button>
       </div>
 
       <div>
@@ -333,6 +430,7 @@ export default function SuppliersPage() {
                 moq: editingSupplier.moq,
                 tags: editingSupplier.tags || [],
                 notes: editingSupplier.notes || '',
+                contacts: editingSupplier.contacts || [],
                 active: editingSupplier.active,
               }}
               onSave={(data) => handleUpdate(editingId, data)}
