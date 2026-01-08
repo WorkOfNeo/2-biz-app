@@ -192,7 +192,8 @@ export function simpleSplitBuy(weights: number[], targetBuy: number): number[] {
   for (let k = 0; k < remainder && k < fractional.length; k++) {
     const item = fractional[k];
     if (item !== undefined) {
-      floored[item.i] += 1;
+      const currentVal = floored[item.i] || 0;
+      floored[item.i] = currentVal + 1;
     }
   }
   
