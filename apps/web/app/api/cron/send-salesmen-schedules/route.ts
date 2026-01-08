@@ -1,4 +1,4 @@
-// Salesmen Schedule Cron Job - queues pending sends for Railway worker
+// Statistic Schedule Cron Job - queues pending sends for Railway worker
 // Times are compared in Europe/Copenhagen timezone
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -7,12 +7,16 @@ const TIMEZONE = 'Europe/Copenhagen';
 
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-interface SalesmenSchedule {
+interface StatisticSchedule {
   id: string;
   name: string;
   salespersonIds: string[];
+  additionalRecipients: string[];
+  includeGeneralCombined: boolean;
   includeCountries: boolean;
-  includeTop15: boolean;
+  includeTop15Salesmen: boolean;
+  includeTop15Overall: boolean;
+  includeOverview: boolean;
   stockLists: string[];
   scheduleType: 'daily' | 'weekly';
   time: string; // "HH:MM"
@@ -63,7 +67,7 @@ function getCopenhagenTime(date: Date): { day: number; hour: number; minute: num
 /**
  * Check if a schedule should run now and return detailed info
  */
-function checkSchedule(schedule: SalesmenSchedule, now: Date): ScheduleCheckResult {
+function checkSchedule(schedule: StatisticSchedule, now: Date): ScheduleCheckResult {
   const cph = getCopenhagenTime(now);
   const currentDay = cph.day;
   const currentHour = cph.hour;
@@ -153,17 +157,36 @@ async function handle(req: Request) {
 
   const supabase = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } });
 
-  // Load schedules
-  const { data: settingsRow } = await supabase
+  // Load schedules - try new key first, fallback to old key
+  let { data: settingsRow } = await supabase
     .from('app_settings')
     .select('id, value')
-    .eq('key', 'salesmen_schedules')
+    .eq('key', 'statistic_schedules')
     .maybeSingle();
 
-  const schedules: SalesmenSchedule[] = (settingsRow?.value as any)?.schedules || [];
+  if (!settingsRow) {
+    const oldResult = await supabase
+      .from('app_settings')
+      .select('id, value')
+      .eq('key', 'salesmen_schedules')
+      .maybeSingle();
+    settingsRow = oldResult.data;
+  }
+
+  const rawSchedules = (settingsRow?.value as any)?.schedules || [];
+  // Migrate old format to new format
+  const schedules: StatisticSchedule[] = rawSchedules.map((s: any) => ({
+    ...s,
+    additionalRecipients: s.additionalRecipients || [],
+    includeGeneralCombined: s.includeGeneralCombined ?? false,
+    includeCountries: s.includeCountries ?? true,
+    includeTop15Salesmen: s.includeTop15Salesmen ?? s.includeTop15 ?? true,
+    includeTop15Overall: s.includeTop15Overall ?? false,
+    includeOverview: s.includeOverview ?? false,
+  }));
 
   if (schedules.length === 0) {
-    return new Response(JSON.stringify({ message: 'No salesmen schedules configured', queued: 0 }), { status: 200 });
+    return new Response(JSON.stringify({ message: 'No statistic schedules configured', queued: 0 }), { status: 200 });
   }
 
   // Load salespersons
@@ -179,14 +202,16 @@ async function handle(req: Request) {
   const { data: exportsData } = await supabase
     .from('exports')
     .select('id, kind, title, path, public_url, meta, created_at')
-    .in('kind', ['general_salesmen_pdfs', 'top_styles_pdf_salesmen', 'countries_pdf', 'stock_list_pdf'])
+    .in('kind', ['general_salesmen_pdfs', 'top_styles_pdf_salesmen', 'top_styles_pdf_overall', 'countries_pdf', 'overview_pdf', 'stock_list_pdf'])
     .order('created_at', { ascending: false })
     .limit(100);
 
   // Build lookup maps
   let salesmenExport: any = null;
   let top15SalesmenExport: any = null;
+  let top15OverallExport: any = null;
   let countriesExport: any = null;
+  let overviewExport: any = null;
   const stockListByName = new Map<string, any>();
 
   for (const row of (exportsData ?? [])) {
@@ -196,8 +221,14 @@ async function handle(req: Request) {
     if (row.kind === 'top_styles_pdf_salesmen' && !top15SalesmenExport) {
       top15SalesmenExport = row;
     }
+    if (row.kind === 'top_styles_pdf_overall' && !top15OverallExport) {
+      top15OverallExport = row;
+    }
     if (row.kind === 'countries_pdf' && !countriesExport) {
       countriesExport = row;
+    }
+    if (row.kind === 'overview_pdf' && !overviewExport) {
+      overviewExport = row;
     }
     if (row.kind === 'stock_list_pdf') {
       const name = String(row?.meta?.list || row?.title || '').replace(/^Stock List ·\s*/i, '');
@@ -208,11 +239,12 @@ async function handle(req: Request) {
   }
 
   const salesmenFiles = (salesmenExport?.meta?.files as Array<{ name: string; path: string; publicUrl?: string | null; salesperson_id?: string }>) || [];
+  const combinedPdfUrl = salesmenExport?.meta?.all?.publicUrl || null;
 
   const now = new Date();
   const cph = getCopenhagenTime(now);
   const results: Array<{ scheduleId: string; scheduleName: string; queued: number; error?: string }> = [];
-  const updatedSchedules: SalesmenSchedule[] = [...schedules];
+  const updatedSchedules: StatisticSchedule[] = [...schedules];
 
   // Check all schedules
   const scheduleChecks: Array<{
@@ -220,6 +252,7 @@ async function handle(req: Request) {
     name: string;
     enabled: boolean;
     salespersonCount: number;
+    additionalRecipientCount: number;
     check: ScheduleCheckResult;
     willRun: boolean;
   }> = [];
@@ -233,52 +266,62 @@ async function handle(req: Request) {
       name: schedule.name,
       enabled: schedule.enabled,
       salespersonCount: schedule.salespersonIds.length,
+      additionalRecipientCount: schedule.additionalRecipients?.length || 0,
       check,
       willRun,
     });
 
     if (!willRun) continue;
 
-    // Queue jobs for each salesperson
+    // Build common template params for files that don't require personal PDF
+    const buildCommonParams = (): Record<string, string> => {
+      const params: Record<string, string> = {};
+      if (schedule.includeGeneralCombined && combinedPdfUrl) {
+        params.all_salesmen_pdf_url = combinedPdfUrl;
+      }
+      if (schedule.includeCountries && countriesExport?.public_url) {
+        params.countries_pdf_url = countriesExport.public_url;
+      }
+      if (schedule.includeTop15Salesmen && top15SalesmenExport?.public_url) {
+        params.top15_salesmen_pdf = top15SalesmenExport.public_url;
+      }
+      if (schedule.includeTop15Overall && top15OverallExport?.public_url) {
+        params.top15_overall_pdf = top15OverallExport.public_url;
+      }
+      if (schedule.includeOverview && overviewExport?.public_url) {
+        params.overview_pdf_url = overviewExport.public_url;
+      }
+      // Add stock lists
+      let idx = 1;
+      for (const listName of (schedule.stockLists || [])) {
+        const exp = stockListByName.get(listName);
+        if (exp?.public_url) {
+          params[`stock_list_${idx}_url`] = exp.public_url;
+          params[`stock_list_${idx}_name`] = listName;
+          idx++;
+        }
+      }
+      return params;
+    };
+
     let queuedCount = 0;
+
+    // Queue jobs for each salesperson (they get their personal PDF)
     for (const spId of schedule.salespersonIds) {
       const sp = salespersonById.get(spId);
       if (!sp || !sp.email) {
-        if (debug) console.log(`[cron:salesmen-schedules] Skipping ${spId}: no email`);
+        if (debug) console.log(`[cron:statistic-schedules] Skipping ${spId}: no email`);
         continue;
       }
 
       // Find their personal PDF
       const myFile = salesmenFiles.find(f => f.salesperson_id === spId);
-      if (!myFile || !myFile.publicUrl) {
-        if (debug) console.log(`[cron:salesmen-schedules] Skipping ${sp.name}: no personal PDF`);
-        continue;
-      }
 
       // Build template params
       const templateParams: Record<string, string> = {
-        salesman_pdf: myFile.publicUrl,
-        countries_pdf_url: '',
-        top15_salesmen_pdf: '',
+        ...buildCommonParams(),
+        salesman_pdf: myFile?.publicUrl || '',
       };
-
-      if (schedule.includeCountries && countriesExport?.public_url) {
-        templateParams.countries_pdf_url = countriesExport.public_url;
-      }
-      if (schedule.includeTop15 && top15SalesmenExport?.public_url) {
-        templateParams.top15_salesmen_pdf = top15SalesmenExport.public_url;
-      }
-
-      // Add stock lists
-      let idx = 1;
-      for (const listName of schedule.stockLists) {
-        const exp = stockListByName.get(listName);
-        if (exp?.public_url) {
-          templateParams[`stock_list_${idx}_url`] = exp.public_url;
-          templateParams[`stock_list_${idx}_name`] = listName;
-          idx++;
-        }
-      }
 
       // Build personalized greeting
       const toTitleCase = (str: string) => str.toLowerCase().split(' ').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
@@ -304,10 +347,40 @@ async function handle(req: Request) {
       });
 
       if (insertError) {
-        console.error(`[cron:salesmen-schedules] Failed to insert job for ${sp.name}:`, insertError);
+        console.error(`[cron:statistic-schedules] Failed to insert job for ${sp.name}:`, insertError);
       } else {
         queuedCount++;
-        if (debug) console.log(`[cron:salesmen-schedules] Queued job for ${sp.name} (${sp.email})`);
+        if (debug) console.log(`[cron:statistic-schedules] Queued job for ${sp.name} (${sp.email})`);
+      }
+    }
+
+    // Queue jobs for additional recipients (no personal PDF)
+    for (const email of (schedule.additionalRecipients || [])) {
+      const templateParams = buildCommonParams();
+      const bodyHtml = `Hej,\n\n${schedule.emailBody || 'Hermed statistik :)'}`;
+
+      const jobPayload = {
+        recipient: email,
+        subject: 'Statistik',
+        body: bodyHtml,
+        context: 'salesmen_schedule',
+        contextId: schedule.id,
+        contextName: schedule.name,
+        templateParams,
+      };
+
+      const { error: insertError } = await supabase.from('jobs').insert({
+        type: 'send_email',
+        payload: jobPayload,
+        status: 'queued',
+        queue: 'default',
+      });
+
+      if (insertError) {
+        console.error(`[cron:statistic-schedules] Failed to insert job for ${email}:`, insertError);
+      } else {
+        queuedCount++;
+        if (debug) console.log(`[cron:statistic-schedules] Queued job for additional recipient (${email})`);
       }
     }
 
@@ -321,12 +394,24 @@ async function handle(req: Request) {
     results.push({ scheduleId: schedule.id, scheduleName: schedule.name, queued: queuedCount });
   }
 
-  // Save updated schedules
-  if (results.length > 0 && settingsRow?.id) {
-    await supabase
+  // Save updated schedules - use new key
+  if (results.length > 0) {
+    const { data: existing } = await supabase
       .from('app_settings')
-      .update({ value: { schedules: updatedSchedules } })
-      .eq('id', settingsRow.id);
+      .select('id')
+      .eq('key', 'statistic_schedules')
+      .maybeSingle();
+    
+    if (existing?.id) {
+      await supabase
+        .from('app_settings')
+        .update({ value: { schedules: updatedSchedules } })
+        .eq('id', existing.id);
+    } else {
+      await supabase
+        .from('app_settings')
+        .insert({ key: 'statistic_schedules', value: { schedules: updatedSchedules } } as any);
+    }
   }
 
   const totalQueued = results.reduce((sum, r) => sum + (r.queued || 0), 0);
@@ -334,7 +419,7 @@ async function handle(req: Request) {
   const response: Record<string, any> = {
     message: results.length > 0 
       ? `Queued ${totalQueued} job(s) for ${results.length} schedule(s)` 
-      : 'No salesmen schedules due to run',
+      : 'No statistic schedules due to run',
     queued: totalQueued,
     testMode,
     serverTime: {
@@ -350,6 +435,7 @@ async function handle(req: Request) {
       name: s.name,
       enabled: s.enabled,
       salespersonCount: s.salespersonCount,
+      additionalRecipientCount: s.additionalRecipientCount,
       scheduledTime: s.check.scheduledTime,
       scheduledDays: s.check.scheduledDays,
       currentTime: s.check.currentTime,
@@ -362,7 +448,10 @@ async function handle(req: Request) {
     response.queueResults = results;
     response.hasSalesmenExport = !!salesmenExport;
     response.hasCountriesExport = !!countriesExport;
-    response.hasTop15Export = !!top15SalesmenExport;
+    response.hasTop15SalesmenExport = !!top15SalesmenExport;
+    response.hasTop15OverallExport = !!top15OverallExport;
+    response.hasOverviewExport = !!overviewExport;
+    response.hasCombinedPdf = !!combinedPdfUrl;
     response.salespersonCount = salespersons.length;
   }
 
@@ -376,7 +465,7 @@ export async function POST(req: Request) {
   try {
     return await handle(req);
   } catch (err: any) {
-    console.error('[cron:send-salesmen-schedules] Error:', err);
+    console.error('[cron:send-statistic-schedules] Error:', err);
     return new Response(JSON.stringify({ error: err?.message || 'Cron error' }), { status: 500 });
   }
 }
@@ -385,7 +474,7 @@ export async function GET(req: Request) {
   try {
     return await handle(req);
   } catch (err: any) {
-    console.error('[cron:send-salesmen-schedules] Error:', err);
+    console.error('[cron:send-statistic-schedules] Error:', err);
     return new Response(JSON.stringify({ error: err?.message || 'Cron error' }), { status: 500 });
   }
 }
@@ -393,4 +482,3 @@ export async function GET(req: Request) {
 export async function OPTIONS() {
   return new Response(null, { status: 204 });
 }
-

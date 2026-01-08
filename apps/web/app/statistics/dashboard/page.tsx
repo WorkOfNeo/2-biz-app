@@ -9,7 +9,7 @@ import { Table, TableBody, TableRow, TableCell, TableHead, TableHeader } from '.
 import { Badge } from '../../../components/ui/badge';
 import { EmailPillsInput } from '../../../components/EmailPillsInput';
 import { Sheet, SheetHeader, SheetTitle, SheetContent, SheetClose } from '../../../components/ui/sheet';
-import { Plus, Pencil, Trash2, Send, Clock, Calendar } from 'lucide-react';
+import { Plus, Pencil, Trash2, Send, Clock, Calendar, Eye, X } from 'lucide-react';
 
 const EMAILJS_ENDPOINT = 'https://api.emailjs.com/api/v1.0/email/send';
 const EMAILJS_SERVICE_ID = process.env.NEXT_PUBLIC_EMAILJS_SERVICE_ID || process.env.NEXT_PUBLIC_EMAILJS_SERVICE_KEY || '';
@@ -41,12 +41,17 @@ interface StockListSchedule {
   lastRun?: string;
 }
 
-interface SalesmenSchedule {
+interface StatisticSchedule {
   id: string;
   name: string;
-  salespersonIds: string[]; // which salespersons to include
+  salespersonIds: string[]; // which salespersons to include (receive their personal PDF)
+  additionalRecipients: string[]; // extra emails not in salespersons list
+  // Which files to include
+  includeGeneralCombined: boolean;
   includeCountries: boolean;
-  includeTop15: boolean;
+  includeTop15Salesmen: boolean;
+  includeTop15Overall: boolean;
+  includeOverview: boolean;
   stockLists: string[]; // optional stock lists to attach
   scheduleType: 'daily' | 'weekly';
   time: string;
@@ -70,7 +75,7 @@ function generateId(): string {
   return Math.random().toString(36).substring(2, 9);
 }
 
-function formatSchedule(schedule: StockListSchedule | SalesmenSchedule): string {
+function formatSchedule(schedule: StockListSchedule | StatisticSchedule): string {
   if (schedule.scheduleType === 'daily') {
     return `Daily at ${schedule.time}`;
   }
@@ -178,190 +183,223 @@ export default function StatisticsDashboardPage() {
     return data;
   });
 
-  // Salesmen Schedules
-  const [salesmenSchedules, setSalesmenSchedules] = React.useState<SalesmenSchedule[]>([]);
-  const [salesmenSheetOpen, setSalesmenSheetOpen] = React.useState(false);
-  const [editingSalesmenSchedule, setEditingSalesmenSchedule] = React.useState<SalesmenSchedule | null>(null);
-  const [viewingSalesmenSchedule, setViewingSalesmenSchedule] = React.useState<SalesmenSchedule | null>(null);
-  const [viewSalesmenSheetOpen, setViewSalesmenSheetOpen] = React.useState(false);
-  const [savingSalesmenSchedules, setSavingSalesmenSchedules] = React.useState(false);
-  const [sendingSalesmenScheduleId, setSendingSalesmenScheduleId] = React.useState<string | null>(null);
+  // Statistic Schedules (renamed from Salesmen Schedules)
+  const [statisticSchedules, setStatisticSchedules] = React.useState<StatisticSchedule[]>([]);
+  const [statisticSheetOpen, setStatisticSheetOpen] = React.useState(false);
+  const [editingStatisticSchedule, setEditingStatisticSchedule] = React.useState<StatisticSchedule | null>(null);
+  const [viewingStatisticSchedule, setViewingStatisticSchedule] = React.useState<StatisticSchedule | null>(null);
+  const [viewStatisticSheetOpen, setViewStatisticSheetOpen] = React.useState(false);
+  const [savingStatisticSchedules, setSavingStatisticSchedules] = React.useState(false);
+  const [sendingStatisticScheduleId, setSendingStatisticScheduleId] = React.useState<string | null>(null);
+  const [previewUrl, setPreviewUrl] = React.useState<string | null>(null);
 
-  // Form state for salesmen schedule editor
-  const [smFormName, setSmFormName] = React.useState('');
-  const [smFormSalespersons, setSmFormSalespersons] = React.useState<Set<string>>(new Set());
-  const [smFormIncludeCountries, setSmFormIncludeCountries] = React.useState(true);
-  const [smFormIncludeTop15, setSmFormIncludeTop15] = React.useState(true);
-  const [smFormStockLists, setSmFormStockLists] = React.useState<Set<string>>(new Set());
-  const [smFormScheduleType, setSmFormScheduleType] = React.useState<'daily' | 'weekly'>('weekly');
-  const [smFormTime, setSmFormTime] = React.useState('09:00');
-  const [smFormDays, setSmFormDays] = React.useState<Set<number>>(new Set([1]));
-  const [smFormEmailBody, setSmFormEmailBody] = React.useState('Hermed statistik :)');
-  const [smFormEnabled, setSmFormEnabled] = React.useState(true);
+  // Form state for statistic schedule editor
+  const [stFormName, setStFormName] = React.useState('');
+  const [stFormSalespersons, setStFormSalespersons] = React.useState<Set<string>>(new Set());
+  const [stFormAdditionalRecipients, setStFormAdditionalRecipients] = React.useState<string[]>([]);
+  const [stFormIncludeGeneralCombined, setStFormIncludeGeneralCombined] = React.useState(false);
+  const [stFormIncludeCountries, setStFormIncludeCountries] = React.useState(true);
+  const [stFormIncludeTop15Salesmen, setStFormIncludeTop15Salesmen] = React.useState(true);
+  const [stFormIncludeTop15Overall, setStFormIncludeTop15Overall] = React.useState(false);
+  const [stFormIncludeOverview, setStFormIncludeOverview] = React.useState(false);
+  const [stFormStockLists, setStFormStockLists] = React.useState<Set<string>>(new Set());
+  const [stFormScheduleType, setStFormScheduleType] = React.useState<'daily' | 'weekly'>('weekly');
+  const [stFormTime, setStFormTime] = React.useState('09:00');
+  const [stFormDays, setStFormDays] = React.useState<Set<number>>(new Set([1]));
+  const [stFormEmailBody, setStFormEmailBody] = React.useState('Hermed statistik :)');
+  const [stFormEnabled, setStFormEnabled] = React.useState(true);
 
-  // Load salesmen schedules from app_settings
-  useSWR('dashboard:salesmen_schedules', async () => {
-    const { data } = await supabase.from('app_settings').select('id, value').eq('key', 'salesmen_schedules').maybeSingle();
-    const val = ((data?.value as any) || {}) as { schedules?: SalesmenSchedule[] };
-    if (val.schedules) setSalesmenSchedules(val.schedules);
+  // Load statistic schedules from app_settings (check both old and new keys for migration)
+  useSWR('dashboard:statistic_schedules', async () => {
+    // Try new key first, fallback to old key for migration
+    let { data } = await supabase.from('app_settings').select('id, value').eq('key', 'statistic_schedules').maybeSingle();
+    if (!data) {
+      const old = await supabase.from('app_settings').select('id, value').eq('key', 'salesmen_schedules').maybeSingle();
+      data = old.data;
+    }
+    const val = ((data?.value as any) || {}) as { schedules?: StatisticSchedule[] };
+    if (val.schedules) {
+      // Migrate old schedules to new format
+      const migrated = val.schedules.map(s => ({
+        ...s,
+        additionalRecipients: s.additionalRecipients || [],
+        includeGeneralCombined: s.includeGeneralCombined ?? false,
+        includeTop15Salesmen: s.includeTop15Salesmen ?? (s as any).includeTop15 ?? true,
+        includeTop15Overall: s.includeTop15Overall ?? false,
+        includeOverview: s.includeOverview ?? false,
+        includeCountries: s.includeCountries ?? true,
+      }));
+      setStatisticSchedules(migrated);
+    }
     return data;
   });
 
-  async function saveSalesmenSchedules(newSchedules: SalesmenSchedule[]) {
-    setSavingSalesmenSchedules(true);
+  async function saveStatisticSchedules(newSchedules: StatisticSchedule[]) {
+    setSavingStatisticSchedules(true);
     try {
       const value = { schedules: newSchedules };
-      const { data: existing } = await supabase.from('app_settings').select('id').eq('key', 'salesmen_schedules').maybeSingle();
+      const { data: existing } = await supabase.from('app_settings').select('id').eq('key', 'statistic_schedules').maybeSingle();
       if (existing?.id) await supabase.from('app_settings').update({ value }).eq('id', existing.id);
-      else await supabase.from('app_settings').insert({ key: 'salesmen_schedules', value } as any);
-      setSalesmenSchedules(newSchedules);
+      else await supabase.from('app_settings').insert({ key: 'statistic_schedules', value } as any);
+      setStatisticSchedules(newSchedules);
     } finally {
-      setSavingSalesmenSchedules(false);
+      setSavingStatisticSchedules(false);
     }
   }
 
-  function openNewSalesmenSchedule() {
-    setEditingSalesmenSchedule(null);
-    setSmFormName('');
-    setSmFormSalespersons(new Set());
-    setSmFormIncludeCountries(true);
-    setSmFormIncludeTop15(true);
-    setSmFormStockLists(new Set());
-    setSmFormScheduleType('weekly');
-    setSmFormTime('09:00');
-    setSmFormDays(new Set([1]));
-    setSmFormEmailBody('Hermed statistik :)');
-    setSmFormEnabled(true);
-    setSalesmenSheetOpen(true);
+  function openNewStatisticSchedule() {
+    setEditingStatisticSchedule(null);
+    setStFormName('');
+    setStFormSalespersons(new Set());
+    setStFormAdditionalRecipients([]);
+    setStFormIncludeGeneralCombined(false);
+    setStFormIncludeCountries(true);
+    setStFormIncludeTop15Salesmen(true);
+    setStFormIncludeTop15Overall(false);
+    setStFormIncludeOverview(false);
+    setStFormStockLists(new Set());
+    setStFormScheduleType('weekly');
+    setStFormTime('09:00');
+    setStFormDays(new Set([1]));
+    setStFormEmailBody('Hermed statistik :)');
+    setStFormEnabled(true);
+    setStatisticSheetOpen(true);
   }
 
-  function openEditSalesmenSchedule(schedule: SalesmenSchedule) {
-    setViewSalesmenSheetOpen(false);
-    setEditingSalesmenSchedule(schedule);
-    setSmFormName(schedule.name);
-    setSmFormSalespersons(new Set(schedule.salespersonIds));
-    setSmFormIncludeCountries(schedule.includeCountries);
-    setSmFormIncludeTop15(schedule.includeTop15);
-    setSmFormStockLists(new Set(schedule.stockLists));
-    setSmFormScheduleType(schedule.scheduleType);
-    setSmFormTime(schedule.time);
-    setSmFormDays(new Set(schedule.days));
-    setSmFormEmailBody(schedule.emailBody);
-    setSmFormEnabled(schedule.enabled);
-    setSalesmenSheetOpen(true);
+  function openEditStatisticSchedule(schedule: StatisticSchedule) {
+    setViewStatisticSheetOpen(false);
+    setEditingStatisticSchedule(schedule);
+    setStFormName(schedule.name);
+    setStFormSalespersons(new Set(schedule.salespersonIds));
+    setStFormAdditionalRecipients(schedule.additionalRecipients || []);
+    setStFormIncludeGeneralCombined(schedule.includeGeneralCombined ?? false);
+    setStFormIncludeCountries(schedule.includeCountries ?? true);
+    setStFormIncludeTop15Salesmen(schedule.includeTop15Salesmen ?? true);
+    setStFormIncludeTop15Overall(schedule.includeTop15Overall ?? false);
+    setStFormIncludeOverview(schedule.includeOverview ?? false);
+    setStFormStockLists(new Set(schedule.stockLists || []));
+    setStFormScheduleType(schedule.scheduleType);
+    setStFormTime(schedule.time);
+    setStFormDays(new Set(schedule.days));
+    setStFormEmailBody(schedule.emailBody);
+    setStFormEnabled(schedule.enabled);
+    setStatisticSheetOpen(true);
   }
 
-  function openViewSalesmenSchedule(schedule: SalesmenSchedule) {
-    setViewingSalesmenSchedule(schedule);
-    setViewSalesmenSheetOpen(true);
+  function openViewStatisticSchedule(schedule: StatisticSchedule) {
+    setViewingStatisticSchedule(schedule);
+    setViewStatisticSheetOpen(true);
   }
 
-  function handleSaveSalesmenSchedule() {
-    if (!smFormName.trim()) {
+  function handleSaveStatisticSchedule() {
+    if (!stFormName.trim()) {
       alert('Please enter a schedule name');
       return;
     }
-    if (smFormSalespersons.size === 0) {
-      alert('Please select at least one salesperson');
+    if (stFormSalespersons.size === 0 && stFormAdditionalRecipients.length === 0) {
+      alert('Please select at least one salesperson or add at least one recipient email');
       return;
     }
-    if (smFormScheduleType === 'weekly' && smFormDays.size === 0) {
+    if (stFormScheduleType === 'weekly' && stFormDays.size === 0) {
       alert('Please select at least one day');
       return;
     }
 
-    const newSchedule: SalesmenSchedule = {
-      id: editingSalesmenSchedule?.id || generateId(),
-      name: smFormName.trim(),
-      salespersonIds: Array.from(smFormSalespersons),
-      includeCountries: smFormIncludeCountries,
-      includeTop15: smFormIncludeTop15,
-      stockLists: Array.from(smFormStockLists),
-      scheduleType: smFormScheduleType,
-      time: smFormTime,
-      days: Array.from(smFormDays),
-      emailBody: smFormEmailBody,
-      enabled: smFormEnabled,
-      lastRun: editingSalesmenSchedule?.lastRun,
+    const newSchedule: StatisticSchedule = {
+      id: editingStatisticSchedule?.id || generateId(),
+      name: stFormName.trim(),
+      salespersonIds: Array.from(stFormSalespersons),
+      additionalRecipients: stFormAdditionalRecipients,
+      includeGeneralCombined: stFormIncludeGeneralCombined,
+      includeCountries: stFormIncludeCountries,
+      includeTop15Salesmen: stFormIncludeTop15Salesmen,
+      includeTop15Overall: stFormIncludeTop15Overall,
+      includeOverview: stFormIncludeOverview,
+      stockLists: Array.from(stFormStockLists),
+      scheduleType: stFormScheduleType,
+      time: stFormTime,
+      days: Array.from(stFormDays),
+      emailBody: stFormEmailBody,
+      enabled: stFormEnabled,
+      lastRun: editingStatisticSchedule?.lastRun,
     };
 
-    let newSchedules: SalesmenSchedule[];
-    if (editingSalesmenSchedule) {
-      newSchedules = salesmenSchedules.map(s => s.id === editingSalesmenSchedule.id ? newSchedule : s);
+    let newSchedules: StatisticSchedule[];
+    if (editingStatisticSchedule) {
+      newSchedules = statisticSchedules.map(s => s.id === editingStatisticSchedule.id ? newSchedule : s);
     } else {
-      newSchedules = [...salesmenSchedules, newSchedule];
+      newSchedules = [...statisticSchedules, newSchedule];
     }
 
-    saveSalesmenSchedules(newSchedules);
-    setSalesmenSheetOpen(false);
+    saveStatisticSchedules(newSchedules);
+    setStatisticSheetOpen(false);
   }
 
-  function handleDeleteSalesmenSchedule(id: string) {
+  function handleDeleteStatisticSchedule(id: string) {
     if (!confirm('Delete this schedule?')) return;
-    const newSchedules = salesmenSchedules.filter(s => s.id !== id);
-    saveSalesmenSchedules(newSchedules);
+    const newSchedules = statisticSchedules.filter(s => s.id !== id);
+    saveStatisticSchedules(newSchedules);
   }
 
-  function handleToggleSalesmenEnabled(id: string) {
-    const newSchedules = salesmenSchedules.map(s => 
+  function handleToggleStatisticEnabled(id: string) {
+    const newSchedules = statisticSchedules.map(s => 
       s.id === id ? { ...s, enabled: !s.enabled } : s
     );
-    saveSalesmenSchedules(newSchedules);
+    saveStatisticSchedules(newSchedules);
   }
 
-  async function handleSendSalesmenNow(schedule: SalesmenSchedule) {
-    if (sendingSalesmenScheduleId) return;
-    setSendingSalesmenScheduleId(schedule.id);
+  async function handleSendStatisticNow(schedule: StatisticSchedule) {
+    if (sendingStatisticScheduleId) return;
+    setSendingStatisticScheduleId(schedule.id);
     try {
       const spExport = latestByKind.get('general_salesmen_pdfs');
       const top15Salesmen = latestByKind.get('top_styles_pdf_salesmen');
+      const top15Overall = latestByKind.get('top_styles_pdf_overall');
       const countries = latestByKind.get('countries_pdf');
+      const overview = latestByKind.get('overview_pdf');
       
-      if (!spExport) {
-        alert('No salesperson PDFs found. Please run exports first.');
-        return;
-      }
-      
-      const files = (spExport.meta?.files as Array<{ name: string; path: string; publicUrl?: string | null; salesperson_id?: string }>) || [];
+      const files = (spExport?.meta?.files as Array<{ name: string; path: string; publicUrl?: string | null; salesperson_id?: string }>) || [];
+      const combinedUrl = spExport?.meta?.all?.publicUrl || null;
       const byId: Record<string, { name: string; email?: string | null }> = Object.fromEntries((salespersons ?? []).map(s => [s.id, { name: s.name, email: s.email }]));
       
       let emailCount = 0;
       
+      // Build common template params for files that don't require personal PDF
+      const buildCommonParams = (): Record<string, string> => {
+        const params: Record<string, string> = {};
+        if (schedule.includeGeneralCombined && combinedUrl) params.all_salesmen_pdf_url = combinedUrl;
+        if (schedule.includeCountries && countries?.public_url) params.countries_pdf_url = countries.public_url;
+        if (schedule.includeTop15Salesmen && top15Salesmen?.public_url) params.top15_salesmen_pdf = top15Salesmen.public_url;
+        if (schedule.includeTop15Overall && top15Overall?.public_url) params.top15_overall_pdf = top15Overall.public_url;
+        if (schedule.includeOverview && overview?.public_url) params.overview_pdf_url = overview.public_url;
+        // Add stock lists
+        if (schedule.stockLists?.length > 0) {
+          let idx = 1;
+          for (const listName of schedule.stockLists) {
+            const exp = latestStockListByName.get(listName);
+            if (exp?.public_url) {
+              params[`stock_list_${idx}_url`] = exp.public_url;
+              params[`stock_list_${idx}_name`] = listName;
+              idx++;
+            }
+          }
+        }
+        return params;
+      };
+
+      // Send to salespersons (each gets their personal PDF)
       for (const spId of schedule.salespersonIds) {
         const sp = (salespersons ?? []).find(s => s.id === spId);
         if (!sp) continue;
         
         const my = files.find((f) => f.salesperson_id === spId);
-        if (!my || !my.publicUrl) continue;
-        
         const recipient = sp.email;
         if (!recipient) continue;
         
         const dynamicParams: Record<string, string> = {
-          salesman_pdf: my.publicUrl || '',
-          countries_pdf_url: '',
-          top15_salesmen_pdf: ''
+          ...buildCommonParams(),
+          salesman_pdf: my?.publicUrl || '',
         };
-        
-        if (schedule.includeCountries && countries?.public_url) {
-          dynamicParams.countries_pdf_url = countries.public_url;
-        }
-        if (schedule.includeTop15 && top15Salesmen?.public_url) {
-          dynamicParams.top15_salesmen_pdf = top15Salesmen.public_url;
-        }
-        
-        // Add stock lists
-        if (schedule.stockLists.length > 0) {
-          let idx = 1;
-          for (const listName of schedule.stockLists) {
-            const exp = latestStockListByName.get(listName);
-            if (exp?.public_url) {
-              dynamicParams[`stock_list_${idx}_url`] = exp.public_url;
-              dynamicParams[`stock_list_${idx}_name`] = listName;
-              idx++;
-            }
-          }
-        }
         
         const fullName = String(byId[spId]?.name || '');
         const toTitleCase = (str: string) => str.toLowerCase().split(' ').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
@@ -374,15 +412,25 @@ export default function StatisticsDashboardPage() {
         emailCount++;
       }
       
+      // Send to additional recipients (they don't get personal PDF, just the selected files)
+      for (const recipient of (schedule.additionalRecipients || [])) {
+        const dynamicParams = buildCommonParams();
+        const bodyHtml = `Hej,\n\n${schedule.emailBody || 'Hermed statistik :)'}`;
+        const subject = 'Statistik';
+        
+        await sendEmailJs([recipient], subject, bodyHtml, undefined, dynamicParams, false);
+        emailCount++;
+      }
+      
       // Update lastRun
-      const newSchedules = salesmenSchedules.map(s => 
+      const newSchedules = statisticSchedules.map(s => 
         s.id === schedule.id ? { ...s, lastRun: new Date().toISOString() } : s
       );
-      await saveSalesmenSchedules(newSchedules);
+      await saveStatisticSchedules(newSchedules);
       
-      alert(`${emailCount} email(s) sent to salespersons`);
+      alert(`${emailCount} email(s) sent`);
     } finally {
-      setSendingSalesmenScheduleId(null);
+      setSendingStatisticScheduleId(null);
     }
   }
 
@@ -1172,22 +1220,22 @@ export default function StatisticsDashboardPage() {
             </CardContent>
           </Card>
 
-          {/* Box #4 - Salesmen Schedules */}
+          {/* Box #4 - Statistic Schedules */}
           <Card>
             <CardHeader className="flex flex-row items-center justify-between">
               <div>
-                <CardTitle>Salesmen Schedules</CardTitle>
-                <CardDescription>Configure automated salesperson statistics emails</CardDescription>
+                <CardTitle>Statistic Schedules</CardTitle>
+                <CardDescription>Configure automated statistics emails with PDFs and reports</CardDescription>
               </div>
-              <Button size="sm" onClick={openNewSalesmenSchedule}>
+              <Button size="sm" onClick={openNewStatisticSchedule}>
                 <Plus className="h-4 w-4 mr-1" />
                 New Schedule
               </Button>
             </CardHeader>
             <CardContent>
-              {salesmenSchedules.length === 0 ? (
+              {statisticSchedules.length === 0 ? (
                 <div className="text-center py-8 text-gray-500 text-sm">
-                  No salesmen schedules configured yet. Create one to get started.
+                  No statistic schedules configured yet. Create one to get started.
                 </div>
               ) : (
                 <div className="rounded-md border overflow-hidden">
@@ -1196,41 +1244,32 @@ export default function StatisticsDashboardPage() {
                       <TableRow>
                         <TableHead className="w-12">On</TableHead>
                         <TableHead>Name</TableHead>
-                        <TableHead>Salespersons</TableHead>
-                        <TableHead>Options</TableHead>
+                        <TableHead>Recipients</TableHead>
                         <TableHead>Schedule</TableHead>
-                        <TableHead>Last Run</TableHead>
                         <TableHead className="w-28">Actions</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {salesmenSchedules.map((schedule) => (
+                      {statisticSchedules.map((schedule) => {
+                        const recipientCount = schedule.salespersonIds.length + (schedule.additionalRecipients?.length || 0);
+                        return (
                         <TableRow 
                           key={schedule.id} 
                           className="cursor-pointer hover:bg-slate-50"
-                          onClick={() => openViewSalesmenSchedule(schedule)}
+                          onClick={() => openViewStatisticSchedule(schedule)}
                         >
                           <TableCell onClick={(e) => e.stopPropagation()}>
                             <Toggle
                               checked={schedule.enabled}
-                              onChange={() => handleToggleSalesmenEnabled(schedule.id)}
+                              onChange={() => handleToggleStatisticEnabled(schedule.id)}
                               size="sm"
                             />
                           </TableCell>
                           <TableCell className="font-medium">{schedule.name}</TableCell>
                           <TableCell>
                             <span className="text-xs text-gray-600">
-                              {schedule.salespersonIds.length} salesperson{schedule.salespersonIds.length !== 1 ? 's' : ''}
+                              {recipientCount} recipient{recipientCount !== 1 ? 's' : ''}
                             </span>
-                          </TableCell>
-                          <TableCell>
-                            <div className="flex flex-wrap gap-1">
-                              {schedule.includeCountries && <Badge className="text-[10px] py-0">Countries</Badge>}
-                              {schedule.includeTop15 && <Badge className="text-[10px] py-0">Top 15</Badge>}
-                              {schedule.stockLists.length > 0 && (
-                                <Badge className="text-[10px] py-0 bg-slate-100">{schedule.stockLists.length} list{schedule.stockLists.length !== 1 ? 's' : ''}</Badge>
-                              )}
-                            </div>
                           </TableCell>
                           <TableCell>
                             <div className="flex items-center gap-1 text-xs text-gray-600">
@@ -1238,17 +1277,14 @@ export default function StatisticsDashboardPage() {
                               {formatSchedule(schedule)}
                             </div>
                           </TableCell>
-                          <TableCell>
-                            <span className="text-xs text-gray-500">{formatLastRun(schedule.lastRun)}</span>
-                          </TableCell>
                           <TableCell onClick={(e) => e.stopPropagation()}>
                             <div className="flex items-center gap-1">
                               <Button
                                 variant="ghost"
                                 size="sm"
                                 className="h-7 w-7 p-0"
-                                onClick={() => handleSendSalesmenNow(schedule)}
-                                disabled={sendingSalesmenScheduleId === schedule.id}
+                                onClick={() => handleSendStatisticNow(schedule)}
+                                disabled={sendingStatisticScheduleId === schedule.id}
                                 title="Send now"
                               >
                                 <Send className="h-3.5 w-3.5" />
@@ -1257,7 +1293,7 @@ export default function StatisticsDashboardPage() {
                                 variant="ghost"
                                 size="sm"
                                 className="h-7 w-7 p-0"
-                                onClick={() => openEditSalesmenSchedule(schedule)}
+                                onClick={() => openEditStatisticSchedule(schedule)}
                                 title="Edit"
                               >
                                 <Pencil className="h-3.5 w-3.5" />
@@ -1266,7 +1302,7 @@ export default function StatisticsDashboardPage() {
                                 variant="ghost"
                                 size="sm"
                                 className="h-7 w-7 p-0 text-red-600 hover:text-red-700 hover:bg-red-50"
-                                onClick={() => handleDeleteSalesmenSchedule(schedule.id)}
+                                onClick={() => handleDeleteStatisticSchedule(schedule.id)}
                                 title="Delete"
                               >
                                 <Trash2 className="h-3.5 w-3.5" />
@@ -1274,15 +1310,10 @@ export default function StatisticsDashboardPage() {
                             </div>
                           </TableCell>
                         </TableRow>
-                      ))}
+                        );
+                      })}
                     </TableBody>
                   </Table>
-                </div>
-              )}
-
-              {(salespersons ?? []).length === 0 && (
-                <div className="mt-4 p-3 rounded-md bg-amber-50 border border-amber-200 text-amber-800 text-xs">
-                  No salespersons found. Add salespersons first to create schedules.
                 </div>
               )}
             </CardContent>
@@ -1599,11 +1630,11 @@ export default function StatisticsDashboardPage() {
         </SheetContent>
       </Sheet>
 
-      {/* Salesmen Schedule Editor Sheet */}
-      <Sheet open={salesmenSheetOpen} onOpenChange={setSalesmenSheetOpen}>
-        <SheetClose onClick={() => setSalesmenSheetOpen(false)} />
+      {/* Statistic Schedule Editor Sheet */}
+      <Sheet open={statisticSheetOpen} onOpenChange={setStatisticSheetOpen}>
+        <SheetClose onClick={() => setStatisticSheetOpen(false)} />
         <SheetHeader>
-          <SheetTitle>{editingSalesmenSchedule ? 'Edit Salesmen Schedule' : 'New Salesmen Schedule'}</SheetTitle>
+          <SheetTitle>{editingStatisticSchedule ? 'Edit Statistic Schedule' : 'New Statistic Schedule'}</SheetTitle>
         </SheetHeader>
         <SheetContent className="space-y-6">
           {/* Schedule Name */}
@@ -1612,45 +1643,45 @@ export default function StatisticsDashboardPage() {
             <input 
               type="text"
               className="w-full h-9 rounded-md border border-slate-200 bg-white px-3 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-offset-2"
-              placeholder="e.g., Weekly Salesperson Stats"
-              value={smFormName}
-              onChange={(e) => setSmFormName(e.target.value)}
+              placeholder="e.g., Weekly Statistics"
+              value={stFormName}
+              onChange={(e) => setStFormName(e.target.value)}
             />
           </div>
 
           {/* Salespersons Selection */}
           <div>
             <div className="flex items-center justify-between mb-2">
-              <label className="text-sm text-gray-600">Salespersons</label>
+              <label className="text-sm text-gray-600">Salespersons (receive personal PDF)</label>
               <button
                 type="button"
                 onClick={() => {
                   const allIds = (salespersons ?? []).filter(sp => sp.email).map(sp => sp.id);
-                  const allSelected = allIds.every(id => smFormSalespersons.has(id));
+                  const allSelected = allIds.every(id => stFormSalespersons.has(id));
                   if (allSelected) {
-                    setSmFormSalespersons(new Set());
+                    setStFormSalespersons(new Set());
                   } else {
-                    setSmFormSalespersons(new Set(allIds));
+                    setStFormSalespersons(new Set(allIds));
                   }
                 }}
                 className="text-xs text-slate-600 hover:text-slate-900"
               >
-                {(salespersons ?? []).filter(sp => sp.email).every(sp => smFormSalespersons.has(sp.id)) ? 'Deselect all' : 'Select all'}
+                {(salespersons ?? []).filter(sp => sp.email).every(sp => stFormSalespersons.has(sp.id)) ? 'Deselect all' : 'Select all'}
               </button>
             </div>
-            <div className="max-h-40 overflow-auto rounded-md border">
+            <div className="max-h-32 overflow-auto rounded-md border">
               <Table>
                 <TableBody>
                   {(salespersons ?? []).map((sp) => {
                     const hasEmail = Boolean(sp.email);
-                    const on = smFormSalespersons.has(sp.id);
+                    const on = stFormSalespersons.has(sp.id);
                     return (
                       <TableRow 
                         key={sp.id} 
                         className={!hasEmail ? 'opacity-50' : 'cursor-pointer'}
                         onClick={() => {
                           if (!hasEmail) return;
-                          setSmFormSalespersons(prev => {
+                          setStFormSalespersons(prev => {
                             const n = new Set(prev);
                             if (n.has(sp.id)) n.delete(sp.id);
                             else n.add(sp.id);
@@ -1673,19 +1704,97 @@ export default function StatisticsDashboardPage() {
             </div>
           </div>
 
-          {/* Include Options */}
+          {/* Additional Recipients */}
+          <div>
+            <EmailPillsInput
+              label="Additional Recipients"
+              helpText="Emails not in salespersons list (no personal PDF)"
+              value={stFormAdditionalRecipients}
+              onChange={setStFormAdditionalRecipients}
+              placeholder="Add email…"
+            />
+          </div>
+
+          {/* Files to Include */}
           <div className="space-y-2">
-            <label className="text-sm text-gray-600 block">Include in email</label>
-            <Toggle
-              checked={smFormIncludeCountries}
-              onChange={() => setSmFormIncludeCountries(v => !v)}
-              label="Countries PDF"
-            />
-            <Toggle
-              checked={smFormIncludeTop15}
-              onChange={() => setSmFormIncludeTop15(v => !v)}
-              label="Top 15 Salesmen PDF"
-            />
+            <label className="text-sm text-gray-600 block">Files to include</label>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between p-2 rounded-md border bg-slate-50">
+                <div className="flex items-center gap-2">
+                  <Toggle
+                    checked={stFormIncludeGeneralCombined}
+                    onChange={() => setStFormIncludeGeneralCombined(v => !v)}
+                    size="sm"
+                  />
+                  <span className="text-sm">General (all combined)</span>
+                </div>
+                {latestByKind.get('general_salesmen_pdfs')?.meta?.all?.publicUrl && (
+                  <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setPreviewUrl(latestByKind.get('general_salesmen_pdfs')?.meta?.all?.publicUrl || null)}>
+                    <Eye className="h-3 w-3 mr-1" />Preview
+                  </Button>
+                )}
+              </div>
+              <div className="flex items-center justify-between p-2 rounded-md border bg-slate-50">
+                <div className="flex items-center gap-2">
+                  <Toggle
+                    checked={stFormIncludeCountries}
+                    onChange={() => setStFormIncludeCountries(v => !v)}
+                    size="sm"
+                  />
+                  <span className="text-sm">Countries</span>
+                </div>
+                {latestByKind.get('countries_pdf')?.public_url && (
+                  <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setPreviewUrl(latestByKind.get('countries_pdf')?.public_url || null)}>
+                    <Eye className="h-3 w-3 mr-1" />Preview
+                  </Button>
+                )}
+              </div>
+              <div className="flex items-center justify-between p-2 rounded-md border bg-slate-50">
+                <div className="flex items-center gap-2">
+                  <Toggle
+                    checked={stFormIncludeTop15Salesmen}
+                    onChange={() => setStFormIncludeTop15Salesmen(v => !v)}
+                    size="sm"
+                  />
+                  <span className="text-sm">Top 15 – Salesmen</span>
+                </div>
+                {latestByKind.get('top_styles_pdf_salesmen')?.public_url && (
+                  <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setPreviewUrl(latestByKind.get('top_styles_pdf_salesmen')?.public_url || null)}>
+                    <Eye className="h-3 w-3 mr-1" />Preview
+                  </Button>
+                )}
+              </div>
+              <div className="flex items-center justify-between p-2 rounded-md border bg-slate-50">
+                <div className="flex items-center gap-2">
+                  <Toggle
+                    checked={stFormIncludeTop15Overall}
+                    onChange={() => setStFormIncludeTop15Overall(v => !v)}
+                    size="sm"
+                  />
+                  <span className="text-sm">Top 15 – Overall</span>
+                </div>
+                {latestByKind.get('top_styles_pdf_overall')?.public_url && (
+                  <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setPreviewUrl(latestByKind.get('top_styles_pdf_overall')?.public_url || null)}>
+                    <Eye className="h-3 w-3 mr-1" />Preview
+                  </Button>
+                )}
+              </div>
+              <div className="flex items-center justify-between p-2 rounded-md border bg-slate-50">
+                <div className="flex items-center gap-2">
+                  <Toggle
+                    checked={stFormIncludeOverview}
+                    onChange={() => setStFormIncludeOverview(v => !v)}
+                    size="sm"
+                  />
+                  <span className="text-sm">Overview</span>
+                </div>
+                {latestByKind.get('overview_pdf')?.public_url && (
+                  <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setPreviewUrl(latestByKind.get('overview_pdf')?.public_url || null)}>
+                    <Eye className="h-3 w-3 mr-1" />Preview
+                  </Button>
+                )}
+              </div>
+            </div>
           </div>
 
           {/* Stock Lists */}
@@ -1694,22 +1803,29 @@ export default function StatisticsDashboardPage() {
               <label className="text-sm text-gray-600 block mb-2">Stock Lists (optional)</label>
               <div className="flex flex-wrap gap-2">
                 {availableStockLists.map((l) => {
-                  const on = smFormStockLists.has(l.name);
+                  const on = stFormStockLists.has(l.name);
+                  const exp = latestStockListByName.get(l.name);
                   return (
-                    <Badge
-                      key={l.id}
-                      className={`cursor-pointer select-none transition-colors ${on ? 'bg-slate-900 text-white border-slate-900' : 'bg-white hover:bg-slate-50'}`}
-                      onClick={() => {
-                        setSmFormStockLists(prev => {
-                          const n = new Set(prev);
-                          if (n.has(l.name)) n.delete(l.name);
-                          else n.add(l.name);
-                          return n;
-                        });
-                      }}
-                    >
-                      {l.name}
-                    </Badge>
+                    <div key={l.id} className="flex items-center gap-1">
+                      <Badge
+                        className={`cursor-pointer select-none transition-colors ${on ? 'bg-slate-900 text-white border-slate-900' : 'bg-white hover:bg-slate-50'}`}
+                        onClick={() => {
+                          setStFormStockLists(prev => {
+                            const n = new Set(prev);
+                            if (n.has(l.name)) n.delete(l.name);
+                            else n.add(l.name);
+                            return n;
+                          });
+                        }}
+                      >
+                        {l.name}
+                      </Badge>
+                      {exp?.public_url && (
+                        <Button variant="ghost" size="sm" className="h-5 w-5 p-0" onClick={() => setPreviewUrl(exp.public_url || null)} title="Preview">
+                          <Eye className="h-3 w-3" />
+                        </Button>
+                      )}
+                    </div>
                   );
                 })}
               </div>
@@ -1721,16 +1837,16 @@ export default function StatisticsDashboardPage() {
             <label className="text-sm text-gray-600 block mb-2">Frequency</label>
             <div className="flex gap-2">
               <Button
-                variant={smFormScheduleType === 'daily' ? 'default' : 'outline'}
+                variant={stFormScheduleType === 'daily' ? 'default' : 'outline'}
                 size="sm"
-                onClick={() => setSmFormScheduleType('daily')}
+                onClick={() => setStFormScheduleType('daily')}
               >
                 Daily
               </Button>
               <Button
-                variant={smFormScheduleType === 'weekly' ? 'default' : 'outline'}
+                variant={stFormScheduleType === 'weekly' ? 'default' : 'outline'}
                 size="sm"
-                onClick={() => setSmFormScheduleType('weekly')}
+                onClick={() => setStFormScheduleType('weekly')}
               >
                 Weekly
               </Button>
@@ -1738,18 +1854,18 @@ export default function StatisticsDashboardPage() {
           </div>
 
           {/* Days (for weekly) */}
-          {smFormScheduleType === 'weekly' && (
+          {stFormScheduleType === 'weekly' && (
             <div>
               <label className="text-sm text-gray-600 block mb-2">Days</label>
               <div className="flex gap-1">
                 {DAYS_OF_WEEK.map((day) => {
-                  const on = smFormDays.has(day.value);
+                  const on = stFormDays.has(day.value);
                   return (
                     <button
                       key={day.value}
                       type="button"
                       onClick={() => {
-                        setSmFormDays(prev => {
+                        setStFormDays(prev => {
                           const n = new Set(prev);
                           if (n.has(day.value)) n.delete(day.value);
                           else n.add(day.value);
@@ -1772,8 +1888,8 @@ export default function StatisticsDashboardPage() {
             <input
               type="time"
               className="h-9 rounded-md border border-slate-200 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-offset-2"
-              value={smFormTime}
-              onChange={(e) => setSmFormTime(e.target.value)}
+              value={stFormTime}
+              onChange={(e) => setStFormTime(e.target.value)}
             />
           </div>
 
@@ -1783,110 +1899,151 @@ export default function StatisticsDashboardPage() {
             <textarea
               className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-offset-2 h-24 resize-none"
               placeholder="Write your message…"
-              value={smFormEmailBody}
-              onChange={(e) => setSmFormEmailBody(e.target.value)}
+              value={stFormEmailBody}
+              onChange={(e) => setStFormEmailBody(e.target.value)}
             />
             <p className="text-xs text-gray-400 mt-1">Salesperson's first name will be used for greeting automatically</p>
           </div>
 
           {/* Enabled */}
           <Toggle
-            checked={smFormEnabled}
-            onChange={() => setSmFormEnabled(v => !v)}
+            checked={stFormEnabled}
+            onChange={() => setStFormEnabled(v => !v)}
             label="Schedule enabled"
           />
 
           {/* Actions */}
           <div className="flex gap-2 pt-4 border-t">
-            <Button variant="outline" onClick={() => setSalesmenSheetOpen(false)}>
+            <Button variant="outline" onClick={() => setStatisticSheetOpen(false)}>
               Cancel
             </Button>
-            <Button onClick={handleSaveSalesmenSchedule} disabled={savingSalesmenSchedules}>
-              {savingSalesmenSchedules ? 'Saving…' : editingSalesmenSchedule ? 'Update Schedule' : 'Create Schedule'}
+            <Button onClick={handleSaveStatisticSchedule} disabled={savingStatisticSchedules}>
+              {savingStatisticSchedules ? 'Saving…' : editingStatisticSchedule ? 'Update Schedule' : 'Create Schedule'}
             </Button>
           </div>
         </SheetContent>
       </Sheet>
 
-      {/* Salesmen Schedule View Sheet */}
-      <Sheet open={viewSalesmenSheetOpen} onOpenChange={setViewSalesmenSheetOpen}>
-        <SheetClose onClick={() => setViewSalesmenSheetOpen(false)} />
+      {/* PDF Preview Dialog */}
+      {previewUrl && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center" onClick={() => setPreviewUrl(null)}>
+          <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-4 border-b">
+              <h3 className="text-sm font-medium">PDF Preview</h3>
+              <div className="flex items-center gap-2">
+                <a href={previewUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-slate-600 hover:text-slate-900 underline">
+                  Open in new tab
+                </a>
+                <Button variant="ghost" size="sm" onClick={() => setPreviewUrl(null)}>
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-auto p-4">
+              <iframe src={previewUrl} className="w-full h-[70vh] border rounded" />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Statistic Schedule View Sheet */}
+      <Sheet open={viewStatisticSheetOpen} onOpenChange={setViewStatisticSheetOpen}>
+        <SheetClose onClick={() => setViewStatisticSheetOpen(false)} />
         <SheetHeader>
           <SheetTitle className="flex items-center gap-2">
-            {viewingSalesmenSchedule?.name}
-            {viewingSalesmenSchedule && (
-              <Badge className={viewingSalesmenSchedule.enabled ? 'bg-green-100 text-green-700 border-green-200' : 'bg-gray-100 text-gray-500'}>
-                {viewingSalesmenSchedule.enabled ? 'Active' : 'Disabled'}
+            {viewingStatisticSchedule?.name}
+            {viewingStatisticSchedule && (
+              <Badge className={viewingStatisticSchedule.enabled ? 'bg-green-100 text-green-700 border-green-200' : 'bg-gray-100 text-gray-500'}>
+                {viewingStatisticSchedule.enabled ? 'Active' : 'Disabled'}
               </Badge>
             )}
           </SheetTitle>
         </SheetHeader>
         <SheetContent className="space-y-6">
-          {viewingSalesmenSchedule && (
+          {viewingStatisticSchedule && (
             <>
               {/* Schedule Info */}
               <div className="flex items-center gap-2 text-sm text-gray-600">
                 <Calendar className="h-4 w-4" />
-                <span>{formatSchedule(viewingSalesmenSchedule)}</span>
-                {viewingSalesmenSchedule.lastRun && (
-                  <span className="text-gray-400">· Last sent {formatLastRun(viewingSalesmenSchedule.lastRun)}</span>
+                <span>{formatSchedule(viewingStatisticSchedule)}</span>
+                {viewingStatisticSchedule.lastRun && (
+                  <span className="text-gray-400">· Last sent {formatLastRun(viewingStatisticSchedule.lastRun)}</span>
                 )}
               </div>
 
-              {/* Options included */}
+              {/* Files included */}
               <div>
-                <h3 className="text-sm font-medium text-slate-900 mb-2">Includes</h3>
+                <h3 className="text-sm font-medium text-slate-900 mb-2">Files Included</h3>
                 <div className="flex flex-wrap gap-2">
-                  <Badge className="bg-slate-100">Personal PDF</Badge>
-                  {viewingSalesmenSchedule.includeCountries && <Badge className="bg-slate-100">Countries</Badge>}
-                  {viewingSalesmenSchedule.includeTop15 && <Badge className="bg-slate-100">Top 15</Badge>}
-                  {viewingSalesmenSchedule.stockLists.map(name => (
+                  {viewingStatisticSchedule.salespersonIds.length > 0 && <Badge className="bg-slate-100">Personal PDF</Badge>}
+                  {viewingStatisticSchedule.includeGeneralCombined && <Badge className="bg-slate-100">General (all)</Badge>}
+                  {viewingStatisticSchedule.includeCountries && <Badge className="bg-slate-100">Countries</Badge>}
+                  {viewingStatisticSchedule.includeTop15Salesmen && <Badge className="bg-slate-100">Top 15 Salesmen</Badge>}
+                  {viewingStatisticSchedule.includeTop15Overall && <Badge className="bg-slate-100">Top 15 Overall</Badge>}
+                  {viewingStatisticSchedule.includeOverview && <Badge className="bg-slate-100">Overview</Badge>}
+                  {(viewingStatisticSchedule.stockLists || []).map(name => (
                     <Badge key={name} className="bg-slate-100">{name}</Badge>
                   ))}
                 </div>
               </div>
 
               {/* Salespersons who will receive */}
-              <div>
-                <h3 className="text-sm font-medium text-slate-900 mb-2">
-                  Recipients ({viewingSalesmenSchedule.salespersonIds.length} salesperson{viewingSalesmenSchedule.salespersonIds.length !== 1 ? 's' : ''})
-                </h3>
-                <div className="space-y-1 max-h-48 overflow-auto">
-                  {viewingSalesmenSchedule.salespersonIds.map((spId) => {
-                    const sp = (salespersons ?? []).find(s => s.id === spId);
-                    if (!sp) return null;
-                    return (
-                      <div key={spId} className="flex items-center gap-2 py-2 px-3 rounded-md border bg-white">
-                        <div className="h-6 w-6 rounded-full bg-slate-200 flex items-center justify-center text-[10px] font-medium text-slate-600 uppercase">
-                          {sp.name.charAt(0)}
+              {viewingStatisticSchedule.salespersonIds.length > 0 && (
+                <div>
+                  <h3 className="text-sm font-medium text-slate-900 mb-2">
+                    Salespersons ({viewingStatisticSchedule.salespersonIds.length})
+                  </h3>
+                  <div className="space-y-1 max-h-32 overflow-auto">
+                    {viewingStatisticSchedule.salespersonIds.map((spId) => {
+                      const sp = (salespersons ?? []).find(s => s.id === spId);
+                      if (!sp) return null;
+                      return (
+                        <div key={spId} className="flex items-center gap-2 py-2 px-3 rounded-md border bg-white">
+                          <div className="h-6 w-6 rounded-full bg-slate-200 flex items-center justify-center text-[10px] font-medium text-slate-600 uppercase">
+                            {sp.name.charAt(0)}
+                          </div>
+                          <div className="flex-1">
+                            <span className="text-sm text-slate-700 font-medium">{sp.name}</span>
+                            <span className="text-xs text-slate-400 ml-2">{sp.email || '(no email)'}</span>
+                          </div>
                         </div>
-                        <div className="flex-1">
-                          <span className="text-sm text-slate-700 font-medium">{sp.name}</span>
-                          <span className="text-xs text-slate-400 ml-2">{sp.email || '(no email)'}</span>
-                        </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
+              )}
+
+              {/* Additional Recipients */}
+              {(viewingStatisticSchedule.additionalRecipients?.length || 0) > 0 && (
+                <div>
+                  <h3 className="text-sm font-medium text-slate-900 mb-2">
+                    Additional Recipients ({viewingStatisticSchedule.additionalRecipients?.length || 0})
+                  </h3>
+                  <div className="flex flex-wrap gap-2">
+                    {(viewingStatisticSchedule.additionalRecipients || []).map((email) => (
+                      <Badge key={email} className="bg-slate-100">{email}</Badge>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* Email Body Preview */}
               <div>
                 <h3 className="text-sm font-medium text-slate-900 mb-2">Email Message</h3>
                 <div className="p-3 rounded-md border bg-slate-50 text-sm text-slate-600 whitespace-pre-wrap">
-                  Hej [First Name],{'\n\n'}{viewingSalesmenSchedule.emailBody || 'Hermed statistik :)'}
+                  Hej [First Name],{'\n\n'}{viewingStatisticSchedule.emailBody || 'Hermed statistik :)'}
                 </div>
               </div>
 
               {/* Actions */}
               <div className="flex gap-2 pt-4 border-t">
-                <Button variant="outline" onClick={() => setViewSalesmenSheetOpen(false)}>
+                <Button variant="outline" onClick={() => setViewStatisticSheetOpen(false)}>
                   Close
                 </Button>
                 <Button 
                   variant="outline" 
                   onClick={() => {
-                    if (viewingSalesmenSchedule) openEditSalesmenSchedule(viewingSalesmenSchedule);
+                    if (viewingStatisticSchedule) openEditStatisticSchedule(viewingStatisticSchedule);
                   }}
                 >
                   <Pencil className="h-4 w-4 mr-1" />
@@ -1894,15 +2051,15 @@ export default function StatisticsDashboardPage() {
                 </Button>
                 <Button 
                   onClick={() => {
-                    if (viewingSalesmenSchedule) {
-                      handleSendSalesmenNow(viewingSalesmenSchedule);
-                      setViewSalesmenSheetOpen(false);
+                    if (viewingStatisticSchedule) {
+                      handleSendStatisticNow(viewingStatisticSchedule);
+                      setViewStatisticSheetOpen(false);
                     }
                   }}
-                  disabled={sendingSalesmenScheduleId === viewingSalesmenSchedule?.id}
+                  disabled={sendingStatisticScheduleId === viewingStatisticSchedule?.id}
                 >
                   <Send className="h-4 w-4 mr-1" />
-                  {sendingSalesmenScheduleId === viewingSalesmenSchedule?.id ? 'Sending…' : 'Send Now'}
+                  {sendingStatisticScheduleId === viewingStatisticSchedule?.id ? 'Sending…' : 'Send Now'}
                 </Button>
               </div>
             </>
