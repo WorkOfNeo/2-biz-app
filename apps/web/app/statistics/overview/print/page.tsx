@@ -3,8 +3,8 @@ import { useMemo, Suspense } from 'react';
 import useSWR from 'swr';
 import { useSearchParams } from 'next/navigation';
 import { supabase } from '../../../../lib/supabaseClient';
+import { useStatisticsData, type Season, type Salesperson } from '../../_shared/StatisticsDataContext';
 
-type Person = { id: string; name: string; currency?: string | null };
 type StatsRow = { account_no: string | null; qty: number; price: number; season_id: string; salesperson_id: string | null };
 type Customer = { customer_id: string; country: string | null; salesperson_id: string | null; nulled?: boolean | null; excluded?: boolean | null; permanently_closed?: boolean | null };
 
@@ -23,14 +23,24 @@ export default function OverviewPrintPage() {
 function Inner() {
   const search = useSearchParams();
   const country = (search.get('country') || 'All') as string;
-  const s1 = search.get('s1') || '';
-  const s2 = search.get('s2') || '';
+  const qs1 = search.get('s1') || '';
+  const qs2 = search.get('s2') || '';
 
-  const { data: seasons } = useSWR('seasons-all', async () => {
-    const { data, error } = await supabase.from('seasons').select('id, name, year').order('created_at', { ascending: false });
-    if (error) throw new Error(error.message);
-    return (data ?? []) as { id: string; name: string; year: number | null }[];
-  });
+  // Use the same season + comparison season auto-selection as Statistics/General (via StatisticsDataProvider)
+  const {
+    seasons: ctxSeasons,
+    s1: ctxS1,
+    s2: ctxS2,
+    salespersons: ctxPeople,
+    customers: ctxCustomers,
+    currencyRatesRow: ctxCurrencyRatesRow,
+    stats: ctxStats,
+  } = useStatisticsData();
+
+  const s1 = qs1 || ctxS1 || '';
+  const s2 = qs2 || ctxS2 || '';
+
+  const seasons = ctxSeasons as Season[] | undefined;
   function getSeasonLabel(seasonId: string | undefined) {
     if (!seasonId) return '';
     const s = (seasons ?? []).find((x) => x.id === seasonId);
@@ -38,25 +48,17 @@ function Inner() {
     return `${s.name}${s.year ? ' ' + s.year : ''}`;
   }
 
-  const { data: people } = useSWR('overview:salespersons', async () => {
-    const { data, error } = await supabase.from('salespersons').select('id, name, currency').order('sort_index', { ascending: true });
-    if (error) throw new Error(error.message);
-    return (data ?? []) as Person[];
-  });
-  const { data: currencyRatesRow } = useSWR('app-settings:currency-rates', async () => {
-    const { data, error } = await supabase.from('app_settings').select('*').eq('key', 'currency_rates').maybeSingle();
-    if (error) throw new Error(error.message);
-    return (data?.value as Record<string, number> | undefined) ?? {};
-  });
+  const people = ctxPeople as Salesperson[] | undefined;
+  const currencyRatesRow = ctxCurrencyRatesRow;
   const rates = useMemo(() => ({ DKK: 1, ...(currencyRatesRow ?? {}) } as Record<string, number>), [currencyRatesRow]);
-  const spCurrencyById = useMemo(() => Object.fromEntries(((people ?? []) as Person[]).map(p => [p.id, p.currency ?? 'DKK'])), [people]);
+  const spCurrencyById = useMemo(() => Object.fromEntries(((people ?? []) as Salesperson[]).map(p => [p.id, p.currency ?? 'DKK'])), [people]);
 
-  const { data: customers } = useSWR('overview:customers', async () => {
-    const { data, error } = await supabase.from('customers').select('customer_id, country, salesperson_id, nulled, excluded, permanently_closed');
-    if (error) throw new Error(error.message);
-    return (data ?? []) as Customer[];
-  });
-  const { data: stats } = useSWR(s1 && s2 ? ['overview:stats', s1, s2] : null, async () => {
+  const customers = (ctxCustomers as Customer[] | undefined) ?? undefined;
+
+  // If the print route is called with explicit ?s1=&s2= different from the current global selection,
+  // fetch locally; otherwise reuse the already-loaded stats from context.
+  const useLocalStats = Boolean(qs1 && qs2 && (!ctxS1 || !ctxS2 || qs1 !== ctxS1 || qs2 !== ctxS2));
+  const { data: localStats } = useSWR(useLocalStats && s1 && s2 ? ['overview:print:stats', s1, s2] : null, async () => {
     const { data, error } = await supabase
       .from('sales_stats')
       .select('account_no, qty, price, season_id, salesperson_id')
@@ -65,6 +67,7 @@ function Inner() {
     if (error) throw new Error(error.message);
     return (data ?? []) as StatsRow[];
   });
+  const stats = (useLocalStats ? localStats : (ctxStats as any[] | undefined)) as StatsRow[] | undefined;
 
   const rows = useMemo(() => {
     if (!people || !customers || !stats) return [] as any[];

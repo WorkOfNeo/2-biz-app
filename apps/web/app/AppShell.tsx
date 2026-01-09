@@ -14,7 +14,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   }
   return (
     <div className="flex min-h-screen relative">
-      <aside className="sidebar flex-shrink-0 w-64 p-4 overflow-hidden">
+      <aside className="sidebar flex-shrink-0 w-72 p-4 overflow-hidden">
         <SidebarNav />
       </aside>
       <main className="flex-1 min-w-0 relative">

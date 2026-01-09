@@ -1,10 +1,13 @@
 "use client";
 
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
 import { Badge } from '../../../components/ui/badge';
 import { ChevronDown, ChevronRight, RefreshCw, Package, CheckCircle2, Truck } from 'lucide-react';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../components/ui/tabs';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { AppPosList } from '../_components/AppPosList';
 
 type PoRow = {
   status: string | null;
@@ -200,6 +203,10 @@ function POTable({
 }
 
 export default function PurchaseOrdersPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const activeTab = (searchParams.get('tab') || 'purchase-orders') === 'app-pos' ? 'app-pos' : 'purchase-orders';
+
   const supabase = createClientComponentClient();
   const [rows, setRows] = useState<PoRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -307,61 +314,79 @@ export default function PurchaseOrdersPage() {
         </button>
       </div>
 
-      {loading && rows.length === 0 && (
-        <div className="py-12 text-center text-slate-500">Loading...</div>
-      )}
+      <Tabs
+        value={activeTab}
+        onValueChange={(v) => {
+          const next = v === 'app-pos' ? '/purchase/orders?tab=app-pos' : '/purchase/orders';
+          router.replace(next);
+        }}
+        className="w-full"
+      >
+        <TabsList className="w-full justify-start bg-slate-100">
+          <TabsTrigger value="purchase-orders">Purchase Orders</TabsTrigger>
+          <TabsTrigger value="app-pos">App PO&apos;s</TabsTrigger>
+        </TabsList>
 
-      {/* Running Orders */}
-      <Card>
-        <CardHeader className="bg-amber-50/50">
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-amber-100">
-              <Package className="w-5 h-5 text-amber-600" />
-            </div>
-            <div>
-              <CardTitle className="text-base">Active Orders</CardTitle>
-              <div className="text-xs text-slate-500 mt-0.5">
-                {runningRows.length} order{runningRows.length !== 1 ? 's' : ''} • {runningTotal.toLocaleString()} pcs
-              </div>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent className="p-0">
-          <POTable
-            rows={runningRows}
-            expanded={expanded}
-            itemsByPo={itemsByPo}
-            onToggle={toggleExpand}
-            emptyMessage="No active orders"
-          />
-        </CardContent>
-      </Card>
+        <TabsContent value="purchase-orders" className="space-y-6">
+          {loading && rows.length === 0 && <div className="py-12 text-center text-slate-500">Loading...</div>}
 
-      {/* Delivered Orders */}
-      <Card>
-        <CardHeader className="bg-green-50/50">
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-green-100">
-              <CheckCircle2 className="w-5 h-5 text-green-600" />
-            </div>
-            <div>
-              <CardTitle className="text-base">Delivered Orders</CardTitle>
-              <div className="text-xs text-slate-500 mt-0.5">
-                {deliveredRows.length} order{deliveredRows.length !== 1 ? 's' : ''} • {deliveredTotal.toLocaleString()} pcs
+          {/* Running Orders */}
+          <Card>
+            <CardHeader className="bg-amber-50/50">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-lg bg-amber-100">
+                  <Package className="w-5 h-5 text-amber-600" />
+                </div>
+                <div>
+                  <CardTitle className="text-base">Active Orders</CardTitle>
+                  <div className="text-xs text-slate-500 mt-0.5">
+                    {runningRows.length} order{runningRows.length !== 1 ? 's' : ''} • {runningTotal.toLocaleString()} pcs
+                  </div>
+                </div>
               </div>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent className="p-0">
-          <POTable
-            rows={deliveredRows}
-            expanded={expanded}
-            itemsByPo={itemsByPo}
-            onToggle={toggleExpand}
-            emptyMessage="No delivered orders yet"
-          />
-        </CardContent>
-      </Card>
+            </CardHeader>
+            <CardContent className="p-0">
+              <POTable
+                rows={runningRows}
+                expanded={expanded}
+                itemsByPo={itemsByPo}
+                onToggle={toggleExpand}
+                emptyMessage="No active orders"
+              />
+            </CardContent>
+          </Card>
+
+          {/* Delivered Orders */}
+          <Card>
+            <CardHeader className="bg-green-50/50">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-lg bg-green-100">
+                  <CheckCircle2 className="w-5 h-5 text-green-600" />
+                </div>
+                <div>
+                  <CardTitle className="text-base">Delivered Orders</CardTitle>
+                  <div className="text-xs text-slate-500 mt-0.5">
+                    {deliveredRows.length} order{deliveredRows.length !== 1 ? 's' : ''} • {deliveredTotal.toLocaleString()} pcs
+                  </div>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="p-0">
+              <POTable
+                rows={deliveredRows}
+                expanded={expanded}
+                itemsByPo={itemsByPo}
+                onToggle={toggleExpand}
+                emptyMessage="No delivered orders yet"
+              />
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="app-pos" className="space-y-6">
+          <AppPosList embedded />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

@@ -1,7 +1,6 @@
 'use client';
-import useSWR from 'swr';
-import { supabase } from '../../../../lib/supabaseClient';
 import { useEffect, useMemo } from 'react';
+import { useStatisticsData, type Customer, type SalesStatRow, type InvoiceRow } from '../../_shared/StatisticsDataContext';
 
 function Donut({ pct, label }: { pct: number; label: string }) {
   const displayPct = Math.round(pct); // number can exceed 100
@@ -31,63 +30,107 @@ function Donut({ pct, label }: { pct: number; label: string }) {
 }
 
 export default function CountriesPrintPage() {
-  const { data: seasons } = useSWR('seasons', async () => {
-    const { data, error } = await supabase.from('seasons').select('id, name, year').order('created_at', { ascending: false });
-    if (error) throw new Error(error.message);
-    return data as { id: string; name: string; year: number | null }[];
-  });
-  const { data: saved } = useSWR('app-settings:season-compare', async () => {
-    const { data, error } = await supabase.from('app_settings').select('*').eq('key', 'season_compare').maybeSingle();
-    if (error) throw new Error(error.message);
-    return data as { id: string; key: string; value: { s1?: string; s2?: string } } | null;
-  });
-  const s1 = saved?.value?.s1 ?? '';
-  const s2 = saved?.value?.s2 ?? '';
-  const { data: stats } = useSWR(s1 && s2 ? ['countries:stats:print', s1, s2] : null, async () => {
-    const { data, error } = await supabase
-      .from('sales_stats')
-      .select('season_id, qty, price, currency, account_no, customer_id, customers(country)')
-      .in('season_id', [s1, s2])
-      .limit(200000);
-    if (error) throw new Error(error.message);
-    return data as any[];
-  });
-  const { data: currencyRatesRow } = useSWR('app-settings:currency-rates', async () => {
-    const { data, error } = await supabase.from('app_settings').select('*').eq('key', 'currency_rates').maybeSingle();
-    if (error) throw new Error(error.message);
-    return (data?.value as Record<string, number> | undefined) ?? {};
-  });
+  // Use the same season + comparison season auto-selection as Statistics/General (via StatisticsDataProvider)
+  const {
+    ready,
+    seasons,
+    s1,
+    s2,
+    stats,
+    invoices,
+    customers,
+    overrides,
+    closedCustomers,
+    currencyRatesRow,
+    ratesS1,
+    ratesS2
+  } = useStatisticsData();
+
   const countries = useMemo(() => ['Denmark', 'Norway', 'Sweden', 'Finland'], []);
-  const rates = useMemo(() => ({ DKK: 1, ...(currencyRatesRow ?? {}) } as Record<string, number>), [currencyRatesRow]);
+
   function getSeasonLabel(seasonId: string | undefined) {
     if (!seasonId) return '';
     const s = (seasons ?? []).find((x) => x.id === seasonId);
     if (!s) return '';
     return `${s.name}${s.year ? ' ' + s.year : ''}`;
   }
+
+  function isHidden(account: string): boolean {
+    return Boolean(overrides?.value.hidden.includes(account)) || Boolean(closedCustomers?.setExcluded.has(account));
+  }
+  function isNulled(account: string): boolean {
+    return (
+      Boolean(overrides?.value.nulled.includes(account)) ||
+      Boolean(closedCustomers?.setNulled.has(account)) ||
+      Boolean(closedCustomers?.setClosed.has(account))
+    );
+  }
+
   const byCountry = useMemo(() => {
-    const out: Record<string, { s1Qty: number; s2Qty: number; s1Price: number; s2Price: number }> = {};
-    for (const c of countries) out[c] = { s1Qty: 0, s2Qty: 0, s1Price: 0, s2Price: 0 };
-    for (const r of (stats ?? []) as any[]) {
-      const ctry = String(r.customers?.country || '').trim();
+    const out: Record<string, { s1Qty: number; s2Qty: number; s1PriceDkk: number; s2PriceDkk: number }> = {};
+    for (const c of countries) out[c] = { s1Qty: 0, s2Qty: 0, s1PriceDkk: 0, s2PriceDkk: 0 };
+
+    const baseRates = { DKK: 1, ...(currencyRatesRow ?? {}) } as Record<string, number>;
+    const customerCountryById = new Map<string, string | null>();
+    for (const c of (customers ?? []) as Customer[]) customerCountryById.set(c.customer_id, c.country ?? null);
+
+    for (const r of (stats ?? []) as SalesStatRow[]) {
+      const acc = String(r.account_no || '');
+      if (acc && isHidden(acc)) continue;
+      const ctry = String(customerCountryById.get(acc) || '').trim();
       if (!countries.includes(ctry)) continue;
-      const bucket = out[ctry] || (out[ctry] = { s1Qty: 0, s2Qty: 0, s1Price: 0, s2Price: 0 });
-      const rate = rates[(String(r.currency || 'DKK').toUpperCase())] ?? 1;
-      const priceDkk = Number(r.price || 0) * rate;
-      if (r.season_id === s1) { bucket.s1Qty += Number(r.qty||0); bucket.s1Price += priceDkk; }
-      else if (r.season_id === s2) { bucket.s2Qty += Number(r.qty||0); bucket.s2Price += priceDkk; }
+
+      const bucket = out[ctry] || (out[ctry] = { s1Qty: 0, s2Qty: 0, s1PriceDkk: 0, s2PriceDkk: 0 });
+      const cur = String(r.currency || 'DKK').toUpperCase();
+      const rateS1 = { ...baseRates, ...(ratesS1 ?? {}) }[cur] ?? 1;
+      const rateS2 = { ...baseRates, ...(ratesS2 ?? {}) }[cur] ?? 1;
+      const price = Number(r.price || 0);
+      if (r.season_id === s1) {
+        if (!isNulled(acc)) {
+          bucket.s1Qty += Number(r.qty || 0);
+          bucket.s1PriceDkk += price * rateS1;
+        }
+      } else if (r.season_id === s2) {
+        bucket.s2Qty += Number(r.qty || 0);
+        bucket.s2PriceDkk += price * rateS2;
+      }
     }
+
+    for (const inv of (invoices ?? []) as InvoiceRow[]) {
+      const acc = String(inv.account_no || '');
+      if (!acc) continue;
+      if (isHidden(acc)) continue;
+      const ctry = String(customerCountryById.get(acc) || '').trim();
+      if (!countries.includes(ctry)) continue;
+
+      const bucket = out[ctry] || (out[ctry] = { s1Qty: 0, s2Qty: 0, s1PriceDkk: 0, s2PriceDkk: 0 });
+      const cur = String(inv.currency || 'DKK').toUpperCase();
+      const rateS1 = { ...baseRates, ...(ratesS1 ?? {}) }[cur] ?? 1;
+      const rateS2 = { ...baseRates, ...(ratesS2 ?? {}) }[cur] ?? 1;
+      const amount = Number(inv.amount || 0);
+      const qty = Number(inv.qty || 0) || 0;
+      if (inv.season_id === s1) {
+        if (!isNulled(acc)) {
+          bucket.s1Qty += qty;
+          bucket.s1PriceDkk += amount * rateS1;
+        }
+      } else if (inv.season_id === s2) {
+        bucket.s2Qty += qty;
+        bucket.s2PriceDkk += amount * rateS2;
+      }
+    }
+
     return out;
-  }, [stats, s1, s2, rates, countries]);
+  }, [countries, customers, stats, invoices, s1, s2, currencyRatesRow, ratesS1, ratesS2, overrides, closedCustomers]);
 
   // Auto-trigger print when data is ready
   useEffect(() => {
-    if (!stats) return;
+    if (!ready) return;
     const id = setTimeout(() => {
       try { window.print(); } catch {}
     }, 300);
     return () => clearTimeout(id);
-  }, [stats]);
+  }, [ready]);
 
   return (
     <div className="p-6 space-y-6 print:p-4">
@@ -96,9 +139,9 @@ export default function CountriesPrintPage() {
         <div className="text-sm text-gray-600">{getSeasonLabel(s1) || 'Season 1'} vs {getSeasonLabel(s2) || 'Season 2'}</div>
       </div>
       {countries.map((c) => {
-        const row = byCountry[c] || { s1Qty: 0, s2Qty: 0, s1Price: 0, s2Price: 0 };
+        const row = byCountry[c] || { s1Qty: 0, s2Qty: 0, s1PriceDkk: 0, s2PriceDkk: 0 };
         const qtyPct = row.s2Qty === 0 ? 0 : (row.s1Qty / row.s2Qty) * 100;
-        const pricePct = row.s2Price === 0 ? 0 : (row.s1Price / row.s2Price) * 100;
+        const pricePct = row.s2PriceDkk === 0 ? 0 : (row.s1PriceDkk / row.s2PriceDkk) * 100;
         return (
           <div key={c} className="rounded-lg border bg-white break-inside-avoid print:break-inside-avoid">
             <div className="border-b text-center bg-[#0f172a] text-white rounded-t-lg text-[1.5rem] leading-tight py-2">{c}</div>
@@ -112,7 +155,7 @@ export default function CountriesPrintPage() {
               <div className="space-y-3">
                 <div className="font-medium">Omsætning (DKK)</div>
                 <div className="text-sm text-gray-600">{getSeasonLabel(s1) || 'Season 1'} vs {getSeasonLabel(s2) || 'Season 2'}</div>
-                <div className="text-lg font-semibold">{Math.round(row.s1Price).toLocaleString('da-DK')} vs {Math.round(row.s2Price).toLocaleString('da-DK')}</div>
+                <div className="text-lg font-semibold">{Math.round(row.s1PriceDkk).toLocaleString('da-DK')} vs {Math.round(row.s2PriceDkk).toLocaleString('da-DK')}</div>
                 <Donut pct={pricePct} label="Omsætning" />
               </div>
             </div>

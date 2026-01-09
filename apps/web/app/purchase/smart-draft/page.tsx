@@ -1161,7 +1161,7 @@ export default function SmartDraftPage() {
             </div>
             
             <div className="flex items-center justify-between pt-4 border-t">
-              <Button variant="outline" onClick={() => router.push('/purchase/app-pos')}>
+              <Button variant="outline" onClick={() => router.push('/purchase/orders?tab=app-pos')}>
                 View All Orders
               </Button>
               <Button

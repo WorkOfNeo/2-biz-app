@@ -1,11 +1,7 @@
 'use client';
 import { useMemo, Suspense } from 'react';
-import useSWR from 'swr';
-import { supabase } from '../../../../lib/supabaseClient';
 import { useSearchParams } from 'next/navigation';
-
-type StatsRow = { account_no: string | null; qty: number; price: number; season_id: string; salesperson_id: string | null };
-type InvoiceRow = { account_no: string | null; qty: number; amount: number; currency: string | null; invoice_no: string | null; season_id: string; created_at?: string };
+import { useStatisticsData, type Customer, type SalesStatRow, type InvoiceRow } from '../../_shared/StatisticsDataContext';
 
 export default function OverviewRecordsPage() {
   return (
@@ -25,19 +21,9 @@ function RecordsInner() {
   const mode = (search.get('mode') as 'nulled' | 'not_visited' | 'visited') || 'visited';
   const country = search.get('country') || 'All';
 
-  const { data: saved } = useSWR('app-settings:season-compare', async () => {
-    const { data, error } = await supabase.from('app_settings').select('*').eq('key', 'season_compare').maybeSingle();
-    if (error) throw new Error(error.message);
-    return data as { id: string; key: string; value: { s1?: string; s2?: string } } | null;
-  });
-  const s1 = saved?.value?.s1 || null;
-  const s2 = saved?.value?.s2 || null;
+  // Use the same season + comparison season auto-selection as Statistics/General (via StatisticsDataProvider)
+  const { seasons, s1, s2, customers, stats, invoices, overrides, closedCustomers, ready } = useStatisticsData();
 
-  const { data: seasons } = useSWR('seasons-all', async () => {
-    const { data, error } = await supabase.from('seasons').select('id, name, year').order('created_at', { ascending: false });
-    if (error) throw new Error(error.message);
-    return (data ?? []) as { id: string; name: string; year: number | null }[];
-  });
   function getSeasonLabel(seasonId: string | null | undefined) {
     if (!seasonId) return '';
     const s = (seasons ?? []).find((x) => x.id === seasonId);
@@ -45,41 +31,34 @@ function RecordsInner() {
     return `${s.name}${s.year ? ' ' + s.year : ''}`;
   }
 
-  const { data: customers } = useSWR('overview-records:customers', async () => {
-    const { data, error } = await supabase.from('customers').select('customer_id, company, city, country, salesperson_id, nulled, excluded, permanently_closed');
-    if (error) throw new Error(error.message);
-    return (data ?? []) as any[];
-  }, { refreshInterval: 10000 });
-
-  const { data: stats, isLoading: statsLoading } = useSWR(s1 && s2 ? ['overview:stats', s1, s2] : null, async () => {
-    if (!s1 || !s2) return [];
-    const { data, error } = await supabase
-      .from('sales_stats')
-      .select('account_no, qty, price, season_id, salesperson_id')
-      .in('season_id', [s1, s2])
-      .limit(200000);
-    if (error) throw new Error(error.message);
-    return (data ?? []) as StatsRow[];
-  }, { refreshInterval: 20000 });
-  const { data: invoices, isLoading: invoicesLoading } = useSWR(s1 && s2 ? ['overview:invoices', s1, s2] : null, async () => {
-    if (!s1 || !s2) return [];
-    const { data, error } = await supabase
-      .from('sales_invoices')
-      .select('account_no, qty, amount, currency, invoice_no, season_id, created_at')
-      .in('season_id', [s1, s2])
-      .limit(200000);
-    if (error) throw new Error(error.message);
-    return (data ?? []) as InvoiceRow[];
-  }, { refreshInterval: 20000 });
+  function isHidden(account: string): boolean {
+    return Boolean(overrides?.value.hidden.includes(account)) || Boolean(closedCustomers?.setExcluded.has(account));
+  }
+  function isNulled(account: string): boolean {
+    return (
+      Boolean(overrides?.value.nulled.includes(account)) ||
+      Boolean(closedCustomers?.setNulled.has(account)) ||
+      Boolean(closedCustomers?.setClosed.has(account))
+    );
+  }
 
   const data = useMemo(() => {
     if (!customers || !stats) return [] as any[];
-    const arr = (customers ?? []).filter((c: any) => c.salesperson_id === sp && (country === 'All' ? true : String(c.country ?? '').toUpperCase() === country.toUpperCase()));
-    const nulledSet = new Set(arr.filter((c: any) => !!(c.nulled || c.excluded || c.permanently_closed)).map((c: any) => c.customer_id));
-    const allSet = new Set(arr.map((c: any) => c.customer_id));
-    const validSet = new Set(arr.filter((c: any) => !nulledSet.has(c.customer_id)).map((c: any) => c.customer_id));
+    const arr = (customers ?? []).filter((c: Customer) => {
+      if (c.salesperson_id !== sp) return false;
+      if (country !== 'All' && String(c.country ?? '').toUpperCase() !== country.toUpperCase()) return false;
+      if (c.customer_id && isHidden(c.customer_id)) return false;
+      return true;
+    });
+
+    const nulledSet = new Set(arr.filter((c: Customer) => c.customer_id && isNulled(c.customer_id)).map((c: Customer) => c.customer_id));
+    const validSet = new Set(arr.filter((c: Customer) => c.customer_id && !nulledSet.has(c.customer_id)).map((c: Customer) => c.customer_id));
     // Only include visited customers that are VALID (not nulled)
-    const visitedSet = new Set((stats ?? []).filter(r => r.salesperson_id === sp && r.season_id === s1 && r.account_no && validSet.has(r.account_no)).map(r => r.account_no as string));
+    const visitedSet = new Set(
+      (stats ?? [])
+        .filter((r: SalesStatRow) => r.salesperson_id === sp && r.season_id === s1 && r.account_no && validSet.has(r.account_no))
+        .map((r: SalesStatRow) => r.account_no as string)
+    );
     const notVisitedSet = new Set(Array.from(validSet).filter((id: string) => !visitedSet.has(id)));
     let targetIds: Set<string>;
     if (mode === 'nulled') targetIds = nulledSet;
@@ -87,46 +66,47 @@ function RecordsInner() {
     else targetIds = visitedSet;
 
     // Create lookup map for customer -> salesperson_id
-    const customerSalespersonMap = new Map<string, string | null>();
-    for (const c of (customers ?? [])) {
-      if (c.customer_id) {
-        customerSalespersonMap.set(c.customer_id, c.salesperson_id || null);
+    const byCustomer = new Map<
+      string,
+      {
+        id: string;
+        name: string;
+        city: string;
+        s1: Array<SalesStatRow & { isInvoice?: boolean; invoice_no?: string | null }>;
+        s2: Array<SalesStatRow & { isInvoice?: boolean; invoice_no?: string | null }>;
       }
-    }
-
-    const byCustomer = new Map<string, { id: string; name: string; city: string; s1: Array<StatsRow & { isInvoice?: boolean; invoice_no?: string | null }>; s2: Array<StatsRow & { isInvoice?: boolean; invoice_no?: string | null }> }>();
+    >();
     for (const id of targetIds) {
-      const c = arr.find((x: any) => x.customer_id === id);
+      const c = arr.find((x: Customer) => x.customer_id === id);
       byCustomer.set(id, { id, name: c?.company || id, city: c?.city || '-', s1: [], s2: [] });
     }
-    for (const r of (stats ?? [])) {
+    for (const r of (stats ?? []) as SalesStatRow[]) {
       if (r.salesperson_id !== sp) continue;
       const acc = r.account_no as string | null;
       if (!acc || !byCustomer.has(acc)) continue;
       if (r.season_id === s1) byCustomer.get(acc)!.s1.push(r);
       if (r.season_id === s2) byCustomer.get(acc)!.s2.push(r);
     }
-    for (const inv of (invoices ?? [])) {
+    for (const inv of (invoices ?? []) as InvoiceRow[]) {
       const acc = inv.account_no as string | null;
       if (!acc || !byCustomer.has(acc)) continue;
-      // Look up salesperson_id from customers table
-      const invSalespersonId = customerSalespersonMap.get(acc) || null;
-      // Only include invoices for the selected salesperson
-      if (invSalespersonId !== sp) continue;
-      const fake: StatsRow & { isInvoice?: boolean; invoice_no?: string | null } = {
+      const fake: SalesStatRow & { isInvoice?: boolean; invoice_no?: string | null } = {
+        id: `inv:${inv.id || inv.invoice_no || acc}:${inv.season_id}`,
         account_no: inv.account_no,
         qty: Number(inv.qty || 0),
         price: Number(inv.amount || 0),
+        currency: inv.currency ?? null,
         season_id: inv.season_id,
-        salesperson_id: invSalespersonId,
+        salesperson_id: sp,
+        updated_at: inv.created_at ?? null,
         isInvoice: true,
         invoice_no: inv.invoice_no
-      };
+      } as any;
       if (inv.season_id === s1) byCustomer.get(acc)!.s1.push(fake);
       if (inv.season_id === s2) byCustomer.get(acc)!.s2.push(fake);
     }
     return Array.from(byCustomer.values()).sort((a, b) => a.name.localeCompare(b.name));
-  }, [customers, stats, invoices, sp, country, mode, s1, s2]);
+  }, [customers, stats, invoices, sp, country, mode, s1, s2, overrides, closedCustomers]);
 
   return (
     <div className="space-y-6">
@@ -135,7 +115,7 @@ function RecordsInner() {
         <div className="text-sm text-gray-600">Salesperson: {sp} · Filter: {mode} · Country: {country}</div>
       </div>
       <div className="overflow-auto rounded-lg border bg-white">
-        {(statsLoading || invoicesLoading) && (
+        {!ready && (
           <div className="flex items-center justify-center p-6">
             <div className="h-5 w-5 animate-spin rounded-full border-2 border-slate-300 border-t-slate-900" />
           </div>

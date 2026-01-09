@@ -2644,7 +2644,7 @@ export default function PurchaseMakeOrderPage() {
                   </Button>
               <Button
                 variant="outline"
-                onClick={() => window.location.href = '/purchase/app-pos'}
+                onClick={() => window.location.href = '/purchase/orders?tab=app-pos'}
               >
                 View All App POs
                   </Button>

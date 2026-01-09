@@ -15,10 +15,10 @@ function NavLink({ href, label }: { href: string; label: string }) {
     <Link
       href={href as any}
       className={cn(
-        'flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors',
+        'flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors',
         active
-          ? 'bg-slate-800 text-white'
-          : 'text-slate-200 hover:bg-slate-800 hover:text-white'
+          ? 'bg-white/10 text-white ring-1 ring-white/10 shadow-sm'
+          : 'text-slate-200/90 hover:bg-white/5 hover:text-white'
       )}
     >
       <span>{label}</span>
@@ -45,7 +45,7 @@ function CollapsibleSection({
     <div className="mt-4">
       <button
         onClick={onToggle}
-        className="w-full flex items-center justify-between text-xs uppercase tracking-wider px-3 py-2 hover:bg-slate-800 rounded-md transition-colors"
+        className="w-full flex items-center justify-between text-xs uppercase tracking-wider px-3 py-2 hover:bg-white/5 rounded-lg transition-colors text-slate-200/80"
       >
         <span>{title}</span>
         {isOpen ? (
@@ -150,11 +150,8 @@ export function SidebarNav() {
     can('/purchase/orders') ? <NavLink key="po" href="/purchase/orders" label="Purchase Orders" /> : null,
     can('/purchase/make-order') ? <NavLink key="pmo" href="/purchase/make-order" label="AI Suggestions" /> : null,
     can('/purchase/smart-draft') ? <NavLink key="psd" href="/purchase/smart-draft" label="Smart Draft" /> : null,
-    can('/purchase/app-pos') ? <NavLink key="pap" href="/purchase/app-pos" label="App PO's" /> : null,
     can('/purchase/conversations') ? <NavLink key="pconv" href="/purchase/conversations" label="Conversations" /> : null,
     can('/purchase/suppliers') ? <NavLink key="psup" href="/purchase/suppliers" label="Suppliers" /> : null,
-    can('/purchase/po-calculator') ? <NavLink key="poc" href="/purchase/po-calculator" label="PO Calculator" /> : null,
-    can('/purchase/style-statistics') ? <NavLink key="pss" href="/purchase/style-statistics" label="Style Statistics" /> : null,
   ].filter(Boolean) as any[];
   const salesLinks = [
     can('/sales/nielsens') ? <NavLink key="sn" href="/sales/nielsens" label="Nielsens" /> : null,
@@ -181,7 +178,7 @@ export function SidebarNav() {
   return (
     <nav className="space-y-2">
       {userName && (
-        <div className="px-3 py-2 text-xs text-slate-300">
+        <div className="px-3 py-2 text-xs text-slate-300/90">
           Signed in as<br/>
           <span className="text-white font-medium">{userName}</span>
         </div>

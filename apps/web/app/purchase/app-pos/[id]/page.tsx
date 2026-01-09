@@ -779,7 +779,7 @@ export default function AppPoDetailPage() {
           Purchase order not found
         </div>
         <div className="text-center">
-          <Button variant="outline" onClick={() => router.push('/purchase/app-pos')}>
+          <Button variant="outline" onClick={() => router.push('/purchase/orders?tab=app-pos')}>
             Back to list
           </Button>
         </div>
@@ -845,7 +845,7 @@ export default function AppPoDetailPage() {
       if (error) throw error;
       
       // Navigate back to list
-      router.push('/purchase/app-pos');
+      router.push('/purchase/orders?tab=app-pos');
     } catch (error: any) {
       alert(`Failed to delete order: ${error.message}`);
       setIsDeleting(false);
@@ -884,7 +884,7 @@ export default function AppPoDetailPage() {
       if (error) throw error;
       
       // Navigate back to list
-      router.push('/purchase/app-pos');
+      router.push('/purchase/orders?tab=app-pos');
     } catch (error: any) {
       alert(`Failed to remove APP PO: ${error.message}`);
       setIsRemovingSpyPo(false);
@@ -917,7 +917,7 @@ export default function AppPoDetailPage() {
         <Button 
           variant="ghost" 
           size="sm"
-          onClick={() => router.push('/purchase/app-pos')}
+          onClick={() => router.push('/purchase/orders?tab=app-pos')}
           className="hover:bg-slate-100"
         >
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

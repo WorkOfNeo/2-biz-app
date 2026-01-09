@@ -4,14 +4,11 @@ import { supabase, useRoles } from '../../../../lib/supabaseClient';
 import { ProgressBar } from '../../../../components/ProgressBar';
 import React from 'react';
 import { MoreHorizontal } from 'lucide-react';
+import { useStatisticsData } from '../../_shared/StatisticsDataContext';
 export default function Top15StylesPage() {
-  const { data: seasons } = useSWR('seasons-all', async () => {
-    const { data } = await supabase.from('seasons').select('id, name, year, is_current').order('created_at', { ascending: false });
-    return (data ?? []) as Array<{ id: string; name: string; year: number | null; is_current?: boolean }>;
-  });
-  const defaultSeasonId = React.useMemo(() => (seasons ?? []).find(s => (s as any).is_current)?.id || (seasons ?? [])[0]?.id || null, [seasons?.length]);
-  const [seasonId, setSeasonId] = React.useState<string | null>(null);
-  React.useEffect(() => { if (!seasonId && defaultSeasonId) setSeasonId(defaultSeasonId); }, [defaultSeasonId]);
+  // Use the same default season logic as Statistics/General (via StatisticsDataProvider)
+  const { seasons, s1, setS1 } = useStatisticsData();
+  const seasonId = s1 || null;
   const [showAll, setShowAll] = React.useState(false);
   // Load all rows for season; we'll filter/exclude and slice to top 10 locally
   const { data: allItems, mutate } = useSWR(seasonId ? ['top-styles', seasonId] : null, async () => {
@@ -169,8 +166,9 @@ export default function Top15StylesPage() {
         <select
           className="rounded border px-2 py-1 text-sm"
           value={seasonId || ''}
-          onChange={(e) => setSeasonId(e.target.value || null)}
+          onChange={(e) => setS1(e.target.value || '')}
         >
+          <option value="">Select…</option>
           {(seasons ?? []).map((s) => (
             <option key={s.id} value={s.id}>{s.name}{s.year ? ' ' + s.year : ''}</option>
           ))}
