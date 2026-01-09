@@ -288,14 +288,15 @@ export default function StockListDetailPage({ params }: { params: { id: string }
   // Remove color from list
   async function removeColor(styleColorId: string) {
     try {
+      // Keep the row and mark as excluded so other pages (e.g. /styles/stock-list) can reliably hide it
       const { error } = await supabase
         .from('stock_list_colors')
-        .delete()
+        .update({ include: false })
         .eq('list_id', params.id)
         .eq('style_color_id', styleColorId);
       if (error) throw error;
       await mutateListColors();
-      flash('Color removed');
+      flash('Color excluded');
     } catch (e: any) {
       flash(e.message || 'Failed to remove color', 'error');
     }
@@ -304,14 +305,15 @@ export default function StockListDetailPage({ params }: { params: { id: string }
   // Add inactive color to list
   async function addInactiveColor(styleId: string, colorId: string, colorName: string) {
     try {
+      // Reactivate (or insert) the color
       const { error } = await supabase
         .from('stock_list_colors')
-        .insert({
+        .upsert({
           list_id: params.id,
           style_id: styleId,
           style_color_id: colorId,
           include: true
-        });
+        } as any, { onConflict: 'list_id,style_color_id' });
       if (error) throw error;
       
       await mutateListColors();
@@ -533,6 +535,19 @@ export default function StockListDetailPage({ params }: { params: { id: string }
     return map;
   }, [listColors, listStyles]);
 
+  // Excluded colors per style (include:false) for styles that are still in the list
+  const excludedColorsByStyle = React.useMemo(() => {
+    const map = new Map<string, ListColor[]>();
+    const styleIdsInList = new Set(listStyles?.map(ls => ls.style_id) ?? []);
+    for (const lc of (listColors ?? [])) {
+      if (!styleIdsInList.has(lc.style_id)) continue;
+      if (lc.include) continue;
+      if (!map.has(lc.style_id)) map.set(lc.style_id, []);
+      map.get(lc.style_id)!.push(lc);
+    }
+    return map;
+  }, [listColors, listStyles]);
+
   // Get inactive colors for styles in the list that are not yet added
   const inactiveColorsByStyle = React.useMemo(() => {
     const map = new Map<string, Array<{ id: string; color: string; inactive: boolean; maybe_inactive: boolean }>>();
@@ -556,11 +571,11 @@ export default function StockListDetailPage({ params }: { params: { id: string }
     return map;
   }, [allStyleColors, listStyles, listColors]);
 
-  // Get deactivated colors (colors with include: false or from removed styles)
+  // Colors from removed styles (style no longer in list; we keep color rows for history/reactivation)
   const deactivatedColors = React.useMemo(() => {
     const styleIdsInList = new Set(listStyles?.map(ls => ls.style_id) ?? []);
     return (listColors ?? []).filter(lc => 
-      !lc.include || !styleIdsInList.has(lc.style_id)
+      !styleIdsInList.has(lc.style_id)
     );
   }, [listColors, listStyles]);
 
@@ -846,6 +861,7 @@ export default function StockListDetailPage({ params }: { params: { id: string }
             {(listStyles ?? []).map((ls) => {
               const style = ls.style;
               const colors = colorsByStyle.get(ls.style_id) ?? [];
+              const excluded = excludedColorsByStyle.get(ls.style_id) ?? [];
               
               return (
                 <div key={ls.style_id} className="border rounded-lg p-4">
@@ -890,6 +906,42 @@ export default function StockListDetailPage({ params }: { params: { id: string }
                               className="ml-1 hover:text-red-600"
                             >
                               <X className="h-3 w-3" />
+                            </button>
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {excluded.length > 0 && (
+                    <div className="mt-2 pt-2 border-t border-dashed">
+                      <div className="text-xs text-gray-500 mb-2">Excluded Colors ({excluded.length})</div>
+                      <div className="flex flex-wrap gap-2">
+                        {excluded.map((lc) => (
+                          <Badge
+                            key={lc.style_color_id}
+                            className="bg-gray-100 text-gray-700 border-gray-300 flex items-center gap-1"
+                          >
+                            <span>{lc.color.color || 'Unknown'}</span>
+                            <button
+                              onClick={async () => {
+                                try {
+                                  const { error } = await supabase
+                                    .from('stock_list_colors')
+                                    .update({ include: true })
+                                    .eq('list_id', params.id)
+                                    .eq('style_color_id', lc.style_color_id);
+                                  if (error) throw error;
+                                  await mutateListColors();
+                                  flash('Color reactivated');
+                                } catch (e: any) {
+                                  flash(e.message || 'Failed to reactivate color', 'error');
+                                }
+                              }}
+                              className="ml-1 hover:text-green-600"
+                              title="Reactivate"
+                            >
+                              <Plus className="h-3 w-3" />
                             </button>
                           </Badge>
                         ))}

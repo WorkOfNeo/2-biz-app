@@ -250,25 +250,28 @@ export default function StockListPage({ publicMode = false, sharedListId = '' }:
   const { data: listColorRules } = useSWR(activeListId ? ['stock_list_colors:byList', activeListId] : null, async () => {
     const { data, error } = await supabase.from('stock_list_colors').select('style_id, style_color_id, include').eq('list_id', activeListId);
     if (error) throw new Error(error.message);
-    // Blacklist model: hiddenIdsMap holds color IDs where include === false
+    // Prefer a whitelist model when possible: allowedIdsMap holds color IDs where include === true
+    const allowedIdsMap = new Map<string, Set<string>>(); // style_id -> set(style_color_id)
+    // Also keep a blacklist (include === false) for backwards-compat / clarity
     const hiddenIdsMap = new Map<string, Set<string>>(); // style_id -> set(style_color_id)
     for (const r of (data ?? []) as any[]) {
       const sid = String(r.style_id || '');
+      const cid = String(r.style_color_id || '');
+      if (!sid || !cid) continue;
       if (r.include === false) {
         const set = hiddenIdsMap.get(sid) || new Set<string>();
-        set.add(String(r.style_color_id || ''));
+        set.add(cid);
         hiddenIdsMap.set(sid, set);
+      } else {
+        const set = allowedIdsMap.get(sid) || new Set<string>();
+        set.add(cid);
+        allowedIdsMap.set(sid, set);
       }
     }
-    // Build reverse map: style_id -> (style_color_id -> colorLower)
-    const invertByStyle = new Map<string, Map<string, string>>();
-    for (const sid of styleIds) {
-      const cmap = styleColors?.idMap?.get(sid) || new Map<string, string>();
-      const inv = new Map<string, string>();
-      for (const [ck, id] of Array.from(cmap.entries())) inv.set(id, ck);
-      invertByStyle.set(sid, inv);
-    }
-    return { hiddenIdsMap, invertByStyle } as { hiddenIdsMap: Map<string, Set<string>>; invertByStyle: Map<string, Map<string, string>> };
+    return { allowedIdsMap, hiddenIdsMap } as {
+      allowedIdsMap: Map<string, Set<string>>;
+      hiddenIdsMap: Map<string, Set<string>>;
+    };
   }, { refreshInterval: 0 });
 
   // Removed per-user selection and view toggles
@@ -422,45 +425,64 @@ export default function StockListPage({ publicMode = false, sharedListId = '' }:
         presentStyleNos.add(styleNo);
       }
     }
-    // Blacklist rules: hide only the explicitly hidden colors; all others visible
+    // When a list is selected:
+    // - Prefer whitelist (only colors that exist in stock_list_colors with include=true)
+    // - Fall back to blacklist (hide include=false) but DO NOT auto-add placeholders (prevents "second load" reintroducing colors)
     const filtered = out.map((row) => {
       const sid = styleMetaByNo[row.styleNo]?.id || null;
       if (!sid) return row;
+      const allowedIds = (listColorRules as any)?.allowedIdsMap?.get(sid) as Set<string> | undefined;
       const hiddenIds = (listColorRules as any)?.hiddenIdsMap?.get(sid) as Set<string> | undefined;
       // Collect colorLower -> style_color_id map for this style
       const allColorKeysMap = styleColors?.idMap?.get(sid) || new Map<string, string>(); // colorLower -> style_color_id
-      // Filter current colors to remove hidden
+      const whitelistActive = !!allowedIds && allowedIds.size > 0;
+
+      // Filter current colors
       const current = row.colors.filter((c) => {
         const key = String(c.color || '').trim().toLowerCase();
         const scId = allColorKeysMap.get(key) || '';
+        if (!scId) return !whitelistActive; // if we can't map, only keep it in fallback mode
+        if (whitelistActive) return allowedIds!.has(String(scId));
         return !(hiddenIds?.has(String(scId)));
       });
-      // Add placeholders for non-hidden colors that have no scraped data yet
+
+      // Only add placeholders when whitelist is active (so we only add colors that are actually in the list)
+      if (!whitelistActive) {
+        const colors = current.sort((a, b) => a.color.localeCompare(b.color));
+        return { ...row, colors };
+      }
+
       const existingKeys = new Set(current.map((c) => `${row.styleNo}|${String(c.color || '').trim().toLowerCase()}`));
       const placeholders: Group[] = [];
-      for (const [ckey, scId] of Array.from(allColorKeysMap.entries())) {
-        if (hiddenIds?.has(String(scId))) continue; // skip hidden
+
+      // Build reverse map style_color_id -> colorLower
+      const idToKey = new Map<string, string>();
+      for (const [ckey, scId] of Array.from(allColorKeysMap.entries())) idToKey.set(String(scId), String(ckey));
+
+      for (const scId of Array.from(allowedIds!)) {
+        const ckey = idToKey.get(String(scId));
+        if (!ckey) continue;
         const key = `${row.styleNo}|${ckey}`;
-        if (!existingKeys.has(key)) {
-          placeholders.push({
-            styleNo: row.styleNo,
-            color: ckey,
-            sizes: [],
-            stock: [],
-            soldSum: [],
-            purchaseSum: [],
-            available: [],
-            soldRows: [],
-            purchaseRows: [],
-            scrapedAt: ''
-          });
-        }
+        if (existingKeys.has(key)) continue;
+        placeholders.push({
+          styleNo: row.styleNo,
+          color: ckey,
+          sizes: [],
+          stock: [],
+          soldSum: [],
+          purchaseSum: [],
+          available: [],
+          soldRows: [],
+          purchaseRows: [],
+          scrapedAt: ''
+        });
       }
+
       const colors = [...current, ...placeholders].sort((a, b) => a.color.localeCompare(b.color));
       return { ...row, colors };
     });
     return filtered as Array<{ styleNo: string; colors: Group[] }>;
-  }, [groups, styleMetaByNo, activeListId, listColorRules?.hiddenIdsMap, styleRows, styleColors, styleIdsInList]);
+  }, [groups, styleMetaByNo, activeListId, (listColorRules as any)?.allowedIdsMap, (listColorRules as any)?.hiddenIdsMap, styleRows, styleColors, styleIdsInList]);
 
   // Log selection changes and high-level counts
   React.useEffect(() => {
@@ -2972,3 +2994,4 @@ function ScrapeActiveListButton({ listId, styleIdsInList, listName, onDataRefres
     </div>
   );
 }
+
