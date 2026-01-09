@@ -37,6 +37,74 @@ type StyleMeta = {
   supplier: string | null;
 };
 
+const SEL_ONLY_NET_NEED = '#POrder\\[bNetNeed\\]';
+const SEL_NET_NEED_FILTER = 'select[name="Spy\\\\Model\\\\Purchase\\\\Edit\\\\Search\\\\ListReportSearch[strNetNeed]"]';
+
+async function ensureOnlyNetNeedOff(page: Page, log?: (msg: string, data?: Record<string, any>) => Promise<void>) {
+  try {
+    const exists = await page.$(SEL_ONLY_NET_NEED);
+    if (!exists) {
+      await log?.('STEP:only_net_need_checkbox_missing');
+      return;
+    }
+    let checked = false;
+    try {
+      checked = await page.isChecked(SEL_ONLY_NET_NEED);
+    } catch {
+      checked = await page.evaluate(() => {
+        const el = document.querySelector('input[name="POrder[bNetNeed]"]') as HTMLInputElement | null;
+        return !!el?.checked;
+      });
+    }
+    if (!checked) {
+      await log?.('STEP:only_net_need_already_off');
+      return;
+    }
+
+    // Try standard uncheck first
+    try {
+      await page.uncheck(SEL_ONLY_NET_NEED, { timeout: 3000 });
+    } catch {
+      // Fallback: JS set + change event
+      await page.evaluate(() => {
+        const el = document.querySelector('input[name="POrder[bNetNeed]"]') as HTMLInputElement | null;
+        if (!el) return;
+        el.checked = false;
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+    }
+    await page.waitForTimeout(250);
+    await log?.('STEP:only_net_need_set_off');
+  } catch (e: any) {
+    await log?.('STEP:only_net_need_set_off_failed', { error: e?.message || String(e) });
+  }
+}
+
+async function ensureNetNeedFilterAll(page: Page, log?: (msg: string, data?: Record<string, any>) => Promise<void>) {
+  try {
+    const sel = await page.$(SEL_NET_NEED_FILTER);
+    if (!sel) {
+      await log?.('STEP:net_need_filter_missing');
+      return;
+    }
+    const current = await page.$eval(SEL_NET_NEED_FILTER, (el) => (el as HTMLSelectElement).value);
+    if (current === 'all') {
+      await log?.('STEP:net_need_filter_already_all');
+      return;
+    }
+    await page.selectOption(SEL_NET_NEED_FILTER, 'all');
+    // The SPY UI updates instantly; wait for its loader if present, then a short settle.
+    try {
+      await page.waitForFunction(() => !document.querySelector('.spy-view-loader--show'), { timeout: 30_000 });
+    } catch {}
+    await page.waitForTimeout(600);
+    await log?.('STEP:net_need_filter_set_to_all');
+  } catch (e: any) {
+    await log?.('STEP:net_need_filter_set_failed', { error: e?.message || String(e) });
+  }
+}
+
 // Format date as MM/DD/YYYY for SPY form
 function formatDateForSpy(d: Date): string {
   const month = String(d.getMonth() + 1).padStart(2, '0');
@@ -327,6 +395,10 @@ export async function pushAppPoToSpy(ctx: Ctx) {
         season_name: seasonData.name,
         spy_season_id: spySeasonId 
       });
+
+      // IMPORTANT: "Only Net Need" is checked by default in SPY - disable it on create.
+      await log(job.id, 'info', 'STEP:ensuring_only_net_need_off');
+      await ensureOnlyNetNeedOff(page, async (msg, data) => log(job.id, 'info', msg, { supplier, ...(data || {}) }));
       
       // Check for and dismiss any sweet alert modals before clicking Create
       try {
@@ -362,16 +434,33 @@ export async function pushAppPoToSpy(ctx: Ctx) {
         await log(job.id, 'info', 'STEP:no_sweet_alert_or_already_dismissed');
       }
       
-      // Submit form to create PO using JavaScript to bypass any overlays
+      // Submit form to create PO using JavaScript to bypass any overlays.
+      // Guard rail: ensure we actually reach the edit page (net-need filter present).
       await log(job.id, 'info', 'STEP:clicking_create_button');
-      await page.evaluate(() => {
-        const createBtn = document.querySelector('button[type="submit"][name="create"]') as HTMLButtonElement;
-        if (createBtn) {
-          createBtn.click();
+      let createdOk = false;
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        await page.evaluate(() => {
+          const createBtn = document.querySelector('button[type="submit"][name="create"]') as HTMLButtonElement;
+          if (createBtn) createBtn.click();
+        });
+        await page.waitForLoadState('domcontentloaded', { timeout: 30_000 });
+        await page.waitForTimeout(800);
+        try {
+          await page.waitForSelector('#MainContent', { timeout: 20_000 });
+        } catch {}
+        const hasFilter = await page.$(SEL_NET_NEED_FILTER);
+        const hasTable = await page.$('#TableContainer table');
+        if (hasFilter || hasTable) {
+          createdOk = true;
+          break;
         }
-      });
-      await page.waitForLoadState('domcontentloaded', { timeout: 30_000 });
-      await page.waitForTimeout(1000);
+        await log(job.id, 'error', 'STEP:po_create_did_not_reach_edit', { supplier, attempt, url: page.url() });
+        // If create didn't work, try once more after a short wait.
+        await page.waitForTimeout(1200);
+      }
+      if (!createdOk) {
+        throw new Error(`Failed to create SPY PO for supplier "${supplier}" (did not reach edit page)`);
+      }
       
       await log(job.id, 'progress', 'STAGE:po_created', { supplier });
       
@@ -380,12 +469,7 @@ export async function pushAppPoToSpy(ctx: Ctx) {
       
       // IMPORTANT: Set Net Need filter to "All"
       await log(job.id, 'info', 'STEP:setting_net_need_filter');
-      const netNeedSelect = await page.$('select[name="Spy\\\\Model\\\\Purchase\\\\Edit\\\\Search\\\\ListReportSearch[strNetNeed]"]');
-      if (netNeedSelect) {
-        await page.selectOption('select[name="Spy\\\\Model\\\\Purchase\\\\Edit\\\\Search\\\\ListReportSearch[strNetNeed]"]', 'all');
-        await page.waitForTimeout(1000);
-        await log(job.id, 'info', 'STEP:net_need_filter_set_to_all');
-      }
+      await ensureNetNeedFilterAll(page, async (msg, data) => log(job.id, 'info', msg, { supplier, ...(data || {}) }));
       
       // Group items by style_no for this supplier
       const itemsByStyle = new Map<string, OrderItem[]>();
@@ -404,23 +488,35 @@ export async function pushAppPoToSpy(ctx: Ctx) {
           colors_count: styleItems.length
         });
         
-        // Find style link in table
+        // Find style link in table. Guard rail: if not found, re-ensure Net Need = All and retry once.
+        await ensureNetNeedFilterAll(page, async (msg, data) => log(job.id, 'info', msg, { supplier, style_no: styleNo, ...(data || {}) }));
         await page.waitForSelector('#TableContainer table', { timeout: 30_000 });
         
-        const styleLinkClicked = await page.evaluate((searchStyleNo) => {
-          const links = document.querySelectorAll('#TableContainer table a[href*="iStyleID"]');
-          for (const link of Array.from(links)) {
-            if (link.textContent?.trim() === searchStyleNo) {
-              (link as HTMLElement).click();
-              return true;
+        const clickStyleLink = async () => {
+          return await page.evaluate((searchStyleNo) => {
+            const links = document.querySelectorAll('#TableContainer table a[href*="iStyleID"]');
+            for (const link of Array.from(links)) {
+              if (link.textContent?.trim() === searchStyleNo) {
+                (link as HTMLElement).click();
+                return true;
+              }
             }
-          }
-          return false;
-        }, styleNo);
-        
+            return false;
+          }, styleNo);
+        };
+
+        let styleLinkClicked = await clickStyleLink();
         if (!styleLinkClicked) {
-          await log(job.id, 'error', 'STEP:style_not_found_in_table', { style_no: styleNo });
-          continue;
+          await log(job.id, 'error', 'STEP:style_not_found_in_table_first_try', { supplier, style_no: styleNo });
+          // If filter isn't all (or UI got stuck), set to all and retry search.
+          await ensureNetNeedFilterAll(page, async (msg, data) => log(job.id, 'info', msg, { supplier, style_no: styleNo, ...(data || {}) }));
+          await page.waitForTimeout(800);
+          styleLinkClicked = await clickStyleLink();
+        }
+
+        if (!styleLinkClicked) {
+          await log(job.id, 'error', 'STEP:style_not_found_in_table', { supplier, style_no: styleNo, url: page.url() });
+          throw new Error(`Style ${styleNo} not found in SPY list for supplier "${supplier}" (Net Need filter set to All)`);
         }
         
         // Wait for add section to appear
@@ -609,12 +705,12 @@ export async function pushAppPoToSpy(ctx: Ctx) {
         return match ? `PO${match[1]}` : null;
       });
       
-      if (spyPoNo) {
-        spyPoNumbers.push(spyPoNo);
-        await log(job.id, 'info', 'STEP:po_number_extracted', { supplier, spy_po_no: spyPoNo });
-      } else {
-        await log(job.id, 'error', 'STEP:po_number_not_found', { supplier });
+      if (!spyPoNo) {
+        await log(job.id, 'error', 'STEP:po_number_not_found', { supplier, url: page.url() });
+        throw new Error(`SPY PO number not found for supplier "${supplier}" (confirm page)`);
       }
+      spyPoNumbers.push(spyPoNo);
+      await log(job.id, 'info', 'STEP:po_number_extracted', { supplier, spy_po_no: spyPoNo });
       
       // Click "Confirm" button to finalize (use JavaScript click)
       await log(job.id, 'info', 'STEP:clicking_confirm');
@@ -636,6 +732,11 @@ export async function pushAppPoToSpy(ctx: Ctx) {
       }
     }
     
+    // Guard rail: if we never extracted any SPY PO number, treat as failure
+    if (spyPoNumbers.length === 0) {
+      throw new Error('Push to SPY did not produce any PO number(s) — order was not confirmed');
+    }
+
     // Update database with SPY PO numbers
     if (spyPoNumbers.length > 0) {
       const spyPoNoCombined = spyPoNumbers.join(', ');
