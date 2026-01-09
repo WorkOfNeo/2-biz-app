@@ -114,46 +114,43 @@ function formatDateForSpy(d: Date): string {
 }
 
 // Get ETD/ETA from app_pos record or calculate defaults
-function getDates(po: AppPo): { etd: string; eta: string } {
+function getDates(
+  po: AppPo,
+  opts?: { lead_time_days?: number | null; travel_time_days?: number | null }
+): { etdSpy: string; etaSpy: string; etdIso: string; etaIso: string; usedDefaults: boolean } {
+  const lead = Number(opts?.lead_time_days || 0) || null;
+  const travel = Number(opts?.travel_time_days || 0) || null;
+
   // If dates exist in app_pos, use those
   if (po.etd) {
     const etdDate = new Date(po.etd);
     const etaDate = po.eta ? new Date(po.eta) : new Date(etdDate);
-    
-    // If no ETA, default to ETD + 4 days
     if (!po.eta) {
-      etaDate.setDate(etaDate.getDate() + 4);
+      // If no ETA, default to ETD + travel time (if known) or 4 days
+      etaDate.setDate(etaDate.getDate() + (travel || 4));
     }
-    
-    return {
-      etd: formatDateForSpy(etdDate),
-      eta: formatDateForSpy(etaDate)
-    };
+    const etdIso = String(po.etd).split('T')[0] || String(po.etd);
+    const etaIso = po.eta ? (String(po.eta).split('T')[0] || String(po.eta)) : etaDate.toISOString().split('T')[0]!;
+    return { etdSpy: formatDateForSpy(etdDate), etaSpy: formatDateForSpy(etaDate), etdIso, etaIso, usedDefaults: false };
   }
-  
-  // Fallback: Calculate defaults (7 weeks ETD, +4 days ETA)
+
+  // If missing dates: compute from supplier lead/travel time if available, otherwise fallback
   const now = new Date();
-  
-  // ETD = 7 weeks from now
   const etd = new Date(now);
-  etd.setDate(etd.getDate() + (7 * 7));
-  
-  // ETA = 4 days after ETD
+  if (lead) etd.setDate(etd.getDate() + lead);
+  else etd.setDate(etd.getDate() + (7 * 7)); // fallback 7 weeks
+
   const eta = new Date(etd);
-  eta.setDate(eta.getDate() + 4);
-  
+  eta.setDate(eta.getDate() + (travel || 4));
+
   // Adjust ETA to next weekday if it falls on weekend
   const dayOfWeek = eta.getDay();
-  if (dayOfWeek === 0) { // Sunday
-    eta.setDate(eta.getDate() + 1);
-  } else if (dayOfWeek === 6) { // Saturday
-    eta.setDate(eta.getDate() + 2);
-  }
-  
-  return {
-    etd: formatDateForSpy(etd),
-    eta: formatDateForSpy(eta)
-  };
+  if (dayOfWeek === 0) eta.setDate(eta.getDate() + 1); // Sunday
+  else if (dayOfWeek === 6) eta.setDate(eta.getDate() + 2); // Saturday
+
+  const etdIso = etd.toISOString().split('T')[0]!;
+  const etaIso = eta.toISOString().split('T')[0]!;
+  return { etdSpy: formatDateForSpy(etd), etaSpy: formatDateForSpy(eta), etdIso, etaIso, usedDefaults: true };
 }
 
 /**
@@ -267,10 +264,48 @@ export async function pushAppPoToSpy(ctx: Ctx) {
     
     const suppliers = Array.from(itemsBySupplier.keys());
     await log(job.id, 'progress', 'STAGE:init', { total_suppliers: suppliers.length });
-    
-    // Get dates from app_pos or calculate defaults
-    const { etd, eta } = getDates(po);
-    await log(job.id, 'info', 'STEP:push_po_dates', { etd, eta, from_record: !!po.etd });
+
+    // Guard rail: if ETD/ETA are missing in app_pos, compute (prefer supplier lead/travel time) and persist
+    let lead_time_days: number | null = null;
+    let travel_time_days: number | null = null;
+    try {
+      const supplierName = po.supplier || suppliers[0] || null;
+      if (supplierName) {
+        const { data: supp } = await supabase
+          .from('suppliers')
+          .select('lead_time_days, travel_time_days')
+          .eq('name', supplierName)
+          .maybeSingle();
+        lead_time_days = (supp as any)?.lead_time_days ?? null;
+        travel_time_days = (supp as any)?.travel_time_days ?? null;
+      }
+    } catch {}
+
+    const { etdSpy, etaSpy, etdIso, etaIso, usedDefaults } = getDates(po, { lead_time_days, travel_time_days });
+    await log(job.id, 'info', 'STEP:push_po_dates', {
+      etd: etdIso,
+      eta: etaIso,
+      from_record: !!po.etd,
+      used_defaults: usedDefaults,
+      lead_time_days,
+      travel_time_days
+    });
+
+    try {
+      if (!po.etd || !po.eta) {
+        const updates: Record<string, any> = {};
+        if (!po.etd) updates.etd = etdIso;
+        if (!po.eta) updates.eta = etaIso;
+        const { error: updErr } = await supabase.from('app_pos').update(updates).eq('id', po.id);
+        if (updErr) {
+          await log(job.id, 'error', 'STEP:push_po_dates_persist_failed', { error: updErr.message });
+        } else {
+          await log(job.id, 'info', 'STEP:push_po_dates_persisted', updates);
+        }
+      }
+    } catch (e: any) {
+      await log(job.id, 'error', 'STEP:push_po_dates_persist_error', { error: e?.message || String(e) });
+    }
     
     const spyPoNumbers: string[] = [];
     
@@ -345,10 +380,10 @@ export async function pushAppPoToSpy(ctx: Ctx) {
       await page.waitForTimeout(500); // Wait for any dynamic updates
       
       // Set ETD
-      await page.fill('#POrder\\[strETD\\]', etd);
+      await page.fill('#POrder\\[strETD\\]', etdSpy);
       
       // Set ETA
-      await page.fill('#POrder\\[strETA\\]', eta);
+      await page.fill('#POrder\\[strETA\\]', etaSpy);
       
       // Log available seasons for debugging
       const availableSeasons = await page.evaluate(() => {
