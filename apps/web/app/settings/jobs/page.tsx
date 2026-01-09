@@ -354,11 +354,14 @@ function RunningJobProgress({ job }: { job: { id: string; type: string; started_
                 • Updated: {progress.updated ?? 0} • Links: {progress.colorLinksInserted ?? 0}
               </span>
             )}
-            {progress.estimatedSecondsRemaining !== null && progress.estimatedSecondsRemaining > 0 && (
+            {(() => {
+              const eta = progress.estimatedSecondsRemaining ?? null;
+              return eta !== null && eta > 0 ? (
               <span className="ml-2 text-blue-600">
-                • ETA: {progress.estimatedSecondsRemaining < 60 ? `${progress.estimatedSecondsRemaining}s` : progress.estimatedSecondsRemaining < 3600 ? `${Math.floor(progress.estimatedSecondsRemaining / 60)}m` : `${Math.floor(progress.estimatedSecondsRemaining / 3600)}h ${Math.floor((progress.estimatedSecondsRemaining % 3600) / 60)}m`}
+                • ETA: {eta < 60 ? `${eta}s` : eta < 3600 ? `${Math.floor(eta / 60)}m` : `${Math.floor(eta / 3600)}h ${Math.floor((eta % 3600) / 60)}m`}
               </span>
-            )}
+              ) : null;
+            })()}
           </>
         ) : (
           <>Waiting for progress...</>
