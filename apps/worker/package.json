@@ -11,20 +11,20 @@
     "start": "node dist/apps/worker/src/index.js"
   },
   "dependencies": {
+    "@react-pdf/renderer": "^3.4.5",
     "@shared/types": "workspace:*",
     "@supabase/supabase-js": "^2.45.4",
+    "dotenv": "^16.4.5",
+    "jszip": "^3.10.1",
+    "openai": "^4.76.0",
     "playwright-core": "^1.48.2",
-    "@react-pdf/renderer": "^3.4.5",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "jszip": "^3.10.1",
-    "xlsx": "^0.18.5",
-    "dotenv": "^16.4.5"
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
+    "@types/react": "^18.3.5",
     "tsx": "^4.16.3",
-    "typescript": "^5.4.5",
-    "@types/react": "^18.3.5"
+    "typescript": "^5.4.5"
   }
 }
-

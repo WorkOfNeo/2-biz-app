@@ -52,6 +52,25 @@ export default function JobDetailPage() {
                   return null;
                 })()
               )}
+              {/* Progress for deep_scrape_styles */}
+              {data.job.type === 'deep_scrape_styles' && (
+                (() => {
+                  const entry = (data.logs as any[]).find((l) => l.msg === 'STEP:deep_styles_progress' && l.data);
+                  const index = Number(entry?.data?.index || 0) || null;
+                  const total = Number(entry?.data?.total || 0) || null;
+                  const percent = Number(entry?.data?.percent || 0) || (index && total ? Math.round((index / total) * 100) : null);
+                  const updated = Number(entry?.data?.updated || 0) || 0;
+                  const links = Number(entry?.data?.colorLinksInserted || 0) || 0;
+                  if (index && total) {
+                    return (
+                      <div className="text-sm mt-1">
+                        Progress: <b>{index}</b> / {total} ({percent ?? 0}%) • Updated: {updated} • Links: {links}
+                      </div>
+                    );
+                  }
+                  return null;
+                })()
+              )}
             </div>
             <div>
               {(data.job.status === 'running' || data.job.status === 'queued') && (

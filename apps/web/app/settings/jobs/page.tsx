@@ -10,10 +10,8 @@ type JobResult = { job_id: string; summary?: string | null; data?: any; created_
 const JOB_DESCRIPTIONS: Record<string, string> = {
   scrape_styles:
     'Scrape Styles: Fast scan of SPY styles table to discover and update styles (number, name, links, images). Detects missing styles. No detail page visits.',
-  enrich_styles:
-    'Enrich Styles: Visits style detail pages to populate style_type (category). Skips styles that already have style_type unless needs_enrichment flag is set. Run on demand or weekly.',
   deep_scrape_styles:
-    'Deep Scrape Styles: Visits each style Materials tab, reads season selects and color boxes, then maps which colors belong to which seasons. Automatically inserts/deletes style_color_seasons links to keep them in sync with SPY.',
+    'Deep Enrich Styles: Visits each style Materials tab, reads season selects and color boxes, then maps which colors belong to which seasons. Automatically inserts/deletes style_color_seasons links to keep them in sync with SPY.',
   update_style_stock:
     'Update Style Stock: Visits selected styles Stat & Stock tab, respects style/color scrape toggles and inactive flags, parses Stock/Sold/Purchase/Dedicated, bulk-upserts rows and runs in fan-out batches.',
   scrape_customers:
@@ -237,12 +235,15 @@ function RunningJobProgress({ job }: { job: { id: string; type: string; started_
     // Determine which log messages to look for based on job type
     const isEanJob = job.type === 'scrape_eans';
     const isStockJob = job.type === 'update_style_stock';
+    const isDeepStylesJob = job.type === 'deep_scrape_styles';
     
     let logMessages: string[] = [];
     if (isEanJob) {
       logMessages = ['STEP:ean_progress', 'STEP:ean_filtered', 'STEP:complete', 'STEP:ean_total_requested', 'STEP:ean_style_done'];
     } else if (isStockJob) {
       logMessages = ['STEP:update_style_stock_progress', 'STEP:style_stock_filtered', 'STEP:complete', 'STEP:style_stock_total_requested', 'STEP:style_stock_style_done'];
+    } else if (isDeepStylesJob) {
+      logMessages = ['STEP:deep_styles_begin', 'STEP:deep_styles_progress', 'STEP:complete'];
     } else {
       // For other job types, return null (no progress tracking yet)
       return null;
@@ -257,6 +258,27 @@ function RunningJobProgress({ job }: { job: { id: string; type: string; started_
       .limit(1000);
     
     if (!allLogs || allLogs.length === 0) return null;
+
+    if (isDeepStylesJob) {
+      // Deep styles progress is reported directly by the worker in STEP:deep_styles_progress
+      let last: any | null = null;
+      for (let i = allLogs.length - 1; i >= 0; i--) {
+        const l = allLogs[i] as any;
+        if (l.msg === 'STEP:deep_styles_progress' && l.data) { last = l; break; }
+      }
+      const index = Number(last?.data?.index || 0) || 0;
+      const total = Number(last?.data?.total || 0) || 0;
+      const percent = Number(last?.data?.percent || 0) || (total ? Math.round((index / total) * 100) : 0);
+      const updated = Number(last?.data?.updated || 0) || 0;
+      const colorLinksInserted = Number(last?.data?.colorLinksInserted || 0) || 0;
+      return {
+        index,
+        total: total || 1,
+        percent: Math.min(100, Math.max(0, percent)),
+        updated,
+        colorLinksInserted
+      };
+    }
     
     // Count total active items
     let totalActive = 0;
@@ -321,10 +343,15 @@ function RunningJobProgress({ job }: { job: { id: string; type: string; started_
       <div className="text-sm text-blue-800 mb-3">
         {progress ? (
           <>
-            {progress.index}/{progress.total} {job.type === 'scrape_eans' ? 'styles' : 'styles'} ({progress.percent}%)
+            {progress.index}/{progress.total} styles ({progress.percent}%)
             {progress.skippedInactive > 0 && (
               <span className="text-xs text-blue-500 ml-1">
                 ({progress.skippedInactive} {job.type === 'scrape_eans' ? 'no link' : 'inactive'} skipped)
+              </span>
+            )}
+            {job.type === 'deep_scrape_styles' && (
+              <span className="ml-2 text-xs text-blue-700">
+                • Updated: {progress.updated ?? 0} • Links: {progress.colorLinksInserted ?? 0}
               </span>
             )}
             {progress.estimatedSecondsRemaining !== null && progress.estimatedSecondsRemaining > 0 && (
@@ -557,8 +584,7 @@ export default function JobsOverviewPage() {
               title: 'Scrapes',
               items: [
                 { type: 'scrape_styles', label: 'Scrape Styles', actions: [{ label: 'Run', payload: {} }] },
-                { type: 'enrich_styles', label: 'Enrich Styles', actions: [{ label: 'Run', payload: {} }] },
-                { type: 'deep_scrape_styles', label: 'Deep Scrape Styles (Seasons)', actions: [{ label: 'Run', payload: {} }] },
+                { type: 'deep_scrape_styles', label: 'Deep Enrich Styles', actions: [{ label: 'Run', payload: {} }] },
                 { type: 'update_style_stock', label: 'Update Style Stock', actions: [{ label: 'Run (Selected)', payload: {} }, { label: 'Run (All)', payload: { mode: 'all' } }] },
                 { type: 'scrape_customers', label: 'Scrape Customers', actions: [{ label: 'Run', payload: {} }] },
                 { type: 'scrape_statistics', label: 'Scrape Statistics', actions: [{ label: 'Run Deep', payload: { toggles: { deep: true } } }, { label: 'Per-size Snapshot', payload: { kind: 'per_size' } }] },

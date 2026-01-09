@@ -154,6 +154,9 @@ importers:
       jszip:
         specifier: ^3.10.1
         version: 3.10.1
+      openai:
+        specifier: ^4.76.0
+        version: 4.104.0(ws@8.18.3)(zod@3.25.76)
       playwright-core:
         specifier: ^1.48.2
         version: 1.56.0

@@ -182,15 +182,24 @@ export default function StylesPage() {
     await enqueueJob('scrape_styles', { requestedBy: (await supabase.auth.getSession()).data.session?.user.email });
   }
 
-  async function enqueueJob(type: 'scrape_styles' | 'enrich_styles', payload: any = {}) {
+  async function enqueueJob(type: 'scrape_styles' | 'deep_scrape_styles', payload: any = {}) {
     try {
       setEnq(type);
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) throw new Error('Not signed in');
+      // Deep scrape/enrich requires current season to be mapped to SPY (same rule as /styles/runs)
+      let fullPayload = { ...payload, requestedBy: payload?.requestedBy || session.user.email } as Record<string, any>;
+      if (type === 'deep_scrape_styles') {
+        const { data: current } = await supabase.from('seasons').select('id, spy_season_id').eq('is_current', true).maybeSingle();
+        const seasonId = (current as any)?.id as string | undefined;
+        const spySeasonId = Number((current as any)?.spy_season_id || 0) || null;
+        if (!seasonId || !spySeasonId) throw new Error('Current season not mapped to SPY yet');
+        fullPayload = { ...fullPayload, seasonId };
+      }
       const res = await fetch('/api/enqueue', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
-        body: JSON.stringify({ type, payload: { ...payload, requestedBy: payload?.requestedBy || session.user.email } })
+        body: JSON.stringify({ type, payload: fullPayload })
       });
       const js = await res.json().catch(() => ({}));
       // eslint-disable-next-line no-console
@@ -200,7 +209,7 @@ export default function StylesPage() {
           const label =
             type === 'scrape_styles'
               ? 'Scrape styles — job started'
-              : 'Enrich styles — job started';
+              : 'Deep enrich styles — job started';
           window.dispatchEvent(new CustomEvent('job-started', { detail: { label } }));
         }
       } catch {}
@@ -214,14 +223,14 @@ export default function StylesPage() {
     }
   }
 
-  async function enqueueScrapeThenEnrich() {
+  async function enqueueScrapeThenDeepEnrich() {
     if (enq) return;
     try {
-      setEnq('scrape_then_enrich');
+      setEnq('scrape_then_deep_enrich');
       await enqueueJob('scrape_styles', {});
       // enqueueJob clears enq; restore a busy indicator for the sequence UI
-      setEnq('scrape_then_enrich');
-      await enqueueJob('enrich_styles', {});
+      setEnq('scrape_then_deep_enrich');
+      await enqueueJob('deep_scrape_styles', {});
     } finally {
       setEnq(null);
       setMenuOpen(false);
@@ -251,16 +260,16 @@ export default function StylesPage() {
               <button
                 className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 disabled:opacity-50"
                 disabled={!!enq}
-                onClick={() => enqueueJob('enrich_styles', {})}
+                onClick={() => enqueueJob('deep_scrape_styles', {})}
               >
-                {enq === 'enrich_styles' ? 'Enriching…' : 'Enrich styles'}
+                {enq === 'deep_scrape_styles' ? 'Enriching…' : 'Deep enrich styles'}
               </button>
               <button
                 className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 disabled:opacity-50"
                 disabled={!!enq}
-                onClick={enqueueScrapeThenEnrich}
+                onClick={enqueueScrapeThenDeepEnrich}
               >
-                {enq === 'scrape_then_enrich' ? 'Starting…' : 'Scrape + enrich'}
+                {enq === 'scrape_then_deep_enrich' ? 'Starting…' : 'Scrape + deep enrich'}
               </button>
             </div>
           )}
@@ -465,7 +474,7 @@ export default function StylesPage() {
                       </div>
                       <div className="flex items-center gap-1.5 flex-wrap">
                         {r.maybe_inactive && !r.inactive && <span className="text-[10px] px-1.5 py-0.5 bg-yellow-100 text-yellow-800 rounded">Maybe Inactive</span>}
-                        {r.needs_enrichment && <span className="text-[10px] px-1.5 py-0.5 bg-blue-100 text-blue-800 rounded" title="Needs enrichment - will be processed by enrich_styles job">Needs Enrichment</span>}
+                        {r.needs_enrichment && <span className="text-[10px] px-1.5 py-0.5 bg-blue-100 text-blue-800 rounded" title="Needs enrichment - will be processed by deep_scrape_styles job">Needs Enrichment</span>}
                       </div>
                     </div>
                   </td>
