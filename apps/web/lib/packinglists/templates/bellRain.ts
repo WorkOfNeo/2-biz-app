@@ -55,7 +55,7 @@ function parseTableRows(sectionLines: PdfLine[], headerIdx: number): Packinglist
 
     const model = tokens[0] || '';
     const modelType = tokens[1] || null;
-    const color = tokens.length >= 3 ? tokens[tokens.length - 1] : null;
+    const color = tokens.length >= 3 ? (tokens[tokens.length - 1] || null) : null;
     const articleNumber = tokens.length > 3 ? tokens.slice(2, -1).join(' ') : null;
 
     const sizes: Record<string, number> = Object.fromEntries(SIZES.map((s) => [s, 0]));
