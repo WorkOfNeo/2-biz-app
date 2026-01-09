@@ -43,10 +43,26 @@ export async function syncAppPoFromSpy(ctx: Ctx) {
       spy_po_no: payload.spy_po_no 
     });
     
-    // Fetch APP PO from database
+    function normalizeSpyDateToIso(s: string | null | undefined): string | null {
+      const raw = String(s || '').trim();
+      if (!raw) return null;
+      // Already ISO-ish
+      if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+      // SPY uses MM/DD/YYYY
+      const m = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+      if (m) {
+        const mm = m[1]!.padStart(2, '0');
+        const dd = m[2]!.padStart(2, '0');
+        const yy = m[3]!;
+        return `${yy}-${mm}-${dd}`;
+      }
+      return raw; // store as-is if unknown format (still better than losing it)
+    }
+
+    // Fetch APP PO from database (including current ETD/ETA)
     const { data: appPO, error: poError } = await supabase
       .from('app_pos')
-      .select('id, po_no, spy_po_no, meta')
+      .select('id, po_no, spy_po_no, meta, etd, eta')
       .eq('id', payload.po_id)
       .single();
       
@@ -119,6 +135,42 @@ export async function syncAppPoFromSpy(ctx: Ctx) {
       styles_count: poRowData.stylesCount,
       total_ordered: poRowData.ordered
     });
+
+    // Backfill ETD/ETA from SPY edit page if missing in app_pos (do not overwrite)
+    try {
+      const missingEtd = !String((appPO as any)?.etd || '').trim();
+      const missingEta = !String((appPO as any)?.eta || '').trim();
+      if ((missingEtd || missingEta) && poRowData.poEditLink) {
+        await log(job.id, 'info', 'STEP:sync_dates_backfill_begin', { missingEtd, missingEta });
+        const editUrl = `${SPY_BASE_URL}${poRowData.poEditLink}`;
+        await page.goto(editUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+        // Fields exist on classic edit page
+        await page.waitForSelector('input[name="POrder[strETD]"], input[name="POrder[strETA]"]', { timeout: 30_000 }).catch(() => null);
+        const etdSpy = await page.$eval('input[name="POrder[strETD]"]', (el) => (el as HTMLInputElement).value || '').catch(() => '');
+        const etaSpy = await page.$eval('input[name="POrder[strETA]"]', (el) => (el as HTMLInputElement).value || '').catch(() => '');
+        const etdIso = normalizeSpyDateToIso(etdSpy);
+        const etaIso = normalizeSpyDateToIso(etaSpy);
+        const updates: Record<string, any> = {};
+        if (missingEtd && etdIso) updates.etd = etdIso;
+        if (missingEta && etaIso) updates.eta = etaIso;
+        if (Object.keys(updates).length > 0) {
+          const { error: updErr } = await supabase.from('app_pos').update(updates).eq('id', payload.po_id);
+          if (updErr) {
+            await log(job.id, 'error', 'STEP:sync_dates_backfill_failed', { error: updErr.message, updates });
+          } else {
+            await log(job.id, 'info', 'STEP:sync_dates_backfilled', { updates, etdSpy, etaSpy });
+          }
+        } else {
+          await log(job.id, 'info', 'STEP:sync_dates_backfill_no_updates', { etdSpy, etaSpy });
+        }
+        // Go back to running list (best effort) for file downloads below
+        await page.goto(`${SPY_BASE_URL}/app/purchase/running`, { waitUntil: 'domcontentloaded', timeout: 30_000 }).catch(() => null);
+        await page.waitForSelector('.app-outlet table', { timeout: 30_000 }).catch(() => null);
+        await page.waitForTimeout(800);
+      }
+    } catch (e: any) {
+      await log(job.id, 'error', 'STEP:sync_dates_backfill_error', { error: e?.message || String(e) });
+    }
     
     // Verify totals match APP PO
     const appPoItems = (appPO.meta as any)?.items || [];
