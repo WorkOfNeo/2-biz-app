@@ -42,6 +42,14 @@ export async function extractPdf(file: File): Promise<PdfExtract> {
     pdfjs = await import('pdfjs-dist/build/pdf.mjs');
   }
 
+  // Some builds still require workerSrc to be set (even with disableWorker / fake worker paths).
+  // Use a CDN URL to avoid bundling the worker into the Next build.
+  try {
+    if (pdfjs?.GlobalWorkerOptions) {
+      pdfjs.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/5.4.530/pdf.worker.min.mjs';
+    }
+  } catch {}
+
   const doc = await pdfjs.getDocument({ data: arrayBuffer, disableWorker: true }).promise;
   const allItems: PdfTextItem[] = [];
   let allText = '';

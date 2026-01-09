@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react';
 import { extractPdf } from '../../../lib/packinglists/pdf';
 import { PACKINGLIST_TEMPLATES } from '../../../lib/packinglists/templates';
 import type { PackinglistParseResult } from '../../../lib/packinglists/types';
+import { Dropzone } from '../../../components/ui/dropzone';
 
 export default function PackinglistsPage() {
   const [file, setFile] = useState<File | null>(null);
@@ -28,13 +29,14 @@ export default function PackinglistsPage() {
     return out;
   }, [result]);
 
-  async function parse() {
-    if (!file) return;
+  async function parse(nextFile?: File) {
+    const f = nextFile || file;
+    if (!f) return;
     setBusy(true);
     setError(null);
     setResult(null);
     try {
-      const pdf = await extractPdf(file);
+      const pdf = await extractPdf(f);
       const template = PACKINGLIST_TEMPLATES.find((t) => t.canParse(pdf));
       if (!template) {
         throw new Error('No matching template found for this PDF (only Bell Rain supported right now).');
@@ -42,6 +44,8 @@ export default function PackinglistsPage() {
       const parsed = template.parse(pdf);
       setResult(parsed);
     } catch (e: any) {
+      // eslint-disable-next-line no-console
+      console.error('[packinglists] parse error', e);
       setError(e?.message || 'Failed to parse PDF');
     } finally {
       setBusy(false);
@@ -60,16 +64,26 @@ export default function PackinglistsPage() {
 
       <div className="rounded-lg border bg-white p-4 space-y-3">
         <div className="text-sm font-medium">Upload PDF</div>
-        <input
-          type="file"
-          accept="application/pdf"
-          onChange={(e) => setFile(e.target.files?.[0] || null)}
-        />
+        <Dropzone
+          accept="application/pdf,.pdf"
+          multiple={false}
+          onFiles={(files) => {
+            const f = files?.[0] || null;
+            setFile(f);
+            if (f) void parse(f);
+          }}
+        >
+          <div className="space-y-1">
+            <div className="text-sm font-medium text-slate-800">Drag & drop a PDF here</div>
+            <div className="text-xs text-slate-500">…or click to browse</div>
+            {file && <div className="text-xs text-slate-600 mt-2">Selected: {file.name}</div>}
+          </div>
+        </Dropzone>
         <div className="flex items-center gap-2">
           <button
             className="rounded border px-3 py-1.5 text-sm bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-50"
             disabled={!file || busy}
-            onClick={parse}
+            onClick={() => parse()}
           >
             {busy ? 'Parsing…' : 'Parse'}
           </button>
