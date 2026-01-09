@@ -11,9 +11,15 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import OpenAI from 'openai';
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+function getOpenAIClient() {
+  const apiKey = (process.env.OPENAI_API_KEY || '').trim();
+  if (!apiKey) {
+    // IMPORTANT: Do not instantiate OpenAI at module load time, otherwise the worker crashes on startup
+    // when OPENAI_API_KEY isn't set (Railway). Instead, fail only the specific job that needs it.
+    throw new Error('OPENAI_API_KEY is missing; cannot run analyzeConversationMessage');
+  }
+  return new OpenAI({ apiKey });
+}
 
 type AnalysisPayload = {
   message_id: string;
@@ -90,7 +96,8 @@ Be careful:
 - Questions should be specific, not generic pleasantries
 - Extract actual dates if mentioned, convert to YYYY-MM-DD format`;
 
-    // Call OpenAI
+    // Call OpenAI (lazy init to avoid crashing worker if OPENAI_API_KEY isn't set)
+    const openai = getOpenAIClient();
     const completion = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [
@@ -188,4 +195,5 @@ Be careful:
     return { success: false, error: error.message };
   }
 }
+
 
