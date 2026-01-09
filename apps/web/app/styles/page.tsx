@@ -1,10 +1,11 @@
 'use client';
-import { useState, useMemo } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { MoreHorizontal } from 'lucide-react';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import useSWR from 'swr';
 import { SearchSelect } from '../../components/SearchSelect';
 import { Button } from '../../components/ui/button';
+import { Modal } from '../../components/Modal';
 
 export default function StylesPage() {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -17,6 +18,11 @@ export default function StylesPage() {
   const [seasonInvert, setSeasonInvert] = useState(false);
   const [settingInactive, setSettingInactive] = useState(false);
   const [updatingStyleId, setUpdatingStyleId] = useState<string | null>(null);
+  const [selectedStyleIds, setSelectedStyleIds] = useState<Set<string>>(new Set());
+  const [addToStockListOpen, setAddToStockListOpen] = useState(false);
+  const [targetStockListId, setTargetStockListId] = useState('');
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const selectAllRef = useRef<HTMLInputElement | null>(null);
   const supabase = createClientComponentClient();
 
   // Fetch seasons for dropdown
@@ -29,6 +35,45 @@ export default function StylesPage() {
     if (error) throw error;
     return data;
   });
+
+  // Pre-aggregated seasons per style_no (labels like "25 WINTER")
+  const { data: styleSeasonsByNo } = useSWR('style_seasons:byStyle:styles-page', async () => {
+    const pageSize = 2000;
+    const cap = 200000;
+    let from = 0;
+    const out = new Map<string, string[]>();
+    while (from < cap) {
+      const to = from + pageSize - 1;
+      const { data, error } = await supabase.from('style_seasons').select('style_no, seasons').range(from, to);
+      if (error) throw error;
+      const batch = (data ?? []) as any[];
+      for (const r of batch) {
+        const arr = Array.isArray(r.seasons) ? (r.seasons as string[]) : [];
+        if (r.style_no) out.set(String(r.style_no), arr.map((s) => String(s)));
+      }
+      if (batch.length < pageSize) break;
+      from += pageSize;
+    }
+    return out as Map<string, string[]>;
+  }, { refreshInterval: 0 });
+
+  const { data: stockLists } = useSWR('stock-lists:all:styles-page', async () => {
+    const { data, error } = await supabase.from('stock_lists').select('id, name');
+    if (error) throw error;
+    const sortOrder: Record<string, number> = {
+      'Aktiv': 1,
+      'Passiv': 2,
+      'NOOS': 3,
+      'Nye styles': 4,
+      'Intet': 5,
+    };
+    return (data ?? []).sort((a: any, b: any) => {
+      const aOrder = sortOrder[a.name] ?? 999;
+      const bOrder = sortOrder[b.name] ?? 999;
+      if (aOrder !== bOrder) return aOrder - bOrder;
+      return String(a.name || '').localeCompare(String(b.name || ''));
+    }) as Array<{ id: string; name: string }>;
+  }, { refreshInterval: 0 });
 
   const { data: rows, mutate } = useSWR(['styles:list', q, supplierFilter, supplierInvert, stockAllZerosFilter, seasonFilter, seasonInvert], async () => {
     // Build base query
@@ -111,6 +156,107 @@ export default function StylesPage() {
     return filtered;
   });
 
+  const visibleStyleIds = useMemo(() => (rows ?? []).map((r: any) => String(r.id || '')).filter(Boolean), [rows]);
+  const selectedCount = selectedStyleIds.size;
+  const allVisibleSelected = visibleStyleIds.length > 0 && visibleStyleIds.every((id) => selectedStyleIds.has(id));
+  const someVisibleSelected = visibleStyleIds.some((id) => selectedStyleIds.has(id));
+  useEffect(() => {
+    if (selectAllRef.current) selectAllRef.current.indeterminate = !allVisibleSelected && someVisibleSelected;
+  }, [allVisibleSelected, someVisibleSelected]);
+
+  function toggleOne(styleId: string) {
+    setSelectedStyleIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(styleId)) next.delete(styleId);
+      else next.add(styleId);
+      return next;
+    });
+  }
+
+  function toggleAllVisible(checked: boolean) {
+    setSelectedStyleIds((prev) => {
+      const next = new Set(prev);
+      for (const id of visibleStyleIds) {
+        if (checked) next.add(id);
+        else next.delete(id);
+      }
+      return next;
+    });
+  }
+
+  async function bulkAddSelectedToStockList() {
+    const listId = targetStockListId;
+    const styleIds = Array.from(selectedStyleIds);
+    if (!listId) {
+      alert('Please select a stock list');
+      return;
+    }
+    if (styleIds.length === 0) {
+      alert('Please select at least one style');
+      return;
+    }
+
+    const chunk = <T,>(arr: T[], size: number) => {
+      const out: T[][] = [];
+      for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+      return out;
+    };
+
+    setBulkBusy(true);
+    try {
+      // Add styles (ignore duplicates)
+      for (const part of chunk(styleIds, 500)) {
+        const inserts = part.map((style_id) => ({ list_id: listId, style_id }));
+        const { error } = await supabase.from('stock_list_styles').upsert(inserts as any, { onConflict: 'list_id,style_id', ignoreDuplicates: true });
+        if (error) throw error;
+      }
+
+      // Fetch colors for selected styles (paginate for safety)
+      const pageSize = 2000;
+      const cap = 200000;
+      let from = 0;
+      const allColors: Array<{ id: string; style_id: string }> = [];
+      while (from < cap) {
+        const to = from + pageSize - 1;
+        const { data, error } = await supabase
+          .from('style_colors')
+          .select('id, style_id')
+          .in('style_id', styleIds)
+          .range(from, to);
+        if (error) throw error;
+        const batch = (data ?? []) as any[];
+        allColors.push(...batch.map((r) => ({ id: String(r.id), style_id: String(r.style_id) })));
+        if (batch.length < pageSize) break;
+        from += pageSize;
+      }
+
+      // Add colors (include=true by default; ignore duplicates)
+      const colorInserts = allColors.map((c) => ({
+        list_id: listId,
+        style_id: c.style_id,
+        style_color_id: c.id,
+        include: true
+      }));
+      for (const part of chunk(colorInserts, 500)) {
+        const { error } = await supabase.from('stock_list_colors').upsert(part as any, { onConflict: 'list_id,style_color_id', ignoreDuplicates: true });
+        if (error) throw error;
+      }
+
+      const listName = stockLists?.find((l) => l.id === listId)?.name || 'stock list';
+      const open = confirm(`✓ Added ${styleIds.length} style(s) to "${listName}".\n\nOpen the stock list page now?`);
+      setSelectedStyleIds(new Set());
+      setAddToStockListOpen(false);
+      setTargetStockListId('');
+      if (open) window.location.href = `/styles/stock-list?list=${encodeURIComponent(listId)}`;
+    } catch (err: any) {
+      // eslint-disable-next-line no-console
+      console.error('[styles] bulk add to stock list failed', err);
+      alert(`❌ Failed to add styles to stock list:\n\n${err?.message || 'Unknown error'}`);
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+
   // Get unique suppliers for the dropdown
   const supplierOptions = useMemo(() => {
     const suppliers = new Set<string>();
@@ -135,6 +281,10 @@ export default function StylesPage() {
       return { value: s.id, label };
     });
   }, [seasons]);
+
+  const stockListOptions = useMemo(() => {
+    return (stockLists ?? []).map((l) => ({ value: l.id, label: l.name }));
+  }, [stockLists]);
 
   // "Set all visible to Inactive" function
   async function setAllVisibleInactive() {
@@ -341,6 +491,26 @@ export default function StylesPage() {
           >
             {settingInactive ? 'Setting Inactive...' : 'Set All Visible to Inactive'}
           </Button>
+          <div className="flex items-center gap-2">
+            <div className="text-xs text-gray-500">{selectedCount} selected</div>
+            <Button
+              onClick={() => setAddToStockListOpen(true)}
+              disabled={selectedCount === 0}
+              variant="secondary"
+              size="sm"
+            >
+              Add to stock list…
+            </Button>
+            {selectedCount > 0 && (
+              <Button
+                onClick={() => setSelectedStyleIds(new Set())}
+                variant="outline"
+                size="sm"
+              >
+                Clear
+              </Button>
+            )}
+          </div>
           {(q || supplierFilter || seasonFilter || stockAllZerosFilter !== null) && (
             <div className="text-xs text-gray-500">
               Found {(rows ?? []).length} style{(rows ?? []).length !== 1 ? 's' : ''}
@@ -351,10 +521,21 @@ export default function StylesPage() {
           <table className="min-w-full text-xs">
             <thead className="bg-gray-50">
               <tr>
+                <th className="text-left p-2 border-b w-10">
+                  <input
+                    ref={selectAllRef}
+                    type="checkbox"
+                    className="h-4 w-4 rounded"
+                    checked={allVisibleSelected}
+                    onChange={(e) => toggleAllVisible(e.target.checked)}
+                    aria-label="Select all visible styles"
+                  />
+                </th>
                 <th className="text-left p-2 border-b">Image</th>
                 <th className="text-left p-2 border-b">Style No.</th>
                 <th className="text-left p-2 border-b">Style Name</th>
                 <th className="text-left p-2 border-b">Supplier</th>
+                <th className="text-left p-2 border-b">Seasons</th>
                 <th className="text-left p-2 border-b">DG</th>
                 <th className="text-left p-2 border-b">Stock All Zeros</th>
                 <th className="text-left p-2 border-b">Missing from SPY</th>
@@ -365,7 +546,7 @@ export default function StylesPage() {
             <tbody>
               {(rows ?? []).length === 0 && (
                 <tr>
-                  <td colSpan={9} className="p-4 text-center text-gray-500">
+                  <td colSpan={11} className="p-4 text-center text-gray-500">
                     No styles found. {(q || supplierFilter || seasonFilter || stockAllZerosFilter !== null) ? 'Try adjusting your filters.' : ''}
                   </td>
                 </tr>
@@ -375,6 +556,18 @@ export default function StylesPage() {
                   key={r.style_no}
                   className={`transition-colors ${r.inactive ? 'bg-red-100 opacity-70' : 'hover:bg-gray-50'}`}
                 >
+                  <td
+                    className="p-2 border-b"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 rounded"
+                      checked={selectedStyleIds.has(String(r.id))}
+                      onChange={() => toggleOne(String(r.id))}
+                      aria-label={`Select style ${r.style_no}`}
+                    />
+                  </td>
                   <td className="p-2 border-b cursor-pointer" onClick={() => { window.location.href = `/styles/${encodeURIComponent(r.style_no)}`; }}>
                     <div className={r.inactive ? 'opacity-50 grayscale' : ''}>
                       {r.image_url ? <img src={r.image_url} alt="thumb" className="h-8 w-8 object-cover rounded" /> : null}
@@ -383,6 +576,16 @@ export default function StylesPage() {
                   <td className={`p-2 border-b underline cursor-pointer ${r.inactive ? 'text-red-700 line-through' : 'text-slate-700'}`} onClick={() => { window.location.href = `/styles/${encodeURIComponent(r.style_no)}`; }}>{r.style_no}</td>
                   <td className={`p-2 border-b cursor-pointer ${r.inactive ? 'text-gray-500 line-through' : ''}`} onClick={() => { window.location.href = `/styles/${encodeURIComponent(r.style_no)}`; }}>{r.style_name ?? '—'}</td>
                   <td className={`p-2 border-b cursor-pointer ${r.inactive ? 'text-gray-500' : ''}`} onClick={() => { window.location.href = `/styles/${encodeURIComponent(r.style_no)}`; }}>{r.supplier ?? '—'}</td>
+                  <td className="p-2 border-b cursor-pointer" onClick={() => { window.location.href = `/styles/${encodeURIComponent(r.style_no)}`; }}>
+                    {(() => {
+                      const arr = styleSeasonsByNo?.get(String(r.style_no)) || [];
+                      if (arr.length === 0) return <span className="text-gray-400">—</span>;
+                      const shown = arr.slice(0, 3);
+                      const rest = arr.length - shown.length;
+                      const text = `${shown.join(', ')}${rest > 0 ? ` +${rest}` : ''}`;
+                      return <span title={arr.join(', ')}>{text}</span>;
+                    })()}
+                  </td>
                   <td className={`p-2 border-b cursor-pointer ${r.inactive ? 'text-gray-500' : ''}`} onClick={() => { window.location.href = `/styles/${encodeURIComponent(r.style_no)}`; }}>{r.dg ?? '—'}</td>
                   <td className="p-2 border-b cursor-pointer" onClick={() => { window.location.href = `/styles/${encodeURIComponent(r.style_no)}`; }}>
                     {r.stock_all_zeros ? (
@@ -485,6 +688,37 @@ export default function StylesPage() {
           </table>
         </div>
       </div>
+
+      <Modal
+        open={addToStockListOpen}
+        onClose={() => { if (!bulkBusy) setAddToStockListOpen(false); }}
+        title="Add selected styles to stock list"
+        footer={
+          <>
+            <Button variant="outline" disabled={bulkBusy} onClick={() => setAddToStockListOpen(false)}>Cancel</Button>
+            <Button disabled={bulkBusy || selectedCount === 0 || !targetStockListId} onClick={bulkAddSelectedToStockList}>
+              {bulkBusy ? 'Adding…' : 'Add'}
+            </Button>
+          </>
+        }
+        maxWidth="max-w-xl"
+      >
+        <div className="space-y-3">
+          <div className="text-sm text-gray-600">
+            {selectedCount} style{selectedCount !== 1 ? 's' : ''} selected.
+          </div>
+          <SearchSelect
+            items={stockListOptions}
+            value={targetStockListId}
+            onChange={setTargetStockListId}
+            placeholder="Select stock list…"
+            clearable={true}
+          />
+          <div className="text-xs text-gray-500">
+            This will add the styles (and all their colors) into the chosen list. Existing entries will be kept (no duplicates).
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }
