@@ -23,6 +23,7 @@ type Supplier = {
   spy_id?: string;
   lead_time_days: number;
   travel_time_days: number;
+  usual_delivery_weekday?: number | null;
   moq: number;
   tags: string[];
   notes?: string;

@@ -148,7 +148,7 @@ export default function AppPoDetailPage() {
     async () => {
       const { data, error } = await supabase
         .from('suppliers')
-        .select('id, name, lead_time_days, travel_time_days, notes, contacts')
+        .select('id, name, lead_time_days, travel_time_days, usual_delivery_weekday, notes, contacts')
         .eq('name', po!.supplier)
         .maybeSingle();
       if (error) console.error('Error fetching supplier:', error);
@@ -157,6 +157,7 @@ export default function AppPoDetailPage() {
         name: string; 
         lead_time_days: number; 
         travel_time_days: number; 
+        usual_delivery_weekday?: number | null;
         notes?: string;
         contacts?: Array<{ name: string; email: string; role?: string; primary?: boolean }>;
       } | null;
@@ -204,26 +205,39 @@ export default function AppPoDetailPage() {
     if (!po) return;
     
     // If po already has ETD/ETA, use those
-    if (po.etd) {
-      setEtdInput(po.etd.split('T')[0] || '');
-    } else if (supplierData?.lead_time_days) {
-      // Calculate default ETD from supplier lead time
+    function snapEtaInFavor(eta: Date, weekday: number | null | undefined): Date {
+      if (weekday == null || Number.isNaN(Number(weekday))) return eta;
+      const target = Number(weekday);
+      if (target < 0 || target > 6) return eta;
+      const d = new Date(eta);
+      const deltaBack = (d.getDay() - target + 7) % 7; // 0..6 days back
+      d.setDate(d.getDate() - deltaBack);
+      // Guard: never snap into the past (relative to today)
       const today = new Date();
-      const etdDate = new Date(today);
-      etdDate.setDate(today.getDate() + supplierData.lead_time_days);
-      setEtdInput(etdDate.toISOString().split('T')[0] || '');
+      today.setHours(0, 0, 0, 0);
+      const dd = new Date(d);
+      dd.setHours(0, 0, 0, 0);
+      if (dd.getTime() < today.getTime()) return eta;
+      return d;
     }
-    
-    if (po.eta) {
-      setEtaInput(po.eta.split('T')[0] || '');
-    } else if (supplierData?.lead_time_days && supplierData?.travel_time_days) {
-      // Calculate default ETA from ETD + travel time
+
+    // If po already has ETD/ETA, use those
+    if (po.etd) setEtdInput(po.etd.split('T')[0] || '');
+    if (po.eta) setEtaInput(po.eta.split('T')[0] || '');
+
+    // Suggest defaults when missing
+    const lead = Number(supplierData?.lead_time_days || 0) || 0;
+    const travel = Number(supplierData?.travel_time_days || 0) || 0;
+    if (!po.etd || !po.eta) {
       const today = new Date();
-      const etdDate = new Date(today);
-      etdDate.setDate(today.getDate() + supplierData.lead_time_days);
-      const etaDate = new Date(etdDate);
-      etaDate.setDate(etdDate.getDate() + supplierData.travel_time_days);
-      setEtaInput(etaDate.toISOString().split('T')[0] || '');
+      today.setHours(0, 0, 0, 0);
+      const etaCandidate = new Date(today);
+      etaCandidate.setDate(etaCandidate.getDate() + lead + travel);
+      const etaSnapped = snapEtaInFavor(etaCandidate, supplierData?.usual_delivery_weekday ?? null);
+      const etdFromEta = new Date(etaSnapped);
+      etdFromEta.setDate(etdFromEta.getDate() - travel);
+      if (!po.eta) setEtaInput(etaSnapped.toISOString().split('T')[0] || '');
+      if (!po.etd) setEtdInput(etdFromEta.toISOString().split('T')[0] || '');
     }
   }, [po?.etd, po?.eta, supplierData]);
 

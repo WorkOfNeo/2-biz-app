@@ -26,7 +26,7 @@ export async function POST(req: Request) {
     const supabase = createRouteHandlerClient({ cookies });
     const body = await req.json();
 
-    const { name, external_name, spy_id, lead_time_days, travel_time_days, moq, tags, notes, contacts, active } = body;
+    const { name, external_name, spy_id, lead_time_days, travel_time_days, usual_delivery_weekday, moq, tags, notes, contacts, active } = body;
 
     if (!name || typeof name !== 'string') {
       return NextResponse.json({ error: 'name is required' }, { status: 400 });
@@ -40,6 +40,7 @@ export async function POST(req: Request) {
         spy_id: spy_id?.trim() || null,
         lead_time_days: lead_time_days ?? 0,
         travel_time_days: travel_time_days ?? 0,
+        usual_delivery_weekday: (usual_delivery_weekday === '' || usual_delivery_weekday === undefined) ? null : usual_delivery_weekday,
         moq: moq ?? 0,
         tags: tags || [],
         notes: notes?.trim() || null,
@@ -77,6 +78,7 @@ export async function PUT(req: Request) {
     if (updates.spy_id !== undefined) cleanUpdates.spy_id = updates.spy_id?.trim() || null;
     if (updates.lead_time_days !== undefined) cleanUpdates.lead_time_days = updates.lead_time_days;
     if (updates.travel_time_days !== undefined) cleanUpdates.travel_time_days = updates.travel_time_days;
+    if (updates.usual_delivery_weekday !== undefined) cleanUpdates.usual_delivery_weekday = (updates.usual_delivery_weekday === '' ? null : updates.usual_delivery_weekday);
     if (updates.moq !== undefined) cleanUpdates.moq = updates.moq;
     if (updates.tags !== undefined) cleanUpdates.tags = updates.tags;
     if (updates.notes !== undefined) cleanUpdates.notes = updates.notes?.trim() || null;

@@ -25,6 +25,7 @@ type Supplier = {
   spy_id?: string;
   lead_time_days: number;
   travel_time_days: number;
+  usual_delivery_weekday?: number | null;
   moq: number;
   tags: string[];
   notes?: string;
@@ -53,6 +54,7 @@ export default function SupplierDetailPage() {
     spy_id: '',
     lead_time_days: 0,
     travel_time_days: 0,
+    usual_delivery_weekday: null as number | null,
     moq: 0,
     tags: [] as string[],
     notes: '',
@@ -83,6 +85,7 @@ export default function SupplierDetailPage() {
         spy_id: supplier.spy_id || '',
         lead_time_days: supplier.lead_time_days || 0,
         travel_time_days: supplier.travel_time_days || 0,
+        usual_delivery_weekday: (supplier as any).usual_delivery_weekday ?? null,
         moq: supplier.moq || 0,
         tags: supplier.tags || [],
         notes: supplier.notes || '',
@@ -341,6 +344,31 @@ export default function SupplierDetailPage() {
                     value={form.travel_time_days}
                     onChange={e => setForm(prev => ({ ...prev, travel_time_days: parseInt(e.target.value) || 0 }))}
                   />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">
+                    Usual delivery day
+                  </label>
+                  <select
+                    className="w-full rounded-md border px-3 py-2 text-sm"
+                    value={form.usual_delivery_weekday === null ? '' : String(form.usual_delivery_weekday)}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setForm((prev) => ({ ...prev, usual_delivery_weekday: v === '' ? null : parseInt(v, 10) }));
+                    }}
+                  >
+                    <option value="">— Not set —</option>
+                    <option value="1">Monday</option>
+                    <option value="2">Tuesday</option>
+                    <option value="3">Wednesday</option>
+                    <option value="4">Thursday</option>
+                    <option value="5">Friday</option>
+                    <option value="6">Saturday</option>
+                    <option value="0">Sunday</option>
+                  </select>
+                  <div className="text-[11px] text-slate-500 mt-1">
+                    Used to snap ETA to the nearest configured weekday (in your favor).
+                  </div>
                 </div>
               </div>
 

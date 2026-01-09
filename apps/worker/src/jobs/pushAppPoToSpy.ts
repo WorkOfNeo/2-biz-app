@@ -114,9 +114,25 @@ function formatDateForSpy(d: Date): string {
 }
 
 // Get ETD/ETA from app_pos record or calculate defaults
+function snapEtaInFavor(eta: Date, weekday: number | null | undefined): Date {
+  if (weekday == null || Number.isNaN(Number(weekday))) return eta;
+  const target = Number(weekday);
+  if (target < 0 || target > 6) return eta;
+  const d = new Date(eta);
+  const deltaBack = (d.getDay() - target + 7) % 7; // 0..6 days back
+  d.setDate(d.getDate() - deltaBack);
+  // Guard: never snap into the past
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const dd = new Date(d);
+  dd.setHours(0, 0, 0, 0);
+  if (dd.getTime() < today.getTime()) return eta;
+  return d;
+}
+
 function getDates(
   po: AppPo,
-  opts?: { lead_time_days?: number | null; travel_time_days?: number | null }
+  opts?: { lead_time_days?: number | null; travel_time_days?: number | null; usual_delivery_weekday?: number | null }
 ): { etdSpy: string; etaSpy: string; etdIso: string; etaIso: string; usedDefaults: boolean } {
   const lead = Number(opts?.lead_time_days || 0) || null;
   const travel = Number(opts?.travel_time_days || 0) || null;
@@ -136,17 +152,15 @@ function getDates(
 
   // If missing dates: compute from supplier lead/travel time if available, otherwise fallback
   const now = new Date();
-  const etd = new Date(now);
-  if (lead) etd.setDate(etd.getDate() + lead);
-  else etd.setDate(etd.getDate() + (7 * 7)); // fallback 7 weeks
+  now.setHours(0, 0, 0, 0);
+  const etaCandidate = new Date(now);
+  const leadDays = lead || (7 * 7);
+  const travelDays = travel || 4;
+  etaCandidate.setDate(etaCandidate.getDate() + leadDays + travelDays);
 
-  const eta = new Date(etd);
-  eta.setDate(eta.getDate() + (travel || 4));
-
-  // Adjust ETA to next weekday if it falls on weekend
-  const dayOfWeek = eta.getDay();
-  if (dayOfWeek === 0) eta.setDate(eta.getDate() + 1); // Sunday
-  else if (dayOfWeek === 6) eta.setDate(eta.getDate() + 2); // Saturday
+  const eta = snapEtaInFavor(etaCandidate, opts?.usual_delivery_weekday ?? null);
+  const etd = new Date(eta);
+  etd.setDate(etd.getDate() - travelDays);
 
   const etdIso = etd.toISOString().split('T')[0]!;
   const etaIso = eta.toISOString().split('T')[0]!;
@@ -268,27 +282,30 @@ export async function pushAppPoToSpy(ctx: Ctx) {
     // Guard rail: if ETD/ETA are missing in app_pos, compute (prefer supplier lead/travel time) and persist
     let lead_time_days: number | null = null;
     let travel_time_days: number | null = null;
+    let usual_delivery_weekday: number | null = null;
     try {
       const supplierName = po.supplier || suppliers[0] || null;
       if (supplierName) {
         const { data: supp } = await supabase
           .from('suppliers')
-          .select('lead_time_days, travel_time_days')
+          .select('lead_time_days, travel_time_days, usual_delivery_weekday')
           .eq('name', supplierName)
           .maybeSingle();
         lead_time_days = (supp as any)?.lead_time_days ?? null;
         travel_time_days = (supp as any)?.travel_time_days ?? null;
+        usual_delivery_weekday = (supp as any)?.usual_delivery_weekday ?? null;
       }
     } catch {}
 
-    const { etdSpy, etaSpy, etdIso, etaIso, usedDefaults } = getDates(po, { lead_time_days, travel_time_days });
+    const { etdSpy, etaSpy, etdIso, etaIso, usedDefaults } = getDates(po, { lead_time_days, travel_time_days, usual_delivery_weekday });
     await log(job.id, 'info', 'STEP:push_po_dates', {
       etd: etdIso,
       eta: etaIso,
       from_record: !!po.etd,
       used_defaults: usedDefaults,
       lead_time_days,
-      travel_time_days
+      travel_time_days,
+      usual_delivery_weekday
     });
 
     try {
