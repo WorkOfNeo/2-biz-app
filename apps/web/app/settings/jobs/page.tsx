@@ -344,9 +344,9 @@ function RunningJobProgress({ job }: { job: { id: string; type: string; started_
         {progress ? (
           <>
             {progress.index}/{progress.total} styles ({progress.percent}%)
-            {progress.skippedInactive > 0 && (
+            {(progress.skippedInactive ?? 0) > 0 && (
               <span className="text-xs text-blue-500 ml-1">
-                ({progress.skippedInactive} {job.type === 'scrape_eans' ? 'no link' : 'inactive'} skipped)
+                ({progress.skippedInactive ?? 0} {job.type === 'scrape_eans' ? 'no link' : 'inactive'} skipped)
               </span>
             )}
             {job.type === 'deep_scrape_styles' && (
