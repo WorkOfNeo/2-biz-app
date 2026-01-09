@@ -8,6 +8,7 @@ import { Button } from '../../components/ui/button';
 
 export default function StylesPage() {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [enq, setEnq] = useState<string | null>(null);
   const [q, setQ] = useState('');
   const [supplierFilter, setSupplierFilter] = useState('');
   const [supplierInvert, setSupplierInvert] = useState(false);
@@ -178,22 +179,52 @@ export default function StylesPage() {
   }
 
   async function enqueueUpdate() {
+    await enqueueJob('scrape_styles', { requestedBy: (await supabase.auth.getSession()).data.session?.user.email });
+  }
+
+  async function enqueueJob(type: 'scrape_styles' | 'enrich_styles', payload: any = {}) {
     try {
+      setEnq(type);
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) throw new Error('Not signed in');
       const res = await fetch('/api/enqueue', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
-        body: JSON.stringify({ type: 'scrape_styles', payload: { requestedBy: session.user.email } })
+        body: JSON.stringify({ type, payload: { ...payload, requestedBy: payload?.requestedBy || session.user.email } })
       });
       const js = await res.json().catch(() => ({}));
       // eslint-disable-next-line no-console
-      console.log('[styles] enqueue', res.status, js);
-      try { if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('job-started', { detail: { label: 'Update styles — job started' } })); } catch {}
+      console.log('[styles] enqueue', type, res.status, js);
+      try {
+        if (typeof window !== 'undefined') {
+          const label =
+            type === 'scrape_styles'
+              ? 'Scrape styles — job started'
+              : 'Enrich styles — job started';
+          window.dispatchEvent(new CustomEvent('job-started', { detail: { label } }));
+        }
+      } catch {}
       setMenuOpen(false);
     } catch (e) {
       // eslint-disable-next-line no-console
-      console.error('[styles] enqueue error', e);
+      console.error('[styles] enqueue error', type, e);
+      alert((e as any)?.message || `Failed to enqueue ${type}`);
+    } finally {
+      setEnq(null);
+    }
+  }
+
+  async function enqueueScrapeThenEnrich() {
+    if (enq) return;
+    try {
+      setEnq('scrape_then_enrich');
+      await enqueueJob('scrape_styles', {});
+      // enqueueJob clears enq; restore a busy indicator for the sequence UI
+      setEnq('scrape_then_enrich');
+      await enqueueJob('enrich_styles', {});
+    } finally {
+      setEnq(null);
+      setMenuOpen(false);
     }
   }
 
@@ -210,7 +241,27 @@ export default function StylesPage() {
           </button>
           {menuOpen && (
             <div className="absolute right-0 mt-2 w-44 rounded-md border bg-white shadow">
-              <button className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50" onClick={enqueueUpdate}>Update styles</button>
+              <button
+                className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 disabled:opacity-50"
+                disabled={!!enq}
+                onClick={enqueueUpdate}
+              >
+                {enq === 'scrape_styles' ? 'Scraping…' : 'Scrape styles'}
+              </button>
+              <button
+                className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 disabled:opacity-50"
+                disabled={!!enq}
+                onClick={() => enqueueJob('enrich_styles', {})}
+              >
+                {enq === 'enrich_styles' ? 'Enriching…' : 'Enrich styles'}
+              </button>
+              <button
+                className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 disabled:opacity-50"
+                disabled={!!enq}
+                onClick={enqueueScrapeThenEnrich}
+              >
+                {enq === 'scrape_then_enrich' ? 'Starting…' : 'Scrape + enrich'}
+              </button>
             </div>
           )}
         </div>
