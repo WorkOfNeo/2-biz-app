@@ -52,11 +52,13 @@ export default function StockListDetailPage({ params }: { params: { id: string }
   const [seasonId, setSeasonId] = React.useState('');
   const [addModalOpen, setAddModalOpen] = React.useState(false);
   const [loading, setLoading] = React.useState(false);
-  const [notice, setNotice] = React.useState<{ kind: 'success' | 'error'; text: string } | null>(null);
 
   function flash(text: string, kind: 'success' | 'error' = 'success') {
-    setNotice({ text, kind });
-    setTimeout(() => setNotice(null), 3000);
+    try {
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('toast', { detail: { message: text, type: kind } }));
+      }
+    } catch {}
   }
 
   // Load the list
@@ -843,13 +845,6 @@ export default function StockListDetailPage({ params }: { params: { id: string }
           </div>
         </div>
       </div>
-
-      {/* Notice */}
-      {notice && (
-        <div className={(notice.kind === 'success' ? 'bg-green-50 text-green-700 border-green-200' : 'bg-red-50 text-red-700 border-red-200') + ' rounded border px-3 py-2 text-sm'}>
-          {notice.text}
-        </div>
-      )}
 
       {/* Styles in list */}
       <Card>

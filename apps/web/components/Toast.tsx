@@ -67,6 +67,66 @@ export function Toast({ open, pct, elapsedSec, done, onClose, label, messages, j
   );
 }
 
+type SimpleToastType = 'success' | 'error' | 'info';
+type SimpleToastMsg = { id: string; message: string; type: SimpleToastType };
+
+export function useSimpleToasts() {
+  const [items, setItems] = React.useState<SimpleToastMsg[]>([]);
+
+  React.useEffect(() => {
+    let mounted = true;
+    function onToast(e: any) {
+      try {
+        const d = (e?.detail || {}) as { message?: string; type?: SimpleToastType };
+        const message = String(d.message || '').trim();
+        if (!message) return;
+        const type: SimpleToastType = (d.type || 'info') as SimpleToastType;
+        const id = `${Date.now()}_${Math.random().toString(16).slice(2)}`;
+        const msg: SimpleToastMsg = { id, message, type };
+        setItems((prev) => [msg, ...prev].slice(0, 3));
+        setTimeout(() => {
+          if (!mounted) return;
+          setItems((prev) => prev.filter((x) => x.id !== id));
+        }, 2800);
+      } catch {}
+    }
+    if (typeof window !== 'undefined') window.addEventListener('toast', onToast as any);
+    return () => {
+      mounted = false;
+      if (typeof window !== 'undefined') window.removeEventListener('toast', onToast as any);
+    };
+  }, []);
+
+  return { items, dismiss: (id: string) => setItems((prev) => prev.filter((x) => x.id !== id)) } as const;
+}
+
+export function SimpleToastStack() {
+  const { items, dismiss } = useSimpleToasts();
+  if (!items || items.length === 0) return null;
+  return (
+    <div className="fixed top-3 right-3 z-50 flex w-[22rem] flex-col gap-2">
+      {items.map((t) => {
+        const cls =
+          t.type === 'success'
+            ? 'border-green-200 bg-green-50 text-green-800'
+            : t.type === 'error'
+              ? 'border-red-200 bg-red-50 text-red-800'
+              : 'border-slate-200 bg-white text-slate-900';
+        return (
+          <div key={t.id} className={`rounded-md border shadow-sm ${cls}`}>
+            <div className="flex items-start gap-2 p-3">
+              <div className="flex-1 text-sm">{t.message}</div>
+              <button className="text-xs opacity-70 hover:opacity-100" onClick={() => dismiss(t.id)}>
+                Close
+              </button>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export function useRunningJobsToast() {
   const [open, setOpen] = React.useState(false);
   const [pct, setPct] = React.useState(0);
@@ -100,7 +160,12 @@ export function useRunningJobsToast() {
 
 export function ToastStack() {
   const { open, pct, elapsedSec, done, label, messages, jobId, close } = useRunningJobsToast();
-  return <Toast open={open} pct={pct} elapsedSec={elapsedSec} done={done} onClose={close} label={label} messages={messages} jobId={jobId} />;
+  return (
+    <>
+      <SimpleToastStack />
+      <Toast open={open} pct={pct} elapsedSec={elapsedSec} done={done} onClose={close} label={label} messages={messages} jobId={jobId} />
+    </>
+  );
 }
 
 
