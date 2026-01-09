@@ -148,6 +148,7 @@ export function SidebarNav() {
   const purchaseLinks = [
     can('/purchase/dashboard') ? <NavLink key="pd" href="/purchase/dashboard" label="Dashboard" /> : null,
     can('/purchase/orders') ? <NavLink key="po" href="/purchase/orders" label="Purchase Orders" /> : null,
+    can('/purchase/packinglists') ? <NavLink key="ppl" href="/purchase/packinglists" label="Packinglists" /> : null,
     can('/purchase/make-order') ? <NavLink key="pmo" href="/purchase/make-order" label="AI Suggestions" /> : null,
     can('/purchase/smart-draft') ? <NavLink key="psd" href="/purchase/smart-draft" label="Smart Draft" /> : null,
     can('/purchase/conversations') ? <NavLink key="pconv" href="/purchase/conversations" label="Conversations" /> : null,

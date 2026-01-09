@@ -9,7 +9,6 @@
     "start": "next start -p 3001"
   },
   "dependencies": {
-    "openai": "^4.76.0",
     "@radix-ui/react-tabs": "^1.0.4",
     "@shared/types": "workspace:*",
     "@supabase/auth-helpers-nextjs": "^0.10.0",
@@ -25,6 +24,8 @@
     "jszip": "^3.10.1",
     "lucide-react": "^0.469.0",
     "next": "^14.2.35",
+    "openai": "^4.76.0",
+    "pdfjs-dist": "^5.4.530",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "swr": "^2.2.5",
