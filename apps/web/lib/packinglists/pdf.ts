@@ -32,14 +32,14 @@ export async function extractPdf(file: File): Promise<PdfExtract> {
   const arrayBuffer = await file.arrayBuffer();
 
   // Dynamic import to keep pdfjs out of the main bundle until needed
-  // Prefer the legacy build to avoid bundler/minifier issues around ESM workers.
-  // We also disable workers entirely (packing slips are small) to avoid shipping pdf.worker.mjs,
-  // which can fail Next.js production minification in some environments.
+  // Prefer the ESM `.mjs` entrypoints (these exist in pdfjs-dist v5), and disable workers entirely
+  // (packing slips are small). This avoids bundling the worker and avoids runtime "module not found"
+  // issues from importing non-existent subpaths.
   let pdfjs: PdfJs;
   try {
-    pdfjs = await import('pdfjs-dist/legacy/build/pdf');
+    pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
   } catch {
-    pdfjs = await import('pdfjs-dist/build/pdf');
+    pdfjs = await import('pdfjs-dist/build/pdf.mjs');
   }
 
   const doc = await pdfjs.getDocument({ data: arrayBuffer, disableWorker: true }).promise;

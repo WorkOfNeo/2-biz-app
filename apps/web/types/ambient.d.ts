@@ -15,4 +15,14 @@ declare module 'pdfjs-dist/build/pdf' {
   export default pdfjs;
 }
 
+declare module 'pdfjs-dist/legacy/build/pdf.mjs' {
+  const pdfjs: any;
+  export default pdfjs;
+}
+
+declare module 'pdfjs-dist/build/pdf.mjs' {
+  const pdfjs: any;
+  export default pdfjs;
+}
+
 
