@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from 'react';
+import { Suspense, useEffect, useMemo, useState } from 'react';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
 import { Badge } from '../../../components/ui/badge';
@@ -203,6 +203,21 @@ function POTable({
 }
 
 export default function PurchaseOrdersPage() {
+  // Next.js requires `useSearchParams()` to be wrapped in a Suspense boundary during prerender.
+  return (
+    <Suspense
+      fallback={
+        <div className="p-6 flex items-center justify-center">
+          <div className="h-5 w-5 animate-spin rounded-full border-2 border-slate-300 border-t-slate-900" />
+        </div>
+      }
+    >
+      <PurchaseOrdersInner />
+    </Suspense>
+  );
+}
+
+function PurchaseOrdersInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const activeTab = (searchParams.get('tab') || 'purchase-orders') === 'app-pos' ? 'app-pos' : 'purchase-orders';
