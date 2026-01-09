@@ -425,8 +425,8 @@ export async function pushAppPoToSpy(ctx: Ctx) {
       
       await log(job.id, 'info', 'STEP:push_po_form_filled', { 
         supplier, 
-        etd, 
-        eta, 
+        etd: etdIso,
+        eta: etaIso,
         season_name: seasonData.name,
         spy_season_id: spySeasonId 
       });
