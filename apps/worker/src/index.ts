@@ -2227,7 +2227,15 @@ async function runJob(job: JobRow) {
               // Parse header to find column indices
               const headerLine = lines[0];
               if (!headerLine) continue;
-              const headers = headerLine.split(';').map((h) => h.trim().toLowerCase());
+              // Helper to strip surrounding quotes from CSV values
+              const stripQuotes = (s: string): string => {
+                const trimmed = s.trim();
+                if ((trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+                  return trimmed.slice(1, -1).trim();
+                }
+                return trimmed;
+              };
+              const headers = headerLine.split(';').map((h) => stripQuotes(h).toLowerCase());
               const colIdx = {
                 accountNo: headers.findIndex((h) => h.includes('account') || h.includes('konto')),
                 styleNo: headers.findIndex((h) => h === 'style no' || h === 'style_no' || h === 'styleno' || h.includes('style no')),
@@ -2258,7 +2266,8 @@ async function runJob(job: JobRow) {
               for (let i = 1; i < lines.length; i++) {
                 const line = lines[i];
                 if (!line) continue;
-                const cells = line.split(';').map((c) => c.trim());
+                // Parse cells and strip quotes from each value
+                const cells = line.split(';').map((c) => stripQuotes(c));
                 const styleNo = colIdx.styleNo >= 0 ? cells[colIdx.styleNo] || '' : '';
                 if (!styleNo) continue; // Skip rows without style number
 
@@ -2295,7 +2304,9 @@ async function runJob(job: JobRow) {
               }
 
               totalStyleRows += rowsToInsert.length;
-              await log(job.id, 'info', 'STEP:style_details_chunk_done', { chunkIdx: chunkIdx + 1, rowsInserted: rowsToInsert.length });
+              // Log sample account_no values for debugging
+              const sampleAccounts = Array.from(new Set(rowsToInsert.slice(0, 10).map(r => r.account_no)));
+              await log(job.id, 'info', 'STEP:style_details_chunk_done', { chunkIdx: chunkIdx + 1, rowsInserted: rowsToInsert.length, sampleAccounts });
             } catch (e: any) {
               await log(job.id, 'error', 'STEP:style_details_chunk_error', { chunkIdx: chunkIdx + 1, error: e?.message || String(e) });
             }
