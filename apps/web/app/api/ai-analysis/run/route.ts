@@ -203,18 +203,21 @@ async function buildAnalysisContext(
     customersBySalesperson[spId] = (customersBySalesperson[spId] || 0) + 1;
   }
 
-  const salespersonData = Object.values(bySalesperson).map(sp => ({
-    id: sp.id,
-    name: sp.name,
-    status: sp.qty > 0 ? 'active' : 'not_started',
-    metrics: {
-      qty_sold: sp.qty,
-      revenue: sp.revenue,
-      customers_visited: sp.customers.size,
-      customers_total: customersBySalesperson[sp.id] || 0,
-      visit_rate_percent: customersBySalesperson[sp.id] ? Math.round((sp.customers.size / customersBySalesperson[sp.id]) * 1000) / 10 : 0
-    }
-  })).sort((a, b) => b.metrics.qty_sold - a.metrics.qty_sold);
+  const salespersonData = Object.values(bySalesperson).map(sp => {
+    const totalCustomers = customersBySalesperson[sp.id] || 0;
+    return {
+      id: sp.id,
+      name: sp.name,
+      status: sp.qty > 0 ? 'active' : 'not_started',
+      metrics: {
+        qty_sold: sp.qty,
+        revenue: sp.revenue,
+        customers_visited: sp.customers.size,
+        customers_total: totalCustomers,
+        visit_rate_percent: totalCustomers > 0 ? Math.round((sp.customers.size / totalCustomers) * 1000) / 10 : 0
+      }
+    };
+  }).sort((a, b) => b.metrics.qty_sold - a.metrics.qty_sold);
 
   // Add salespersons with 0 sales
   for (const sp of (salespersons ?? []) as any[]) {
