@@ -292,15 +292,19 @@ async function buildAnalysisContext(
       else if (total < 50) lowStockCount++;
 
       // Check if style is selling fast with low stock
-      const [styleNo, color] = key.split('|');
-      const styleData = styleQty[styleNo];
-      if (styleData && total < 50 && styleData.qty > 100) {
-        criticalStyles.push({
-          style_no: styleNo,
-          color,
-          available: total,
-          sold_this_season: styleData.qty
-        });
+      const parts = key.split('|');
+      const styleNo = parts[0] || '';
+      const color = parts[1] || '';
+      if (styleNo && styleQty[styleNo]) {
+        const styleData = styleQty[styleNo];
+        if (styleData && total < 50 && styleData.qty > 100) {
+          criticalStyles.push({
+            style_no: styleNo,
+            color,
+            available: total,
+            sold_this_season: styleData.qty
+          });
+        }
       }
     }
   }
