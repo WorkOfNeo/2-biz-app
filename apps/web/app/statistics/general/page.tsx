@@ -1640,12 +1640,17 @@ export default function StatisticsGeneralPage() {
                         <tr key={row.account_no} className={(row.isGroupTotal ? 'bg-slate-100 font-semibold ' : '') + "border-t hover:bg-slate-50 group " + (nulled ? 'opacity-80' : '')}>
                           <td className={"relative p-2 font-medium " + (nulled ? '' : '')}>
                             <div className="flex items-center gap-1.5">
-                              {row.customer}
-                              {/* Style details flag - show when customer has scraped style details */}
-                              {!row.isGroupTotal && styleDetailsAccounts?.has(row.account_no) && (
-                                <span title="Style details available" className="text-indigo-500">
-                                  <Layers className="h-3.5 w-3.5" />
-                                </span>
+                              {/* Customer name - clickable link to open details if style details exist */}
+                              {!row.isGroupTotal && styleDetailsAccounts?.has(row.account_no) ? (
+                                <button
+                                  onClick={() => openDetails(row)}
+                                  className="text-left text-indigo-600 hover:text-indigo-800 hover:font-semibold transition-all cursor-pointer underline decoration-indigo-300 hover:decoration-indigo-600"
+                                  title="Click to view style details"
+                                >
+                                  {row.customer}
+                                </button>
+                              ) : (
+                                <span>{row.customer}</span>
                               )}
                               {!row.isGroupTotal && (() => {
                                 const existingCustomer = (allCustomers ?? []).find(c => c.customer_id === row.account_no);
