@@ -338,6 +338,7 @@ export default function StatisticsGeneralPage() {
   // Style details state (grouped by style_no + color)
   const [detailsStyleRows, setDetailsStyleRows] = useState<Array<{ style_no: string; style_name: string | null; color: string | null; totalQty: number; image_url: string | null; rows: any[] }>>([]);
   const [styleDetailsExpanded, setStyleDetailsExpanded] = useState<Set<string>>(new Set());
+  const [detailsScrapeInfo, setDetailsScrapeInfo] = useState<{ first_scraped_at: string | null; force_rescrape: boolean } | null>(null);
   // Comment modal state
   const [commentModalOpen, setCommentModalOpen] = useState(false);
   const [commentCustomerId, setCommentCustomerId] = useState<string>('');
@@ -357,6 +358,7 @@ export default function StatisticsGeneralPage() {
     setDetailsS2NewRows([]);
     setDetailsStyleRows([]);
     setStyleDetailsExpanded(new Set());
+    setDetailsScrapeInfo(null);
     try {
       const hasAccount = !!row.account_no && !row.account_no.includes(':');
           const buildQuery = (seasonId: string | undefined) => {
@@ -456,6 +458,20 @@ export default function StatisticsGeneralPage() {
             // Sort by total qty descending
             const sortedGroups = Array.from(grouped.values()).sort((a, b) => b.totalQty - a.totalQty);
             setDetailsStyleRows(sortedGroups);
+          }
+
+          // Fetch scrape tracking info
+          const { data: scrapeInfo } = await supabase
+            .from('sales_style_details_scraped')
+            .select('first_scraped_at, force_rescrape')
+            .eq('season_id', s1)
+            .eq('account_no', row.account_no)
+            .maybeSingle();
+          if (scrapeInfo) {
+            setDetailsScrapeInfo({
+              first_scraped_at: scrapeInfo.first_scraped_at,
+              force_rescrape: scrapeInfo.force_rescrape
+            });
           }
         } catch (e: any) {
           console.error('Failed to fetch style details:', e?.message);
@@ -2396,10 +2412,39 @@ export default function StatisticsGeneralPage() {
                   {/* Style Details Section (only shown when data exists) */}
                   {detailsStyleRows.length > 0 && (
                     <div className="mt-6 pt-4 border-t">
-                      <div className="flex items-center gap-2 mb-2">
-                        <Layers className="h-4 w-4 text-indigo-500" />
-                        <span className="font-medium text-indigo-700">Style Details ({getSeasonLabel(s1) || 'Season 1'})</span>
-                        <span className="text-xs text-gray-500">({detailsStyleRows.reduce((sum, g) => sum + g.totalQty, 0)} total qty across {detailsStyleRows.length} style/color combinations)</span>
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          <Layers className="h-4 w-4 text-indigo-500" />
+                          <span className="font-medium text-indigo-700">Style Details ({getSeasonLabel(s1) || 'Season 1'})</span>
+                          <span className="text-xs text-gray-500">({detailsStyleRows.reduce((sum, g) => sum + g.totalQty, 0)} total qty across {detailsStyleRows.length} style/color combinations)</span>
+                        </div>
+                        <div className="flex items-center gap-3 text-xs">
+                          {detailsScrapeInfo?.first_scraped_at && (
+                            <span className="text-gray-500">
+                              First scraped: {new Date(detailsScrapeInfo.first_scraped_at).toLocaleDateString('da-DK')}
+                            </span>
+                          )}
+                          <button
+                            className={`px-2 py-1 rounded text-xs ${
+                              detailsScrapeInfo?.force_rescrape 
+                                ? 'bg-orange-100 text-orange-700 border border-orange-300' 
+                                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                            }`}
+                            onClick={async () => {
+                              if (!s1 || !detailsRow) return;
+                              const newValue = !detailsScrapeInfo?.force_rescrape;
+                              await supabase
+                                .from('sales_style_details_scraped')
+                                .update({ force_rescrape: newValue })
+                                .eq('season_id', s1)
+                                .eq('account_no', detailsRow.account_no);
+                              setDetailsScrapeInfo(prev => prev ? { ...prev, force_rescrape: newValue } : null);
+                            }}
+                            title={detailsScrapeInfo?.force_rescrape ? 'Will re-scrape on next job run' : 'Click to enable re-scrape on next job run'}
+                          >
+                            {detailsScrapeInfo?.force_rescrape ? '⟳ Re-scrape queued' : 'Queue re-scrape'}
+                          </button>
+                        </div>
                       </div>
                       <table className="min-w-full text-sm">
                         <thead>

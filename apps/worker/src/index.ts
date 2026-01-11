@@ -2171,17 +2171,47 @@ async function runJob(job: JobRow) {
       if (styleDetailsEnabled && styleDetailsCustomerMap.size > 0 && spySeasonId) {
         await log(job.id, 'info', 'STEP:style_details_begin', { customerCount: styleDetailsCustomerMap.size, spySeasonId });
         try {
-          // Delete existing style details for this season (idempotent refresh)
-          const { error: delErr } = await supabase
-            .from('sales_style_details_rows')
-            .delete()
+          // Get list of already-scraped customers for this season
+          const { data: alreadyScrapedData } = await supabase
+            .from('sales_style_details_scraped')
+            .select('account_no, force_rescrape')
             .eq('season_id', targetSeasonId);
-          if (delErr) {
-            await log(job.id, 'error', 'STEP:style_details_delete_error', { error: delErr.message });
+          
+          const alreadyScraped = new Map<string, boolean>();
+          for (const row of (alreadyScrapedData ?? []) as any[]) {
+            alreadyScraped.set(row.account_no, row.force_rescrape === true);
           }
 
-          // Chunk customer IDs for bulk download (max 100 per request to avoid huge files)
-          const allSpyCustomerIds = Array.from(styleDetailsCustomerMap.keys());
+          // Filter: only scrape customers that are new OR have force_rescrape = true
+          const allSpyCustomerIds: string[] = [];
+          const accountNosToScrape: string[] = [];
+          for (const [spyId, accountNo] of styleDetailsCustomerMap.entries()) {
+            const wasScraped = alreadyScraped.has(accountNo);
+            const forceRescrape = alreadyScraped.get(accountNo) === true;
+            if (!wasScraped || forceRescrape) {
+              allSpyCustomerIds.push(spyId);
+              accountNosToScrape.push(accountNo);
+            }
+          }
+
+          await log(job.id, 'info', 'STEP:style_details_filter', { 
+            total: styleDetailsCustomerMap.size, 
+            alreadyScraped: alreadyScraped.size,
+            toScrape: allSpyCustomerIds.length,
+            forceRescrape: Array.from(alreadyScraped.values()).filter(v => v).length
+          });
+
+          if (allSpyCustomerIds.length === 0) {
+            await log(job.id, 'info', 'STEP:style_details_skip_all_scraped', { reason: 'All customers already scraped' });
+          } else {
+            // Delete existing style details for customers we're about to re-scrape
+            for (const accountNo of accountNosToScrape) {
+              await supabase
+                .from('sales_style_details_rows')
+                .delete()
+                .eq('season_id', targetSeasonId)
+                .eq('account_no', accountNo);
+            }
           const chunkSize = 100;
           const chunks: string[][] = [];
           for (let i = 0; i < allSpyCustomerIds.length; i += chunkSize) {
@@ -2313,6 +2343,36 @@ async function runJob(job: JobRow) {
           }
 
           await log(job.id, 'info', 'STEP:style_details_complete', { totalRows: totalStyleRows });
+
+            // Record which customers were scraped (upsert to preserve first_scraped_at)
+            for (const accountNo of accountNosToScrape) {
+              const { data: existing } = await supabase
+                .from('sales_style_details_scraped')
+                .select('id')
+                .eq('season_id', targetSeasonId)
+                .eq('account_no', accountNo)
+                .maybeSingle();
+              
+              if (existing) {
+                // Already exists - just reset force_rescrape flag
+                await supabase
+                  .from('sales_style_details_scraped')
+                  .update({ force_rescrape: false })
+                  .eq('id', existing.id);
+              } else {
+                // New record - insert with first_scraped_at
+                await supabase
+                  .from('sales_style_details_scraped')
+                  .insert({
+                    season_id: targetSeasonId,
+                    account_no: accountNo,
+                    first_scraped_at: new Date().toISOString(),
+                    force_rescrape: false
+                  });
+              }
+            }
+            await log(job.id, 'info', 'STEP:style_details_tracking_saved', { customersTracked: accountNosToScrape.length });
+          }
         } catch (e: any) {
           await log(job.id, 'error', 'STEP:style_details_error', { error: e?.message || String(e) });
         }
