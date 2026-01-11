@@ -53,10 +53,11 @@ export async function POST(req: Request) {
       .in('status', ['queued', 'running'])
       .limit(1);
 
-    if (existingJobs && existingJobs.length > 0) {
+    const existingJob = existingJobs?.[0];
+    if (existingJob) {
       return NextResponse.json({ 
         error: 'An AI analysis job is already running', 
-        existingJobId: existingJobs[0].id 
+        existingJobId: existingJob.id 
       }, { status: 409 });
     }
 
