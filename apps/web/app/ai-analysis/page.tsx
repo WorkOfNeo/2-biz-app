@@ -6,7 +6,7 @@ import { supabase } from '../../lib/supabaseClient';
 import Link from 'next/link';
 import { Brain, Play, TrendingUp, Users, Package, AlertTriangle, Calendar, Clock, ChevronRight, Trash2 } from 'lucide-react';
 
-type Analysis = {
+type AnalysisRaw = {
   id: string;
   season_id: string;
   analysis_type: 'daily' | 'purchase_round';
@@ -18,6 +18,10 @@ type Analysis = {
   created_at: string;
   email_sent_at: string | null;
   purchase_round_number: number | null;
+  season: { name: string; year: number | null }[] | null;
+};
+
+type Analysis = Omit<AnalysisRaw, 'season'> & {
   season?: { name: string; year: number | null };
 };
 
@@ -38,7 +42,11 @@ export default function AIAnalysisDashboard() {
       .order('created_at', { ascending: false })
       .limit(50);
     if (error) throw new Error(error.message);
-    return (data ?? []) as Analysis[];
+    // Supabase returns season as array, flatten to single object
+    return ((data ?? []) as AnalysisRaw[]).map(row => ({
+      ...row,
+      season: Array.isArray(row.season) && row.season.length > 0 ? row.season[0] : undefined
+    })) as Analysis[];
   });
 
   // Fetch seasons for context
