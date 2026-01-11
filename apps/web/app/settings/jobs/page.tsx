@@ -590,7 +590,7 @@ export default function JobsOverviewPage() {
                 { type: 'deep_scrape_styles', label: 'Deep Enrich Styles', actions: [{ label: 'Run', payload: {} }] },
                 { type: 'update_style_stock', label: 'Update Style Stock', actions: [{ label: 'Run (Selected)', payload: {} }, { label: 'Run (All)', payload: { mode: 'all' } }] },
                 { type: 'scrape_customers', label: 'Scrape Customers', actions: [{ label: 'Run', payload: {} }] },
-                { type: 'scrape_statistics', label: 'Scrape Statistics', actions: [{ label: 'Run Deep', payload: { toggles: { deep: true } } }, { label: 'Per-size Snapshot', payload: { kind: 'per_size' } }] },
+                { type: 'scrape_statistics', label: 'Scrape Statistics', actions: [{ label: 'Run Deep', payload: { toggles: { deep: true } } }, { label: 'Run Deep + Style Details', payload: { toggles: { deep: true, style_details: true } } }, { label: 'Per-size Snapshot', payload: { kind: 'per_size' } }] },
                 { type: 'scrape_purchase_orders', label: 'Sync PO\'s', actions: [{ label: 'Run', payload: {} }] },
                 { type: 'scrape_top_styles', label: 'Scrape Top 10 Styles', actions: [{ label: 'Run', payload: {} }] },
                 { type: 'scrape_eans', label: 'Scrape EANs', actions: [{ label: 'Run', payload: {} }] },

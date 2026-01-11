@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo, useRef, type ReactNode } from 'react';
 import useSWR from 'swr';
 import { supabase } from '../../../lib/supabaseClient';
 import Link from 'next/link';
-import { Menu, EyeOff, Trash2, Ban, MessageCircle, RefreshCw } from 'lucide-react';
+import { Menu, EyeOff, Trash2, Ban, MessageCircle, RefreshCw, Layers } from 'lucide-react';
 import { SearchSelect } from '../../../components/SearchSelect';
 import { ProgressBar } from '../../../components/ProgressBar';
 import { Modal } from '../../../components/Modal';
@@ -86,6 +86,30 @@ export default function StatisticsGeneralPage() {
   }, [allCustomers]);
   const spNameById = useMemo(() => Object.fromEntries(((salespersons ?? []) as { id: string; name: string }[]).map(s => [s.id, s.name])), [salespersons]);
   const spCurrencyById = useMemo(() => Object.fromEntries(((salespersons ?? []) as { id: string; currency?: string | null }[]).map(s => [s.id, s.currency ?? 'DKK'])), [salespersons]);
+
+  // Fetch which customers have style details for Season 1 (for showing flag)
+  const { data: styleDetailsAccounts } = useSWR(
+    s1 ? ['style-details-accounts', s1] : null,
+    async () => {
+      if (!s1) return new Set<string>();
+      // Select distinct account_no values that have style details for this season
+      const { data, error } = await supabase
+        .from('sales_style_details_rows')
+        .select('account_no')
+        .eq('season_id', s1)
+        .limit(50000);
+      if (error) {
+        console.error('Failed to fetch style details accounts:', error.message);
+        return new Set<string>();
+      }
+      const set = new Set<string>();
+      for (const r of (data ?? []) as { account_no: string }[]) {
+        if (r.account_no) set.add(r.account_no);
+      }
+      return set;
+    },
+    { refreshInterval: 60000, revalidateOnFocus: false }
+  );
   useEffect(() => {
     if (s1 || s2) setShowSave(true);
   }, [s1, s2]);
@@ -311,6 +335,9 @@ export default function StatisticsGeneralPage() {
   const [detailsS2, setDetailsS2] = useState<any[]>([]);
   const [detailsS1NewRows, setDetailsS1NewRows] = useState<any[]>([]);
   const [detailsS2NewRows, setDetailsS2NewRows] = useState<any[]>([]);
+  // Style details state (grouped by style_no + color)
+  const [detailsStyleRows, setDetailsStyleRows] = useState<Array<{ style_no: string; style_name: string | null; color: string | null; totalQty: number; rows: any[] }>>([]);
+  const [styleDetailsExpanded, setStyleDetailsExpanded] = useState<Set<string>>(new Set());
   // Comment modal state
   const [commentModalOpen, setCommentModalOpen] = useState(false);
   const [commentCustomerId, setCommentCustomerId] = useState<string>('');
@@ -328,6 +355,8 @@ export default function StatisticsGeneralPage() {
     setDetailsLoading(true);
     setDetailsS1NewRows([]);
     setDetailsS2NewRows([]);
+    setDetailsStyleRows([]);
+    setStyleDetailsExpanded(new Set());
     try {
       const hasAccount = !!row.account_no && !row.account_no.includes(':');
           const buildQuery = (seasonId: string | undefined) => {
@@ -367,6 +396,43 @@ export default function StatisticsGeneralPage() {
       }
       setDetailsS1(s1Combined as any[]);
       setDetailsS2(s2Combined as any[]);
+
+      // Fetch style details for Season 1 if available
+      if (s1 && hasAccount && styleDetailsAccounts?.has(row.account_no)) {
+        try {
+          const { data: styleRows, error: styleErr } = await supabase
+            .from('sales_style_details_rows')
+            .select('style_no, style_name, quality, color, size, qty, barcode')
+            .eq('season_id', s1)
+            .eq('account_no', row.account_no)
+            .limit(10000);
+          if (!styleErr && styleRows && styleRows.length > 0) {
+            // Group by style_no + color
+            const grouped = new Map<string, { style_no: string; style_name: string | null; color: string | null; totalQty: number; rows: any[] }>();
+            for (const sr of styleRows as any[]) {
+              const key = `${sr.style_no || ''}|${sr.color || ''}`;
+              const existing = grouped.get(key);
+              if (existing) {
+                existing.totalQty += Number(sr.qty || 0);
+                existing.rows.push(sr);
+              } else {
+                grouped.set(key, {
+                  style_no: sr.style_no || '',
+                  style_name: sr.style_name || null,
+                  color: sr.color || null,
+                  totalQty: Number(sr.qty || 0),
+                  rows: [sr]
+                });
+              }
+            }
+            // Sort by total qty descending
+            const sortedGroups = Array.from(grouped.values()).sort((a, b) => b.totalQty - a.totalQty);
+            setDetailsStyleRows(sortedGroups);
+          }
+        } catch (e: any) {
+          console.error('Failed to fetch style details:', e?.message);
+        }
+      }
     } catch (e: any) {
       alert(e?.message || 'Failed to load details');
     } finally {
@@ -1575,6 +1641,12 @@ export default function StatisticsGeneralPage() {
                           <td className={"relative p-2 font-medium " + (nulled ? '' : '')}>
                             <div className="flex items-center gap-1.5">
                               {row.customer}
+                              {/* Style details flag - show when customer has scraped style details */}
+                              {!row.isGroupTotal && styleDetailsAccounts?.has(row.account_no) && (
+                                <span title="Style details available" className="text-indigo-500">
+                                  <Layers className="h-3.5 w-3.5" />
+                                </span>
+                              )}
                               {!row.isGroupTotal && (() => {
                                 const existingCustomer = (allCustomers ?? []).find(c => c.customer_id === row.account_no);
                                 const customerExists = !!existingCustomer;
@@ -2284,6 +2356,87 @@ export default function StatisticsGeneralPage() {
                       </tfoot>
                     </table>
                   </div>
+
+                  {/* Style Details Section (only shown when data exists) */}
+                  {detailsStyleRows.length > 0 && (
+                    <div className="mt-6 pt-4 border-t">
+                      <div className="flex items-center gap-2 mb-2">
+                        <Layers className="h-4 w-4 text-indigo-500" />
+                        <span className="font-medium text-indigo-700">Style Details ({getSeasonLabel(s1) || 'Season 1'})</span>
+                        <span className="text-xs text-gray-500">({detailsStyleRows.reduce((sum, g) => sum + g.totalQty, 0)} total qty across {detailsStyleRows.length} style/color combinations)</span>
+                      </div>
+                      <table className="min-w-full text-sm">
+                        <thead>
+                          <tr className="bg-indigo-50">
+                            <th className="text-left p-2 border-b">Style No</th>
+                            <th className="text-left p-2 border-b">Style Name</th>
+                            <th className="text-left p-2 border-b">Color</th>
+                            <th className="text-right p-2 border-b">Total Qty</th>
+                            <th className="text-center p-2 border-b">Sizes</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {detailsStyleRows.map((group) => {
+                            const groupKey = `${group.style_no}|${group.color || ''}`;
+                            const isExpanded = styleDetailsExpanded.has(groupKey);
+                            return (
+                              <tr key={groupKey} className="hover:bg-indigo-50/50">
+                                <td className="p-2 border-b font-mono text-xs">{group.style_no}</td>
+                                <td className="p-2 border-b">{group.style_name || '—'}</td>
+                                <td className="p-2 border-b">{group.color || '—'}</td>
+                                <td className="p-2 border-b text-right font-medium">{group.totalQty}</td>
+                                <td className="p-2 border-b text-center">
+                                  <button
+                                    className="text-xs text-indigo-600 hover:text-indigo-800 underline"
+                                    onClick={() => {
+                                      const next = new Set(styleDetailsExpanded);
+                                      if (isExpanded) {
+                                        next.delete(groupKey);
+                                      } else {
+                                        next.add(groupKey);
+                                      }
+                                      setStyleDetailsExpanded(next);
+                                    }}
+                                  >
+                                    {isExpanded ? 'Hide' : `Show ${group.rows.length} sizes`}
+                                  </button>
+                                  {isExpanded && (
+                                    <div className="mt-2 text-left text-xs bg-white border rounded p-2">
+                                      <table className="min-w-full">
+                                        <thead>
+                                          <tr className="text-gray-500">
+                                            <th className="text-left pr-3">Size</th>
+                                            <th className="text-right pr-3">Qty</th>
+                                            <th className="text-left">Barcode</th>
+                                          </tr>
+                                        </thead>
+                                        <tbody>
+                                          {group.rows.map((sr: any, idx: number) => (
+                                            <tr key={idx}>
+                                              <td className="pr-3">{sr.size || '—'}</td>
+                                              <td className="text-right pr-3">{sr.qty}</td>
+                                              <td className="text-gray-400 font-mono">{sr.barcode || '—'}</td>
+                                            </tr>
+                                          ))}
+                                        </tbody>
+                                      </table>
+                                    </div>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                        <tfoot>
+                          <tr className="bg-indigo-50 font-semibold">
+                            <td className="p-2" colSpan={3}>TOTAL</td>
+                            <td className="p-2 text-right">{detailsStyleRows.reduce((sum, g) => sum + g.totalQty, 0)}</td>
+                            <td></td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+                  )}
                 </div>
               )}
             </Modal>

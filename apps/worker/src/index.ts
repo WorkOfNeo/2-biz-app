@@ -1717,6 +1717,8 @@ async function runJob(job: JobRow) {
       const resultSamples: Array<{ salesperson: string; rows: Array<{ customer: string; account: string; country: string; qty: string; amount: string; salesperson: string }> }> = [];
       const topsellerDump: Array<{ salesperson: string; rows: Array<{ customer: string; account: string; country: string; qty: number; amount: number; currency: string | null }> }> = [];
       const perSalespersonCounts: Array<{ salesperson: string; created: number; updated: number; unchanged: number }> = [];
+      // Collect SPY customer IDs for style details bulk download (when enabled)
+      const styleDetailsCustomerMap: Map<string, string> = new Map(); // spyCustomerId -> accountNo
       for (const sp of salespeople) {
         await ensureNotCancelled(job.id);
         processed++;
@@ -1760,7 +1762,17 @@ async function runJob(job: JobRow) {
             const span = el.querySelector('span') as HTMLElement | null;
             return ((el.innerText || link?.innerText || span?.innerText || el.textContent || '') as string).replace(/\s+/g, ' ').trim();
           }
-          const out: { customer: string; account: string; country: string; qty: string; amount: string; salesperson: string }[] = [];
+          function extractSpyCustomerId(tr: HTMLTableRowElement, customerColIdx: number): string {
+            // Try to extract SPY customer_id from the customer cell's anchor href
+            const td = tr.querySelectorAll('td')[customerColIdx] as HTMLElement | undefined;
+            if (!td) return '';
+            const anchor = td.querySelector('a') as HTMLAnchorElement | null;
+            if (!anchor) return '';
+            const href = anchor.getAttribute('href') || '';
+            const match = href.match(/customer_id=(\d+)/);
+            return match ? match[1] : '';
+          }
+          const out: { customer: string; account: string; country: string; qty: string; amount: string; salesperson: string; spyCustomerId: string }[] = [];
           for (const tr of Array.from(trs) as HTMLTableRowElement[]) {
             out.push({
               customer: idx.customer >= 0 ? cellText(tr, idx.customer) : '',
@@ -1768,7 +1780,8 @@ async function runJob(job: JobRow) {
               country: idx.country >= 0 ? cellText(tr, idx.country) : '',
               qty: idx.qty >= 0 ? cellText(tr, idx.qty) : '0',
               amount: idx.amountCus >= 0 ? cellText(tr, idx.amountCus) : '0',
-              salesperson: idx.salesperson >= 0 ? cellText(tr, idx.salesperson) : ''
+              salesperson: idx.salesperson >= 0 ? cellText(tr, idx.salesperson) : '',
+              spyCustomerId: idx.customer >= 0 ? extractSpyCustomerId(tr, idx.customer) : ''
             });
           }
           return out;
@@ -1799,6 +1812,10 @@ async function runJob(job: JobRow) {
           const accountNo = (r.account || '').trim();
           const customerName = (r.customer || '').trim();
           const country = (r.country || '').trim();
+          // Collect SPY customer ID for style details (when toggle enabled)
+          if (r.spyCustomerId && accountNo) {
+            styleDetailsCustomerMap.set(r.spyCustomerId, accountNo);
+          }
           // Ensure customer exists
           const customerUuid = await ensureCustomerIdByAccount(accountNo, { company: customerName || null, country: country || null, salesperson_id: salespersonId });
           // Determine existing state for comparison
@@ -2148,6 +2165,146 @@ async function runJob(job: JobRow) {
 
       // Do not adjust TopSeller (sales_stats) with invoice deltas; keep separate sources
       try { await log(job.id, 'info', 'STEP:invoiced_adjustments_skipped'); } catch {}
+
+      // ========== STYLE DETAILS SCRAPE (opt-in via toggles.style_details) ==========
+      const styleDetailsEnabled = Boolean((job.payload as any)?.toggles?.style_details);
+      if (styleDetailsEnabled && styleDetailsCustomerMap.size > 0 && spySeasonId) {
+        await log(job.id, 'info', 'STEP:style_details_begin', { customerCount: styleDetailsCustomerMap.size, spySeasonId });
+        try {
+          // Delete existing style details for this season (idempotent refresh)
+          const { error: delErr } = await supabase
+            .from('sales_style_details_rows')
+            .delete()
+            .eq('season_id', targetSeasonId);
+          if (delErr) {
+            await log(job.id, 'error', 'STEP:style_details_delete_error', { error: delErr.message });
+          }
+
+          // Chunk customer IDs for bulk download (max 100 per request to avoid huge files)
+          const allSpyCustomerIds = Array.from(styleDetailsCustomerMap.keys());
+          const chunkSize = 100;
+          const chunks: string[][] = [];
+          for (let i = 0; i < allSpyCustomerIds.length; i += chunkSize) {
+            chunks.push(allSpyCustomerIds.slice(i, i + chunkSize));
+          }
+          await log(job.id, 'info', 'STEP:style_details_chunks', { totalCustomers: allSpyCustomerIds.length, chunks: chunks.length });
+
+          let totalStyleRows = 0;
+          for (let chunkIdx = 0; chunkIdx < chunks.length; chunkIdx++) {
+            await ensureNotCancelled(job.id);
+            const chunk = chunks[chunkIdx];
+            const customerIdsParam = chunk.join(',');
+            // Build the download URL (prefer CSV for fast parsing)
+            const downloadUrl = new URL(`modules/s_orders.add/download_styles_details.php`, SPY_BASE_URL);
+            downloadUrl.searchParams.set('type', 'csv');
+            downloadUrl.searchParams.set('customer_ids', customerIdsParam);
+            downloadUrl.searchParams.set('season_id', spySeasonId);
+            downloadUrl.searchParams.set('delivery_id', '0');
+
+            await log(job.id, 'info', 'STEP:style_details_chunk_download', { chunkIdx: chunkIdx + 1, totalChunks: chunks.length, customers: chunk.length });
+
+            try {
+              // Fetch CSV content via page context (authenticated session)
+              const csvContent = await page.evaluate(async (url: string) => {
+                const resp = await fetch(url, { credentials: 'include' });
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                return await resp.text();
+              }, downloadUrl.toString());
+
+              if (!csvContent || csvContent.trim().length === 0) {
+                await log(job.id, 'info', 'STEP:style_details_chunk_empty', { chunkIdx: chunkIdx + 1 });
+                continue;
+              }
+
+              // Parse CSV (simple split - assumes no embedded commas/quotes in data)
+              const lines = csvContent.split(/\r?\n/).filter((l) => l.trim().length > 0);
+              if (lines.length < 2) {
+                await log(job.id, 'info', 'STEP:style_details_chunk_no_data', { chunkIdx: chunkIdx + 1, lines: lines.length });
+                continue;
+              }
+
+              // Parse header to find column indices
+              const headerLine = lines[0];
+              const headers = headerLine.split(';').map((h) => h.trim().toLowerCase());
+              const colIdx = {
+                accountNo: headers.findIndex((h) => h.includes('account') || h.includes('konto')),
+                styleNo: headers.findIndex((h) => h === 'style no' || h === 'style_no' || h === 'styleno' || h.includes('style no')),
+                styleName: headers.findIndex((h) => h === 'style name' || h === 'style_name' || h === 'stylename' || h.includes('style name')),
+                quality: headers.findIndex((h) => h === 'quality' || h.includes('quality')),
+                color: headers.findIndex((h) => h === 'color' || h === 'colour' || h.includes('color')),
+                size: headers.findIndex((h) => h === 'size' || h.includes('size')),
+                qty: headers.findIndex((h) => h === 'qty' || h === 'quantity' || h.includes('qty')),
+                barcode: headers.findIndex((h) => h === 'barcode' || h === 'ean' || h.includes('barcode'))
+              };
+
+              await log(job.id, 'info', 'STEP:style_details_headers', { headers: headers.slice(0, 15), colIdx });
+
+              // Parse data rows
+              const rowsToInsert: Array<{
+                season_id: string;
+                account_no: string;
+                style_no: string;
+                style_name: string | null;
+                quality: string | null;
+                color: string | null;
+                size: string | null;
+                qty: number;
+                barcode: string | null;
+                scraped_at: string;
+              }> = [];
+
+              for (let i = 1; i < lines.length; i++) {
+                const cells = lines[i].split(';').map((c) => c.trim());
+                const styleNo = colIdx.styleNo >= 0 ? cells[colIdx.styleNo] || '' : '';
+                if (!styleNo) continue; // Skip rows without style number
+
+                // Try to find account_no from CSV or fall back to mapping
+                let accountNo = colIdx.accountNo >= 0 ? cells[colIdx.accountNo] || '' : '';
+                // If CSV doesn't have account column, we can't reliably map back
+                // For now, log and skip if we can't determine account
+                if (!accountNo) {
+                  // This shouldn't happen if the CSV includes customer info
+                  continue;
+                }
+
+                rowsToInsert.push({
+                  season_id: targetSeasonId,
+                  account_no: accountNo,
+                  style_no: styleNo,
+                  style_name: colIdx.styleName >= 0 ? cells[colIdx.styleName] || null : null,
+                  quality: colIdx.quality >= 0 ? cells[colIdx.quality] || null : null,
+                  color: colIdx.color >= 0 ? cells[colIdx.color] || null : null,
+                  size: colIdx.size >= 0 ? cells[colIdx.size] || null : null,
+                  qty: colIdx.qty >= 0 ? (Number((cells[colIdx.qty] || '0').replace(/[^0-9.\-]/g, '')) || 0) : 0,
+                  barcode: colIdx.barcode >= 0 ? cells[colIdx.barcode] || null : null,
+                  scraped_at: new Date().toISOString()
+                });
+              }
+
+              // Batch insert (1000 at a time)
+              for (let bi = 0; bi < rowsToInsert.length; bi += 1000) {
+                const batch = rowsToInsert.slice(bi, bi + 1000);
+                const { error: insErr } = await supabase.from('sales_style_details_rows').insert(batch as any);
+                if (insErr) {
+                  await log(job.id, 'error', 'STEP:style_details_insert_error', { error: insErr.message, batchStart: bi });
+                }
+              }
+
+              totalStyleRows += rowsToInsert.length;
+              await log(job.id, 'info', 'STEP:style_details_chunk_done', { chunkIdx: chunkIdx + 1, rowsInserted: rowsToInsert.length });
+            } catch (e: any) {
+              await log(job.id, 'error', 'STEP:style_details_chunk_error', { chunkIdx: chunkIdx + 1, error: e?.message || String(e) });
+            }
+          }
+
+          await log(job.id, 'info', 'STEP:style_details_complete', { totalRows: totalStyleRows });
+        } catch (e: any) {
+          await log(job.id, 'error', 'STEP:style_details_error', { error: e?.message || String(e) });
+        }
+      } else if (styleDetailsEnabled) {
+        await log(job.id, 'info', 'STEP:style_details_skipped', { reason: styleDetailsCustomerMap.size === 0 ? 'no_customers' : 'no_spy_season_id' });
+      }
+      // ========== END STYLE DETAILS SCRAPE ==========
 
       await saveResult(job.id, 'Deep scrape completed', {
         seasonId: targetSeasonId,
