@@ -193,7 +193,7 @@ async function buildPurchaseRoundContext(
         qty: 0, 
         colors: new Set(), 
         customers: new Set(),
-        supplier: styleInfo?.supplier,
+        supplier: styleInfo?.supplier ?? undefined, // Convert null to undefined
         lastYearQty: comparisonStyleQty[sn] || 0
       };
     }
