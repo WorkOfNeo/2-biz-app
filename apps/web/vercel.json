@@ -6,6 +6,7 @@
     { "path": "/api/cron/scrape-statistics-deep", "schedule": "0 12 * * *" },
     { "path": "/api/cron/scrape-statistics-deep", "schedule": "0 15 * * *" },
     { "path": "/api/cron/scrape-style-details", "schedule": "0 18 * * *" },
+    { "path": "/api/cron/ai-daily-analysis", "schedule": "0 19 * * *" },
     { "path": "/api/cron/scrape-top-styles", "schedule": "30 14 * * *" },
     { "path": "/api/cron/exports-after-deep", "schedule": "30 2 * * *" },
     { "path": "/api/cron/exports-after-deep", "schedule": "0 5 * * *" },

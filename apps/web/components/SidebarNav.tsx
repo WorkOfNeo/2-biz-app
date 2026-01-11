@@ -83,7 +83,7 @@ export function SidebarNav() {
     if (pathname.startsWith('/statistics/') && pathname !== '/statistics/dashboard') return 'statistics';
     if (pathname.startsWith('/finance/')) return 'finance';
     if (pathname.startsWith('/styles/')) return 'styles';
-    if (pathname.startsWith('/purchase/')) return 'purchase';
+    if (pathname.startsWith('/purchase/') || pathname.startsWith('/ai-analysis')) return 'purchase';
     if (pathname.startsWith('/sales/')) return 'sales';
     if (pathname.startsWith('/settings/') || pathname === '/statistics/exports' || pathname === '/statistics/downloads') return 'settings';
     if (pathname.startsWith('/admin/')) return 'admin';
@@ -147,6 +147,7 @@ export function SidebarNav() {
   ].filter(Boolean) as any[];
   const purchaseLinks = [
     can('/purchase/dashboard') ? <NavLink key="pd" href="/purchase/dashboard" label="Dashboard" /> : null,
+    can('/ai-analysis') ? <NavLink key="pai" href="/ai-analysis" label="AI Analysis" /> : null,
     can('/purchase/orders') ? <NavLink key="po" href="/purchase/orders" label="Purchase Orders" /> : null,
     can('/purchase/packinglists') ? <NavLink key="ppl" href="/purchase/packinglists" label="Packinglists" /> : null,
     can('/purchase/make-order') ? <NavLink key="pmo" href="/purchase/make-order" label="AI Suggestions" /> : null,
