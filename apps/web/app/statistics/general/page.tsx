@@ -336,7 +336,7 @@ export default function StatisticsGeneralPage() {
   const [detailsS1NewRows, setDetailsS1NewRows] = useState<any[]>([]);
   const [detailsS2NewRows, setDetailsS2NewRows] = useState<any[]>([]);
   // Style details state (grouped by style_no + color)
-  const [detailsStyleRows, setDetailsStyleRows] = useState<Array<{ style_no: string; style_name: string | null; color: string | null; totalQty: number; rows: any[] }>>([]);
+  const [detailsStyleRows, setDetailsStyleRows] = useState<Array<{ style_no: string; style_name: string | null; color: string | null; totalQty: number; image_url: string | null; rows: any[] }>>([]);
   const [styleDetailsExpanded, setStyleDetailsExpanded] = useState<Set<string>>(new Set());
   // Comment modal state
   const [commentModalOpen, setCommentModalOpen] = useState(false);
@@ -407,20 +407,48 @@ export default function StatisticsGeneralPage() {
             .eq('account_no', row.account_no)
             .limit(10000);
           if (!styleErr && styleRows && styleRows.length > 0) {
+            // Helper to strip quotes from values
+            const stripQuotes = (s: string | null): string | null => {
+              if (!s) return null;
+              const trimmed = s.trim();
+              if ((trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+                return trimmed.slice(1, -1).trim();
+              }
+              return trimmed;
+            };
+
+            // Get unique style numbers to fetch images
+            const uniqueStyleNos = Array.from(new Set((styleRows as any[]).map(sr => stripQuotes(sr.style_no)).filter(Boolean))) as string[];
+            
+            // Fetch style images
+            let styleImages: Map<string, string | null> = new Map();
+            if (uniqueStyleNos.length > 0) {
+              const { data: stylesData } = await supabase
+                .from('styles')
+                .select('style_no, image_url')
+                .in('style_no', uniqueStyleNos);
+              for (const s of (stylesData ?? []) as any[]) {
+                if (s.style_no) styleImages.set(s.style_no, s.image_url || null);
+              }
+            }
+
             // Group by style_no + color
-            const grouped = new Map<string, { style_no: string; style_name: string | null; color: string | null; totalQty: number; rows: any[] }>();
+            const grouped = new Map<string, { style_no: string; style_name: string | null; color: string | null; totalQty: number; image_url: string | null; rows: any[] }>();
             for (const sr of styleRows as any[]) {
-              const key = `${sr.style_no || ''}|${sr.color || ''}`;
+              const cleanStyleNo = stripQuotes(sr.style_no) || '';
+              const cleanColor = stripQuotes(sr.color) || '';
+              const key = `${cleanStyleNo}|${cleanColor}`;
               const existing = grouped.get(key);
               if (existing) {
                 existing.totalQty += Number(sr.qty || 0);
                 existing.rows.push(sr);
               } else {
                 grouped.set(key, {
-                  style_no: sr.style_no || '',
-                  style_name: sr.style_name || null,
-                  color: sr.color || null,
+                  style_no: cleanStyleNo,
+                  style_name: stripQuotes(sr.style_name),
+                  color: cleanColor || null,
                   totalQty: Number(sr.qty || 0),
+                  image_url: styleImages.get(cleanStyleNo) || null,
                   rows: [sr]
                 });
               }
@@ -1642,13 +1670,16 @@ export default function StatisticsGeneralPage() {
                             <div className="flex items-center gap-1.5">
                               {/* Customer name - clickable link to open details if style details exist */}
                               {!row.isGroupTotal && styleDetailsAccounts?.has(row.account_no) ? (
-                                <button
-                                  onClick={() => openDetails(row)}
-                                  className="text-left text-indigo-600 hover:text-indigo-800 hover:font-semibold transition-all cursor-pointer underline decoration-indigo-300 hover:decoration-indigo-600"
-                                  title="Click to view style details"
-                                >
-                                  {row.customer}
-                                </button>
+                                <>
+                                  <button
+                                    onClick={() => openDetails(row)}
+                                    className="text-left hover:underline cursor-pointer"
+                                    title="Click to view style details"
+                                  >
+                                    {row.customer}
+                                  </button>
+                                  <span className="text-gray-400 text-xs" title="Style details available">✓</span>
+                                </>
                               ) : (
                                 <span>{row.customer}</span>
                               )}
@@ -2373,61 +2404,34 @@ export default function StatisticsGeneralPage() {
                       <table className="min-w-full text-sm">
                         <thead>
                           <tr className="bg-indigo-50">
-                            <th className="text-left p-2 border-b">Style No</th>
+                            <th className="text-left p-2 border-b w-16">Image</th>
                             <th className="text-left p-2 border-b">Style Name</th>
                             <th className="text-left p-2 border-b">Color</th>
                             <th className="text-right p-2 border-b">Total Qty</th>
-                            <th className="text-center p-2 border-b">Sizes</th>
                           </tr>
                         </thead>
                         <tbody>
                           {detailsStyleRows.map((group) => {
                             const groupKey = `${group.style_no}|${group.color || ''}`;
-                            const isExpanded = styleDetailsExpanded.has(groupKey);
                             return (
                               <tr key={groupKey} className="hover:bg-indigo-50/50">
-                                <td className="p-2 border-b font-mono text-xs">{group.style_no}</td>
-                                <td className="p-2 border-b">{group.style_name || '—'}</td>
-                                <td className="p-2 border-b">{group.color || '—'}</td>
-                                <td className="p-2 border-b text-right font-medium">{group.totalQty}</td>
-                                <td className="p-2 border-b text-center">
-                                  <button
-                                    className="text-xs text-indigo-600 hover:text-indigo-800 underline"
-                                    onClick={() => {
-                                      const next = new Set(styleDetailsExpanded);
-                                      if (isExpanded) {
-                                        next.delete(groupKey);
-                                      } else {
-                                        next.add(groupKey);
-                                      }
-                                      setStyleDetailsExpanded(next);
-                                    }}
-                                  >
-                                    {isExpanded ? 'Hide' : `Show ${group.rows.length} sizes`}
-                                  </button>
-                                  {isExpanded && (
-                                    <div className="mt-2 text-left text-xs bg-white border rounded p-2">
-                                      <table className="min-w-full">
-                                        <thead>
-                                          <tr className="text-gray-500">
-                                            <th className="text-left pr-3">Size</th>
-                                            <th className="text-right pr-3">Qty</th>
-                                            <th className="text-left">Barcode</th>
-                                          </tr>
-                                        </thead>
-                                        <tbody>
-                                          {group.rows.map((sr: any, idx: number) => (
-                                            <tr key={idx}>
-                                              <td className="pr-3">{sr.size || '—'}</td>
-                                              <td className="text-right pr-3">{sr.qty}</td>
-                                              <td className="text-gray-400 font-mono">{sr.barcode || '—'}</td>
-                                            </tr>
-                                          ))}
-                                        </tbody>
-                                      </table>
+                                <td className="p-2 border-b">
+                                  {group.image_url ? (
+                                    <img 
+                                      src={group.image_url} 
+                                      alt={group.style_no} 
+                                      className="w-12 h-12 object-cover rounded"
+                                      title={group.style_no}
+                                    />
+                                  ) : (
+                                    <div className="w-12 h-12 bg-gray-100 rounded flex items-center justify-center text-[10px] text-gray-400 font-mono">
+                                      {group.style_no}
                                     </div>
                                   )}
                                 </td>
+                                <td className="p-2 border-b">{group.style_name || '—'}</td>
+                                <td className="p-2 border-b">{group.color || '—'}</td>
+                                <td className="p-2 border-b text-right font-medium">{group.totalQty}</td>
                               </tr>
                             );
                           })}
@@ -2436,7 +2440,6 @@ export default function StatisticsGeneralPage() {
                           <tr className="bg-indigo-50 font-semibold">
                             <td className="p-2" colSpan={3}>TOTAL</td>
                             <td className="p-2 text-right">{detailsStyleRows.reduce((sum, g) => sum + g.totalQty, 0)}</td>
-                            <td></td>
                           </tr>
                         </tfoot>
                       </table>

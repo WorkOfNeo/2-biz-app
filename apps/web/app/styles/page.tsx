@@ -21,6 +21,8 @@ export default function StylesPage() {
   const [selectedStyleIds, setSelectedStyleIds] = useState<Set<string>>(new Set());
   const [addToStockListOpen, setAddToStockListOpen] = useState(false);
   const [targetStockListId, setTargetStockListId] = useState('');
+  const [onlySeasonColors, setOnlySeasonColors] = useState(false);
+  const [onlySeasonId, setOnlySeasonId] = useState('');
   const [bulkBusy, setBulkBusy] = useState(false);
   const selectAllRef = useRef<HTMLInputElement | null>(null);
   const supabase = createClientComponentClient();
@@ -186,13 +188,17 @@ export default function StylesPage() {
 
   async function bulkAddSelectedToStockList() {
     const listId = targetStockListId;
-    const styleIds = Array.from(selectedStyleIds);
+    const styleIdsAll = Array.from(selectedStyleIds);
     if (!listId) {
       alert('Please select a stock list');
       return;
     }
-    if (styleIds.length === 0) {
+    if (styleIdsAll.length === 0) {
       alert('Please select at least one style');
+      return;
+    }
+    if (onlySeasonColors && !onlySeasonId) {
+      alert('Please select a season (or disable season-only mode)');
       return;
     }
 
@@ -204,13 +210,6 @@ export default function StylesPage() {
 
     setBulkBusy(true);
     try {
-      // Add styles (ignore duplicates)
-      for (const part of chunk(styleIds, 500)) {
-        const inserts = part.map((style_id) => ({ list_id: listId, style_id }));
-        const { error } = await supabase.from('stock_list_styles').upsert(inserts as any, { onConflict: 'list_id,style_id', ignoreDuplicates: true });
-        if (error) throw error;
-      }
-
       // Fetch colors for selected styles (paginate for safety)
       const pageSize = 2000;
       const cap = 200000;
@@ -221,7 +220,7 @@ export default function StylesPage() {
         const { data, error } = await supabase
           .from('style_colors')
           .select('id, style_id')
-          .in('style_id', styleIds)
+          .in('style_id', styleIdsAll)
           .range(from, to);
         if (error) throw error;
         const batch = (data ?? []) as any[];
@@ -230,8 +229,48 @@ export default function StylesPage() {
         from += pageSize;
       }
 
+      let colorsToInsert = allColors;
+      let stylesToAdd = styleIdsAll;
+      let skippedStyles = 0;
+      let seasonColorCount = 0;
+
+      // Option: only include colors mapped to a specific season (requires deep enrich -> style_color_seasons)
+      if (onlySeasonColors && onlySeasonId) {
+        const allowed = new Set<string>();
+        const colorIds = allColors.map((c) => c.id);
+        for (const part of chunk(colorIds, 500)) {
+          const { data, error } = await supabase
+            .from('style_color_seasons')
+            .select('style_color_id')
+            .eq('season_id', onlySeasonId)
+            .in('style_color_id', part)
+            .limit(100000);
+          if (error) throw error;
+          for (const r of (data ?? []) as any[]) {
+            if (r?.style_color_id) allowed.add(String(r.style_color_id));
+          }
+        }
+        colorsToInsert = allColors.filter((c) => allowed.has(c.id));
+        seasonColorCount = colorsToInsert.length;
+        const allowedStyleIds = new Set(colorsToInsert.map((c) => c.style_id));
+        stylesToAdd = styleIdsAll.filter((sid) => allowedStyleIds.has(sid));
+        skippedStyles = styleIdsAll.length - stylesToAdd.length;
+        if (stylesToAdd.length === 0) {
+          const listName = stockLists?.find((l) => l.id === listId)?.name || 'stock list';
+          alert(`No colors were mapped to the selected season for the chosen styles.\n\nNothing was added to "${listName}".\n\nTip: run “Deep enrich styles” to populate season↔color mappings.`);
+          return;
+        }
+      }
+
+      // Add styles (ignore duplicates)
+      for (const part of chunk(stylesToAdd, 500)) {
+        const inserts = part.map((style_id) => ({ list_id: listId, style_id }));
+        const { error } = await supabase.from('stock_list_styles').upsert(inserts as any, { onConflict: 'list_id,style_id', ignoreDuplicates: true });
+        if (error) throw error;
+      }
+
       // Add colors (include=true by default; ignore duplicates)
-      const colorInserts = allColors.map((c) => ({
+      const colorInserts = colorsToInsert.map((c) => ({
         list_id: listId,
         style_id: c.style_id,
         style_color_id: c.id,
@@ -243,10 +282,17 @@ export default function StylesPage() {
       }
 
       const listName = stockLists?.find((l) => l.id === listId)?.name || 'stock list';
-      const open = confirm(`✓ Added ${styleIds.length} style(s) to "${listName}".\n\nOpen the stock list page now?`);
+      const seasonLabel = onlySeasonColors && onlySeasonId ? (seasonOptions.find((s) => s.value === onlySeasonId)?.label || 'selected season') : null;
+      const extra =
+        onlySeasonColors && onlySeasonId
+          ? `\n\nSeason filter: ${seasonLabel}\nColors added: ${seasonColorCount}\nSkipped styles (no colors in season): ${skippedStyles}`
+          : '';
+      const open = confirm(`✓ Added ${stylesToAdd.length} style(s) to "${listName}".${extra}\n\nOpen the stock list page now?`);
       setSelectedStyleIds(new Set());
       setAddToStockListOpen(false);
       setTargetStockListId('');
+      setOnlySeasonColors(false);
+      setOnlySeasonId('');
       if (open) window.location.href = `/styles/stock-list?list=${encodeURIComponent(listId)}`;
     } catch (err: any) {
       // eslint-disable-next-line no-console
@@ -714,8 +760,32 @@ export default function StylesPage() {
             placeholder="Select stock list…"
             clearable={true}
           />
+          <label className="flex items-center gap-2 text-sm text-gray-700">
+            <input
+              type="checkbox"
+              className="h-4 w-4 rounded"
+              checked={onlySeasonColors}
+              onChange={(e) => {
+                setOnlySeasonColors(e.target.checked);
+                if (!e.target.checked) setOnlySeasonId('');
+              }}
+              disabled={bulkBusy}
+            />
+            Only include colors from a season
+          </label>
+          {onlySeasonColors && (
+            <SearchSelect
+              items={seasonOptions}
+              value={onlySeasonId}
+              onChange={setOnlySeasonId}
+              placeholder="Select season…"
+              clearable={true}
+            />
+          )}
           <div className="text-xs text-gray-500">
-            This will add the styles (and all their colors) into the chosen list. Existing entries will be kept (no duplicates).
+            {onlySeasonColors
+              ? 'This will add ONLY colors mapped to the selected season (requires “Deep enrich styles” to have populated season↔color links). Existing entries will be kept (no duplicates).'
+              : 'This will add the styles (and all their colors) into the chosen list. Existing entries will be kept (no duplicates).'}
           </div>
         </div>
       </Modal>

@@ -11,3 +11,4 @@ COMMENT ON COLUMN seasons.frozen_at IS 'Timestamp when the season was marked fro
 COMMENT ON COLUMN seasons.frozen_by IS 'Email or identifier of user who froze the season.';
 
 
+

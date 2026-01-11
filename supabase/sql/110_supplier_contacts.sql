@@ -8,3 +8,4 @@ CREATE INDEX IF NOT EXISTS idx_suppliers_contacts ON suppliers USING gin (contac
 
 COMMENT ON COLUMN suppliers.contacts IS 'Array of contact persons: [{ name, email, role?, primary? }]';
 
+
