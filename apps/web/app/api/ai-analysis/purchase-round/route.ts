@@ -24,21 +24,21 @@ async function buildPurchaseRoundContext(
     .from('seasons')
     .select('id, name, year, created_at')
     .eq('id', seasonId)
-    .single();
+    .single() as { data: { id: string; name: string; year: number | null; created_at: string } | null };
 
   // 2. Fetch sales_stats for current season
   const { data: salesStats } = await supabase
     .from('sales_stats')
     .select('account_no, customer_name, qty, price, salesperson_id, country')
     .eq('season_id', seasonId)
-    .limit(50000);
+    .limit(50000) as { data: any[] | null };
 
   // 3. Fetch style details for current season
   const { data: styleDetails } = await supabase
     .from('sales_style_details_rows')
     .select('style_no, style_name, color, size, qty, account_no')
     .eq('season_id', seasonId)
-    .limit(100000);
+    .limit(100000) as { data: any[] | null };
 
   // 4. Get unique style numbers
   const styleNos = Array.from(new Set((styleDetails ?? []).map((r: any) => r.style_no).filter(Boolean)));
@@ -49,7 +49,7 @@ async function buildPurchaseRoundContext(
     const { data } = await supabase
       .from('style_stock')
       .select('style_no, color, section, row_label, sizes, values')
-      .in('style_no', styleNos.slice(0, 1000));
+      .in('style_no', styleNos.slice(0, 1000)) as { data: any[] | null };
     stockData = data ?? [];
   }
 
@@ -57,19 +57,19 @@ async function buildPurchaseRoundContext(
   const { data: stylesInfo } = await supabase
     .from('styles')
     .select('style_no, style_name, supplier, image_url')
-    .in('style_no', styleNos.slice(0, 500));
+    .in('style_no', styleNos.slice(0, 500)) as { data: { style_no: string; style_name: string | null; supplier: string | null; image_url: string | null }[] | null };
 
   // 7. Fetch suppliers
   const { data: suppliers } = await supabase
     .from('suppliers')
     .select('id, name, moq, lead_time_days')
-    .limit(100);
+    .limit(100) as { data: { id: string; name: string; moq: number | null; lead_time_days: number | null }[] | null };
 
   // 8. Fetch customers for coverage calculation
   const { data: customers } = await supabase
     .from('customers')
     .select('customer_id, salesperson_id')
-    .limit(5000);
+    .limit(5000) as { data: { customer_id: string; salesperson_id: string | null }[] | null };
 
   // 9. Get previous purchase round number
   const { data: lastRound } = await supabase
@@ -90,7 +90,7 @@ async function buildPurchaseRoundContext(
       .from('sales_style_details_rows')
       .select('style_no, qty')
       .eq('season_id', comparisonSeasonId)
-      .limit(100000);
+      .limit(100000) as { data: any[] | null };
     
     for (const row of (cDetails ?? []) as any[]) {
       const sn = row.style_no;
