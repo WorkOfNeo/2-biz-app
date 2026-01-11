@@ -1770,7 +1770,7 @@ async function runJob(job: JobRow) {
             if (!anchor) return '';
             const href = anchor.getAttribute('href') || '';
             const match = href.match(/customer_id=(\d+)/);
-            return match ? match[1] : '';
+            return match && match[1] ? match[1] : '';
           }
           const out: { customer: string; account: string; country: string; qty: string; amount: string; salesperson: string; spyCustomerId: string }[] = [];
           for (const tr of Array.from(trs) as HTMLTableRowElement[]) {
@@ -2193,6 +2193,7 @@ async function runJob(job: JobRow) {
           for (let chunkIdx = 0; chunkIdx < chunks.length; chunkIdx++) {
             await ensureNotCancelled(job.id);
             const chunk = chunks[chunkIdx];
+            if (!chunk || chunk.length === 0) continue;
             const customerIdsParam = chunk.join(',');
             // Build the download URL (prefer CSV for fast parsing)
             const downloadUrl = new URL(`modules/s_orders.add/download_styles_details.php`, SPY_BASE_URL);
@@ -2225,6 +2226,7 @@ async function runJob(job: JobRow) {
 
               // Parse header to find column indices
               const headerLine = lines[0];
+              if (!headerLine) continue;
               const headers = headerLine.split(';').map((h) => h.trim().toLowerCase());
               const colIdx = {
                 accountNo: headers.findIndex((h) => h.includes('account') || h.includes('konto')),
@@ -2254,7 +2256,9 @@ async function runJob(job: JobRow) {
               }> = [];
 
               for (let i = 1; i < lines.length; i++) {
-                const cells = lines[i].split(';').map((c) => c.trim());
+                const line = lines[i];
+                if (!line) continue;
+                const cells = line.split(';').map((c) => c.trim());
                 const styleNo = colIdx.styleNo >= 0 ? cells[colIdx.styleNo] || '' : '';
                 if (!styleNo) continue; // Skip rows without style number
 
