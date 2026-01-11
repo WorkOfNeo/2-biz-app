@@ -13,6 +13,47 @@ interface PurchaseRoundRequest {
   comparisonSeasonId?: string;
 }
 
+// Helper to fetch all rows with pagination (bypasses Supabase 1000 row limit)
+async function fetchAllRows<T>(
+  supabase: ReturnType<typeof createRouteHandlerClient>,
+  table: string,
+  select: string,
+  filters: Record<string, any>,
+  options?: { orderBy?: string; cap?: number }
+): Promise<T[]> {
+  const PAGE_SIZE = 1000;
+  const cap = options?.cap ?? 100000;
+  let from = 0;
+  const allRows: T[] = [];
+
+  while (from < cap) {
+    let query = supabase.from(table).select(select);
+    
+    // Apply filters
+    for (const [key, value] of Object.entries(filters)) {
+      query = query.eq(key, value);
+    }
+    
+    // Apply ordering and range
+    if (options?.orderBy) {
+      query = query.order(options.orderBy, { ascending: true });
+    }
+    query = query.range(from, from + PAGE_SIZE - 1);
+    
+    const { data, error } = await query;
+    if (error) throw error;
+    
+    const batch = (data ?? []) as T[];
+    allRows.push(...batch);
+    
+    // Break if we got fewer rows than requested (end of data)
+    if (batch.length < PAGE_SIZE) break;
+    from += PAGE_SIZE;
+  }
+  
+  return allRows;
+}
+
 // Build comprehensive context for purchase round decisions
 async function buildPurchaseRoundContext(
   supabase: ReturnType<typeof createRouteHandlerClient>,
@@ -26,31 +67,46 @@ async function buildPurchaseRoundContext(
     .eq('id', seasonId)
     .single() as { data: { id: string; name: string; year: number | null; created_at: string } | null };
 
-  // 2. Fetch sales_stats for current season
-  const { data: salesStats } = await supabase
-    .from('sales_stats')
-    .select('account_no, customer_name, qty, price, salesperson_id, country')
-    .eq('season_id', seasonId)
-    .limit(50000) as { data: any[] | null };
+  // 2. Fetch sales_stats for current season (with pagination)
+  const salesStats = await fetchAllRows<any>(
+    supabase,
+    'sales_stats',
+    'account_no, customer_name, qty, price, salesperson_id, country',
+    { season_id: seasonId },
+    { cap: 50000 }
+  );
 
-  // 3. Fetch style details for current season
-  const { data: styleDetails } = await supabase
-    .from('sales_style_details_rows')
-    .select('style_no, style_name, color, size, qty, account_no')
-    .eq('season_id', seasonId)
-    .limit(100000) as { data: any[] | null };
+  // 3. Fetch style details for current season (with pagination)
+  const styleDetails = await fetchAllRows<any>(
+    supabase,
+    'sales_style_details_rows',
+    'style_no, style_name, color, size, qty, account_no',
+    { season_id: seasonId },
+    { cap: 100000 }
+  );
 
   // 4. Get unique style numbers
   const styleNos = Array.from(new Set((styleDetails ?? []).map((r: any) => r.style_no).filter(Boolean)));
 
-  // 5. Fetch style_stock for stock levels (critical for purchase decisions)
+  // 5. Fetch style_stock for stock levels with pagination (critical for purchase decisions)
   let stockData: any[] = [];
   if (styleNos.length > 0) {
-    const { data } = await supabase
-      .from('style_stock')
-      .select('style_no, color, section, row_label, sizes, values')
-      .in('style_no', styleNos.slice(0, 1000)) as { data: any[] | null };
-    stockData = data ?? [];
+    const PAGE_SIZE = 1000;
+    let from = 0;
+    const styleBatch = styleNos.slice(0, 1000); // Limit styles to check
+    
+    while (from < 50000) {
+      const { data } = await supabase
+        .from('style_stock')
+        .select('style_no, color, section, row_label, sizes, values')
+        .in('style_no', styleBatch)
+        .range(from, from + PAGE_SIZE - 1);
+      
+      const batch = (data ?? []) as any[];
+      stockData.push(...batch);
+      if (batch.length < PAGE_SIZE) break;
+      from += PAGE_SIZE;
+    }
   }
 
   // 6. Fetch styles table for supplier info
@@ -65,11 +121,14 @@ async function buildPurchaseRoundContext(
     .select('id, name, moq, lead_time_days')
     .limit(100) as { data: { id: string; name: string; moq: number | null; lead_time_days: number | null }[] | null };
 
-  // 8. Fetch customers for coverage calculation
-  const { data: customers } = await supabase
-    .from('customers')
-    .select('customer_id, salesperson_id')
-    .limit(5000) as { data: { customer_id: string; salesperson_id: string | null }[] | null };
+  // 8. Fetch customers for coverage calculation (with pagination)
+  const customers = await fetchAllRows<{ customer_id: string; salesperson_id: string | null }>(
+    supabase,
+    'customers',
+    'customer_id, salesperson_id',
+    {},
+    { cap: 10000 }
+  );
 
   // 9. Get previous purchase round number
   const { data: lastRound } = await supabase
@@ -83,14 +142,16 @@ async function buildPurchaseRoundContext(
 
   const nextRoundNumber = ((lastRound?.purchase_round_number) || 0) + 1;
 
-  // 10. Comparison season data
+  // 10. Comparison season data (with pagination)
   let comparisonStyleQty: Record<string, number> = {};
   if (comparisonSeasonId) {
-    const { data: cDetails } = await supabase
-      .from('sales_style_details_rows')
-      .select('style_no, qty')
-      .eq('season_id', comparisonSeasonId)
-      .limit(100000) as { data: any[] | null };
+    const cDetails = await fetchAllRows<any>(
+      supabase,
+      'sales_style_details_rows',
+      'style_no, qty',
+      { season_id: comparisonSeasonId },
+      { cap: 100000 }
+    );
     
     for (const row of (cDetails ?? []) as any[]) {
       const sn = row.style_no;

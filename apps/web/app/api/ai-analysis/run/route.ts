@@ -10,6 +10,47 @@ import { getPromptConfig, interpolatePrompt } from '../../../../lib/ai/prompts';
 
 type AnalysisType = 'daily' | 'purchase_round';
 
+// Helper to fetch all rows with pagination (bypasses Supabase 1000 row limit)
+async function fetchAllRows<T>(
+  supabase: ReturnType<typeof createRouteHandlerClient>,
+  table: string,
+  select: string,
+  filters: Record<string, any>,
+  options?: { orderBy?: string; cap?: number }
+): Promise<T[]> {
+  const PAGE_SIZE = 1000;
+  const cap = options?.cap ?? 100000;
+  let from = 0;
+  const allRows: T[] = [];
+
+  while (from < cap) {
+    let query = supabase.from(table).select(select);
+    
+    // Apply filters
+    for (const [key, value] of Object.entries(filters)) {
+      query = query.eq(key, value);
+    }
+    
+    // Apply ordering and range
+    if (options?.orderBy) {
+      query = query.order(options.orderBy, { ascending: true });
+    }
+    query = query.range(from, from + PAGE_SIZE - 1);
+    
+    const { data, error } = await query;
+    if (error) throw error;
+    
+    const batch = (data ?? []) as T[];
+    allRows.push(...batch);
+    
+    // Break if we got fewer rows than requested (end of data)
+    if (batch.length < PAGE_SIZE) break;
+    from += PAGE_SIZE;
+  }
+  
+  return allRows;
+}
+
 interface RunAnalysisRequest {
   analysisType?: AnalysisType;
   seasonId?: string;         // Override for current season
@@ -41,38 +82,57 @@ async function buildAnalysisContext(
     comparisonSeason = data;
   }
 
-  // 2. Fetch sales_stats for current season
-  const { data: salesStats } = await supabase
-    .from('sales_stats')
-    .select('account_no, customer_name, qty, price, salesperson_id, city, country')
-    .eq('season_id', seasonId)
-    .limit(50000);
+  // 2. Fetch sales_stats for current season (with pagination)
+  const salesStats = await fetchAllRows<any>(
+    supabase,
+    'sales_stats',
+    'account_no, customer_name, qty, price, salesperson_id, city, country',
+    { season_id: seasonId },
+    { cap: 50000 }
+  );
 
-  // 3. Fetch sales_style_details_rows for style-level detail
-  const { data: styleDetails } = await supabase
-    .from('sales_style_details_rows')
-    .select('style_no, style_name, color, size, qty, account_no')
-    .eq('season_id', seasonId)
-    .limit(100000);
+  // 3. Fetch sales_style_details_rows for style-level detail (with pagination)
+  const styleDetails = await fetchAllRows<any>(
+    supabase,
+    'sales_style_details_rows',
+    'style_no, style_name, color, size, qty, account_no',
+    { season_id: seasonId },
+    { cap: 100000 }
+  );
 
   // 4. Get unique style numbers for stock lookup
   const styleNos = Array.from(new Set((styleDetails ?? []).map((r: any) => r.style_no).filter(Boolean)));
 
-  // 5. Fetch style_stock for stock levels
+  // 5. Fetch style_stock for stock levels (with pagination for large datasets)
   let stockData: any[] = [];
   if (styleNos.length > 0) {
-    const { data } = await supabase
-      .from('style_stock')
-      .select('style_no, color, section, row_label, sizes, values')
-      .in('style_no', styleNos.slice(0, 500)); // Limit to avoid huge queries
-    stockData = data ?? [];
+    // Fetch in batches of 500 style numbers to avoid query size limits
+    const PAGE_SIZE = 1000;
+    let from = 0;
+    const styleBatch = styleNos.slice(0, 1000); // Limit styles to check
+    
+    while (from < 50000) {
+      const { data } = await supabase
+        .from('style_stock')
+        .select('style_no, color, section, row_label, sizes, values')
+        .in('style_no', styleBatch)
+        .range(from, from + PAGE_SIZE - 1);
+      
+      const batch = data ?? [];
+      stockData.push(...batch);
+      if (batch.length < PAGE_SIZE) break;
+      from += PAGE_SIZE;
+    }
   }
 
-  // 6. Fetch customers
-  const { data: customers } = await supabase
-    .from('customers')
-    .select('customer_id, customer_name, country, salesperson_id')
-    .limit(5000);
+  // 6. Fetch customers (with pagination)
+  const customers = await fetchAllRows<any>(
+    supabase,
+    'customers',
+    'customer_id, customer_name, country, salesperson_id',
+    {},
+    { cap: 10000 }
+  );
 
   // 7. Fetch salespersons
   const { data: salespersons } = await supabase
@@ -80,23 +140,25 @@ async function buildAnalysisContext(
     .select('id, name, email')
     .limit(100);
 
-  // 8. Fetch comparison season data (if available)
+  // 8. Fetch comparison season data (if available) with pagination
   let comparisonStats: any[] = [];
   let comparisonStyleDetails: any[] = [];
   if (comparisonSeasonId) {
-    const { data: cStats } = await supabase
-      .from('sales_stats')
-      .select('account_no, qty, price, salesperson_id')
-      .eq('season_id', comparisonSeasonId)
-      .limit(50000);
-    comparisonStats = cStats ?? [];
+    comparisonStats = await fetchAllRows<any>(
+      supabase,
+      'sales_stats',
+      'account_no, qty, price, salesperson_id',
+      { season_id: comparisonSeasonId },
+      { cap: 50000 }
+    );
 
-    const { data: cDetails } = await supabase
-      .from('sales_style_details_rows')
-      .select('style_no, color, qty')
-      .eq('season_id', comparisonSeasonId)
-      .limit(100000);
-    comparisonStyleDetails = cDetails ?? [];
+    comparisonStyleDetails = await fetchAllRows<any>(
+      supabase,
+      'sales_style_details_rows',
+      'style_no, color, qty',
+      { season_id: comparisonSeasonId },
+      { cap: 100000 }
+    );
   }
 
   // ========== CALCULATE METRICS ==========
