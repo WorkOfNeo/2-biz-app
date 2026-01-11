@@ -56,10 +56,12 @@ create index if not exists idx_ai_season_analyses_created on public.ai_season_an
 -- RLS
 alter table public.ai_season_analyses enable row level security;
 
+-- Allow anyone to read (anon + authenticated)
 drop policy if exists ai_season_analyses_select_all on public.ai_season_analyses;
 create policy ai_season_analyses_select_all on public.ai_season_analyses 
-  for select to public using (true);
+  for select using (true);
 
+-- Allow authenticated users to insert/update/delete
 drop policy if exists ai_season_analyses_insert_authenticated on public.ai_season_analyses;
 create policy ai_season_analyses_insert_authenticated on public.ai_season_analyses 
   for insert to authenticated with check (true);
@@ -71,3 +73,8 @@ create policy ai_season_analyses_update_authenticated on public.ai_season_analys
 drop policy if exists ai_season_analyses_delete_authenticated on public.ai_season_analyses;
 create policy ai_season_analyses_delete_authenticated on public.ai_season_analyses 
   for delete to authenticated using (true);
+
+-- Also add anon read access for ai_runs (in case it's missing)
+drop policy if exists ai_runs_select_anon on public.ai_runs;
+create policy ai_runs_select_anon on public.ai_runs
+  for select to anon using (true);
