@@ -14,26 +14,25 @@ interface AiAnalysisPayload {
 // Default prompts (fallback if not in DB)
 const DEFAULT_PROMPTS = {
   daily_analysis_v1: {
-    version: 1,
-    content: `You are an AI purchasing analyst for 2-BIZ, a Danish fashion wholesale company.
+    version: 2,
+    content: `You are an AI analyst for 2-BIZ, a Danish fashion wholesale company tracking season sales progress.
 
-Analyze the provided season data and provide insights in JSON format with these keys:
-- executive_summary: A 2-3 paragraph overview of season performance
-- salesperson_reports: Object with salesperson IDs as keys, each containing { summary, performance_rating, recommendations }
-- style_insights: { top_sellers: [...], declining: [...], new_momentum: [...] }
-- warnings: Array of urgent issues requiring attention
-- recommendations: Array of actionable recommendations
-- comparison_note: Brief comparison to last season if data available
+Analyze the provided data and respond with JSON containing:
+- executive_summary: A concise 2-3 paragraph progress report. Focus on what changed since the last analysis and current trajectory.
+- progress_note: One sentence about what changed since last analysis (use changes_since_last if provided)
+- salesperson_summaries: Object with salesperson IDs as keys, each containing { note: string } - a brief observation about their progress
 
-Focus on:
-1. Which salespeople have started? Who hasn't?
-2. Customer visit rates and coverage
-3. Top performing styles and concerning trends
-4. Stock levels vs. sales velocity
-5. Comparison to previous season if available`,
+Key metrics to highlight:
+1. Overall progress: qty sold, revenue, visit rate
+2. Changes since last analysis (if available)
+3. Index performance (this season vs last season for visited customers)
+4. Which salespeople are active/inactive
+5. Top performing styles
+
+Keep it factual and concise. No warnings or recommendations needed.`,
     model: 'gpt-5-mini',
     temperature: 1, // GPT-5 only supports default
-    maxTokens: 8192,
+    maxTokens: 4096,
   },
   purchase_round_v1: {
     version: 1,
@@ -254,6 +253,23 @@ export async function runAiAnalysis(
       });
     }
 
+    // ========== STEP 7b: Fetch Last Analysis for Progress Comparison ==========
+    await log('info', 'AI_ANALYSIS:fetching_last_analysis');
+    
+    const { data: lastAnalysis } = await supabase
+      .from('ai_season_analyses')
+      .select('id, analysis_date, metrics, created_at')
+      .eq('season_id', seasonId)
+      .eq('analysis_type', 'daily')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    
+    await log('info', 'AI_ANALYSIS:last_analysis_loaded', { 
+      hasLast: !!lastAnalysis,
+      lastDate: lastAnalysis?.analysis_date 
+    });
+
     // ========== STEP 8: Calculate Metrics ==========
     await log('info', 'AI_ANALYSIS:calculating_metrics');
 
@@ -277,23 +293,59 @@ export async function runAiAnalysis(
     const avgDailyRevenue = Math.round(totalRevenue / daysActive);
     const projectedTotal = avgDailyQty * 42; // 6 weeks
 
-    // Build customer country map
+    // Build customer country map and salesperson map
     const customerCountryMap = new Map<string, string>();
+    const customerSalespersonMap = new Map<string, string>();
     for (const c of customers) {
-      if (c.customer_id) customerCountryMap.set(c.customer_id, c.country || 'Unknown');
+      if (c.customer_id) {
+        customerCountryMap.set(c.customer_id, c.country || 'Unknown');
+        customerSalespersonMap.set(c.customer_id, c.salesperson_id || 'unknown');
+      }
     }
 
-    // Group by salesperson
-    const bySalesperson: Record<string, { id: string; name: string; qty: number; revenue: number; customers: Set<string> }> = {};
+    // Build comparison data: what each customer bought last season
+    const lastSeasonByCustomer = new Map<string, { qty: number; revenue: number }>();
+    for (const row of comparisonStats) {
+      const acc = row.account_no;
+      if (!acc) continue;
+      const existing = lastSeasonByCustomer.get(acc) || { qty: 0, revenue: 0 };
+      existing.qty += Number(row.qty) || 0;
+      existing.revenue += Number(row.price) || 0;
+      lastSeasonByCustomer.set(acc, existing);
+    }
+
+    // Group current season by salesperson with per-customer breakdown
+    const bySalesperson: Record<string, { 
+      id: string; 
+      name: string; 
+      qty: number; 
+      revenue: number; 
+      customers: Set<string>;
+      customerData: Map<string, { qty: number; revenue: number }>;
+    }> = {};
+    
     for (const row of salesStats) {
       const spId = row.salesperson_id || 'unknown';
       if (!bySalesperson[spId]) {
         const sp = (salespersons ?? []).find((s: any) => s.id === spId);
-        bySalesperson[spId] = { id: spId, name: sp?.name || 'Unknown', qty: 0, revenue: 0, customers: new Set() };
+        bySalesperson[spId] = { 
+          id: spId, 
+          name: sp?.name || 'Unknown', 
+          qty: 0, 
+          revenue: 0, 
+          customers: new Set(),
+          customerData: new Map()
+        };
       }
       bySalesperson[spId].qty += Number(row.qty) || 0;
       bySalesperson[spId].revenue += Number(row.price) || 0;
-      if (row.account_no) bySalesperson[spId].customers.add(row.account_no);
+      if (row.account_no) {
+        bySalesperson[spId].customers.add(row.account_no);
+        const custData = bySalesperson[spId].customerData.get(row.account_no) || { qty: 0, revenue: 0 };
+        custData.qty += Number(row.qty) || 0;
+        custData.revenue += Number(row.price) || 0;
+        bySalesperson[spId].customerData.set(row.account_no, custData);
+      }
     }
 
     const customersBySalesperson: Record<string, number> = {};
@@ -302,20 +354,41 @@ export async function runAiAnalysis(
       customersBySalesperson[spId] = (customersBySalesperson[spId] || 0) + 1;
     }
 
+    // Calculate index for each salesperson (visited customers: this season vs last season)
     const salespersonData = Object.values(bySalesperson).map(sp => {
       const totalCustomers = customersBySalesperson[sp.id] || 0;
+      
+      // Calculate index: sum of this season qty for visited customers / sum of last season qty for same customers
+      let thisSeasonQtyForVisited = 0;
+      let lastSeasonQtyForVisited = 0;
+      
+      for (const [custId, custData] of sp.customerData) {
+        thisSeasonQtyForVisited += custData.qty;
+        const lastSeason = lastSeasonByCustomer.get(custId);
+        if (lastSeason) {
+          lastSeasonQtyForVisited += lastSeason.qty;
+        }
+      }
+      
+      // Index: if last season was 100%, what is this season?
+      // If no last season data, index is null
+      const index = lastSeasonQtyForVisited > 0 
+        ? Math.round((thisSeasonQtyForVisited / lastSeasonQtyForVisited) * 1000) / 10 
+        : null;
+      
       return {
         id: sp.id,
         name: sp.name,
         status: sp.qty > 0 ? 'active' : 'not_started',
         metrics: {
           qty_sold: sp.qty,
-          revenue: sp.revenue,
+          revenue: Math.round(sp.revenue * 100) / 100,
           customers_visited: sp.customers.size,
           customers_total: totalCustomers,
           visit_rate_percent: totalCustomers > 0 
             ? Math.round((sp.customers.size / totalCustomers) * 1000) / 10 
-            : 0
+            : 0,
+          index // null if no comparison data, otherwise percentage (e.g., 85 means 85% of last season)
         }
       };
     }).sort((a, b) => b.metrics.qty_sold - a.metrics.qty_sold);
@@ -332,7 +405,8 @@ export async function runAiAnalysis(
             revenue: 0,
             customers_visited: 0,
             customers_total: customersBySalesperson[sp.id] || 0,
-            visit_rate_percent: 0
+            visit_rate_percent: 0,
+            index: null
           }
         });
       }
@@ -391,6 +465,22 @@ export async function runAiAnalysis(
       visitRatePercent 
     });
 
+    // Calculate changes since last analysis
+    let changesSinceLast: any = null;
+    if (lastAnalysis?.metrics) {
+      const lastMetrics = lastAnalysis.metrics as any;
+      const lastTotals = lastMetrics.totals || {};
+      const lastCoverage = lastMetrics.customer_coverage || {};
+      
+      changesSinceLast = {
+        last_analysis_date: lastAnalysis.analysis_date,
+        qty_change: totalQty - (lastTotals.qty_sold || 0),
+        revenue_change: Math.round((totalRevenue - (lastTotals.revenue || 0)) * 100) / 100,
+        customers_change: uniqueCustomers - (lastCoverage.visited_customers || 0),
+        visit_rate_change: Math.round((visitRatePercent - (lastCoverage.visit_rate_percent || 0)) * 10) / 10
+      };
+    }
+
     // Build context object
     const currentSeasonData = {
       current_season: {
@@ -409,7 +499,7 @@ export async function runAiAnalysis(
       is_first_season: !comparisonSeasonId,
       totals: {
         qty_sold: totalQty,
-        revenue: totalRevenue,
+        revenue: Math.round(totalRevenue * 100) / 100,
         unique_customers: uniqueCustomers,
         unique_styles: uniqueStyles
       },
@@ -423,6 +513,14 @@ export async function runAiAnalysis(
         avg_daily_revenue: avgDailyRevenue,
         projected_season_total: projectedTotal
       },
+      changes_since_last: changesSinceLast,
+      salesperson_table: salespersonData.map(sp => ({
+        salesperson: sp.name,
+        visited_customers: sp.metrics.customers_visited,
+        qty: sp.metrics.qty_sold,
+        price: sp.metrics.revenue,
+        index: sp.metrics.index
+      })),
       salespersons: salespersonData,
       by_country: countryData,
       top_styles: topStyles

@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import useSWR from 'swr';
 import { supabase } from '../../lib/supabaseClient';
 import Link from 'next/link';
-import { Brain, Play, TrendingUp, Users, Package, AlertTriangle, Calendar, Clock, ChevronRight, Trash2, Database, RefreshCw, Loader2 } from 'lucide-react';
+import { Brain, Play, TrendingUp, Package, Calendar, Clock, ChevronRight, Trash2, Database, RefreshCw, Loader2 } from 'lucide-react';
 
 type AnalysisRaw = {
   id: string;
@@ -440,7 +440,7 @@ export default function AIAnalysisDashboard() {
               <p className="text-slate-900">{latestAnalysis.executive_summary || 'No summary available'}</p>
             </div>
 
-            {/* Key Metrics */}
+            {/* Key Metrics with Changes */}
             {latestAnalysis.metrics && (
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-5">
                 <div className="p-3 bg-slate-50 rounded-lg">
@@ -448,21 +448,33 @@ export default function AIAnalysisDashboard() {
                   <div className="text-2xl font-bold text-slate-900">
                     {(latestAnalysis.metrics.totals?.qty_sold || 0).toLocaleString()}
                   </div>
-                  <div className="text-xs text-slate-500">pieces</div>
+                  {latestAnalysis.metrics.changes_since_last?.qty_change != null && (
+                    <div className={`text-xs ${latestAnalysis.metrics.changes_since_last.qty_change > 0 ? 'text-green-600' : 'text-slate-400'}`}>
+                      {latestAnalysis.metrics.changes_since_last.qty_change > 0 ? '+' : ''}{latestAnalysis.metrics.changes_since_last.qty_change} since last
+                    </div>
+                  )}
                 </div>
                 <div className="p-3 bg-slate-50 rounded-lg">
                   <div className="text-xs text-slate-500 uppercase tracking-wide">Revenue</div>
                   <div className="text-2xl font-bold text-slate-900">
                     {((latestAnalysis.metrics.totals?.revenue || 0) / 1000).toFixed(0)}K
                   </div>
-                  <div className="text-xs text-slate-500">DKK</div>
+                  {latestAnalysis.metrics.changes_since_last?.revenue_change != null && (
+                    <div className={`text-xs ${latestAnalysis.metrics.changes_since_last.revenue_change > 0 ? 'text-green-600' : 'text-slate-400'}`}>
+                      {latestAnalysis.metrics.changes_since_last.revenue_change > 0 ? '+' : ''}{(latestAnalysis.metrics.changes_since_last.revenue_change / 1000).toFixed(1)}K
+                    </div>
+                  )}
                 </div>
                 <div className="p-3 bg-slate-50 rounded-lg">
                   <div className="text-xs text-slate-500 uppercase tracking-wide">Visit Rate</div>
                   <div className="text-2xl font-bold text-slate-900">
                     {latestAnalysis.metrics.customer_coverage?.visit_rate_percent || 0}%
                   </div>
-                  <div className="text-xs text-slate-500">customers</div>
+                  {latestAnalysis.metrics.changes_since_last?.customers_change != null && (
+                    <div className={`text-xs ${latestAnalysis.metrics.changes_since_last.customers_change > 0 ? 'text-green-600' : 'text-slate-400'}`}>
+                      {latestAnalysis.metrics.changes_since_last.customers_change > 0 ? '+' : ''}{latestAnalysis.metrics.changes_since_last.customers_change} customers
+                    </div>
+                  )}
                 </div>
                 <div className="p-3 bg-slate-50 rounded-lg">
                   <div className="text-xs text-slate-500 uppercase tracking-wide">Active Styles</div>
@@ -474,34 +486,45 @@ export default function AIAnalysisDashboard() {
               </div>
             )}
 
-            {/* Warnings */}
-            {latestAnalysis.warnings && latestAnalysis.warnings.length > 0 && (
-              <div className="mb-4">
-                <h3 className="text-sm font-medium text-slate-500 mb-2 flex items-center gap-1">
-                  <AlertTriangle className="h-4 w-4 text-amber-500" />
-                  Warnings
-                </h3>
-                <ul className="space-y-1">
-                  {latestAnalysis.warnings.slice(0, 3).map((w, i) => (
-                    <li key={i} className="text-sm text-amber-700 bg-amber-50 px-3 py-2 rounded">
-                      {w}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            {/* Recommendations */}
-            {latestAnalysis.recommendations && latestAnalysis.recommendations.length > 0 && (
-              <div>
-                <h3 className="text-sm font-medium text-slate-500 mb-2">💡 Recommendations</h3>
-                <ul className="space-y-1">
-                  {latestAnalysis.recommendations.slice(0, 3).map((r, i) => (
-                    <li key={i} className="text-sm text-slate-700 bg-slate-50 px-3 py-2 rounded">
-                      {r}
-                    </li>
-                  ))}
-                </ul>
+            {/* Salesperson Table */}
+            {latestAnalysis.metrics?.salesperson_table && latestAnalysis.metrics.salesperson_table.length > 0 && (
+              <div className="mt-5">
+                <h3 className="text-sm font-medium text-slate-500 mb-3">Salesperson Progress</h3>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-200">
+                        <th className="text-left py-2 px-3 font-medium text-slate-600">Salesperson</th>
+                        <th className="text-right py-2 px-3 font-medium text-slate-600">Visited</th>
+                        <th className="text-right py-2 px-3 font-medium text-slate-600">Qty</th>
+                        <th className="text-right py-2 px-3 font-medium text-slate-600">Price</th>
+                        <th className="text-right py-2 px-3 font-medium text-slate-600">Index</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {latestAnalysis.metrics.salesperson_table.map((sp: any, i: number) => (
+                        <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
+                          <td className="py-2 px-3 font-medium text-slate-900">{sp.salesperson}</td>
+                          <td className="py-2 px-3 text-right text-slate-700">{sp.visited_customers}</td>
+                          <td className="py-2 px-3 text-right text-slate-700">{sp.qty.toLocaleString()}</td>
+                          <td className="py-2 px-3 text-right text-slate-700">{sp.price.toLocaleString('da-DK', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</td>
+                          <td className="py-2 px-3 text-right">
+                            {sp.index != null ? (
+                              <span className={`font-medium ${sp.index >= 100 ? 'text-green-600' : sp.index >= 80 ? 'text-amber-600' : 'text-red-600'}`}>
+                                {sp.index}%
+                              </span>
+                            ) : (
+                              <span className="text-slate-400">—</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="text-xs text-slate-400 mt-2">
+                  Index = This season qty / Last season qty for visited customers (100% = same as last year)
+                </p>
               </div>
             )}
           </div>
@@ -553,11 +576,6 @@ export default function AIAnalysisDashboard() {
                     <div className="font-medium text-slate-900">{(a.metrics.totals.qty_sold || 0).toLocaleString()} pcs</div>
                     <div className="text-slate-500">{a.metrics.customer_coverage?.visit_rate_percent || 0}% visited</div>
                   </div>
-                )}
-                {a.warnings && a.warnings.length > 0 && (
-                  <span className="px-2 py-1 bg-amber-100 text-amber-700 text-xs rounded-full">
-                    {a.warnings.length} warnings
-                  </span>
                 )}
                 <ChevronRight className="h-5 w-5 text-slate-300" />
               </div>
