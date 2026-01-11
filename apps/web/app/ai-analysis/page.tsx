@@ -41,7 +41,8 @@ export default function AIAnalysisDashboard() {
   const [jobLogs, setJobLogs] = useState<JobLog[]>([]);
 
   // Fetch latest analyses
-  const { data: analyses, mutate } = useSWR('ai-analyses', async () => {
+  const { data: analyses, mutate, error: analysesError } = useSWR('ai-analyses', async () => {
+    console.log('[AI Analysis] Fetching analyses...');
     const { data, error } = await supabase
       .from('ai_season_analyses')
       .select(`
@@ -51,7 +52,14 @@ export default function AIAnalysisDashboard() {
       `)
       .order('created_at', { ascending: false })
       .limit(50);
-    if (error) throw new Error(error.message);
+    
+    if (error) {
+      console.error('[AI Analysis] Fetch error:', error);
+      throw new Error(error.message);
+    }
+    
+    console.log('[AI Analysis] Fetched analyses:', data?.length || 0, 'rows', data);
+    
     // Supabase returns season as array, flatten to single object
     return ((data ?? []) as AnalysisRaw[]).map(row => ({
       ...row,
@@ -301,6 +309,12 @@ export default function AIAnalysisDashboard() {
       {analysisError && (
         <div className="mb-6 p-4 bg-red-50 border border-red-200 text-red-700 rounded-lg">
           {analysisError}
+        </div>
+      )}
+
+      {analysesError && (
+        <div className="mb-6 p-4 bg-red-50 border border-red-200 text-red-700 rounded-lg">
+          <strong>Error loading analyses:</strong> {analysesError.message}
         </div>
       )}
 
