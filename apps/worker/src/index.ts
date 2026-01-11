@@ -2505,7 +2505,7 @@ async function runJob(job: JobRow) {
         async (level, msg, data) => log(job.id, level, msg, data)
       );
       if (result.success) {
-        await saveResult(job.id, { analysisId: result.analysisId });
+        await saveResult(job.id, 'AI analysis completed', { analysisId: result.analysisId });
         await setJobSucceeded(job.id);
       } else {
         await setJobFailedOrRequeue(job, result.error || 'AI analysis failed');
