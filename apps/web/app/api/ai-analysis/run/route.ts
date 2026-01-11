@@ -127,10 +127,11 @@ async function buildAnalysisContext(
   }
 
   // 6. Fetch customers (with pagination)
+  // Note: customers table uses 'company' or 'stats_display_name', not 'customer_name'
   const customers = await fetchAllRows<any>(
     supabase,
     'customers',
-    'customer_id, customer_name, country, salesperson_id',
+    'customer_id, company, stats_display_name, country, salesperson_id',
     {},
     { cap: 10000 }
   );
