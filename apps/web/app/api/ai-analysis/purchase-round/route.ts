@@ -363,12 +363,16 @@ export async function POST(req: Request) {
 
     console.log('[Purchase Round] Calling', promptConfig.model);
 
-    // Call OpenAI
+    // Call OpenAI - GPT-5 uses max_completion_tokens instead of max_tokens
     const openai = new OpenAI({ apiKey: openaiApiKey });
+    const isGpt5 = promptConfig.model.startsWith('gpt-5');
     const completion = await openai.chat.completions.create({
       model: promptConfig.model,
       temperature: promptConfig.temperature,
-      max_tokens: promptConfig.maxTokens,
+      ...(isGpt5 
+        ? { max_completion_tokens: promptConfig.maxTokens }
+        : { max_tokens: promptConfig.maxTokens }
+      ),
       messages: [
         { role: 'system', content: promptConfig.content },
         { role: 'user', content: userMessage }
