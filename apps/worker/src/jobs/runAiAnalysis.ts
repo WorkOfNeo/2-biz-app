@@ -64,7 +64,7 @@ async function fetchAllRows<T>(
   table: string,
   select: string,
   filters: Record<string, any>,
-  options?: { cap?: number }
+  options?: { cap?: number; logFn?: (msg: string, data?: any) => Promise<void> }
 ): Promise<T[]> {
   const PAGE_SIZE = 1000;
   const cap = options?.cap ?? 100000;
@@ -72,6 +72,10 @@ async function fetchAllRows<T>(
   const allRows: T[] = [];
 
   while (from < cap) {
+    if (options?.logFn) {
+      await options.logFn(`FETCH:${table}_page`, { from, pageSize: PAGE_SIZE, totalSoFar: allRows.length });
+    }
+    
     let query = supabase.from(table).select(select);
     for (const [key, value] of Object.entries(filters)) {
       query = query.eq(key, value);
@@ -79,10 +83,20 @@ async function fetchAllRows<T>(
     query = query.range(from, from + PAGE_SIZE - 1);
     
     const { data, error } = await query;
-    if (error) throw error;
+    if (error) {
+      if (options?.logFn) {
+        await options.logFn(`FETCH:${table}_error`, { error: error.message, from });
+      }
+      throw error;
+    }
     
     const batch = (data ?? []) as T[];
     allRows.push(...batch);
+    
+    if (options?.logFn) {
+      await options.logFn(`FETCH:${table}_batch`, { batchSize: batch.length, total: allRows.length });
+    }
+    
     if (batch.length < PAGE_SIZE) break;
     from += PAGE_SIZE;
   }
@@ -138,12 +152,14 @@ export async function runAiAnalysis(
     // ========== STEP 2: Fetch Sales Stats ==========
     await log('info', 'AI_ANALYSIS:fetching_sales_stats');
     
+    const logProgress = async (msg: string, data?: any) => log('progress', msg, data);
+    
     const salesStats = await fetchAllRows<any>(
       supabase,
       'sales_stats',
       'account_no, customer_name, qty, price, salesperson_id',
       { season_id: seasonId },
-      { cap: 50000 }
+      { cap: 50000, logFn: logProgress }
     );
     
     await log('info', 'AI_ANALYSIS:sales_stats_loaded', { count: salesStats.length });
@@ -156,7 +172,7 @@ export async function runAiAnalysis(
       'sales_style_details_rows',
       'style_no, style_name, color, size, qty, account_no',
       { season_id: seasonId },
-      { cap: 100000 }
+      { cap: 100000, logFn: logProgress }
     );
     
     await log('info', 'AI_ANALYSIS:style_details_loaded', { count: styleDetails.length });
@@ -169,7 +185,7 @@ export async function runAiAnalysis(
       'customers',
       'customer_id, company, stats_display_name, country, salesperson_id',
       {},
-      { cap: 10000 }
+      { cap: 10000, logFn: logProgress }
     );
     
     await log('info', 'AI_ANALYSIS:customers_loaded', { count: customers.length });
@@ -221,7 +237,7 @@ export async function runAiAnalysis(
         'sales_stats',
         'account_no, qty, price, salesperson_id',
         { season_id: comparisonSeasonId },
-        { cap: 50000 }
+        { cap: 50000, logFn: logProgress }
       );
 
       comparisonStyleDetails = await fetchAllRows<any>(
@@ -229,7 +245,7 @@ export async function runAiAnalysis(
         'sales_style_details_rows',
         'style_no, color, qty',
         { season_id: comparisonSeasonId },
-        { cap: 100000 }
+        { cap: 100000, logFn: logProgress }
       );
       
       await log('info', 'AI_ANALYSIS:comparison_data_loaded', { 
