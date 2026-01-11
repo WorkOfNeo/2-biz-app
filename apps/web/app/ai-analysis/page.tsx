@@ -1,10 +1,10 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import useSWR from 'swr';
 import { supabase } from '../../lib/supabaseClient';
 import Link from 'next/link';
-import { Brain, Play, TrendingUp, Users, Package, AlertTriangle, Calendar, Clock, ChevronRight, Trash2, Database, RefreshCw } from 'lucide-react';
+import { Brain, Play, TrendingUp, Users, Package, AlertTriangle, Calendar, Clock, ChevronRight, Trash2, Database, RefreshCw, Loader2 } from 'lucide-react';
 
 type AnalysisRaw = {
   id: string;
@@ -25,10 +25,20 @@ type Analysis = Omit<AnalysisRaw, 'season'> & {
   season?: { name: string; year: number | null };
 };
 
+type JobLog = {
+  id: string;
+  level: string;
+  msg: string;
+  data: any;
+  created_at: string;
+};
+
 export default function AIAnalysisDashboard() {
   const [runningAnalysis, setRunningAnalysis] = useState(false);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [clearing, setClearing] = useState(false);
+  const [currentJobId, setCurrentJobId] = useState<string | null>(null);
+  const [jobLogs, setJobLogs] = useState<JobLog[]>([]);
 
   // Fetch latest analyses
   const { data: analyses, mutate } = useSWR('ai-analyses', async () => {
@@ -129,9 +139,52 @@ export default function AIAnalysisDashboard() {
   const todayStr = new Date().toISOString().split('T')[0];
   const hasRunToday = latestAnalysis?.analysis_date === todayStr;
 
+  // Poll for job status and logs when a job is running
+  useEffect(() => {
+    if (!currentJobId) return;
+
+    const pollInterval = setInterval(async () => {
+      // Fetch job status
+      const { data: job } = await supabase
+        .from('jobs')
+        .select('id, status, result, error_message')
+        .eq('id', currentJobId)
+        .single();
+
+      // Fetch latest logs
+      const { data: logs } = await supabase
+        .from('job_logs')
+        .select('id, level, msg, data, created_at')
+        .eq('job_id', currentJobId)
+        .order('created_at', { ascending: true })
+        .limit(100);
+
+      if (logs) {
+        setJobLogs(logs as JobLog[]);
+      }
+
+      // Check if job completed or failed
+      if (job?.status === 'succeeded') {
+        clearInterval(pollInterval);
+        setRunningAnalysis(false);
+        setCurrentJobId(null);
+        setJobLogs([]);
+        await mutate(); // Refresh analyses list
+      } else if (job?.status === 'failed' || job?.status === 'cancelled') {
+        clearInterval(pollInterval);
+        setRunningAnalysis(false);
+        setCurrentJobId(null);
+        setAnalysisError(job?.error_message || 'Job failed');
+      }
+    }, 2000); // Poll every 2 seconds
+
+    return () => clearInterval(pollInterval);
+  }, [currentJobId, mutate]);
+
   async function runAnalysis(type: 'daily' | 'purchase_round') {
     setRunningAnalysis(true);
     setAnalysisError(null);
+    setJobLogs([]);
     try {
       // Use different endpoints for daily vs purchase round
       const endpoint = type === 'purchase_round' 
@@ -143,14 +196,23 @@ export default function AIAnalysisDashboard() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(type === 'daily' ? { analysisType: 'daily' } : {})
       });
+      
+      const data = await res.json();
+      
       if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || 'Analysis failed');
+        throw new Error(data.error || 'Analysis failed');
       }
-      await mutate();
+
+      // Job has been queued - start polling
+      if (data.jobId) {
+        setCurrentJobId(data.jobId);
+      } else {
+        // Direct response (shouldn't happen with new worker-based approach)
+        setRunningAnalysis(false);
+        await mutate();
+      }
     } catch (e: any) {
       setAnalysisError(e?.message || 'Failed to run analysis');
-    } finally {
       setRunningAnalysis(false);
     }
   }
@@ -238,6 +300,39 @@ export default function AIAnalysisDashboard() {
       {analysisError && (
         <div className="mb-6 p-4 bg-red-50 border border-red-200 text-red-700 rounded-lg">
           {analysisError}
+        </div>
+      )}
+
+      {/* Job Progress Panel */}
+      {currentJobId && (
+        <div className="mb-6 bg-slate-900 text-white rounded-xl overflow-hidden">
+          <div className="p-4 border-b border-slate-700 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <Loader2 className="h-5 w-5 animate-spin text-indigo-400" />
+              <span className="font-medium">AI Analysis Running...</span>
+            </div>
+            <span className="text-xs text-slate-400 font-mono">Job: {currentJobId.slice(0, 8)}...</span>
+          </div>
+          <div className="p-4 max-h-64 overflow-y-auto font-mono text-sm space-y-1">
+            {jobLogs.length === 0 ? (
+              <div className="text-slate-500">Waiting for logs...</div>
+            ) : (
+              jobLogs.map((log) => (
+                <div key={log.id} className={`flex gap-2 ${log.level === 'error' ? 'text-red-400' : log.level === 'progress' ? 'text-yellow-400' : 'text-slate-300'}`}>
+                  <span className="text-slate-500 shrink-0">
+                    {new Date(log.created_at).toLocaleTimeString('da-DK', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                  </span>
+                  <span className={`shrink-0 w-12 uppercase text-xs ${log.level === 'error' ? 'text-red-500' : log.level === 'progress' ? 'text-yellow-500' : 'text-indigo-400'}`}>
+                    [{log.level}]
+                  </span>
+                  <span>{log.msg}</span>
+                  {log.data && Object.keys(log.data).length > 0 && (
+                    <span className="text-slate-500 truncate">{JSON.stringify(log.data)}</span>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
         </div>
       )}
 

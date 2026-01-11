@@ -29,6 +29,7 @@ import { createSpyStockOrder } from './jobs/createSpyStockOrder.js';
 import { scrapeStyleRawCosts } from './jobs/scrapeStyleRawCosts.js';
 import { sendEmail } from './jobs/sendEmail.js';
 import { analyzeConversationMessage } from './jobs/analyzeConversationMessage.js';
+import { runAiAnalysis } from './jobs/runAiAnalysis.js';
 // (imported with .js extension above)
 
 const SUPABASE_URL = process.env.SUPABASE_URL!;
@@ -2492,6 +2493,22 @@ async function runJob(job: JobRow) {
         await setJobSucceeded(job.id);
       } else {
         await setJobFailedOrRequeue(job, result.message || 'Failed to send email');
+      }
+      return;
+    }
+
+    // Handle run_ai_analysis job (AI season analysis - runs on worker to avoid API timeouts)
+    if ((job.type as any) === 'run_ai_analysis') {
+      const result = await runAiAnalysis(
+        supabase,
+        job.payload as any,
+        async (level, msg, data) => log(job.id, level, msg, data)
+      );
+      if (result.success) {
+        await saveResult(job.id, { analysisId: result.analysisId });
+        await setJobSucceeded(job.id);
+      } else {
+        await setJobFailedOrRequeue(job, result.error || 'AI analysis failed');
       }
       return;
     }

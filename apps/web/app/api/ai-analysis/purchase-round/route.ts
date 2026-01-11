@@ -1,314 +1,19 @@
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
-export const maxDuration = 180; // 3 minutes max for purchase round analysis
 
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
-import OpenAI from 'openai';
-import { getPromptConfig, interpolatePrompt } from '../../../../lib/ai/prompts';
 
 interface PurchaseRoundRequest {
   seasonId?: string;
   comparisonSeasonId?: string;
 }
 
-// Helper to fetch all rows with pagination (bypasses Supabase 1000 row limit)
-async function fetchAllRows<T>(
-  supabase: ReturnType<typeof createRouteHandlerClient>,
-  table: string,
-  select: string,
-  filters: Record<string, any>,
-  options?: { orderBy?: string; cap?: number }
-): Promise<T[]> {
-  const PAGE_SIZE = 1000;
-  const cap = options?.cap ?? 100000;
-  let from = 0;
-  const allRows: T[] = [];
-
-  while (from < cap) {
-    let query = supabase.from(table).select(select);
-    
-    // Apply filters
-    for (const [key, value] of Object.entries(filters)) {
-      query = query.eq(key, value);
-    }
-    
-    // Apply ordering and range
-    if (options?.orderBy) {
-      query = query.order(options.orderBy, { ascending: true });
-    }
-    query = query.range(from, from + PAGE_SIZE - 1);
-    
-    const { data, error } = await query;
-    if (error) throw error;
-    
-    const batch = (data ?? []) as T[];
-    allRows.push(...batch);
-    
-    // Break if we got fewer rows than requested (end of data)
-    if (batch.length < PAGE_SIZE) break;
-    from += PAGE_SIZE;
-  }
-  
-  return allRows;
-}
-
-// Build comprehensive context for purchase round decisions
-async function buildPurchaseRoundContext(
-  supabase: ReturnType<typeof createRouteHandlerClient>,
-  seasonId: string,
-  comparisonSeasonId: string | null
-) {
-  // 1. Get season info
-  const { data: currentSeason } = await supabase
-    .from('seasons')
-    .select('id, name, year, created_at')
-    .eq('id', seasonId)
-    .single() as { data: { id: string; name: string; year: number | null; created_at: string } | null };
-
-  // 2. Fetch sales_stats for current season (with pagination)
-  // Note: country comes from customers table, not sales_stats
-  const salesStats = await fetchAllRows<any>(
-    supabase,
-    'sales_stats',
-    'account_no, customer_name, qty, price, salesperson_id',
-    { season_id: seasonId },
-    { cap: 50000 }
-  );
-
-  // 3. Fetch style details for current season (with pagination)
-  const styleDetails = await fetchAllRows<any>(
-    supabase,
-    'sales_style_details_rows',
-    'style_no, style_name, color, size, qty, account_no',
-    { season_id: seasonId },
-    { cap: 100000 }
-  );
-
-  // 4. Get unique style numbers
-  const styleNos = Array.from(new Set((styleDetails ?? []).map((r: any) => r.style_no).filter(Boolean)));
-
-  // 5. Fetch style_stock for stock levels with pagination (critical for purchase decisions)
-  let stockData: any[] = [];
-  if (styleNos.length > 0) {
-    const PAGE_SIZE = 1000;
-    let from = 0;
-    const styleBatch = styleNos.slice(0, 1000); // Limit styles to check
-    
-    while (from < 50000) {
-      const { data } = await supabase
-        .from('style_stock')
-        .select('style_no, color, section, row_label, sizes, values')
-        .in('style_no', styleBatch)
-        .range(from, from + PAGE_SIZE - 1);
-      
-      const batch = (data ?? []) as any[];
-      stockData.push(...batch);
-      if (batch.length < PAGE_SIZE) break;
-      from += PAGE_SIZE;
-    }
-  }
-
-  // 6. Fetch styles table for supplier info
-  const { data: stylesInfo } = await supabase
-    .from('styles')
-    .select('style_no, style_name, supplier, image_url')
-    .in('style_no', styleNos.slice(0, 500)) as { data: { style_no: string; style_name: string | null; supplier: string | null; image_url: string | null }[] | null };
-
-  // 7. Fetch suppliers
-  const { data: suppliers } = await supabase
-    .from('suppliers')
-    .select('id, name, moq, lead_time_days')
-    .limit(100) as { data: { id: string; name: string; moq: number | null; lead_time_days: number | null }[] | null };
-
-  // 8. Fetch customers for coverage calculation (with pagination)
-  const customers = await fetchAllRows<{ customer_id: string; salesperson_id: string | null }>(
-    supabase,
-    'customers',
-    'customer_id, salesperson_id',
-    {},
-    { cap: 10000 }
-  );
-
-  // 9. Get previous purchase round number
-  const { data: lastRound } = await supabase
-    .from('ai_season_analyses')
-    .select('purchase_round_number')
-    .eq('season_id', seasonId)
-    .eq('analysis_type', 'purchase_round')
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle() as { data: { purchase_round_number: number | null } | null };
-
-  const nextRoundNumber = ((lastRound?.purchase_round_number) || 0) + 1;
-
-  // 10. Comparison season data (with pagination)
-  let comparisonStyleQty: Record<string, number> = {};
-  if (comparisonSeasonId) {
-    const cDetails = await fetchAllRows<any>(
-      supabase,
-      'sales_style_details_rows',
-      'style_no, qty',
-      { season_id: comparisonSeasonId },
-      { cap: 100000 }
-    );
-    
-    for (const row of (cDetails ?? []) as any[]) {
-      const sn = row.style_no;
-      if (!sn) continue;
-      comparisonStyleQty[sn] = (comparisonStyleQty[sn] || 0) + Number(row.qty || 0);
-    }
-  }
-
-  // ========== CALCULATE METRICS ==========
-
-  // Current totals
-  const totalQty = (salesStats ?? []).reduce((sum: number, r: any) => sum + (Number(r.qty) || 0), 0);
-  const uniqueCustomers = new Set((salesStats ?? []).map((r: any) => r.account_no)).size;
-  const totalCustomers = (customers ?? []).length;
-  const visitRatePercent = totalCustomers > 0 ? Math.round((uniqueCustomers / totalCustomers) * 1000) / 10 : 0;
-
-  // Season stage
-  let purchaseStage: 'EARLY' | 'MID' | 'CLOSING' = 'EARLY';
-  if (visitRatePercent >= 75) purchaseStage = 'CLOSING';
-  else if (visitRatePercent >= 40) purchaseStage = 'MID';
-
-  // Group style details with stock info
-  const styleData: Record<string, { 
-    qty: number; 
-    colors: Set<string>; 
-    customers: Set<string>;
-    supplier?: string;
-    available?: number;
-    onOrder?: number;
-    lastYearQty?: number;
-  }> = {};
-
-  for (const row of (styleDetails ?? []) as any[]) {
-    const sn = row.style_no;
-    if (!sn) continue;
-    if (!styleData[sn]) {
-      const styleInfo = (stylesInfo ?? []).find((s: any) => s.style_no === sn);
-      styleData[sn] = { 
-        qty: 0, 
-        colors: new Set(), 
-        customers: new Set(),
-        supplier: styleInfo?.supplier ?? undefined, // Convert null to undefined
-        lastYearQty: comparisonStyleQty[sn] || 0
-      };
-    }
-    styleData[sn].qty += Number(row.qty) || 0;
-    if (row.color) styleData[sn].colors.add(row.color);
-    if (row.account_no) styleData[sn].customers.add(row.account_no);
-  }
-
-  // Add stock info
-  for (const stockRow of stockData) {
-    const sn = stockRow.style_no;
-    if (!styleData[sn]) continue;
-    
-    const values = stockRow.values || [];
-    const total = values.reduce((s: number, v: number) => s + (Number(v) || 0), 0);
-    
-    if (stockRow.section === 'Available' || stockRow.section === 'Stock') {
-      styleData[sn].available = (styleData[sn].available || 0) + total;
-    }
-    if (stockRow.section?.includes('Purchase') || stockRow.section?.includes('PO')) {
-      styleData[sn].onOrder = (styleData[sn].onOrder || 0) + total;
-    }
-  }
-
-  // Group by supplier
-  const bySupplier: Record<string, any[]> = {};
-  for (const [styleNo, data] of Object.entries(styleData)) {
-    const supplier = data.supplier || 'Unknown';
-    if (!bySupplier[supplier]) bySupplier[supplier] = [];
-    bySupplier[supplier].push({
-      style_no: styleNo,
-      qty_sold: data.qty,
-      colors_count: data.colors.size,
-      customer_count: data.customers.size,
-      available_stock: data.available || 0,
-      on_order: data.onOrder || 0,
-      remaining_need: Math.max(0, data.qty - (data.onOrder || 0)),
-      last_year_qty: data.lastYearQty || 0
-    });
-  }
-
-  // Supplier summary
-  const supplierSummary = Object.entries(bySupplier).map(([name, styles]) => {
-    const supplierInfo = (suppliers ?? []).find((s: any) => s.name === name);
-    return {
-      name,
-      moq: supplierInfo?.moq || 0,
-      lead_time_days: supplierInfo?.lead_time_days || 0,
-      styles_count: styles.length,
-      total_sold: styles.reduce((s, st) => s + st.qty_sold, 0),
-      total_remaining_need: styles.reduce((s, st) => s + st.remaining_need, 0),
-      styles: styles.sort((a, b) => b.qty_sold - a.qty_sold).slice(0, 30) // Top 30 per supplier
-    };
-  }).sort((a, b) => b.total_sold - a.total_sold);
-
-  // Build context object
-  const purchaseRoundContext = {
-    round_number: nextRoundNumber,
-    purchase_stage: purchaseStage,
-    visit_rate_percent: visitRatePercent,
-    stage_rules: {
-      EARLY: 'Add 10-30% buffer to remaining need',
-      MID: 'Cover remaining need exactly or +10%',
-      CLOSING: 'Exact match only, skip if below MOQ'
-    }
-  };
-
-  const currentSeasonData = {
-    season: {
-      id: currentSeason?.id,
-      name: currentSeason?.name,
-      year: currentSeason?.year
-    },
-    totals: {
-      qty_sold: totalQty,
-      unique_customers: uniqueCustomers,
-      unique_styles: styleNos.length
-    },
-    customer_coverage: {
-      visited: uniqueCustomers,
-      total: totalCustomers,
-      visit_rate_percent: visitRatePercent
-    }
-  };
-
-  const stockStatus = {
-    summary: {
-      total_styles_tracked: Object.keys(styleData).length,
-      styles_with_stock_data: stockData.length
-    },
-    by_supplier: supplierSummary
-  };
-
-  return {
-    purchaseRoundContext,
-    currentSeasonData,
-    stockStatus,
-    supplierData: supplierSummary,
-    comparisonData: comparisonSeasonId ? { has_data: Object.keys(comparisonStyleQty).length > 0 } : null,
-    nextRoundNumber
-  };
-}
-
 export async function POST(req: Request) {
-  const startTime = Date.now();
-
   try {
     const supabase = createRouteHandlerClient({ cookies });
     const body: PurchaseRoundRequest = await req.json();
-
-    const openaiApiKey = process.env.OPENAI_API_KEY;
-    if (!openaiApiKey) {
-      return NextResponse.json({ error: 'OpenAI API key not configured' }, { status: 500 });
-    }
 
     // Get season IDs
     let seasonId = body.seasonId;
@@ -328,130 +33,78 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'No season configured' }, { status: 400 });
     }
 
-    console.log('[Purchase Round] Starting for season:', seasonId);
-
-    // Build context
-    const { purchaseRoundContext, currentSeasonData, stockStatus, supplierData, comparisonData, nextRoundNumber } = 
-      await buildPurchaseRoundContext(supabase, seasonId, comparisonSeasonId || null);
-
-    // Get prompt
-    const promptConfig = await getPromptConfig('purchase_round_v1');
-
-    // Interpolate prompt
-    const userMessage = interpolatePrompt(`
-## Purchase Round Context
-{{purchase_round_context}}
-
-## Current Season Data
-{{current_season_data}}
-
-## Stock Status
-{{stock_status}}
-
-## Supplier Information
-{{supplier_data}}
-
-## Comparison Season (Last Year)
-{{comparison_season_data}}
-`, {
-      purchase_round_context: JSON.stringify(purchaseRoundContext, null, 2),
-      current_season_data: JSON.stringify(currentSeasonData, null, 2),
-      stock_status: JSON.stringify(stockStatus, null, 2),
-      supplier_data: JSON.stringify(supplierData, null, 2),
-      comparison_season_data: comparisonData ? JSON.stringify(comparisonData, null, 2) : 'No comparison data available'
-    });
-
-    console.log('[Purchase Round] Calling', promptConfig.model);
-
-    // Call OpenAI - GPT-5 has different parameter requirements:
-    // - Uses max_completion_tokens instead of max_tokens
-    // - Does not support custom temperature (only default 1)
-    const openai = new OpenAI({ apiKey: openaiApiKey });
-    const isGpt5 = promptConfig.model.startsWith('gpt-5');
-    const completion = await openai.chat.completions.create({
-      model: promptConfig.model,
-      // GPT-5 only supports temperature=1 (default), so omit for GPT-5
-      ...(!isGpt5 && { temperature: promptConfig.temperature }),
-      ...(isGpt5 
-        ? { max_completion_tokens: promptConfig.maxTokens }
-        : { max_tokens: promptConfig.maxTokens }
-      ),
-      messages: [
-        { role: 'system', content: promptConfig.content },
-        { role: 'user', content: userMessage }
-      ],
-      response_format: { type: 'json_object' }
-    });
-
-    const rawResponse = completion.choices[0]?.message?.content || '{}';
-    let aiOutput: any = {};
-    try {
-      aiOutput = JSON.parse(rawResponse);
-    } catch {
-      aiOutput = { error: 'Failed to parse AI response' };
-    }
-
-    const durationMs = Date.now() - startTime;
-
-    // Create ai_runs entry
-    const { data: aiRun } = await supabase
-      .from('ai_runs')
-      .insert({
-        prompt_key: 'purchase_round_v1',
-        prompt_version: promptConfig.version,
-        prompt_content: promptConfig.content,
-        model: promptConfig.model,
-        temperature: promptConfig.temperature,
-        max_tokens: promptConfig.maxTokens,
-        input_snapshot: { seasonId, comparisonSeasonId, purchaseRoundContext, stockStatus },
-        output: aiOutput,
-        raw_response: rawResponse,
-        usage: completion.usage,
-        status: 'completed',
-        duration_ms: durationMs,
-        completed_at: new Date().toISOString()
-      })
-      .select('id')
-      .single();
-
-    // Create ai_season_analyses entry
-    const { data: analysis, error: analysisError } = await supabase
+    // Get next purchase round number
+    const { data: lastRound } = await supabase
       .from('ai_season_analyses')
+      .select('purchase_round_number')
+      .eq('season_id', seasonId)
+      .eq('analysis_type', 'purchase_round')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    const nextRoundNumber = ((lastRound as any)?.purchase_round_number || 0) + 1;
+
+    // Check for existing running analysis job
+    const { data: existingJobs } = await supabase
+      .from('jobs')
+      .select('id, status')
+      .eq('type', 'run_ai_analysis')
+      .in('status', ['queued', 'running'])
+      .limit(1);
+
+    if (existingJobs && existingJobs.length > 0) {
+      return NextResponse.json({ 
+        error: 'An AI analysis job is already running', 
+        existingJobId: existingJobs[0].id 
+      }, { status: 409 });
+    }
+
+    // Enqueue the job to run on the worker
+    const { data: job, error: insertError } = await supabase
+      .from('jobs')
       .insert({
-        ai_run_id: aiRun?.id || null,
-        season_id: seasonId,
-        comparison_season_id: comparisonSeasonId || null,
-        analysis_type: 'purchase_round',
-        analysis_date: new Date().toISOString().split('T')[0],
-        metrics: currentSeasonData,
-        executive_summary: aiOutput.executive_summary || null,
-        salesperson_reports: {},
-        style_insights: aiOutput.style_insights || {},
-        warnings: aiOutput.warnings || [],
-        recommendations: [],
-        purchase_round_number: nextRoundNumber,
-        purchase_recommendations: aiOutput.purchase_recommendations || null
+        type: 'run_ai_analysis',
+        payload: {
+          analysisType: 'purchase_round',
+          seasonId,
+          comparisonSeasonId: comparisonSeasonId || null,
+          purchaseRoundNumber: nextRoundNumber,
+          sendEmail: false
+        },
+        status: 'queued',
+        max_attempts: 1
       })
       .select('id')
       .single();
 
-    if (analysisError) {
-      return NextResponse.json({ error: 'Failed to save analysis', detail: analysisError.message }, { status: 500 });
+    if (insertError) {
+      console.error('[Purchase Round] Failed to enqueue job:', insertError);
+      return NextResponse.json({ error: 'Failed to start purchase round', detail: insertError.message }, { status: 500 });
     }
 
-    console.log('[Purchase Round] Completed in', durationMs, 'ms. Round #', nextRoundNumber);
+    // Log the job creation
+    await supabase.from('job_logs').insert({
+      job_id: job.id,
+      level: 'info',
+      msg: 'Purchase round job enqueued',
+      data: { seasonId, comparisonSeasonId, roundNumber: nextRoundNumber }
+    });
+
+    console.log('[Purchase Round] Job enqueued:', job.id, 'Round #', nextRoundNumber);
 
     return NextResponse.json({
       success: true,
-      analysisId: analysis?.id,
+      message: 'Purchase round job started. Check job logs for progress.',
+      jobId: job.id,
       purchaseRoundNumber: nextRoundNumber,
-      durationMs,
-      output: aiOutput
+      seasonId,
+      comparisonSeasonId
     });
 
   } catch (e: any) {
     console.error('[Purchase Round] Error:', e);
-    return NextResponse.json({ error: e?.message || 'Purchase round failed' }, { status: 500 });
+    return NextResponse.json({ error: e?.message || 'Failed to start purchase round' }, { status: 500 });
   }
 }
 
