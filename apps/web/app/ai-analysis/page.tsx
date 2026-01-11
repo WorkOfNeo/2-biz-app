@@ -144,10 +144,10 @@ export default function AIAnalysisDashboard() {
     if (!currentJobId) return;
 
     const pollInterval = setInterval(async () => {
-      // Fetch job status
+      // Fetch job status (jobs table has 'error' not 'error_message' or 'result')
       const { data: job } = await supabase
         .from('jobs')
-        .select('id, status, result, error_message')
+        .select('id, status, error')
         .eq('id', currentJobId)
         .single();
 
@@ -174,7 +174,7 @@ export default function AIAnalysisDashboard() {
         clearInterval(pollInterval);
         setRunningAnalysis(false);
         setCurrentJobId(null);
-        setAnalysisError(job?.error_message || 'Job failed');
+        setAnalysisError(job?.error || 'Job failed');
       }
     }, 2000); // Poll every 2 seconds
 
