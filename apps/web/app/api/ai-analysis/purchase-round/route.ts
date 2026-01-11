@@ -68,10 +68,11 @@ async function buildPurchaseRoundContext(
     .single() as { data: { id: string; name: string; year: number | null; created_at: string } | null };
 
   // 2. Fetch sales_stats for current season (with pagination)
+  // Note: country comes from customers table, not sales_stats
   const salesStats = await fetchAllRows<any>(
     supabase,
     'sales_stats',
-    'account_no, customer_name, qty, price, salesperson_id, country',
+    'account_no, customer_name, qty, price, salesperson_id',
     { season_id: seasonId },
     { cap: 50000 }
   );

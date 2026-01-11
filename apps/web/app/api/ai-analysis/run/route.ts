@@ -83,10 +83,11 @@ async function buildAnalysisContext(
   }
 
   // 2. Fetch sales_stats for current season (with pagination)
+  // Note: country comes from customers table, not sales_stats
   const salesStats = await fetchAllRows<any>(
     supabase,
     'sales_stats',
-    'account_no, customer_name, qty, price, salesperson_id, city, country',
+    'account_no, customer_name, qty, price, salesperson_id',
     { season_id: seasonId },
     { cap: 50000 }
   );
@@ -237,10 +238,16 @@ async function buildAnalysisContext(
     }
   }
 
-  // Group by country
+  // Build customer_id -> country mapping from customers table
+  const customerCountryMap = new Map<string, string>();
+  for (const c of (customers ?? []) as any[]) {
+    if (c.customer_id) customerCountryMap.set(c.customer_id, c.country || 'Unknown');
+  }
+
+  // Group by country (look up country from customers table via account_no)
   const byCountry: Record<string, { qty: number; revenue: number; customers: Set<string> }> = {};
   for (const row of (salesStats ?? []) as any[]) {
-    const country = row.country || 'Unknown';
+    const country = customerCountryMap.get(row.account_no) || 'Unknown';
     if (!byCountry[country]) byCountry[country] = { qty: 0, revenue: 0, customers: new Set() };
     byCountry[country].qty += Number(row.qty) || 0;
     byCountry[country].revenue += Number(row.price) || 0;
