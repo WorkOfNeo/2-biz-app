@@ -5,10 +5,11 @@ import useSWR from 'swr';
 import { supabase } from '../../../lib/supabaseClient';
 import Link from 'next/link';
 import { 
-  ArrowLeft, Brain, TrendingUp, Users, Package, AlertTriangle, Calendar, 
-  ChevronDown, ChevronUp, User, Globe, BarChart3, Clock, Mail, CheckCircle2
+  ArrowLeft, Brain, TrendingUp, Users, Package, Calendar, 
+  ChevronDown, ChevronUp, User, Globe, BarChart3, Clock, Mail
 } from 'lucide-react';
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
+import Image from 'next/image';
 
 type Analysis = {
   id: string;
@@ -109,6 +110,29 @@ export default function AnalysisDetailPage() {
         .single();
       if (error) throw new Error(error.message);
       return data as Analysis;
+    }
+  );
+
+  // Extract style numbers from top_styles to fetch style info
+  const topStyleNos = useMemo(() => {
+    if (!analysis?.metrics?.top_styles) return [];
+    return analysis.metrics.top_styles.slice(0, 15).map((s: any) => s.style_no).filter(Boolean);
+  }, [analysis]);
+
+  // Fetch style info (image, name) for top styles
+  const { data: stylesInfo } = useSWR(
+    topStyleNos.length > 0 ? ['styles-info', topStyleNos.join(',')] : null,
+    async () => {
+      const { data } = await supabase
+        .from('styles')
+        .select('style_no, name, image_url')
+        .in('style_no', topStyleNos);
+      // Build a lookup map
+      const map: Record<string, { name: string | null; image_url: string | null }> = {};
+      for (const s of (data || [])) {
+        map[s.style_no] = { name: s.name, image_url: s.image_url };
+      }
+      return map;
     }
   );
 
@@ -253,39 +277,50 @@ export default function AnalysisDetailPage() {
         </div>
       )}
 
-      {/* Warnings */}
-      {analysis.warnings && analysis.warnings.length > 0 && (
-        <div className="bg-amber-50 border border-amber-200 rounded-xl p-5 mb-6">
-          <h2 className="font-semibold text-amber-800 flex items-center gap-2 mb-3">
-            <AlertTriangle className="h-5 w-5" />
-            Warnings ({analysis.warnings.length})
-          </h2>
-          <ul className="space-y-2">
-            {analysis.warnings.map((w, i) => (
-              <li key={i} className="text-amber-700 flex items-start gap-2">
-                <span className="text-amber-500 mt-0.5">•</span>
-                {w}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {/* Recommendations */}
-      {analysis.recommendations && analysis.recommendations.length > 0 && (
-        <div className="bg-blue-50 border border-blue-200 rounded-xl p-5 mb-6">
-          <h2 className="font-semibold text-blue-800 flex items-center gap-2 mb-3">
-            <CheckCircle2 className="h-5 w-5" />
-            Recommendations ({analysis.recommendations.length})
-          </h2>
-          <ul className="space-y-2">
-            {analysis.recommendations.map((r, i) => (
-              <li key={i} className="text-blue-700 flex items-start gap-2">
-                <span className="text-blue-500 mt-0.5">•</span>
-                {r}
-              </li>
-            ))}
-          </ul>
+      {/* Salesperson Table */}
+      {analysis.metrics?.salesperson_table && analysis.metrics.salesperson_table.length > 0 && (
+        <div className="bg-white border rounded-xl overflow-hidden mb-6">
+          <div className="p-4 border-b bg-slate-50">
+            <h2 className="font-semibold text-slate-900 flex items-center gap-2">
+              <Users className="h-5 w-5 text-slate-400" />
+              Salesperson Progress
+            </h2>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b bg-slate-50">
+                  <th className="text-left p-3 font-medium text-slate-600">Salesperson</th>
+                  <th className="text-right p-3 font-medium text-slate-600">Visited</th>
+                  <th className="text-right p-3 font-medium text-slate-600">Qty</th>
+                  <th className="text-right p-3 font-medium text-slate-600">Price</th>
+                  <th className="text-right p-3 font-medium text-slate-600">Index</th>
+                </tr>
+              </thead>
+              <tbody>
+                {analysis.metrics.salesperson_table.map((sp: any, i: number) => (
+                  <tr key={i} className="border-b hover:bg-slate-50">
+                    <td className="p-3 font-medium text-slate-900">{sp.salesperson}</td>
+                    <td className="p-3 text-right text-slate-700">{sp.visited_customers}</td>
+                    <td className="p-3 text-right text-slate-700">{sp.qty.toLocaleString()}</td>
+                    <td className="p-3 text-right text-slate-700">{sp.price.toLocaleString('da-DK', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</td>
+                    <td className="p-3 text-right">
+                      {sp.index != null ? (
+                        <span className={`font-medium ${sp.index >= 100 ? 'text-green-600' : sp.index >= 80 ? 'text-amber-600' : 'text-red-600'}`}>
+                          {sp.index}%
+                        </span>
+                      ) : (
+                        <span className="text-slate-400">—</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="p-3 bg-slate-50 border-t text-xs text-slate-500">
+            Index = This season qty / Last season qty for visited customers (100% = same as last year)
+          </div>
         </div>
       )}
 
@@ -402,21 +437,48 @@ export default function AnalysisDetailPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b bg-slate-50">
-                  <th className="text-left p-3 font-medium text-slate-600">Style No</th>
+                  <th className="text-left p-3 font-medium text-slate-600">Style</th>
                   <th className="text-right p-3 font-medium text-slate-600">Qty Sold</th>
                   <th className="text-right p-3 font-medium text-slate-600">Colors</th>
                   <th className="text-right p-3 font-medium text-slate-600">Customers</th>
                 </tr>
               </thead>
               <tbody>
-                {analysis.metrics.top_styles.slice(0, 15).map((s: any, i: number) => (
-                  <tr key={i} className="border-b">
-                    <td className="p-3 font-mono font-medium">{s.style_no}</td>
-                    <td className="p-3 text-right font-semibold">{s.total_qty.toLocaleString()}</td>
-                    <td className="p-3 text-right">{s.colors_count}</td>
-                    <td className="p-3 text-right">{s.customer_count}</td>
-                  </tr>
-                ))}
+                {analysis.metrics.top_styles.slice(0, 15).map((s: any, i: number) => {
+                  const styleInfo = stylesInfo?.[s.style_no];
+                  return (
+                    <tr key={i} className="border-b hover:bg-slate-50">
+                      <td className="p-3">
+                        <div className="flex items-center gap-3">
+                          {styleInfo?.image_url ? (
+                            <div className="relative w-12 h-12 rounded overflow-hidden bg-slate-100 shrink-0">
+                              <Image
+                                src={styleInfo.image_url}
+                                alt={s.style_no}
+                                fill
+                                className="object-cover"
+                                sizes="48px"
+                              />
+                            </div>
+                          ) : (
+                            <div className="w-12 h-12 rounded bg-slate-100 flex items-center justify-center text-slate-400 text-xs shrink-0">
+                              No img
+                            </div>
+                          )}
+                          <div>
+                            <div className="font-medium text-slate-900">
+                              {styleInfo?.name || s.style_no}
+                            </div>
+                            <div className="text-xs text-slate-500 font-mono">{s.style_no}</div>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="p-3 text-right font-semibold">{s.total_qty.toLocaleString()}</td>
+                      <td className="p-3 text-right">{s.colors_count}</td>
+                      <td className="p-3 text-right">{s.customer_count}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
