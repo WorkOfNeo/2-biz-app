@@ -4,7 +4,7 @@ import { useState } from 'react';
 import useSWR from 'swr';
 import { supabase } from '../../lib/supabaseClient';
 import Link from 'next/link';
-import { Brain, Play, TrendingUp, Users, Package, AlertTriangle, Calendar, Clock, ChevronRight, Trash2 } from 'lucide-react';
+import { Brain, Play, TrendingUp, Users, Package, AlertTriangle, Calendar, Clock, ChevronRight, Trash2, Database, RefreshCw } from 'lucide-react';
 
 type AnalysisRaw = {
   id: string;
@@ -69,6 +69,60 @@ export default function AIAnalysisDashboard() {
         .single();
       return data;
     }
+  );
+
+  // Fetch data status - how much data is available for analysis
+  const { data: dataStatus } = useSWR(
+    seasonCompare?.s1 ? ['data-status', seasonCompare.s1] : null,
+    async () => {
+      const seasonId = seasonCompare!.s1!;
+      
+      // Count sales_stats rows
+      const { count: salesStatsCount } = await supabase
+        .from('sales_stats')
+        .select('*', { count: 'exact', head: true })
+        .eq('season_id', seasonId);
+      
+      // Count style details rows
+      const { count: styleDetailsCount } = await supabase
+        .from('sales_style_details_rows')
+        .select('*', { count: 'exact', head: true })
+        .eq('season_id', seasonId);
+      
+      // Count unique customers with style details
+      const { data: styleDetailsCustomers } = await supabase
+        .from('sales_style_details_scraped')
+        .select('account_no, first_scraped_at')
+        .eq('season_id', seasonId)
+        .order('first_scraped_at', { ascending: false })
+        .limit(1);
+      
+      // Get last scrape time
+      const lastScrapeTime = styleDetailsCustomers?.[0]?.first_scraped_at;
+      
+      // Count customers with style details
+      const { count: scrapedCustomersCount } = await supabase
+        .from('sales_style_details_scraped')
+        .select('*', { count: 'exact', head: true })
+        .eq('season_id', seasonId);
+      
+      // Get last analysis time
+      const lastAnalysisTime = analyses?.[0]?.created_at;
+      
+      // Check if there's new data since last analysis
+      const hasNewData = lastScrapeTime && lastAnalysisTime 
+        ? new Date(lastScrapeTime) > new Date(lastAnalysisTime)
+        : Boolean(styleDetailsCount && styleDetailsCount > 0);
+      
+      return {
+        salesStatsCount: salesStatsCount || 0,
+        styleDetailsCount: styleDetailsCount || 0,
+        scrapedCustomersCount: scrapedCustomersCount || 0,
+        lastScrapeTime,
+        hasNewData
+      };
+    },
+    { refreshInterval: 30000 }
   );
 
   const latestAnalysis = analyses?.[0];
@@ -201,6 +255,38 @@ export default function AIAnalysisDashboard() {
               ✓ Analyzed today
             </span>
           )}
+        </div>
+      )}
+
+      {/* Data Status Card */}
+      {dataStatus && (
+        <div className={`mb-6 p-4 border rounded-lg ${dataStatus.hasNewData ? 'bg-amber-50 border-amber-200' : 'bg-slate-50 border-slate-200'}`}>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <Database className={`h-5 w-5 ${dataStatus.hasNewData ? 'text-amber-600' : 'text-slate-400'}`} />
+              <div>
+                <div className="font-medium text-slate-900 flex items-center gap-2">
+                  Data Available for Analysis
+                  {dataStatus.hasNewData && (
+                    <span className="px-2 py-0.5 bg-amber-100 text-amber-700 text-xs rounded-full flex items-center gap-1">
+                      <RefreshCw className="h-3 w-3" />
+                      New data since last analysis
+                    </span>
+                  )}
+                </div>
+                <div className="text-sm text-slate-500 mt-1">
+                  {dataStatus.salesStatsCount.toLocaleString()} sales records • {dataStatus.styleDetailsCount.toLocaleString()} style detail rows • {dataStatus.scrapedCustomersCount} customers scraped
+                </div>
+              </div>
+            </div>
+            <div className="text-right text-sm text-slate-500">
+              {dataStatus.lastScrapeTime && (
+                <div>
+                  Last scrape: {new Date(dataStatus.lastScrapeTime).toLocaleDateString('da-DK')} {new Date(dataStatus.lastScrapeTime).toLocaleTimeString('da-DK', { hour: '2-digit', minute: '2-digit' })}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       )}
 
