@@ -4,7 +4,7 @@ import { useState } from 'react';
 import useSWR from 'swr';
 import { supabase } from '../../lib/supabaseClient';
 import Link from 'next/link';
-import { Brain, Play, TrendingUp, Users, Package, AlertTriangle, Calendar, Clock, ChevronRight } from 'lucide-react';
+import { Brain, Play, TrendingUp, Users, Package, AlertTriangle, Calendar, Clock, ChevronRight, Trash2 } from 'lucide-react';
 
 type Analysis = {
   id: string;
@@ -24,6 +24,7 @@ type Analysis = {
 export default function AIAnalysisDashboard() {
   const [runningAnalysis, setRunningAnalysis] = useState(false);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const [clearing, setClearing] = useState(false);
 
   // Fetch latest analyses
   const { data: analyses, mutate } = useSWR('ai-analyses', async () => {
@@ -92,6 +93,27 @@ export default function AIAnalysisDashboard() {
     }
   }
 
+  async function clearAllData() {
+    if (!confirm('Are you sure you want to delete ALL AI analysis data? This cannot be undone.')) {
+      return;
+    }
+    setClearing(true);
+    setAnalysisError(null);
+    try {
+      // Delete all ai_season_analyses
+      const { error } = await supabase
+        .from('ai_season_analyses')
+        .delete()
+        .neq('id', '00000000-0000-0000-0000-000000000000'); // Delete all rows
+      if (error) throw error;
+      await mutate();
+    } catch (e: any) {
+      setAnalysisError(e?.message || 'Failed to clear data');
+    } finally {
+      setClearing(false);
+    }
+  }
+
   return (
     <div className="p-6 max-w-6xl mx-auto">
       {/* Header */}
@@ -108,7 +130,7 @@ export default function AIAnalysisDashboard() {
         <div className="flex items-center gap-3">
           <button
             onClick={() => runAnalysis('daily')}
-            disabled={runningAnalysis}
+            disabled={runningAnalysis || clearing}
             className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50"
           >
             {runningAnalysis ? (
@@ -125,11 +147,28 @@ export default function AIAnalysisDashboard() {
           </button>
           <button
             onClick={() => runAnalysis('purchase_round')}
-            disabled={runningAnalysis}
+            disabled={runningAnalysis || clearing}
             className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50"
           >
             <Package className="h-4 w-4" />
             Start Purchase Round
+          </button>
+          <button
+            onClick={clearAllData}
+            disabled={runningAnalysis || clearing}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
+          >
+            {clearing ? (
+              <>
+                <div className="h-4 w-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                Clearing...
+              </>
+            ) : (
+              <>
+                <Trash2 className="h-4 w-4" />
+                Clear Data
+              </>
+            )}
           </button>
         </div>
       </div>
