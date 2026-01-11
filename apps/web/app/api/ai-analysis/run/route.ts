@@ -138,7 +138,7 @@ async function buildAnalysisContext(
   const { data: salespersons } = await supabase
     .from('salespersons')
     .select('id, name, email')
-    .limit(100);
+    .limit(100) as { data: { id: string; name: string; email: string | null }[] | null };
 
   // 8. Fetch comparison season data (if available) with pagination
   let comparisonStats: any[] = [];
