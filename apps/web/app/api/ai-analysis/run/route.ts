@@ -433,12 +433,15 @@ export async function POST(req: Request) {
 
     console.log('[AI Analysis] Calling', promptConfig.model, 'with', userMessage.length, 'chars');
 
-    // Call OpenAI - GPT-5 uses max_completion_tokens instead of max_tokens
+    // Call OpenAI - GPT-5 has different parameter requirements:
+    // - Uses max_completion_tokens instead of max_tokens
+    // - Does not support custom temperature (only default 1)
     const openai = new OpenAI({ apiKey: openaiApiKey });
     const isGpt5 = promptConfig.model.startsWith('gpt-5');
     const completion = await openai.chat.completions.create({
       model: promptConfig.model,
-      temperature: promptConfig.temperature,
+      // GPT-5 only supports temperature=1 (default), so omit for GPT-5
+      ...(!isGpt5 && { temperature: promptConfig.temperature }),
       ...(isGpt5 
         ? { max_completion_tokens: promptConfig.maxTokens }
         : { max_tokens: promptConfig.maxTokens }
