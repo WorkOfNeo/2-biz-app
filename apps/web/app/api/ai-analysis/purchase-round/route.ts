@@ -79,9 +79,9 @@ async function buildPurchaseRoundContext(
     .eq('analysis_type', 'purchase_round')
     .order('created_at', { ascending: false })
     .limit(1)
-    .maybeSingle();
+    .maybeSingle() as { data: { purchase_round_number: number | null } | null };
 
-  const nextRoundNumber = ((lastRound?.purchase_round_number as number) || 0) + 1;
+  const nextRoundNumber = ((lastRound?.purchase_round_number) || 0) + 1;
 
   // 10. Comparison season data
   let comparisonStyleQty: Record<string, number> = {};
