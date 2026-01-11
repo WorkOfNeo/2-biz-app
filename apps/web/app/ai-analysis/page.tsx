@@ -151,16 +151,17 @@ export default function AIAnalysisDashboard() {
         .eq('id', currentJobId)
         .single();
 
-      // Fetch latest logs
+      // Fetch latest logs (job_logs uses 'ts' not 'created_at')
       const { data: logs } = await supabase
         .from('job_logs')
-        .select('id, level, msg, data, created_at')
+        .select('id, level, msg, data, ts')
         .eq('job_id', currentJobId)
-        .order('created_at', { ascending: true })
+        .order('ts', { ascending: true })
         .limit(100);
 
       if (logs) {
-        setJobLogs(logs as JobLog[]);
+        // Map 'ts' to 'created_at' for consistency with JobLog type
+        setJobLogs((logs as any[]).map(log => ({ ...log, created_at: log.ts })) as JobLog[]);
       }
 
       // Check if job completed or failed
