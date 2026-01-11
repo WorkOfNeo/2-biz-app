@@ -203,12 +203,90 @@ async function maybeGetLoginFrame(page: Page): Promise<Page> {
   return page;
 }
 
+// Job types that don't require a browser
+const BROWSERLESS_JOB_TYPES = new Set([
+  'run_ai_analysis',
+  'send_email',
+  'send_stock_list_email',
+  'analyze_conversation_message',
+  'fix_invoices',
+  'apply_customer_preview'
+]);
+
 async function runJob(job: JobRow) {
   let browser: Browser | null = null;
   let context: BrowserContext | null = null;
   let page: Page | null = null;
 
   try {
+    // Handle jobs that don't need a browser first
+    if (BROWSERLESS_JOB_TYPES.has(job.type as string)) {
+      await log(job.id, 'info', 'Running browser-less job');
+      
+      // Handle run_ai_analysis job
+      if ((job.type as any) === 'run_ai_analysis') {
+        const result = await runAiAnalysis(
+          supabase,
+          job.payload as any,
+          async (level, msg, data) => log(job.id, level, msg, data)
+        );
+        if (result.success) {
+          await saveResult(job.id, 'AI analysis completed', { analysisId: result.analysisId });
+          await setJobSucceeded(job.id);
+        } else {
+          await setJobFailedOrRequeue(job, result.error || 'AI analysis failed');
+        }
+        return;
+      }
+
+      // Handle analyze_conversation_message job
+      if ((job.type as any) === 'analyze_conversation_message') {
+        const result = await analyzeConversationMessage(
+          supabase,
+          job.payload as any,
+          async (level, msg, data) => log(job.id, level, msg, data)
+        );
+        if (result.success) {
+          await saveResult(job.id, 'Conversation analyzed', result);
+          await setJobSucceeded(job.id);
+        } else {
+          await setJobFailedOrRequeue(job, result.error || 'Conversation analysis failed');
+        }
+        return;
+      }
+
+      // Handle send_email job
+      if ((job.type as any) === 'send_email' || (job.type as any) === 'send_stock_list_email') {
+        const result = await sendEmail(
+          supabase,
+          job.payload as any,
+          async (level, msg, data) => log(job.id, level, msg, data)
+        );
+        if (result.success) {
+          await setJobSucceeded(job.id);
+        } else {
+          await setJobFailedOrRequeue(job, result.message || 'Failed to send email');
+        }
+        return;
+      }
+
+      // Handle fix_invoices job
+      if ((job.type as any) === 'fix_invoices') {
+        await fixInvoicesJob({ job, log, saveResult, ensureNotCancelled, supabase });
+        return;
+      }
+
+      // Handle apply_customer_preview job
+      if ((job.type as any) === 'apply_customer_preview') {
+        await applyCustomerScrapePreview({ job, log, saveResult, setJobFailedOrRequeue, setJobSucceeded, ensureNotCancelled, supabase });
+        return;
+      }
+
+      // If we get here, the job type was in the set but not handled
+      throw new Error(`Unhandled browser-less job type: ${job.type}`);
+    }
+
+    // For browser-based jobs, connect to Browserless
     await log(job.id, 'info', 'Connecting to Browserless');
     browser = await chromium.connectOverCDP(BROWSERLESS_WS);
     context = await browser.newContext({ timezoneId: TIMEZONE, viewport: { width: 1280, height: 800 } });
@@ -286,10 +364,7 @@ async function runJob(job: JobRow) {
     await scrapeCustomers({ job, page: page!, log, saveResult, setJobFailedOrRequeue, setJobSucceeded, ensureNotCancelled, supabase, SPY_BASE_URL, findFirst });
     return;
   }
-  if ((job.type as any) === 'apply_customer_preview') {
-    await applyCustomerScrapePreview({ job, log, saveResult, setJobFailedOrRequeue, setJobSucceeded, ensureNotCancelled, supabase });
-    return;
-  }
+  // apply_customer_preview is now handled in browser-less section at the top
   if ((job.type as any) === 'push_app_po_to_spy') {
     await pushAppPoToSpy({ 
       job, 
@@ -1028,10 +1103,7 @@ async function runJob(job: JobRow) {
     await scrapeTopStylesJob({ job, page: page!, log, saveResult, setJobFailedOrRequeue, setJobSucceeded, supabase });
     return;
   }
-  if ((job.type as any) === 'fix_invoices') {
-    await fixInvoicesJob({ job, log, saveResult, ensureNotCancelled, supabase });
-    return;
-  }
+  // fix_invoices is now handled in browser-less section at the top
   if ((job.type as any) === 'scrape_purchase_orders') {
     await scrapePurchaseOrdersJob({ job, page: page!, log, saveResult, setJobFailedOrRequeue, setJobSucceeded, ensureNotCancelled, supabase });
     return;
@@ -2466,54 +2538,7 @@ async function runJob(job: JobRow) {
       return; // scrape_statistics handled successfully
     }
 
-    // Handle analyze_conversation_message job (AI analysis of supplier replies)
-    if ((job.type as any) === 'analyze_conversation_message') {
-      const result = await analyzeConversationMessage(
-        supabase,
-        job.payload as any,
-        async (level, msg, data) => log(job.id, level, msg, data)
-      );
-      if (result.success) {
-        await setJobSucceeded(job.id);
-      } else {
-        await setJobFailedOrRequeue(job, result.error || 'Failed to analyze message');
-      }
-      return;
-    }
-
-    // Handle send_email job (generic email sending)
-    // Also supports legacy 'send_stock_list_email' for backwards compatibility
-    if ((job.type as any) === 'send_email' || (job.type as any) === 'send_stock_list_email') {
-      const result = await sendEmail(
-        supabase,
-        job.payload as any,
-        async (level, msg, data) => log(job.id, level, msg, data)
-      );
-      if (result.success) {
-        await setJobSucceeded(job.id);
-      } else {
-        await setJobFailedOrRequeue(job, result.message || 'Failed to send email');
-      }
-      return;
-    }
-
-    // Handle run_ai_analysis job (AI season analysis - runs on worker to avoid API timeouts)
-    if ((job.type as any) === 'run_ai_analysis') {
-      const result = await runAiAnalysis(
-        supabase,
-        job.payload as any,
-        async (level, msg, data) => log(job.id, level, msg, data)
-      );
-      if (result.success) {
-        await saveResult(job.id, 'AI analysis completed', { analysisId: result.analysisId });
-        await setJobSucceeded(job.id);
-      } else {
-        await setJobFailedOrRequeue(job, result.error || 'AI analysis failed');
-      }
-      return;
-    }
-
-    // If we reach here, the job type was not handled
+    // If we reach here, the job type was not handled (browser-less jobs are handled earlier)
     throw new Error(`Unknown or unhandled job type: ${job.type}`);
   } finally {
     try { await page?.close(); } catch {}
