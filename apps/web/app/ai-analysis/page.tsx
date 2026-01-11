@@ -48,7 +48,7 @@ export default function AIAnalysisDashboard() {
       .select(`
         id, season_id, analysis_type, analysis_date, executive_summary, 
         metrics, warnings, recommendations, created_at, email_sent_at, purchase_round_number,
-        season:seasons(name, year)
+        season:seasons!season_id(name, year)
       `)
       .order('created_at', { ascending: false })
       .limit(50);
