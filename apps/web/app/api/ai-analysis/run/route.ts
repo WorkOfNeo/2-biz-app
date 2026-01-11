@@ -70,15 +70,15 @@ async function buildAnalysisContext(
     .from('seasons')
     .select('id, name, year, created_at, is_current, is_frozen')
     .eq('id', seasonId)
-    .single();
+    .single() as { data: { id: string; name: string; year: number | null; created_at: string; is_current: boolean; is_frozen: boolean } | null };
 
-  let comparisonSeason = null;
+  let comparisonSeason: { id: string; name: string; year: number | null; created_at: string } | null = null;
   if (comparisonSeasonId) {
     const { data } = await supabase
       .from('seasons')
       .select('id, name, year, created_at')
       .eq('id', comparisonSeasonId)
-      .single();
+      .single() as { data: { id: string; name: string; year: number | null; created_at: string } | null };
     comparisonSeason = data;
   }
 
