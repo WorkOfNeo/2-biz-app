@@ -1,11 +1,12 @@
-// DST-safe check_stock_fix cron (Europe/Copenhagen): 07:30, 12:30, 15:30
-// Runs via frequent Vercel cron and checks Copenhagen time window before enqueuing.
+// DST-safe check_stock_fix cron (Europe/Copenhagen)
+// Reads schedule from scrape_schedules table (configurable via UI)
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 const TIMEZONE = 'Europe/Copenhagen';
+const SCHEDULE_KEY = 'check_stock_fix';
 
-function getCopenhagenParts(date: Date): { isoDate: string; hour: number; minute: number } {
+function getCopenhagenParts(date: Date): { isoDate: string; hour: number; minute: number; dayOfWeek: number } {
   const formatter = new Intl.DateTimeFormat('en-CA', {
     timeZone: TIMEZONE,
     year: 'numeric',
@@ -13,6 +14,7 @@ function getCopenhagenParts(date: Date): { isoDate: string; hour: number; minute
     day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
+    weekday: 'short',
     hour12: false,
   });
   const parts = formatter.formatToParts(date);
@@ -21,7 +23,10 @@ function getCopenhagenParts(date: Date): { isoDate: string; hour: number; minute
   const day = parts.find((p) => p.type === 'day')?.value || '01';
   const hour = parseInt(parts.find((p) => p.type === 'hour')?.value || '0', 10);
   const minute = parseInt(parts.find((p) => p.type === 'minute')?.value || '0', 10);
-  return { isoDate: `${year}-${month}-${day}`, hour, minute };
+  const weekday = parts.find((p) => p.type === 'weekday')?.value || 'Mon';
+  const dayMap: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  const dayOfWeek = dayMap[weekday] ?? 1;
+  return { isoDate: `${year}-${month}-${day}`, hour, minute, dayOfWeek };
 }
 
 async function handle(req: Request) {
@@ -36,26 +41,42 @@ async function handle(req: Request) {
   }
   const supabase = createClient(url, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } });
 
-  const now = new Date();
-  const cph = getCopenhagenParts(now);
+  // Fetch schedule config from database
+  const { data: scheduleRow } = await supabase
+    .from('scrape_schedules')
+    .select('enabled, hours, days_of_week, config')
+    .eq('key', SCHEDULE_KEY)
+    .maybeSingle();
 
-  // Trigger windows: 07:30-07:39, 12:30-12:39, 15:30-15:39 Copenhagen time
-  const targetSlots = [
-    { hour: 7, minute: 30 },
-    { hour: 12, minute: 30 },
-    { hour: 15, minute: 30 },
-  ];
+  // Fallback defaults if table doesn't exist or no row found
+  const schedule = scheduleRow ?? { enabled: true, hours: [7, 12, 15], days_of_week: null, config: { minuteOffset: 30, autoFix: true } };
   
-  const isInWindow = targetSlots.some(slot => 
-    cph.hour === slot.hour && cph.minute >= slot.minute && cph.minute <= slot.minute + 9
-  );
-  
-  if (!isInWindow) {
-    const res = { skipped: true, reason: 'outside scheduled window', cph };
+  if (!schedule.enabled) {
+    const res = { skipped: true, reason: 'schedule disabled' };
     return new Response(JSON.stringify(debug ? { ...res, debug: true } : res), { status: 200, headers: { 'Content-Type': 'application/json' } });
   }
 
-  const runKey = `check_stock_fix:${cph.isoDate}-${String(cph.hour).padStart(2, '0')}:30`;
+  const now = new Date();
+  const cph = getCopenhagenParts(now);
+  const minuteOffset = (schedule.config as any)?.minuteOffset ?? 0;
+  const autoFix = (schedule.config as any)?.autoFix ?? true;
+
+  // Check day of week if specified
+  if (schedule.days_of_week !== null && !schedule.days_of_week.includes(cph.dayOfWeek)) {
+    const res = { skipped: true, reason: 'not a scheduled day', cph, scheduledDays: schedule.days_of_week };
+    return new Response(JSON.stringify(debug ? { ...res, debug: true } : res), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  }
+
+  // Check if current hour is in scheduled hours and we're in the time window
+  const isScheduledHour = schedule.hours.includes(cph.hour);
+  const isInWindow = cph.minute >= minuteOffset && cph.minute <= minuteOffset + 9;
+  
+  if (!isScheduledHour || !isInWindow) {
+    const res = { skipped: true, reason: 'outside scheduled window', cph, scheduledHours: schedule.hours, minuteOffset };
+    return new Response(JSON.stringify(debug ? { ...res, debug: true } : res), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  }
+
+  const runKey = `check_stock_fix:${cph.isoDate}-${String(cph.hour).padStart(2, '0')}:${String(minuteOffset).padStart(2, '0')}`;
 
   // Dedupe: if we already enqueued this runKey today, do nothing
   const { data: existing } = await supabase
@@ -84,7 +105,7 @@ async function handle(req: Request) {
     return new Response(JSON.stringify(debug ? { ...res, debug: true } : res), { status: 200, headers: { 'Content-Type': 'application/json' } });
   }
 
-  // Enqueue check_stock_fix with autoFix enabled
+  // Enqueue check_stock_fix
   const { data: job, error: insErr } = await supabase
     .from('jobs')
     .insert({
@@ -92,7 +113,7 @@ async function handle(req: Request) {
       payload: {
         requestedBy: 'cron_check_stock_fix',
         runKey,
-        autoFix: true, // Auto-enqueue update_style_stock for mismatches
+        autoFix,
       },
       status: 'queued',
       max_attempts: 3,
@@ -110,7 +131,7 @@ async function handle(req: Request) {
   const jobId = (job as any)?.id as string;
   await supabase
     .from('job_logs')
-    .insert({ job_id: jobId, level: 'info', msg: 'Enqueued via cron', data: { kind: 'check_stock_fix', runKey, autoFix: true } });
+    .insert({ job_id: jobId, level: 'info', msg: 'Enqueued via cron', data: { kind: 'check_stock_fix', runKey, autoFix } });
 
   const res = { enqueued: true, jobId, runKey, cph };
   return new Response(JSON.stringify(debug ? { ...res, debug: true } : res), { status: 200, headers: { 'Content-Type': 'application/json' } });

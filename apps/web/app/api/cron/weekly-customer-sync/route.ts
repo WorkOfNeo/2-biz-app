@@ -1,9 +1,11 @@
-// Weekly Customer Sync - Sundays at 04:00 Copenhagen time
+// Weekly Customer Sync - Configurable day/time (Copenhagen)
+// Reads schedule from scrape_schedules table (configurable via UI)
 // Runs scrape_customers which creates a preview with orphaned customers for approval
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 const TIMEZONE = 'Europe/Copenhagen';
+const SCHEDULE_KEY = 'weekly_customer_sync';
 
 function getCopenhagenParts(date: Date): { isoDate: string; hour: number; minute: number; dayOfWeek: number } {
   const formatter = new Intl.DateTimeFormat('en-CA', {
@@ -42,15 +44,36 @@ async function handle(req: Request) {
   }
   const supabase = createClient(url, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } });
 
+  // Fetch schedule config from database
+  const { data: scheduleRow } = await supabase
+    .from('scrape_schedules')
+    .select('enabled, hours, days_of_week, config')
+    .eq('key', SCHEDULE_KEY)
+    .maybeSingle();
+
+  // Fallback defaults: Sundays at 04:00
+  const schedule = scheduleRow ?? { enabled: true, hours: [4], days_of_week: [0], config: {} };
+  
+  if (!schedule.enabled) {
+    const res = { skipped: true, reason: 'schedule disabled' };
+    return new Response(JSON.stringify(debug ? { ...res, debug: true } : res), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  }
+
   const now = new Date();
   const cph = getCopenhagenParts(now);
 
-  // Only run on Sundays between 04:00-04:09 Copenhagen time
-  const isSunday = cph.dayOfWeek === 0;
-  const isInWindow = cph.hour === 4 && cph.minute >= 0 && cph.minute <= 9;
+  // Check day of week
+  if (schedule.days_of_week !== null && !schedule.days_of_week.includes(cph.dayOfWeek)) {
+    const res = { skipped: true, reason: 'not a scheduled day', cph, scheduledDays: schedule.days_of_week };
+    return new Response(JSON.stringify(debug ? { ...res, debug: true } : res), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  }
 
-  if (!isSunday || !isInWindow) {
-    const res = { skipped: true, reason: 'not Sunday 04:00-04:09', cph };
+  // Check hour and time window
+  const isScheduledHour = schedule.hours.includes(cph.hour);
+  const isInWindow = cph.minute >= 0 && cph.minute <= 9;
+
+  if (!isScheduledHour || !isInWindow) {
+    const res = { skipped: true, reason: 'outside scheduled window', cph, scheduledHours: schedule.hours };
     return new Response(JSON.stringify(debug ? { ...res, debug: true } : res), { status: 200, headers: { 'Content-Type': 'application/json' } });
   }
 
@@ -107,9 +130,6 @@ async function handle(req: Request) {
   await supabase
     .from('job_logs')
     .insert({ job_id: jobId, level: 'info', msg: 'Enqueued via weekly cron', data: { runKey } });
-
-  // Note: After scrape_customers completes, users can review orphaned customers
-  // at /settings/customers/preview?id=<preview_id> and mark them as inactive
 
   const res = { enqueued: true, jobId, runKey, note: 'Preview with orphaned customers will be available at /settings/customers after job completes' };
   return new Response(JSON.stringify(debug ? { ...res, debug: true } : res), { status: 200, headers: { 'Content-Type': 'application/json' } });

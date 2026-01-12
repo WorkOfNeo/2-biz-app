@@ -9,7 +9,7 @@ import { Table, TableBody, TableRow, TableCell, TableHead, TableHeader } from '.
 import { Badge } from '../../../components/ui/badge';
 import { EmailPillsInput } from '../../../components/EmailPillsInput';
 import { Sheet, SheetHeader, SheetTitle, SheetContent, SheetClose } from '../../../components/ui/sheet';
-import { Plus, Pencil, Trash2, Send, Clock, Calendar, Eye, X } from 'lucide-react';
+import { Plus, Pencil, Trash2, Send, Clock, Calendar, Eye, X, Settings, RefreshCw, Play } from 'lucide-react';
 
 const EMAILJS_ENDPOINT = 'https://api.emailjs.com/api/v1.0/email/send';
 const EMAILJS_SERVICE_ID = process.env.NEXT_PUBLIC_EMAILJS_SERVICE_ID || process.env.NEXT_PUBLIC_EMAILJS_SERVICE_KEY || '';
@@ -90,6 +90,407 @@ function formatLastRun(iso: string | undefined): string {
   const month = (d.getMonth() + 1).toString().padStart(2, '0');
   return `Opdateret ${day}/${month} kl. ${hh}:${mm}`;
 }
+
+// ============================================================================
+// SCRAPES TAB COMPONENT
+// ============================================================================
+
+interface ScrapeSchedule {
+  id: string;
+  key: string;
+  name: string;
+  description: string | null;
+  enabled: boolean;
+  hours: number[];
+  days_of_week: number[] | null;
+  config: Record<string, any>;
+  updated_at: string;
+}
+
+const HOURS_OPTIONS = Array.from({ length: 24 }, (_, i) => ({
+  value: i,
+  label: `${String(i).padStart(2, '0')}:00`,
+}));
+
+const DAYS_OPTIONS = [
+  { value: 0, label: 'Sun' },
+  { value: 1, label: 'Mon' },
+  { value: 2, label: 'Tue' },
+  { value: 3, label: 'Wed' },
+  { value: 4, label: 'Thu' },
+  { value: 5, label: 'Fri' },
+  { value: 6, label: 'Sat' },
+];
+
+function formatScrapeSchedule(schedule: ScrapeSchedule): string {
+  const hours = schedule.hours.sort((a, b) => a - b).map(h => `${String(h).padStart(2, '0')}:00`);
+  const minuteOffset = schedule.config?.minuteOffset;
+  const hoursWithOffset = minuteOffset ? hours.map(h => h.replace(':00', `:${String(minuteOffset).padStart(2, '0')}`)) : hours;
+  
+  if (schedule.days_of_week === null) {
+    return `Daily at ${hoursWithOffset.join(', ')}`;
+  }
+  const days = schedule.days_of_week.sort((a, b) => a - b).map(d => DAYS_OPTIONS.find(o => o.value === d)?.label || '').filter(Boolean);
+  return `${days.join(', ')} at ${hoursWithOffset.join(', ')}`;
+}
+
+function ScrapesTab() {
+  const [schedules, setSchedules] = React.useState<ScrapeSchedule[]>([]);
+  const [loading, setLoading] = React.useState(true);
+  const [saving, setSaving] = React.useState<string | null>(null);
+  const [editingId, setEditingId] = React.useState<string | null>(null);
+  const [editHours, setEditHours] = React.useState<number[]>([]);
+  const [editDays, setEditDays] = React.useState<number[] | null>(null);
+  const [editMinuteOffset, setEditMinuteOffset] = React.useState<number>(0);
+  const [runningJob, setRunningJob] = React.useState<string | null>(null);
+
+  const fetchSchedules = React.useCallback(async () => {
+    try {
+      const res = await fetch('/api/admin/scrape-schedules');
+      if (!res.ok) throw new Error('Failed to fetch');
+      const data = await res.json();
+      setSchedules(data.schedules || []);
+    } catch (e: any) {
+      console.error('Failed to fetch scrape schedules:', e);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    fetchSchedules();
+  }, [fetchSchedules]);
+
+  const toggleEnabled = async (schedule: ScrapeSchedule) => {
+    setSaving(schedule.id);
+    try {
+      const res = await fetch('/api/admin/scrape-schedules', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: schedule.id, enabled: !schedule.enabled }),
+      });
+      if (!res.ok) throw new Error('Failed to update');
+      await fetchSchedules();
+    } catch (e: any) {
+      alert('Failed to update schedule');
+    } finally {
+      setSaving(null);
+    }
+  };
+
+  const startEdit = (schedule: ScrapeSchedule) => {
+    setEditingId(schedule.id);
+    setEditHours([...schedule.hours]);
+    setEditDays(schedule.days_of_week ? [...schedule.days_of_week] : null);
+    setEditMinuteOffset(schedule.config?.minuteOffset || 0);
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setEditHours([]);
+    setEditDays(null);
+    setEditMinuteOffset(0);
+  };
+
+  const saveEdit = async (schedule: ScrapeSchedule) => {
+    setSaving(schedule.id);
+    try {
+      const config = { ...schedule.config };
+      if (editMinuteOffset > 0) {
+        config.minuteOffset = editMinuteOffset;
+      } else {
+        delete config.minuteOffset;
+      }
+      
+      const res = await fetch('/api/admin/scrape-schedules', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: schedule.id,
+          hours: editHours,
+          days_of_week: editDays,
+          config,
+        }),
+      });
+      if (!res.ok) throw new Error('Failed to update');
+      await fetchSchedules();
+      cancelEdit();
+    } catch (e: any) {
+      alert('Failed to save schedule');
+    } finally {
+      setSaving(null);
+    }
+  };
+
+  const toggleHour = (hour: number) => {
+    if (editHours.includes(hour)) {
+      setEditHours(editHours.filter(h => h !== hour));
+    } else {
+      setEditHours([...editHours, hour].sort((a, b) => a - b));
+    }
+  };
+
+  const toggleDay = (day: number) => {
+    if (editDays === null) {
+      // Switching from "every day" to specific days
+      setEditDays([day]);
+    } else if (editDays.includes(day)) {
+      const newDays = editDays.filter(d => d !== day);
+      setEditDays(newDays.length === 0 ? null : newDays);
+    } else {
+      setEditDays([...editDays, day].sort((a, b) => a - b));
+    }
+  };
+
+  const runNow = async (schedule: ScrapeSchedule) => {
+    setRunningJob(schedule.id);
+    try {
+      // Map schedule key to job type
+      const jobTypeMap: Record<string, string> = {
+        check_stock_fix: 'check_stock_fix',
+        scrape_statistics: 'scrape_statistics',
+        scrape_purchase_orders: 'scrape_purchase_orders',
+        export_statistics: 'export_overview',
+        weekly_style_refresh: 'scrape_styles',
+        weekly_customer_sync: 'scrape_customers',
+      };
+      
+      const jobType = jobTypeMap[schedule.key];
+      if (!jobType) {
+        alert('Unknown job type');
+        return;
+      }
+
+      const res = await fetch('/api/enqueue', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: jobType,
+          payload: { requestedBy: 'manual_dashboard', ...schedule.config },
+        }),
+      });
+      
+      if (!res.ok) throw new Error('Failed to enqueue');
+      const data = await res.json();
+      alert(`Job enqueued: ${data.jobId || 'success'}`);
+    } catch (e: any) {
+      alert('Failed to run job: ' + (e?.message || 'Unknown error'));
+    } finally {
+      setRunningJob(null);
+    }
+  };
+
+  if (loading) {
+    return (
+      <Card>
+        <CardContent className="py-12 text-center">
+          <RefreshCw className="h-6 w-6 animate-spin mx-auto text-slate-400" />
+          <div className="text-slate-400 text-sm mt-2">Loading schedules...</div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Settings className="h-5 w-5" />
+            Scrape Schedules
+          </CardTitle>
+          <CardDescription>
+            Configure when automated data scrapes run. All times are in Copenhagen timezone (DST-safe).
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="rounded-md border overflow-hidden">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-[200px]">Name</TableHead>
+                  <TableHead>Schedule</TableHead>
+                  <TableHead className="w-[100px]">Status</TableHead>
+                  <TableHead className="w-[180px] text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {schedules.map(schedule => (
+                  <React.Fragment key={schedule.id}>
+                    <TableRow className={editingId === schedule.id ? 'bg-slate-50' : ''}>
+                      <TableCell>
+                        <div className="font-medium">{schedule.name}</div>
+                        {schedule.description && (
+                          <div className="text-xs text-slate-500 mt-0.5">{schedule.description}</div>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          <Clock className="h-4 w-4 text-slate-400" />
+                          <span className="text-sm">{formatScrapeSchedule(schedule)}</span>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <Badge
+                          variant={schedule.enabled ? 'default' : 'secondary'}
+                          className={schedule.enabled ? 'bg-green-100 text-green-800' : ''}
+                        >
+                          {schedule.enabled ? 'Active' : 'Disabled'}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => runNow(schedule)}
+                            disabled={runningJob === schedule.id}
+                            title="Run now"
+                          >
+                            {runningJob === schedule.id ? (
+                              <RefreshCw className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Play className="h-4 w-4" />
+                            )}
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => editingId === schedule.id ? cancelEdit() : startEdit(schedule)}
+                          >
+                            {editingId === schedule.id ? <X className="h-4 w-4" /> : <Pencil className="h-4 w-4" />}
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant={schedule.enabled ? 'outline' : 'default'}
+                            onClick={() => toggleEnabled(schedule)}
+                            disabled={saving === schedule.id}
+                          >
+                            {saving === schedule.id ? (
+                              <RefreshCw className="h-4 w-4 animate-spin" />
+                            ) : schedule.enabled ? (
+                              'Disable'
+                            ) : (
+                              'Enable'
+                            )}
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                    {editingId === schedule.id && (
+                      <TableRow className="bg-slate-50">
+                        <TableCell colSpan={4} className="p-4">
+                          <div className="space-y-4">
+                            {/* Hours selection */}
+                            <div>
+                              <label className="text-sm font-medium text-slate-700 block mb-2">
+                                Run at hours (Copenhagen time):
+                              </label>
+                              <div className="flex flex-wrap gap-1">
+                                {HOURS_OPTIONS.map(opt => (
+                                  <button
+                                    key={opt.value}
+                                    type="button"
+                                    onClick={() => toggleHour(opt.value)}
+                                    className={`px-2 py-1 text-xs rounded border transition-colors ${
+                                      editHours.includes(opt.value)
+                                        ? 'bg-blue-600 text-white border-blue-600'
+                                        : 'bg-white text-slate-700 border-slate-300 hover:border-blue-400'
+                                    }`}
+                                  >
+                                    {opt.label}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                            
+                            {/* Minute offset */}
+                            <div>
+                              <label className="text-sm font-medium text-slate-700 block mb-2">
+                                Minute offset (e.g., 30 for :30):
+                              </label>
+                              <input
+                                type="number"
+                                min="0"
+                                max="59"
+                                value={editMinuteOffset}
+                                onChange={e => setEditMinuteOffset(Math.min(59, Math.max(0, parseInt(e.target.value) || 0)))}
+                                className="w-20 px-2 py-1 text-sm border rounded"
+                              />
+                            </div>
+                            
+                            {/* Days selection */}
+                            <div>
+                              <label className="text-sm font-medium text-slate-700 block mb-2">
+                                Days of week:
+                              </label>
+                              <div className="flex gap-2 items-center">
+                                <button
+                                  type="button"
+                                  onClick={() => setEditDays(null)}
+                                  className={`px-3 py-1 text-xs rounded border transition-colors ${
+                                    editDays === null
+                                      ? 'bg-blue-600 text-white border-blue-600'
+                                      : 'bg-white text-slate-700 border-slate-300 hover:border-blue-400'
+                                  }`}
+                                >
+                                  Every day
+                                </button>
+                                <span className="text-slate-400 text-xs">or specific:</span>
+                                {DAYS_OPTIONS.map(opt => (
+                                  <button
+                                    key={opt.value}
+                                    type="button"
+                                    onClick={() => toggleDay(opt.value)}
+                                    className={`px-2 py-1 text-xs rounded border transition-colors ${
+                                      editDays?.includes(opt.value)
+                                        ? 'bg-blue-600 text-white border-blue-600'
+                                        : 'bg-white text-slate-700 border-slate-300 hover:border-blue-400'
+                                    }`}
+                                  >
+                                    {opt.label}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                            
+                            {/* Save/Cancel */}
+                            <div className="flex gap-2 pt-2">
+                              <Button size="sm" onClick={() => saveEdit(schedule)} disabled={saving === schedule.id || editHours.length === 0}>
+                                {saving === schedule.id ? <RefreshCw className="h-4 w-4 animate-spin mr-1" /> : null}
+                                Save Changes
+                              </Button>
+                              <Button size="sm" variant="outline" onClick={cancelEdit}>
+                                Cancel
+                              </Button>
+                            </div>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </React.Fragment>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+          
+          <div className="mt-4 p-3 bg-slate-50 rounded-md border border-slate-200">
+            <h4 className="text-sm font-medium text-slate-700 mb-1">How it works</h4>
+            <p className="text-xs text-slate-500">
+              Schedules are checked every 5 minutes by Vercel cron. When a check runs during a configured time window 
+              (first 10 minutes of each hour), the corresponding job is enqueued. This ensures correct timing regardless 
+              of Daylight Saving Time changes.
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+// ============================================================================
+// MAIN DASHBOARD COMPONENT
+// ============================================================================
 
 export default function StatisticsDashboardPage() {
   const { data: salespersons } = useSWR('salespersons:list', async () => {
@@ -719,6 +1120,7 @@ export default function StatisticsDashboardPage() {
         <TabsList className="mb-4">
           <TabsTrigger value="mailing">Mailing</TabsTrigger>
           <TabsTrigger value="statistic">Statistic</TabsTrigger>
+          <TabsTrigger value="scrapes">Scrapes</TabsTrigger>
         </TabsList>
 
         <TabsContent value="mailing" className="space-y-6">
@@ -985,6 +1387,10 @@ export default function StatisticsDashboardPage() {
               <div className="text-slate-400 text-sm">Coming soon</div>
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="scrapes">
+          <ScrapesTab />
         </TabsContent>
       </Tabs>
 

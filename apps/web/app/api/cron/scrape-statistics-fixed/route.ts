@@ -1,13 +1,12 @@
 // DST-safe scrape_statistics cron (Europe/Copenhagen)
-// Schedule: 07:00, 09:00, 11:00, 13:00, 15:00
-// At 07:00 and 15:00: deep + style_details
-// At 09:00, 11:00, 13:00: deep only (no style_details)
+// Reads schedule from scrape_schedules table (configurable via UI)
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 const TIMEZONE = 'Europe/Copenhagen';
+const SCHEDULE_KEY = 'scrape_statistics';
 
-function getCopenhagenParts(date: Date): { isoDate: string; hour: number; minute: number } {
+function getCopenhagenParts(date: Date): { isoDate: string; hour: number; minute: number; dayOfWeek: number } {
   const formatter = new Intl.DateTimeFormat('en-CA', {
     timeZone: TIMEZONE,
     year: 'numeric',
@@ -15,6 +14,7 @@ function getCopenhagenParts(date: Date): { isoDate: string; hour: number; minute
     day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
+    weekday: 'short',
     hour12: false,
   });
   const parts = formatter.formatToParts(date);
@@ -23,7 +23,10 @@ function getCopenhagenParts(date: Date): { isoDate: string; hour: number; minute
   const day = parts.find((p) => p.type === 'day')?.value || '01';
   const hour = parseInt(parts.find((p) => p.type === 'hour')?.value || '0', 10);
   const minute = parseInt(parts.find((p) => p.type === 'minute')?.value || '0', 10);
-  return { isoDate: `${year}-${month}-${day}`, hour, minute };
+  const weekday = parts.find((p) => p.type === 'weekday')?.value || 'Mon';
+  const dayMap: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  const dayOfWeek = dayMap[weekday] ?? 1;
+  return { isoDate: `${year}-${month}-${day}`, hour, minute, dayOfWeek };
 }
 
 async function handle(req: Request) {
@@ -38,23 +41,37 @@ async function handle(req: Request) {
   }
   const supabase = createClient(url, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } });
 
+  // Fetch schedule config from database
+  const { data: scheduleRow } = await supabase
+    .from('scrape_schedules')
+    .select('enabled, hours, days_of_week, config')
+    .eq('key', SCHEDULE_KEY)
+    .maybeSingle();
+
+  // Fallback defaults
+  const schedule = scheduleRow ?? { enabled: true, hours: [7, 9, 11, 13, 15], days_of_week: null, config: { styleDetailsHours: [7, 15] } };
+  
+  if (!schedule.enabled) {
+    const res = { skipped: true, reason: 'schedule disabled' };
+    return new Response(JSON.stringify(debug ? { ...res, debug: true } : res), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  }
+
   const now = new Date();
   const cph = getCopenhagenParts(now);
+  const styleDetailsHours: number[] = (schedule.config as any)?.styleDetailsHours ?? [7, 15];
 
-  // Target hours and their configurations
-  const scheduleConfig: Record<number, { styleDetails: boolean }> = {
-    7: { styleDetails: true },   // 07:00 - with style details
-    9: { styleDetails: false },  // 09:00 - deep only
-    11: { styleDetails: false }, // 11:00 - deep only
-    13: { styleDetails: false }, // 13:00 - deep only
-    15: { styleDetails: true },  // 15:00 - with style details
-  };
+  // Check day of week if specified
+  if (schedule.days_of_week !== null && !schedule.days_of_week.includes(cph.dayOfWeek)) {
+    const res = { skipped: true, reason: 'not a scheduled day', cph };
+    return new Response(JSON.stringify(debug ? { ...res, debug: true } : res), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  }
 
-  const config = scheduleConfig[cph.hour];
-  const isInWindow = config !== undefined && cph.minute >= 0 && cph.minute <= 9;
+  // Check if current hour is in scheduled hours and we're in the time window (first 10 mins)
+  const isScheduledHour = schedule.hours.includes(cph.hour);
+  const isInWindow = cph.minute >= 0 && cph.minute <= 9;
 
-  if (!isInWindow) {
-    const res = { skipped: true, reason: 'outside scheduled window', cph };
+  if (!isScheduledHour || !isInWindow) {
+    const res = { skipped: true, reason: 'outside scheduled window', cph, scheduledHours: schedule.hours };
     return new Response(JSON.stringify(debug ? { ...res, debug: true } : res), { status: 200, headers: { 'Content-Type': 'application/json' } });
   }
 
@@ -110,8 +127,9 @@ async function handle(req: Request) {
   }
 
   // Build toggles based on schedule config
+  const includeStyleDetails = styleDetailsHours.includes(cph.hour);
   const toggles: { deep: boolean; style_details?: boolean } = { deep: true };
-  if (config!.styleDetails) {
+  if (includeStyleDetails) {
     toggles.style_details = true;
   }
 
@@ -125,7 +143,7 @@ async function handle(req: Request) {
         runKey,
         toggles,
         ...(seasonId ? { seasonId } : {}),
-        cronHour: cph.hour, // Used by after-statistics-exports to identify 15:00 run
+        cronHour: cph.hour, // Used by after-statistics-exports to identify runs
       },
       status: 'queued',
       max_attempts: 3,

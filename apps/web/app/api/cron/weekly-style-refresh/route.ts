@@ -1,9 +1,11 @@
-// Weekly Style Refresh - Sundays at 02:00 Copenhagen time
+// Weekly Style Refresh - Configurable day/time (Copenhagen)
+// Reads schedule from scrape_schedules table (configurable via UI)
 // Pipeline: scrape_styles → deep_scrape_styles → scrape_eans → check_stock_fix (autoFix) → export_stock_list
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 const TIMEZONE = 'Europe/Copenhagen';
+const SCHEDULE_KEY = 'weekly_style_refresh';
 
 function getCopenhagenParts(date: Date): { isoDate: string; hour: number; minute: number; dayOfWeek: number } {
   const formatter = new Intl.DateTimeFormat('en-CA', {
@@ -42,15 +44,36 @@ async function handle(req: Request) {
   }
   const supabase = createClient(url, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } });
 
+  // Fetch schedule config from database
+  const { data: scheduleRow } = await supabase
+    .from('scrape_schedules')
+    .select('enabled, hours, days_of_week, config')
+    .eq('key', SCHEDULE_KEY)
+    .maybeSingle();
+
+  // Fallback defaults: Sundays at 02:00
+  const schedule = scheduleRow ?? { enabled: true, hours: [2], days_of_week: [0], config: {} };
+  
+  if (!schedule.enabled) {
+    const res = { skipped: true, reason: 'schedule disabled' };
+    return new Response(JSON.stringify(debug ? { ...res, debug: true } : res), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  }
+
   const now = new Date();
   const cph = getCopenhagenParts(now);
 
-  // Only run on Sundays between 02:00-02:09 Copenhagen time
-  const isSunday = cph.dayOfWeek === 0;
-  const isInWindow = cph.hour === 2 && cph.minute >= 0 && cph.minute <= 9;
+  // Check day of week
+  if (schedule.days_of_week !== null && !schedule.days_of_week.includes(cph.dayOfWeek)) {
+    const res = { skipped: true, reason: 'not a scheduled day', cph, scheduledDays: schedule.days_of_week };
+    return new Response(JSON.stringify(debug ? { ...res, debug: true } : res), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  }
 
-  if (!isSunday || !isInWindow) {
-    const res = { skipped: true, reason: 'not Sunday 02:00-02:09', cph };
+  // Check hour and time window
+  const isScheduledHour = schedule.hours.includes(cph.hour);
+  const isInWindow = cph.minute >= 0 && cph.minute <= 9;
+
+  if (!isScheduledHour || !isInWindow) {
+    const res = { skipped: true, reason: 'outside scheduled window', cph, scheduledHours: schedule.hours };
     return new Response(JSON.stringify(debug ? { ...res, debug: true } : res), { status: 200, headers: { 'Content-Type': 'application/json' } });
   }
 
@@ -84,9 +107,6 @@ async function handle(req: Request) {
   }
 
   // Enqueue the full pipeline with run_after delays to sequence them
-  // Each job waits for the previous one to complete before being picked up
-  const baseDelay = 5 * 60 * 1000; // 5 minutes between each step to allow completion
-
   const inserts = [
     // Step 1: scrape_styles (immediately)
     {
