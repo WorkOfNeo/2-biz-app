@@ -368,8 +368,8 @@ export default function AIAnalysisDashboard() {
         </div>
       )}
 
-      {/* Data Status Card */}
-      {dataStatus && (
+      {/* Data Status Card - only show if there's new data or no analysis today */}
+      {dataStatus && (dataStatus.hasNewData || !hasRunToday) && (
         <div className={`mb-6 p-4 border rounded-lg ${dataStatus.hasNewData ? 'bg-amber-50 border-amber-200' : 'bg-slate-50 border-slate-200'}`}>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
