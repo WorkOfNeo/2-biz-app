@@ -221,6 +221,7 @@ function PurchaseOrdersInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const activeTab = (searchParams.get('tab') || 'purchase-orders') === 'app-pos' ? 'app-pos' : 'purchase-orders';
+  const statusTab = searchParams.get('status') || 'active';
 
   const supabase = createClientComponentClient();
   const [rows, setRows] = useState<PoRow[]>([]);
@@ -342,60 +343,88 @@ function PurchaseOrdersInner() {
           <TabsTrigger value="app-pos">App PO&apos;s</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="purchase-orders" className="space-y-6">
+        <TabsContent value="purchase-orders" className="space-y-4">
           {loading && rows.length === 0 && <div className="py-12 text-center text-slate-500">Loading...</div>}
 
-          {/* Running Orders */}
-          <Card>
-            <CardHeader className="bg-amber-50/50">
-              <div className="flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-amber-100">
-                  <Package className="w-5 h-5 text-amber-600" />
-                </div>
-                <div>
-                  <CardTitle className="text-base">Active Orders</CardTitle>
-                  <div className="text-xs text-slate-500 mt-0.5">
-                    {runningRows.length} order{runningRows.length !== 1 ? 's' : ''} • {runningTotal.toLocaleString()} pcs
-                  </div>
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent className="p-0">
-              <POTable
-                rows={runningRows}
-                expanded={expanded}
-                itemsByPo={itemsByPo}
-                onToggle={toggleExpand}
-                emptyMessage="No active orders"
-              />
-            </CardContent>
-          </Card>
+          {/* Status sub-tabs */}
+          <Tabs
+            value={statusTab}
+            onValueChange={(v) => {
+              router.replace(`/purchase/orders?status=${v}`);
+            }}
+            className="w-full"
+          >
+            <TabsList className="bg-slate-100">
+              <TabsTrigger value="active" className="gap-2">
+                <Package className="w-4 h-4" />
+                Running / Shipped
+                <Badge className="ml-1 bg-amber-100 text-amber-700 border-amber-200">
+                  {runningRows.length}
+                </Badge>
+              </TabsTrigger>
+              <TabsTrigger value="received" className="gap-2">
+                <CheckCircle2 className="w-4 h-4" />
+                Received
+                <Badge className="ml-1 bg-green-100 text-green-700 border-green-200">
+                  {deliveredRows.length}
+                </Badge>
+              </TabsTrigger>
+            </TabsList>
 
-          {/* Delivered Orders */}
-          <Card>
-            <CardHeader className="bg-green-50/50">
-              <div className="flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-green-100">
-                  <CheckCircle2 className="w-5 h-5 text-green-600" />
-                </div>
-                <div>
-                  <CardTitle className="text-base">Delivered Orders</CardTitle>
-                  <div className="text-xs text-slate-500 mt-0.5">
-                    {deliveredRows.length} order{deliveredRows.length !== 1 ? 's' : ''} • {deliveredTotal.toLocaleString()} pcs
+            <TabsContent value="active" className="mt-4">
+              <Card>
+                <CardHeader className="bg-amber-50/50">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 rounded-lg bg-amber-100">
+                      <Package className="w-5 h-5 text-amber-600" />
+                    </div>
+                    <div>
+                      <CardTitle className="text-base">Running / Shipped Orders</CardTitle>
+                      <div className="text-xs text-slate-500 mt-0.5">
+                        {runningRows.length} order{runningRows.length !== 1 ? 's' : ''} • {runningTotal.toLocaleString()} pcs
+                      </div>
+                    </div>
                   </div>
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent className="p-0">
-              <POTable
-                rows={deliveredRows}
-                expanded={expanded}
-                itemsByPo={itemsByPo}
-                onToggle={toggleExpand}
-                emptyMessage="No delivered orders yet"
-              />
-            </CardContent>
-          </Card>
+                </CardHeader>
+                <CardContent className="p-0">
+                  <POTable
+                    rows={runningRows}
+                    expanded={expanded}
+                    itemsByPo={itemsByPo}
+                    onToggle={toggleExpand}
+                    emptyMessage="No active orders"
+                  />
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            <TabsContent value="received" className="mt-4">
+              <Card>
+                <CardHeader className="bg-green-50/50">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 rounded-lg bg-green-100">
+                      <CheckCircle2 className="w-5 h-5 text-green-600" />
+                    </div>
+                    <div>
+                      <CardTitle className="text-base">Received Orders</CardTitle>
+                      <div className="text-xs text-slate-500 mt-0.5">
+                        {deliveredRows.length} order{deliveredRows.length !== 1 ? 's' : ''} • {deliveredTotal.toLocaleString()} pcs
+                      </div>
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent className="p-0">
+                  <POTable
+                    rows={deliveredRows}
+                    expanded={expanded}
+                    itemsByPo={itemsByPo}
+                    onToggle={toggleExpand}
+                    emptyMessage="No received orders yet"
+                  />
+                </CardContent>
+              </Card>
+            </TabsContent>
+          </Tabs>
         </TabsContent>
 
         <TabsContent value="app-pos" className="space-y-6">
