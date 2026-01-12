@@ -1,4 +1,30 @@
-export type JobType = 'scrape_statistics' | 'scrape_styles' | 'update_style_stock' | 'export_overview' | 'scrape_customers' | 'apply_customer_preview' | 'deep_scrape_styles' | 'scrape_top_styles' | 'export_top_styles' | 'scrape_purchase_orders' | 'fix_invoices' | 'scrape_eans' | 'export_stock_list' | 'check_purchase_orders' | 'push_app_po_to_spy' | 'sync_app_po_from_spy' | 'export_suppleringer' | 'scrape_style_raw_costs';
+export type JobType =
+  | 'scrape_statistics'
+  | 'scrape_styles'
+  | 'enrich_styles'
+  | 'update_style_stock'
+  | 'check_stock_fix'
+  | 'export_overview'
+  | 'export_stock_list'
+  | 'export_top_styles'
+  | 'export_suppleringer'
+  | 'scrape_customers'
+  | 'apply_customer_preview'
+  | 'deep_scrape_styles'
+  | 'scrape_top_styles'
+  | 'scrape_purchase_orders'
+  | 'check_purchase_orders'
+  | 'scrape_style_raw_costs'
+  | 'fix_invoices'
+  | 'scrape_eans'
+  | 'push_app_po_to_spy'
+  | 'sync_app_po_from_spy'
+  | 'create_spy_stock_order'
+  | 'run_ai_analysis'
+  | 'analyze_conversation_message'
+  | 'send_email'
+  | 'send_stock_list_email'
+  | 'export_stock_list_after_update_stock';
 
 export interface ScrapeStatisticsPayload {
   // Allow optional 'deep' along with arbitrary keys; values may be undefined pre-validation

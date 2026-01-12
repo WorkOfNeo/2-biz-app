@@ -12,8 +12,12 @@ const JOB_DESCRIPTIONS: Record<string, string> = {
     'Scrape Styles: Fast scan of SPY styles table to discover and update styles (number, name, links, images). Detects missing styles. No detail page visits.',
   deep_scrape_styles:
     'Deep Enrich Styles: Visits each style Materials tab, reads season selects and color boxes, then maps which colors belong to which seasons. Automatically inserts/deletes style_color_seasons links to keep them in sync with SPY.',
+  enrich_styles:
+    'Enrich Styles (Legacy): Older enrich pass kept for backwards compatibility. Prefer Deep Enrich Styles.',
   update_style_stock:
     'Update Style Stock: Visits selected styles Stat & Stock tab, respects style/color scrape toggles and inactive flags, parses Stock/Sold/Purchase/Dedicated, bulk-upserts rows and runs in fan-out batches.',
+  check_stock_fix:
+    'Check Stock Fix: Post-checker for Update Style Stock. Verifies stock rows and optionally queues corrective actions. Typically auto-triggered after full/selected stock runs.',
   scrape_customers:
     'Scrape Customers: Imports customers from SPY (company, city, country, salesperson). Updates optional fields like phone, priority and links when available.',
   scrape_statistics:
@@ -22,16 +26,40 @@ const JOB_DESCRIPTIONS: Record<string, string> = {
     'Sync PO\'s: Scrapes purchase orders from SPY list page. Marks POs no longer in the list as Delivered. Automatically triggers Check PO Details afterwards.',
   check_purchase_orders:
     'Check PO Details: Visits each Running PO detail page to extract ETD/ETA dates and line items. Triggered automatically after Sync PO\'s.',
+  scrape_style_raw_costs:
+    'Scrape Style Raw Costs: Visits style cost/material pages in SPY and stores raw cost inputs used for purchase/order calculations.',
   export_overview:
     'Export Overview: Generates React-PDF exports (General per salesperson and combined ZIP), uploads to Supabase Storage and records entries in exports.',
   scrape_top_styles:
     'Scrape Top 10 Styles: Collects top-performing styles (and optionally color variants) and stores results for Top 10 dashboards.',
   export_top_styles:
     'Export Top 10 Styles: Builds PDF exports for Top styles based on stored results and uploads them to Storage.',
+  export_stock_list:
+    'Export Stock Lists: Generates PDF exports for all configured stock lists and uploads them to Supabase Storage.',
+  export_suppleringer:
+    'Export Suppleringer: Generates supplier ring PDFs (per salesperson / overall) and uploads them to Supabase Storage.',
   scrape_eans:
     'Scrape EANs: Visits each style EAN tab (#tab=ean), parses Color/Size/EAN, maps to style_colors, flushes and reimports the EAN table.',
   fix_invoices:
-    'Fix Invoices: Reconciles season_id on invoices by matching invoice_date to season date ranges. Supports dry run and apply.'
+    'Fix Invoices: Reconciles season_id on invoices by matching invoice_date to season date ranges. Supports dry run and apply.',
+  push_app_po_to_spy:
+    'Push App PO to SPY: Takes a purchase order created/edited in the app and pushes it into SPY (UI automation).',
+  sync_app_po_from_spy:
+    'Sync App PO from SPY: Imports/refreshes purchase order data from SPY into the app (UI automation).',
+  create_spy_stock_order:
+    'Create SPY Stock Order: Creates a stock order in SPY based on app inputs (UI automation).',
+  run_ai_analysis:
+    'Run AI Analysis: Runs automated AI analyses and stores results for the AI Analysis screens.',
+  analyze_conversation_message:
+    'Analyze Conversation Message: Runs AI classification/extraction for purchase conversations and stores results.',
+  send_email:
+    'Send Email: Sends queued emails (used by schedules and system automations).',
+  send_stock_list_email:
+    'Send Stock List Email: Sends the stock list export emails to scheduled recipients.',
+  apply_customer_preview:
+    'Apply Customer Preview: Applies a scraped customer preview into production customers table (used by review flows).',
+  export_stock_list_after_update_stock:
+    'Export Stock Lists After Stock Update (Internal): Waits for all Update Style Stock batches to finish, then enqueues Export Stock Lists once.'
 };
 
 function Truncated({ text, expanded, onToggle }: { text: string; expanded: boolean; onToggle: () => void }) {
@@ -589,11 +617,14 @@ export default function JobsOverviewPage() {
                 { type: 'scrape_styles', label: 'Scrape Styles', actions: [{ label: 'Run', payload: {} }] },
                 { type: 'deep_scrape_styles', label: 'Deep Enrich Styles', actions: [{ label: 'Run', payload: {} }] },
                 { type: 'update_style_stock', label: 'Update Style Stock', actions: [{ label: 'Run (Selected)', payload: {} }, { label: 'Run (All)', payload: { mode: 'all' } }] },
+                { type: 'check_stock_fix', label: 'Check Stock Fix', actions: [{ label: 'Run', payload: {} }] },
                 { type: 'scrape_customers', label: 'Scrape Customers', actions: [{ label: 'Run', payload: {} }] },
                 { type: 'scrape_statistics', label: 'Scrape Statistics', actions: [{ label: 'Run Deep', payload: { toggles: { deep: true } } }, { label: 'Run Deep + Style Details', payload: { toggles: { deep: true, style_details: true } } }, { label: 'Per-size Snapshot', payload: { kind: 'per_size' } }] },
                 { type: 'scrape_purchase_orders', label: 'Sync PO\'s', actions: [{ label: 'Run', payload: {} }] },
+                { type: 'check_purchase_orders', label: 'Check PO Details', actions: [{ label: 'Run', payload: {} }] },
                 { type: 'scrape_top_styles', label: 'Scrape Top 10 Styles', actions: [{ label: 'Run', payload: {} }] },
                 { type: 'scrape_eans', label: 'Scrape EANs', actions: [{ label: 'Run', payload: {} }] },
+                { type: 'scrape_style_raw_costs', label: 'Scrape Style Raw Costs', actions: [{ label: 'Run', payload: {} }] },
                 { type: 'fix_invoices', label: 'Fix Invoices', actions: [{ label: 'Dry run', payload: { dryRun: true } }, { label: 'Apply', payload: { dryRun: false } }] }
               ]
             },
@@ -604,7 +635,30 @@ export default function JobsOverviewPage() {
                 { type: 'export_overview', label: 'Export Overview', actions: [{ label: 'Run', payload: { mode: 'overview_react_pdf' } }] },
                 { type: 'export_overview', label: 'Export Countries', actions: [{ label: 'Run', payload: { mode: 'countries_react_pdf' } }] },
                 { type: 'export_top_styles', label: 'Export Top 10 Styles', actions: [{ label: 'Run', payload: {} }] },
+                { type: 'export_stock_list', label: 'Export Stock Lists', actions: [{ label: 'Run', payload: {} }] },
+                { type: 'export_suppleringer', label: 'Export Suppleringer', actions: [{ label: 'Run', payload: {} }] },
                 { type: 'export_all', label: 'Export All', actions: [{ label: 'Run', payload: {} }] }
+              ]
+            }
+            ,
+            {
+              title: 'SPY / Purchase Orders (Automation)',
+              items: [
+                { type: 'push_app_po_to_spy', label: 'Push App PO to SPY' },
+                { type: 'sync_app_po_from_spy', label: 'Sync App PO from SPY' },
+                { type: 'create_spy_stock_order', label: 'Create SPY Stock Order' },
+              ]
+            },
+            {
+              title: 'Internal / Email / AI (Automation)',
+              items: [
+                { type: 'run_ai_analysis', label: 'Run AI Analysis' },
+                { type: 'analyze_conversation_message', label: 'Analyze Conversation Message' },
+                { type: 'send_email', label: 'Send Email' },
+                { type: 'send_stock_list_email', label: 'Send Stock List Email' },
+                { type: 'apply_customer_preview', label: 'Apply Customer Preview' },
+                { type: 'export_stock_list_after_update_stock', label: 'Export Stock Lists After Stock Update (Internal)' },
+                { type: 'enrich_styles', label: 'Enrich Styles (Legacy)' },
               ]
             }
           ].map((section) => (
@@ -612,7 +666,7 @@ export default function JobsOverviewPage() {
               <div className="px-3 py-2 text-xs font-semibold text-gray-600 bg-gray-50">{section.title}</div>
               <ul className="divide-y">
                 {section.items.map((f) => (
-                  <li key={f.type} className="px-3 py-2">
+                  <li key={`${f.type}:${f.label}`} className="px-3 py-2">
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <div className="text-sm font-medium">{f.label}</div>
@@ -626,7 +680,9 @@ export default function JobsOverviewPage() {
                         <div className="mt-1 text-[11px] text-gray-500 font-mono">{f.type}</div>
                       </div>
                       <div className="flex flex-wrap items-center gap-2">
-                        {f.type === 'export_all' ? (
+                        {!('actions' in f) || !f.actions ? (
+                          <span className="text-[11px] text-gray-500">Automation only</span>
+                        ) : f.type === 'export_all' ? (
                           <button
                             disabled={seqRunning}
                             onClick={runAllExportsSequential}
