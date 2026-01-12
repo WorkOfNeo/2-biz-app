@@ -1,10 +1,9 @@
 {
   "crons": [
     { "path": "/api/cron/check-stock-fix-fixed", "schedule": "*/5 * * * *" },
-    { "path": "/api/cron/scrape-purchase-orders", "schedule": "0 6 * * *" },
+    { "path": "/api/cron/scrape-purchase-orders-fixed", "schedule": "*/5 * * * *" },
     { "path": "/api/cron/scrape-statistics-fixed", "schedule": "*/5 * * * *" },
     { "path": "/api/cron/ai-after-style-details", "schedule": "*/5 * * * *" },
-    { "path": "/api/cron/scrape-top-styles", "schedule": "30 14 * * *" },
     { "path": "/api/cron/after-statistics-exports", "schedule": "*/5 * * * *" },
     { "path": "/api/cron/cleanup-job-logs", "schedule": "0 2 */14 * *" },
     { "path": "/api/cron/send-stock-list-schedules", "schedule": "*/5 * * * *" },
