@@ -426,19 +426,22 @@ export async function runAiAnalysis(
       .sort((a, b) => b.qty - a.qty);
 
     // Group style details
-    const styleQty: Record<string, { qty: number; colors: Set<string>; customers: Set<string> }> = {};
+    const styleQty: Record<string, { qty: number; colors: Set<string>; customers: Set<string>; style_name: string }> = {};
     for (const row of styleDetails) {
       const sn = row.style_no;
       if (!sn) continue;
-      if (!styleQty[sn]) styleQty[sn] = { qty: 0, colors: new Set(), customers: new Set() };
+      if (!styleQty[sn]) styleQty[sn] = { qty: 0, colors: new Set(), customers: new Set(), style_name: row.style_name || '' };
       styleQty[sn].qty += Number(row.qty) || 0;
       if (row.color) styleQty[sn].colors.add(row.color);
       if (row.account_no) styleQty[sn].customers.add(row.account_no);
+      // Keep the first non-empty style_name we encounter
+      if (!styleQty[sn].style_name && row.style_name) styleQty[sn].style_name = row.style_name;
     }
 
     const topStyles = Object.entries(styleQty)
       .map(([style_no, data]) => ({
         style_no,
+        style_name: data.style_name || style_no, // Fallback to style_no if no name
         total_qty: data.qty,
         colors_count: data.colors.size,
         customer_count: data.customers.size
