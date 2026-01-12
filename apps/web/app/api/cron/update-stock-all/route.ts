@@ -8,7 +8,12 @@ async function handle(req: Request) {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
   const serviceKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVER_ROLE_KEY || '').trim();
   if (!url || !serviceKey) {
-    const errRes = { error: 'Supabase env missing', urlPresent: Boolean(url), serviceKeyPresent: Boolean(serviceKey), tried: ['SUPABASE_SERVICE_ROLE_KEY','SUPABASE_SERVER_ROLE_KEY'] };
+    const errRes = {
+      error: 'Supabase env missing',
+      urlPresent: Boolean(url),
+      serviceKeyPresent: Boolean(serviceKey),
+      tried: ['SUPABASE_SERVICE_ROLE_KEY', 'SUPABASE_SERVER_ROLE_KEY'],
+    };
     return new Response(JSON.stringify(debug ? { ...errRes, debug: true } : errRes), { status: 500 });
   }
   const supabase = createClient(url, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } });
@@ -18,7 +23,7 @@ async function handle(req: Request) {
     status: 'queued' as const,
     max_attempts: 3,
     queue: 'stock',
-    priority: 200
+    priority: 200,
   };
   const { data: job, error } = await supabase.from('jobs').insert(insertBody).select('id').single();
   if (error) {
@@ -26,13 +31,33 @@ async function handle(req: Request) {
     return new Response(JSON.stringify(debug ? { ...errRes, debug: true } : errRes), { status: 500 });
   }
   const jobId = (job as any)?.id as string;
-  await supabase.from('job_logs').insert({ job_id: jobId, level: 'info', msg: 'Enqueued via cron', data: { kind: 'update_stock_all' } });
+  await supabase
+    .from('job_logs')
+    .insert({ job_id: jobId, level: 'info', msg: 'Enqueued via cron', data: { kind: 'update_stock_all' } });
+
+  // Export of stock lists is triggered by the worker at the end of update_style_stock (fan-out safe).
   const res = { jobId };
-  return new Response(JSON.stringify(debug ? { ...res, debug: true } : res), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  return new Response(JSON.stringify(debug ? { ...res, debug: true } : res), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  });
 }
 
-export async function POST(req: Request) { try { return await handle(req); } catch (err: any) { return new Response(JSON.stringify({ error: err?.message || 'Cron update-stock-all error' }), { status: 500 }); } }
-export async function GET(req: Request) { try { return await handle(req); } catch (err: any) { return new Response(JSON.stringify({ error: err?.message || 'Cron update-stock-all error' }), { status: 500 }); } }
-export async function OPTIONS() { return new Response(null, { status: 204 }); }
-
+export async function POST(req: Request) {
+  try {
+    return await handle(req);
+  } catch (err: any) {
+    return new Response(JSON.stringify({ error: err?.message || 'Cron update-stock-all error' }), { status: 500 });
+  }
+}
+export async function GET(req: Request) {
+  try {
+    return await handle(req);
+  } catch (err: any) {
+    return new Response(JSON.stringify({ error: err?.message || 'Cron update-stock-all error' }), { status: 500 });
+  }
+}
+export async function OPTIONS() {
+  return new Response(null, { status: 204 });
+}
 

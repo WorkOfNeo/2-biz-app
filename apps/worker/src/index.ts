@@ -210,7 +210,9 @@ const BROWSERLESS_JOB_TYPES = new Set([
   'send_stock_list_email',
   'analyze_conversation_message',
   'fix_invoices',
-  'apply_customer_preview'
+  'apply_customer_preview',
+  // Internal orchestration jobs
+  'export_stock_list_after_update_stock'
 ]);
 
 async function runJob(job: JobRow) {
@@ -279,6 +281,63 @@ async function runJob(job: JobRow) {
       // Handle apply_customer_preview job
       if ((job.type as any) === 'apply_customer_preview') {
         await applyCustomerScrapePreview({ job, log, saveResult, setJobFailedOrRequeue, setJobSucceeded, ensureNotCancelled, supabase });
+        return;
+      }
+
+      // Wait for update_style_stock batches to finish, then enqueue export_stock_list
+      if ((job.type as any) === 'export_stock_list_after_update_stock') {
+        const triggerJobId = String((job.payload as any)?.triggerJobId || '').trim();
+        const requestedBy = (job.payload as any)?.requestedBy as string | undefined;
+        const waitMs = Math.max(30_000, Number((job.payload as any)?.waitMs || 120_000) || 120_000);
+        if (!triggerJobId) throw new Error('export_stock_list_after_update_stock missing payload.triggerJobId');
+
+        // Find all update_style_stock jobs in this run (root + fan-out batches)
+        const { data: stockJobs, error: stockJobsErr } = await supabase
+          .from('jobs')
+          .select('id,status')
+          .eq('type', 'update_style_stock')
+          .or(`id.eq.${triggerJobId},payload->>rootId.eq.${triggerJobId}`);
+        if (stockJobsErr) throw new Error(`Failed to query update_style_stock jobs: ${stockJobsErr.message}`);
+
+        const list = (stockJobs ?? []) as Array<{ id: string; status: string }>;
+        const pending = list.filter((j) => j.status === 'queued' || j.status === 'running');
+        if (pending.length > 0) {
+          const nextRun = new Date(Date.now() + waitMs).toISOString();
+          // Keep run_after even though we fail/requeue (setJobFailedOrRequeue doesn't clear it)
+          try { await supabase.from('jobs').update({ run_after: nextRun }).eq('id', job.id); } catch {}
+          await log(job.id, 'info', 'WAITING:update_style_stock_batches', { triggerJobId, pending: pending.length, nextRun });
+          throw new Error('WAITING_FOR_UPDATE_STYLE_STOCK');
+        }
+
+        // Dedupe: only enqueue one export_stock_list per triggerJobId
+        const { data: existingExport } = await supabase
+          .from('jobs')
+          .select('id,status,created_at')
+          .eq('type', 'export_stock_list')
+          .contains('payload', { triggerJobId })
+          .order('created_at', { ascending: false })
+          .limit(1);
+        const existing = (existingExport ?? [])[0] as any | undefined;
+        if (existing && (existing.status === 'queued' || existing.status === 'running' || existing.status === 'succeeded')) {
+          await saveResult(job.id, 'Export stock list already enqueued for this stock update', { triggerJobId, existingJobId: existing.id, status: existing.status });
+          return;
+        }
+
+        const { data: inserted, error: insErr } = await supabase
+          .from('jobs')
+          .insert({
+            type: 'export_stock_list',
+            payload: { requestedBy: requestedBy || 'after_update_stock', triggerJobId },
+            status: 'queued',
+            max_attempts: 3,
+            queue: 'default',
+            priority: 110,
+          })
+          .select('id')
+          .single();
+        if (insErr) throw new Error(`Failed to enqueue export_stock_list: ${insErr.message}`);
+
+        await saveResult(job.id, 'Enqueued export_stock_list after update_style_stock', { triggerJobId, exportJobId: (inserted as any)?.id });
         return;
       }
 
@@ -1051,6 +1110,44 @@ async function runJob(job: JobRow) {
         }
       } else {
         await log(job.id, 'info', 'STEP:check_stock_fix_already_enqueued', { existingJobId: existingCheckJob.id });
+      }
+    }
+
+    // Always export stock lists after full/selected stock update runs.
+    // Note: update_style_stock is a fan-out job. We enqueue a small waiter job that will
+    // wait until all batches (root + payload.rootId fan-outs) are done before enqueuing export_stock_list once.
+    if (isRootJob && isFullOrSelectedRun && currentBatchIndex === 1) {
+      try {
+        const { data: existingFollowup } = await supabase
+          .from('jobs')
+          .select('id,status')
+          .eq('type', 'export_stock_list_after_update_stock')
+          .contains('payload', { triggerJobId: rootId })
+          .in('status', ['queued', 'running'])
+          .maybeSingle();
+        if (!existingFollowup) {
+          const runAfter = new Date(Date.now() + 120_000).toISOString();
+          const { data: followup, error: followErr } = await supabase
+            .from('jobs')
+            .insert({
+              type: 'export_stock_list_after_update_stock',
+              payload: { triggerJobId: rootId, requestedBy: requestedBy || 'after_update_stock', waitMs: 120_000 },
+              status: 'queued',
+              max_attempts: 120, // ~4 hours at 2-min intervals
+              queue: 'default',
+              priority: 90,
+              run_after: runAfter,
+            } as any)
+            .select('id')
+            .single();
+          if (!followErr) {
+            await log(job.id, 'info', 'STEP:export_stock_list_after_enqueued', { triggerJobId: rootId, followupJobId: (followup as any)?.id, runAfter });
+          }
+        } else {
+          await log(job.id, 'info', 'STEP:export_stock_list_after_already_enqueued', { triggerJobId: rootId, existingJobId: (existingFollowup as any)?.id });
+        }
+      } catch (e: any) {
+        await log(job.id, 'error', 'STEP:export_stock_list_after_enqueue_failed', { error: e?.message || String(e), triggerJobId: rootId });
       }
     }
     
