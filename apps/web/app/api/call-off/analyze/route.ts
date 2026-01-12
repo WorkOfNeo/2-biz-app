@@ -279,7 +279,7 @@ Provide a brief analysis explaining why we should order ${neededTotal} units (or
 
       try {
         const completion = await openai.chat.completions.create({
-          model: 'gpt-4o-mini',
+          model: 'gpt-5-mini',
           messages: [
             {
               role: 'system',
@@ -291,7 +291,7 @@ Provide a brief analysis explaining why we should order ${neededTotal} units (or
             }
           ],
           max_tokens: 200,
-          temperature: 0.3
+          // GPT-5 only supports temperature=1 (default)
         });
 
         const analysis = completion.choices[0]?.message?.content || 

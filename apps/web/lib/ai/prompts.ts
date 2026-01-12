@@ -184,9 +184,9 @@ Examples:
   "warnings": ["string"]
 }
 \`\`\``,
-    model: 'gpt-4o',  // Using gpt-4o for better instruction following
-    temperature: 0.3,
-    maxTokens: 16384,  // gpt-4o max completion tokens
+    model: 'gpt-5',  // Using gpt-5 for best instruction following
+    temperature: 1,  // GPT-5 only supports default temperature
+    maxTokens: 16384,
   },
   
   // Compact prompt for processing one supplier at a time (chunked approach)
@@ -222,9 +222,9 @@ MOQ: {{supplier_moq}} | Lead Time: {{supplier_lead_time}} days
   "moq_status": "met|under|n/a",
   "summary": "1-2 sentences"
 }`,
-    model: 'gpt-4o',
-    temperature: 0.2,  // Lower temp for more consistent output
-    maxTokens: 4096,   // Smaller - one supplier shouldn't need more
+    model: 'gpt-5',
+    temperature: 1,  // GPT-5 only supports default temperature
+    maxTokens: 4096,
   },
 
   // Daily season analysis prompt - monitors season performance

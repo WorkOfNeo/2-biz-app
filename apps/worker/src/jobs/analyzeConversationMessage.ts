@@ -99,7 +99,7 @@ Be careful:
     // Call OpenAI (lazy init to avoid crashing worker if OPENAI_API_KEY isn't set)
     const openai = getOpenAIClient();
     const completion = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
+      model: 'gpt-5-mini',
       messages: [
         {
           role: 'system',
@@ -110,7 +110,7 @@ Be careful:
           content: prompt
         }
       ],
-      temperature: 0.3,
+      // GPT-5 only supports temperature=1 (default)
       max_tokens: 500,
     });
 

@@ -1247,13 +1247,13 @@ ${stylesData}
 
         try {
           const completion = await openai.chat.completions.create({
-            model: 'gpt-4o',
+            model: 'gpt-5',
             messages: [
               { role: 'system', content: 'Respond with valid JSON only. No markdown.' },
               { role: 'user', content: singleSupplierPrompt },
             ],
             max_tokens: 4096,
-            temperature: 0.2,
+            // GPT-5 only supports temperature=1 (default)
             response_format: { type: 'json_object' },
           });
           
