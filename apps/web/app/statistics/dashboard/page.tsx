@@ -332,8 +332,7 @@ function ScrapesTab() {
                       </TableCell>
                       <TableCell>
                         <Badge
-                          variant={schedule.enabled ? 'default' : 'secondary'}
-                          className={schedule.enabled ? 'bg-green-100 text-green-800' : ''}
+                          className={schedule.enabled ? 'bg-green-100 text-green-800 border-green-200' : 'bg-slate-100 text-slate-600 border-slate-200'}
                         >
                           {schedule.enabled ? 'Active' : 'Disabled'}
                         </Badge>
