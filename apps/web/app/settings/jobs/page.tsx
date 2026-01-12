@@ -3,9 +3,18 @@ import React from 'react';
 import useSWR from 'swr';
 import Link from 'next/link';
 import { supabase } from '../../../lib/supabaseClient';
+import { Badge } from '../../../components/ui/badge';
+import { Button } from '../../../components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../components/ui/table';
 
 type JobRow = { id: string; type: string; status: string; finished_at: string | null; started_at: string | null; created_at: string };
 type JobResult = { job_id: string; summary?: string | null; data?: any; created_at: string };
+
+type CronConfig = {
+  crons: Array<{ path: string; schedule: string }>;
+  byJobType: Record<string, { enabled: boolean; schedules: string[]; cronPaths: string[] }>;
+};
 
 const JOB_DESCRIPTIONS: Record<string, string> = {
   scrape_styles:
@@ -74,6 +83,23 @@ function Truncated({ text, expanded, onToggle }: { text: string; expanded: boole
           {expanded ? 'View less' : 'View more'}
         </button>
       )}
+    </div>
+  );
+}
+
+function CronBadges({ type, cron }: { type: string; cron: CronConfig | null | undefined }) {
+  const info = cron?.byJobType?.[type];
+  const enabled = !!info?.enabled;
+  const schedules = info?.schedules || [];
+  if (!enabled) return <Badge className="border-slate-200 text-slate-600">Cron: off</Badge>;
+  return (
+    <div className="flex flex-wrap items-center gap-1">
+      <Badge className="border-emerald-200 bg-emerald-50 text-emerald-800">Cron: on</Badge>
+      {schedules.map((s) => (
+        <Badge key={s} className="border-slate-200 bg-white text-slate-700 font-mono">
+          {s}
+        </Badge>
+      ))}
     </div>
   );
 }
@@ -486,6 +512,11 @@ async function fetchOverview() {
 
 export default function JobsOverviewPage() {
   const { data, mutate } = useSWR('jobs:overview', fetchOverview, { refreshInterval: 10000 });
+  const { data: cronConfig } = useSWR<CronConfig>('/api/admin/cron-config', async (url: string) => {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(await res.text());
+    return (await res.json()) as CronConfig;
+  }, { refreshInterval: 60_000 });
   const [enq, setEnq] = React.useState<string | null>(null);
   const [expandDesc, setExpandDesc] = React.useState<Record<string, boolean>>({});
   const [seqRunning, setSeqRunning] = React.useState(false);
@@ -606,10 +637,15 @@ export default function JobsOverviewPage() {
         );
       })()}
 
-      {/* Jobs list divided into Scrapes and Exports */}
-      <div className="rounded-md border bg-white">
-        <div className="p-3 text-sm font-semibold">Jobs</div>
-        <div className="border-t">
+      {/* Jobs list */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Jobs</CardTitle>
+          <div className="text-xs text-slate-600">
+            Cron badges are read automatically from <span className="font-mono">vercel.json</span>.
+          </div>
+        </CardHeader>
+        <CardContent className="p-0">
           {[
             {
               title: 'Scrapes',
@@ -663,13 +699,20 @@ export default function JobsOverviewPage() {
             }
           ].map((section) => (
             <div key={section.title} className="border-t first:border-t-0">
-              <div className="px-3 py-2 text-xs font-semibold text-gray-600 bg-gray-50">{section.title}</div>
-              <ul className="divide-y">
-                {section.items.map((f) => (
-                  <li key={`${f.type}:${f.label}`} className="px-3 py-2">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="text-sm font-medium">{f.label}</div>
+              <div className="px-4 py-2 text-xs font-semibold text-slate-700 bg-slate-50">{section.title}</div>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Job</TableHead>
+                    <TableHead>Cron</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {section.items.map((f) => (
+                    <TableRow key={`${f.type}:${f.label}`}>
+                      <TableCell>
+                        <div className="text-sm font-medium text-slate-900">{f.label}</div>
                         {JOB_DESCRIPTIONS[f.type] && (
                           <Truncated
                             text={JOB_DESCRIPTIONS[f.type] ?? ''}
@@ -677,39 +720,41 @@ export default function JobsOverviewPage() {
                             onToggle={() => setExpandDesc((m) => ({ ...m, [f.type]: !m[f.type] }))}
                           />
                         )}
-                        <div className="mt-1 text-[11px] text-gray-500 font-mono">{f.type}</div>
-                      </div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        {!('actions' in f) || !f.actions ? (
-                          <span className="text-[11px] text-gray-500">Automation only</span>
-                        ) : f.type === 'export_all' ? (
-                          <button
-                            disabled={seqRunning}
-                            onClick={runAllExportsSequential}
-                            className="rounded border px-2 py-1 text-xs hover:bg-gray-50 disabled:opacity-50"
-                          >Run</button>
-                        ) : (
-                          f.actions.map((a, i) => (
-                            <button
-                              key={i}
-                              disabled={enq!==null}
-                              onClick={() => enqueue(f.type, a.payload || {})}
-                              className="rounded border px-2 py-1 text-xs hover:bg-gray-50 disabled:opacity-50"
-                            >{a.label}</button>
-                          ))
-                        )}
-                      </div>
-                    </div>
-                  </li>
-                ))}
-              </ul>
+                        <div className="mt-1 text-[11px] text-slate-500 font-mono">{f.type}</div>
+                      </TableCell>
+                      <TableCell>
+                        <CronBadges type={f.type} cron={cronConfig ?? null} />
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex flex-wrap items-center justify-end gap-2">
+                          {!('actions' in f) || !f.actions ? (
+                            <Badge className="border-slate-200 text-slate-600">Automation only</Badge>
+                          ) : f.type === 'export_all' ? (
+                            <Button variant="outline" disabled={seqRunning} onClick={runAllExportsSequential}>
+                              Run
+                            </Button>
+                          ) : (
+                            f.actions.map((a, i) => (
+                              <Button key={i} variant="outline" disabled={enq !== null} onClick={() => enqueue(f.type, a.payload || {})}>
+                                {a.label}
+                              </Button>
+                            ))
+                          )}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
             </div>
           ))}
-        </div>
-        <div className="p-3 text-xs">
-          <Link href="/settings/runs" className="underline text-blue-700">View runs</Link>
-        </div>
-      </div>
+          <div className="p-4 text-xs border-t">
+            <Link href="/settings/runs" className="underline text-blue-700">
+              View runs
+            </Link>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }
