@@ -36,7 +36,7 @@ const JOB_DESCRIPTIONS: Record<string, string> = {
   check_purchase_orders:
     'Check PO Details: Visits each Running PO detail page to extract ETD/ETA dates and line items. Triggered automatically after Sync PO\'s.',
   scrape_style_raw_costs:
-    'Scrape Style Raw Costs: Visits style cost/material pages in SPY and stores raw cost inputs used for purchase/order calculations.',
+    '[DEPRECATED] Scrape Style Raw Costs: This job is deprecated and no longer used. Kept for backward compatibility only.',
   export_overview:
     'Export Overview: Generates React-PDF exports (General per salesperson and combined ZIP), uploads to Supabase Storage and records entries in exports.',
   scrape_top_styles:
@@ -660,7 +660,6 @@ export default function JobsOverviewPage() {
                 { type: 'check_purchase_orders', label: 'Check PO Details', actions: [{ label: 'Run', payload: {} }] },
                 { type: 'scrape_top_styles', label: 'Scrape Top 10 Styles', actions: [{ label: 'Run', payload: {} }] },
                 { type: 'scrape_eans', label: 'Scrape EANs', actions: [{ label: 'Run', payload: {} }] },
-                { type: 'scrape_style_raw_costs', label: 'Scrape Style Raw Costs', actions: [{ label: 'Run', payload: {} }] },
                 { type: 'fix_invoices', label: 'Fix Invoices', actions: [{ label: 'Dry run', payload: { dryRun: true } }, { label: 'Apply', payload: { dryRun: false } }] }
               ]
             },

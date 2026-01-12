@@ -1,0 +1,120 @@
+// Weekly Customer Sync - Sundays at 04:00 Copenhagen time
+// Runs scrape_customers which creates a preview with orphaned customers for approval
+export const dynamic = 'force-dynamic';
+export const runtime = 'nodejs';
+
+const TIMEZONE = 'Europe/Copenhagen';
+
+function getCopenhagenParts(date: Date): { isoDate: string; hour: number; minute: number; dayOfWeek: number } {
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    weekday: 'short',
+    hour12: false,
+  });
+  const parts = formatter.formatToParts(date);
+  const year = parts.find((p) => p.type === 'year')?.value || '1970';
+  const month = parts.find((p) => p.type === 'month')?.value || '01';
+  const day = parts.find((p) => p.type === 'day')?.value || '01';
+  const hour = parseInt(parts.find((p) => p.type === 'hour')?.value || '0', 10);
+  const minute = parseInt(parts.find((p) => p.type === 'minute')?.value || '0', 10);
+  const weekday = parts.find((p) => p.type === 'weekday')?.value || 'Mon';
+  
+  const dayMap: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  const dayOfWeek = dayMap[weekday] ?? 1;
+  
+  return { isoDate: `${year}-${month}-${day}`, hour, minute, dayOfWeek };
+}
+
+async function handle(req: Request) {
+  const urlObj = new URL(req.url);
+  const debug = urlObj.searchParams.get('debug') === '1';
+  const { createClient } = await import('@supabase/supabase-js');
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const serviceKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVER_ROLE_KEY || '').trim();
+  if (!url || !serviceKey) {
+    const errRes = { error: 'Supabase env missing', urlPresent: Boolean(url), serviceKeyPresent: Boolean(serviceKey) };
+    return new Response(JSON.stringify(debug ? { ...errRes, debug: true } : errRes), { status: 500 });
+  }
+  const supabase = createClient(url, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } });
+
+  const now = new Date();
+  const cph = getCopenhagenParts(now);
+
+  // Only run on Sundays between 04:00-04:09 Copenhagen time
+  const isSunday = cph.dayOfWeek === 0;
+  const isInWindow = cph.hour === 4 && cph.minute >= 0 && cph.minute <= 9;
+
+  if (!isSunday || !isInWindow) {
+    const res = { skipped: true, reason: 'not Sunday 04:00-04:09', cph };
+    return new Response(JSON.stringify(debug ? { ...res, debug: true } : res), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  }
+
+  const runKey = `weekly_customer_sync:${cph.isoDate}`;
+
+  // Dedupe: if we already enqueued this week's sync, do nothing
+  const { data: existing } = await supabase
+    .from('jobs')
+    .select('id,status')
+    .eq('type', 'scrape_customers')
+    .contains('payload', { requestedBy: 'cron_weekly_customer_sync', runKey })
+    .order('created_at', { ascending: false })
+    .limit(1);
+
+  if ((existing ?? []).length > 0) {
+    const res = { skipped: true, reason: 'already enqueued this week', runKey, existingJobId: (existing as any)[0]?.id };
+    return new Response(JSON.stringify(debug ? { ...res, debug: true } : res), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  }
+
+  // Check if a scrape_customers is already running
+  const { data: running } = await supabase
+    .from('jobs')
+    .select('id')
+    .eq('type', 'scrape_customers')
+    .in('status', ['queued', 'running'])
+    .limit(1);
+
+  if ((running ?? []).length > 0) {
+    const res = { skipped: true, reason: 'scrape_customers already in progress', existingJobId: (running as any)[0]?.id };
+    return new Response(JSON.stringify(debug ? { ...res, debug: true } : res), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  }
+
+  // Enqueue scrape_customers job
+  const { data: job, error: insErr } = await supabase
+    .from('jobs')
+    .insert({
+      type: 'scrape_customers',
+      payload: {
+        requestedBy: 'cron_weekly_customer_sync',
+        runKey,
+      },
+      status: 'queued',
+      max_attempts: 3,
+    } as any)
+    .select('id')
+    .single();
+
+  if (insErr) {
+    const errRes = { error: 'enqueue scrape_customers failed', detail: insErr.message };
+    return new Response(JSON.stringify(debug ? { ...errRes, debug: true } : errRes), { status: 500 });
+  }
+
+  const jobId = (job as any)?.id as string;
+  await supabase
+    .from('job_logs')
+    .insert({ job_id: jobId, level: 'info', msg: 'Enqueued via weekly cron', data: { runKey } });
+
+  // Note: After scrape_customers completes, users can review orphaned customers
+  // at /settings/customers/preview?id=<preview_id> and mark them as inactive
+
+  const res = { enqueued: true, jobId, runKey, note: 'Preview with orphaned customers will be available at /settings/customers after job completes' };
+  return new Response(JSON.stringify(debug ? { ...res, debug: true } : res), { status: 200, headers: { 'Content-Type': 'application/json' } });
+}
+
+export async function POST(req: Request) { try { return await handle(req); } catch (err: any) { return new Response(JSON.stringify({ error: err?.message || 'Cron weekly-customer-sync error' }), { status: 500 }); } }
+export async function GET(req: Request) { try { return await handle(req); } catch (err: any) { return new Response(JSON.stringify({ error: err?.message || 'Cron weekly-customer-sync error' }), { status: 500 }); } }
+export async function OPTIONS() { return new Response(null, { status: 204 }); }

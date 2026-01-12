@@ -1031,6 +1031,13 @@ async function runJob(job: JobRow) {
       if (stockMovements.length) {
         try { await supabase.from('style_stock_movements').insert(stockMovements); } catch {}
       }
+      // Update style_stock_totals for fast check_stock_fix comparisons
+      try {
+        await supabase.rpc('update_style_stock_total', { p_style_no: s.style_no });
+      } catch (e: any) {
+        // Non-fatal: totals table may not exist yet during migration period
+        // Will be populated via refresh_all_style_stock_totals() after migration
+      }
       // Check per-color if all values across all sections are 0 and update maybe_inactive flag
       try {
         // Group extracted rows by color

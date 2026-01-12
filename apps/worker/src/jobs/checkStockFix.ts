@@ -1,6 +1,5 @@
 import type { Page } from 'playwright-core';
 import type { JobRow } from '@shared/types';
-import * as XLSX from 'xlsx';
 
 type Ctx = {
   job: JobRow;
@@ -16,8 +15,13 @@ type Ctx = {
 };
 
 // Check stock fix: Scrape SPY stock data and compare with database
+// Supports autoFix mode: when payload.autoFix is true, enqueues update_style_stock for mismatched styles
 export async function checkStockFix(ctx: Ctx) {
   const { job, page, log, saveResult, setJobFailedOrRequeue, setJobSucceeded, ensureNotCancelled, supabase, SPY_BASE_URL } = ctx;
+  
+  // Read autoFix mode from payload (default: false for backward compatibility)
+  const autoFix = (job.payload as any)?.autoFix === true;
+  const requestedBy = (job.payload as any)?.requestedBy as string | undefined;
   
   try {
     await log(job.id, 'info', 'STEP:check_stock_fix_begin');
@@ -115,122 +119,152 @@ export async function checkStockFix(ctx: Ctx) {
     await log(job.id, 'info', 'STEP:check_stock_fix_storing_data', { sample: parsedRows.slice(0, 5) });
     
     // Fetch current stock data from database and compare
-    // We need to aggregate stock data per style_no from style_stock table
     const styleNos = Array.from(new Set(parsedRows.map(r => r.style_no).filter(Boolean)));
     await log(job.id, 'info', 'STEP:check_stock_fix_fetching_db_stock', { styleCount: styleNos.length });
     
-    // Fetch all stock data with pagination to avoid Supabase default limits
-    // Batch the style_no queries if there are too many (PostgreSQL IN clause limit ~1000)
-    const BATCH_SIZE = 500; // Safe batch size for IN clause
-    const PAGE_SIZE = 1000; // Supabase page size
-    const stockData: any[] = [];
+    const dbStockByStyleNo = new Map<string, number>();
+    let usedTotalsTable = false;
     
-    for (let i = 0; i < styleNos.length; i += BATCH_SIZE) {
-      const batch = styleNos.slice(i, i + BATCH_SIZE);
-      await log(job.id, 'info', 'STEP:check_stock_fix_fetching_batch', { 
-        batchIndex: Math.floor(i / BATCH_SIZE) + 1,
-        totalBatches: Math.ceil(styleNos.length / BATCH_SIZE),
-        batchSize: batch.length
+    // Try fast path: use style_stock_totals table (pre-aggregated totals)
+    try {
+      const BATCH_SIZE = 500;
+      let totalsFound = 0;
+      
+      for (let i = 0; i < styleNos.length; i += BATCH_SIZE) {
+        const batch = styleNos.slice(i, i + BATCH_SIZE);
+        const { data: totalsData, error: totalsErr } = await supabase
+          .from('style_stock_totals')
+          .select('style_no, total_stock')
+          .in('style_no', batch);
+        
+        if (totalsErr) {
+          // Table doesn't exist or query failed - fall back to slow path
+          throw new Error(totalsErr.message);
+        }
+        
+        for (const row of (totalsData ?? [])) {
+          dbStockByStyleNo.set(row.style_no, row.total_stock ?? 0);
+          totalsFound++;
+        }
+      }
+      
+      if (totalsFound > 0) {
+        usedTotalsTable = true;
+        await log(job.id, 'info', 'STEP:check_stock_fix_used_totals_table', { 
+          stylesFound: totalsFound,
+          stylesMissing: styleNos.length - totalsFound
+        });
+      }
+    } catch (e: any) {
+      await log(job.id, 'info', 'STEP:check_stock_fix_totals_fallback', { 
+        reason: e?.message || 'style_stock_totals not available',
+        usingSlowPath: true
+      });
+    }
+    
+    // Fallback: slow path - aggregate from style_stock table
+    if (!usedTotalsTable) {
+      const BATCH_SIZE = 500;
+      const PAGE_SIZE = 1000;
+      const stockData: any[] = [];
+      
+      for (let i = 0; i < styleNos.length; i += BATCH_SIZE) {
+        const batch = styleNos.slice(i, i + BATCH_SIZE);
+        await log(job.id, 'info', 'STEP:check_stock_fix_fetching_batch', { 
+          batchIndex: Math.floor(i / BATCH_SIZE) + 1,
+          totalBatches: Math.ceil(styleNos.length / BATCH_SIZE),
+          batchSize: batch.length
+        });
+        
+        let from = 0;
+        let hasMore = true;
+        
+        while (hasMore) {
+          const to = from + PAGE_SIZE - 1;
+          const { data: batchData, error: batchError } = await supabase
+            .from('style_stock')
+            .select('style_no, color, sizes, section, row_label, values, scraped_at')
+            .in('style_no', batch)
+            .order('scraped_at', { ascending: false })
+            .range(from, to);
+          
+          if (batchError) {
+            await log(job.id, 'error', 'STEP:check_stock_fix_db_batch_error', { 
+              error: batchError.message,
+              batchIndex: Math.floor(i / BATCH_SIZE) + 1
+            });
+            throw new Error(`Failed to fetch stock data batch: ${batchError.message}`);
+          }
+          
+          if (batchData && batchData.length > 0) {
+            stockData.push(...batchData);
+          }
+          
+          hasMore = batchData && batchData.length === PAGE_SIZE;
+          from += PAGE_SIZE;
+        }
+      }
+      
+      const foundStyleNos = new Set(stockData.map((r: any) => r.style_no));
+      const missingStyleNos = styleNos.filter(sn => !foundStyleNos.has(sn));
+      
+      await log(job.id, 'info', 'STEP:check_stock_fix_db_rows_fetched', { 
+        total_rows: stockData.length,
+        unique_styles_requested: styleNos.length,
+        unique_styles_found: foundStyleNos.size,
+        missing_styles_count: missingStyleNos.length,
+        sample_style: styleNos[0],
+        sample_rows: stockData.filter((r: any) => r.style_no === styleNos[0]).length,
+        sample_missing_styles: missingStyleNos.slice(0, 10)
       });
       
-      // Fetch all pages for this batch
-      let from = 0;
-      let hasMore = true;
-      
-      while (hasMore) {
-        const to = from + PAGE_SIZE - 1;
-        const { data: batchData, error: batchError } = await supabase
-          .from('style_stock')
-          .select('style_no, color, sizes, section, row_label, values, scraped_at')
-          .in('style_no', batch)
-          .order('scraped_at', { ascending: false })
-          .range(from, to);
-        
-        if (batchError) {
-          await log(job.id, 'error', 'STEP:check_stock_fix_db_batch_error', { 
-            error: batchError.message,
-            batchIndex: Math.floor(i / BATCH_SIZE) + 1
-          });
-          throw new Error(`Failed to fetch stock data batch: ${batchError.message}`);
-        }
-        
-        if (batchData && batchData.length > 0) {
-          stockData.push(...batchData);
-        }
-        
-        hasMore = batchData && batchData.length === PAGE_SIZE;
-        from += PAGE_SIZE;
+      // Group by style_no -> color
+      const byStyle = new Map<string, Map<string, any[]>>();
+      for (const r of (stockData ?? [])) {
+        if (!byStyle.has(r.style_no)) byStyle.set(r.style_no, new Map());
+        const byColor = byStyle.get(r.style_no)!;
+        if (!byColor.has(r.color)) byColor.set(r.color, []);
+        byColor.get(r.color)!.push(r);
       }
-    }
-    
-    // Check which styles we found data for
-    const foundStyleNos = new Set(stockData.map((r: any) => r.style_no));
-    const missingStyleNos = styleNos.filter(sn => !foundStyleNos.has(sn));
-    
-    await log(job.id, 'info', 'STEP:check_stock_fix_db_rows_fetched', { 
-      total_rows: stockData.length,
-      unique_styles_requested: styleNos.length,
-      unique_styles_found: foundStyleNos.size,
-      missing_styles_count: missingStyleNos.length,
-      sample_style: styleNos[0],
-      sample_rows: stockData.filter((r: any) => r.style_no === styleNos[0]).length,
-      sample_missing_styles: missingStyleNos.slice(0, 10)
-    });
-    
-    // Aggregate stock data per style using same logic as stock-list page
-    // Need to deduplicate by (style_no, color, section, row_label) keeping only latest
-    const dbStockByStyleNo = new Map<string, number>();
-    
-    // Group by style_no -> color
-    const byStyle = new Map<string, Map<string, any[]>>();
-    for (const r of (stockData ?? [])) {
-      if (!byStyle.has(r.style_no)) byStyle.set(r.style_no, new Map());
-      const byColor = byStyle.get(r.style_no)!;
-      if (!byColor.has(r.color)) byColor.set(r.color, []);
-      byColor.get(r.color)!.push(r);
-    }
-    
-    // For each style, aggregate across all colors
-    for (const [styleNo, byColor] of byStyle.entries()) {
-      let styleTotal = 0;
       
-      for (const [color, rows] of byColor.entries()) {
-        // Deduplicate: keep latest per (section, row_label)
-        const latestMap = new Map<string, any>();
-        let uniqueIdCounter = 0;
+      // For each style, aggregate across all colors
+      for (const [styleNo, byColor] of byStyle.entries()) {
+        let styleTotal = 0;
         
-        for (const r of rows) {
-          const normalizedLabel = String(r.row_label ?? '').trim();
+        for (const [, rows] of byColor.entries()) {
+          const latestMap = new Map<string, any>();
+          let uniqueIdCounter = 0;
           
-          if (normalizedLabel) {
-            // Has a PO number: deduplicate by keeping only latest scraped_at for this PO
-            const key = `${r.section}|${normalizedLabel}`;
-            const curr = latestMap.get(key);
-            if (!curr || new Date(r.scraped_at).getTime() > new Date(curr.scraped_at).getTime()) {
-              latestMap.set(key, r);
+          for (const r of rows) {
+            const normalizedLabel = String(r.row_label ?? '').trim();
+            
+            if (normalizedLabel) {
+              const key = `${r.section}|${normalizedLabel}`;
+              const curr = latestMap.get(key);
+              if (!curr || new Date(r.scraped_at).getTime() > new Date(curr.scraped_at).getTime()) {
+                latestMap.set(key, r);
+              }
+            } else {
+              latestMap.set(`${r.section}|__unnamed_${uniqueIdCounter++}`, r);
             }
-          } else {
-            // No PO number (NULL/empty): treat each row as a unique unnamed PO
-            latestMap.set(`${r.section}|__unnamed_${uniqueIdCounter++}`, r);
+          }
+          
+          const latestRows = Array.from(latestMap.values());
+          const stockRow = latestRows.find(r => r.section === 'Stock');
+          
+          if (stockRow) {
+            const values = Array.isArray(stockRow.values) 
+              ? stockRow.values 
+              : JSON.parse(String(stockRow.values || '[]'));
+            const colorTotal = Array.isArray(values) 
+              ? values.reduce((sum: number, v: any) => sum + (Number(v) || 0), 0) 
+              : Number(values) || 0;
+            styleTotal += colorTotal;
           }
         }
         
-        // Get the Stock section row for this color
-        const latestRows = Array.from(latestMap.values());
-        const stockRow = latestRows.find(r => r.section === 'Stock');
-        
-        if (stockRow) {
-          const values = Array.isArray(stockRow.values) 
-            ? stockRow.values 
-            : JSON.parse(String(stockRow.values || '[]'));
-          const colorTotal = Array.isArray(values) 
-            ? values.reduce((sum: number, v: any) => sum + (Number(v) || 0), 0) 
-            : Number(values) || 0;
-          styleTotal += colorTotal;
-        }
+        dbStockByStyleNo.set(styleNo, styleTotal);
       }
-      
-      dbStockByStyleNo.set(styleNo, styleTotal);
     }
     
     // Compare and find mismatches
@@ -238,18 +272,18 @@ export async function checkStockFix(ctx: Ctx) {
     const allComparisons: Array<{ style_no: string; style_name: string | null; spy_stock: number | null; db_stock: number; diff: number }> = [];
     const mismatches: Array<{ style_no: string; spy_stock: number | null; db_stock: number; diff: number }> = [];
     
-    // Log first 10 comparisons for debugging, including styles with no DB data
+    // Log first 10 comparisons for debugging
     const debugSample = parsedRows.slice(0, 10).map(row => {
       const spyStock = row.stock ?? 0;
       const dbStock = row.style_no ? dbStockByStyleNo.get(row.style_no) ?? 0 : 0;
-      const hasDbData = row.style_no ? byStyle.has(row.style_no) : false;
+      const hasDbData = row.style_no ? dbStockByStyleNo.has(row.style_no) : false;
       return {
         style_no: row.style_no,
         spy_stock: spyStock,
         db_stock: dbStock,
         has_db_data: hasDbData,
-        colors_in_db: row.style_no ? (byStyle.get(row.style_no)?.size || 0) : 0,
-        match: spyStock === dbStock
+        match: spyStock === dbStock,
+        usedTotalsTable
       };
     });
     
@@ -257,7 +291,7 @@ export async function checkStockFix(ctx: Ctx) {
     
     // Log summary of styles with no DB data
     const stylesWithNoDbData = parsedRows
-      .filter(row => row.style_no && !byStyle.has(row.style_no))
+      .filter(row => row.style_no && !dbStockByStyleNo.has(row.style_no))
       .map(row => row.style_no)
       .filter(Boolean) as string[];
     
@@ -300,8 +334,7 @@ export async function checkStockFix(ctx: Ctx) {
             style_no: styleNo,
             style_name: row.style_name,
             spy_stock: row.stock,
-            db_stock: dbStock,
-            colors_in_db: byStyle.get(styleNo)?.size || 0
+            db_stock: dbStock
           });
         }
       }
@@ -310,13 +343,101 @@ export async function checkStockFix(ctx: Ctx) {
     await log(job.id, 'info', 'STEP:check_stock_fix_mismatches_found', { 
       totalChecked: parsedRows.length, 
       mismatchCount: mismatches.length,
+      autoFix,
       sample: mismatches.slice(0, 10)
     });
     
-    // Store mismatches for manual review - DO NOT auto-scrape
-    if (mismatches.length > 0) {
+    // Handle autoFix mode: enqueue update_style_stock for mismatched styles
+    let fixJobsEnqueued = 0;
+    if (autoFix && mismatches.length > 0) {
+      await log(job.id, 'info', 'STEP:check_stock_fix_autofix_start', { 
+        message: 'AutoFix enabled - enqueuing update_style_stock for mismatched styles',
+        styleCount: mismatches.length 
+      });
+      
+      const mismatchedStyleNos = mismatches.map(m => m.style_no);
+      
+      // Chunk the mismatched styles into batches of 30 (same as update_style_stock BATCH_SIZE)
+      const BATCH_SIZE = 30;
+      const chunks: string[][] = [];
+      for (let i = 0; i < mismatchedStyleNos.length; i += BATCH_SIZE) {
+        chunks.push(mismatchedStyleNos.slice(i, i + BATCH_SIZE));
+      }
+      
+      // Enqueue update_style_stock jobs for each chunk
+      for (let i = 0; i < chunks.length; i++) {
+        const chunk = chunks[i];
+        if (!chunk) continue;
+        try {
+          const { error: insertErr } = await supabase
+            .from('jobs')
+            .insert({
+              type: 'update_style_stock',
+              payload: {
+                styleNos: chunk,
+                requestedBy: 'check_stock_fix_autofix',
+                triggerJobId: job.id,
+                batchIndex: i + 1,
+                batchTotal: chunks.length
+              },
+              status: 'queued',
+              max_attempts: 3,
+              queue: 'stock',
+              priority: 150 // Medium-high priority
+            });
+          if (!insertErr) {
+            fixJobsEnqueued++;
+          } else {
+            await log(job.id, 'error', 'STEP:check_stock_fix_autofix_enqueue_error', { 
+              batchIndex: i + 1, 
+              error: insertErr.message 
+            });
+          }
+        } catch (e: any) {
+          await log(job.id, 'error', 'STEP:check_stock_fix_autofix_enqueue_exception', { 
+            batchIndex: i + 1, 
+            error: e?.message || String(e) 
+          });
+        }
+      }
+      
+      await log(job.id, 'info', 'STEP:check_stock_fix_autofix_enqueued', { 
+        jobsEnqueued: fixJobsEnqueued,
+        totalBatches: chunks.length,
+        totalStyles: mismatchedStyleNos.length
+      });
+      
+      // Enqueue export_stock_list to run after fixes complete (with delay)
+      // Use a waiter job pattern similar to export_stock_list_after_update_stock
+      try {
+        const runAfter = new Date(Date.now() + 180_000).toISOString(); // 3 min delay
+        const { error: exportErr } = await supabase
+          .from('jobs')
+          .insert({
+            type: 'export_stock_list',
+            payload: {
+              requestedBy: 'check_stock_fix_autofix',
+              triggerJobId: job.id
+            },
+            status: 'queued',
+            max_attempts: 3,
+            queue: 'default',
+            priority: 80,
+            run_after: runAfter
+          });
+        if (!exportErr) {
+          await log(job.id, 'info', 'STEP:check_stock_fix_export_enqueued', { runAfter });
+        } else {
+          await log(job.id, 'error', 'STEP:check_stock_fix_export_enqueue_error', { error: exportErr.message });
+        }
+      } catch (e: any) {
+        await log(job.id, 'error', 'STEP:check_stock_fix_export_enqueue_exception', { error: e?.message || String(e) });
+      }
+      
+    } else if (mismatches.length > 0) {
+      // Manual review mode (autoFix disabled)
       await log(job.id, 'info', 'STEP:check_stock_fix_ready_for_review', { 
-        message: 'Mismatches found - ready for manual review',
+        message: 'Mismatches found - ready for manual review (autoFix disabled)',
         styleCount: mismatches.length 
       });
     } else {
@@ -329,6 +450,8 @@ export async function checkStockFix(ctx: Ctx) {
       totalChecked: parsedRows.length,
       mismatches: mismatches.length,
       mismatchedStyles: mismatches.map(m => m.style_no),
+      autoFix,
+      fixJobsEnqueued,
       details: allComparisons // Send ALL styles, not just mismatches
     });
     

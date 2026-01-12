@@ -1,19 +1,17 @@
 {
   "crons": [
-    { "path": "/api/cron/update-stock-all", "schedule": "0 0 * * *" },
+    { "path": "/api/cron/check-stock-fix-fixed", "schedule": "*/5 * * * *" },
     { "path": "/api/cron/scrape-purchase-orders", "schedule": "0 6 * * *" },
-    { "path": "/api/cron/scrape-statistics-deep", "schedule": "0 8 * * *" },
-    { "path": "/api/cron/scrape-statistics-deep", "schedule": "0 12 * * *" },
-    { "path": "/api/cron/scrape-statistics-deep", "schedule": "0 15 * * *" },
-    { "path": "/api/cron/scrape-style-details", "schedule": "0 18 * * *" },
-    { "path": "/api/cron/ai-daily-analysis", "schedule": "0 19 * * *" },
+    { "path": "/api/cron/scrape-statistics-fixed", "schedule": "*/5 * * * *" },
+    { "path": "/api/cron/ai-after-style-details", "schedule": "*/5 * * * *" },
     { "path": "/api/cron/scrape-top-styles", "schedule": "30 14 * * *" },
-    { "path": "/api/cron/exports-after-deep", "schedule": "30 2 * * *" },
-    { "path": "/api/cron/exports-after-deep", "schedule": "0 5 * * *" },
+    { "path": "/api/cron/after-statistics-exports", "schedule": "*/5 * * * *" },
     { "path": "/api/cron/cleanup-job-logs", "schedule": "0 2 */14 * *" },
     { "path": "/api/cron/send-stock-list-schedules", "schedule": "*/5 * * * *" },
     { "path": "/api/cron/send-salesmen-schedules", "schedule": "*/5 * * * *" },
-    { "path": "/api/cron/export-statistics-fixed", "schedule": "*/5 * * * *" }
+    { "path": "/api/cron/export-statistics-fixed", "schedule": "*/5 * * * *" },
+    { "path": "/api/cron/weekly-style-refresh", "schedule": "*/5 * * * *" },
+    { "path": "/api/cron/weekly-customer-sync", "schedule": "*/5 * * * *" }
   ]
 }
 
