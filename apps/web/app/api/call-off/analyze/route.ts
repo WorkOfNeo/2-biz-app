@@ -290,7 +290,7 @@ Provide a brief analysis explaining why we should order ${neededTotal} units (or
               content: prompt
             }
           ],
-          max_tokens: 200,
+          max_completion_tokens: 200,  // GPT-5 uses max_completion_tokens
           // GPT-5 only supports temperature=1 (default)
         });
 

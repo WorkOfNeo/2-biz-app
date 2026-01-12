@@ -1252,7 +1252,7 @@ ${stylesData}
               { role: 'system', content: 'Respond with valid JSON only. No markdown.' },
               { role: 'user', content: singleSupplierPrompt },
             ],
-            max_tokens: 4096,
+            max_completion_tokens: 4096,  // GPT-5 uses max_completion_tokens
             // GPT-5 only supports temperature=1 (default)
             response_format: { type: 'json_object' },
           });
@@ -1341,6 +1341,7 @@ ${stylesData}
           promptLength: finalPrompt.length,
         });
 
+        const isGpt5 = promptConfig.model.startsWith('gpt-5');
         const completion = await openai.chat.completions.create({
           model: promptConfig.model,
           messages: [
@@ -1353,8 +1354,11 @@ ${stylesData}
               content: finalPrompt,
             },
           ],
-          max_tokens: promptConfig.maxTokens,
-          temperature: promptConfig.temperature,
+          // GPT-5 uses max_completion_tokens and only supports temperature=1
+          ...(isGpt5 
+            ? { max_completion_tokens: promptConfig.maxTokens }
+            : { max_tokens: promptConfig.maxTokens, temperature: promptConfig.temperature }
+          ),
           response_format: { type: 'json_object' },
         });
 

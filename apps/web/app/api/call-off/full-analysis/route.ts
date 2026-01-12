@@ -637,7 +637,7 @@ Keep it SHORT. Only mention specific styles. No general business advice.`;
       const completion = await openai.chat.completions.create({
         model: 'gpt-5-mini',
         messages: [{ role: 'user', content: aiPrompt }],
-        max_tokens: 600,
+        max_completion_tokens: 600,  // GPT-5 uses max_completion_tokens
         // GPT-5 only supports temperature=1 (default)
       });
       aiSummary = completion.choices[0]?.message?.content || 'Unable to generate AI summary.';

@@ -111,7 +111,7 @@ Be careful:
         }
       ],
       // GPT-5 only supports temperature=1 (default)
-      max_tokens: 500,
+      max_completion_tokens: 500,  // GPT-5 uses max_completion_tokens instead of max_tokens
     });
 
     const responseText = completion.choices[0]?.message?.content || '{}';
