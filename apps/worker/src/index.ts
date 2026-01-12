@@ -30,6 +30,7 @@ import { scrapeStyleRawCosts } from './jobs/scrapeStyleRawCosts.js';
 import { sendEmail } from './jobs/sendEmail.js';
 import { analyzeConversationMessage } from './jobs/analyzeConversationMessage.js';
 import { runAiAnalysis } from './jobs/runAiAnalysis.js';
+import { exportAiAnalysis } from './jobs/exportAiAnalysis.js';
 // (imported with .js extension above)
 
 const SUPABASE_URL = process.env.SUPABASE_URL!;
@@ -206,6 +207,7 @@ async function maybeGetLoginFrame(page: Page): Promise<Page> {
 // Job types that don't require a browser
 const BROWSERLESS_JOB_TYPES = new Set([
   'run_ai_analysis',
+  'export_ai_analysis',
   'send_email',
   'send_stock_list_email',
   'analyze_conversation_message',
@@ -235,8 +237,43 @@ async function runJob(job: JobRow) {
         if (result.success) {
           await saveResult(job.id, 'AI analysis completed', { analysisId: result.analysisId });
           await setJobSucceeded(job.id);
+          
+          // Enqueue PDF export job if analysis succeeded
+          if (result.analysisId) {
+            try {
+              await supabase.from('jobs').insert({
+                type: 'export_ai_analysis',
+                payload: { analysisId: result.analysisId },
+                status: 'queued',
+                max_attempts: 2
+              });
+              await log(job.id, 'info', 'Enqueued PDF export job', { analysisId: result.analysisId });
+            } catch (enqueueErr: any) {
+              await log(job.id, 'error', 'Failed to enqueue PDF export', { error: enqueueErr.message });
+            }
+          }
         } else {
           await setJobFailedOrRequeue(job, result.error || 'AI analysis failed');
+        }
+        return;
+      }
+      
+      // Handle export_ai_analysis job (PDF generation)
+      if ((job.type as any) === 'export_ai_analysis') {
+        // This job needs a page for Image loading in React-PDF (even if minimal)
+        // But we can try without first - React-PDF can fetch images directly
+        try {
+          await exportAiAnalysis({
+            job,
+            page: null as any, // Not used for this job
+            log: async (_, level, msg, data) => log(job.id, level, msg, data),
+            saveResult,
+            setJobFailedOrRequeue,
+            setJobSucceeded,
+            supabase
+          });
+        } catch (e: any) {
+          await setJobFailedOrRequeue(job, e.message || 'Export failed');
         }
         return;
       }

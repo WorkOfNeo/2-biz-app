@@ -24,7 +24,8 @@ export type JobType =
   | 'analyze_conversation_message'
   | 'send_email'
   | 'send_stock_list_email'
-  | 'export_stock_list_after_update_stock';
+  | 'export_stock_list_after_update_stock'
+  | 'export_ai_analysis';
 
 export interface ScrapeStatisticsPayload {
   // Allow optional 'deep' along with arbitrary keys; values may be undefined pre-validation

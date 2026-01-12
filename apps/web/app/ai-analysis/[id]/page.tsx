@@ -6,7 +6,7 @@ import { supabase } from '../../../lib/supabaseClient';
 import Link from 'next/link';
 import { 
   ArrowLeft, Brain, TrendingUp, Users, Package, Calendar, 
-  ChevronDown, ChevronUp, User, Globe, BarChart3, Clock, Mail
+  ChevronDown, ChevronUp, User, Globe, BarChart3, Clock, Mail, FileDown
 } from 'lucide-react';
 import { useState, useMemo } from 'react';
 import Image from 'next/image';
@@ -29,6 +29,7 @@ type Analysis = {
   email_sent_at: string | null;
   email_recipients: string[];
   created_at: string;
+  pdf_url: string | null;
   season?: { name: string; year: number | null };
   comparison_season?: { name: string; year: number | null };
 };
@@ -212,6 +213,17 @@ export default function AnalysisDetailPage() {
                   <Mail className="h-4 w-4" />
                   Email sent
                 </span>
+              )}
+              {analysis.pdf_url && (
+                <a 
+                  href={analysis.pdf_url} 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-1 text-indigo-600 hover:text-indigo-700"
+                >
+                  <FileDown className="h-4 w-4" />
+                  Download PDF
+                </a>
               )}
             </div>
           </div>
