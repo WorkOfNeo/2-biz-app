@@ -125,17 +125,39 @@ export default function AnalysisDetailPage() {
   const { data: stylesInfo } = useSWR(
     topStyleNos.length > 0 ? ['styles-info', topStyleNos.join(',')] : null,
     async () => {
+      console.log('[StylesInfo] Fetching for style numbers:', topStyleNos);
+      
       // Fetch basic style info
-      const { data: styles } = await supabase
+      const { data: styles, error: stylesError } = await supabase
         .from('styles')
         .select('style_no, name, image_url')
         .in('style_no', topStyleNos);
       
+      console.log('[StylesInfo] Styles table result:', { 
+        count: styles?.length, 
+        error: stylesError,
+        sample: styles?.slice(0, 2).map(s => ({ 
+          style_no: s.style_no, 
+          name: s.name, 
+          has_image: !!s.image_url,
+          image_url: s.image_url?.substring(0, 60) + '...'
+        }))
+      });
+      
       // Fetch color images as fallback (from deep scrape)
-      const { data: colorImages } = await supabase
+      const { data: colorImages, error: colorError } = await supabase
         .from('style_colors')
         .select('style_id, image_url, styles!inner(style_no)')
         .not('image_url', 'is', null);
+      
+      console.log('[StylesInfo] Color images result:', { 
+        count: colorImages?.length, 
+        error: colorError,
+        sample: colorImages?.slice(0, 3).map(c => ({
+          style_no: (c.styles as any)?.style_no,
+          image_url: c.image_url?.substring(0, 60) + '...'
+        }))
+      });
       
       // Build color image lookup by style_no
       const colorImageMap: Record<string, string> = {};
@@ -146,14 +168,26 @@ export default function AnalysisDetailPage() {
         }
       }
       
+      console.log('[StylesInfo] Color image map entries:', Object.keys(colorImageMap).length);
+      
       // Build final lookup - prefer style image, fallback to color image
       const map: Record<string, { name: string | null; image_url: string | null }> = {};
       for (const s of (styles || [])) {
+        const finalImageUrl = s.image_url || colorImageMap[s.style_no] || null;
         map[s.style_no] = { 
           name: s.name, 
-          image_url: s.image_url || colorImageMap[s.style_no] || null 
+          image_url: finalImageUrl 
         };
+        console.log(`[StylesInfo] ${s.style_no}: style_img=${!!s.image_url}, color_img=${!!colorImageMap[s.style_no]}, final=${!!finalImageUrl}`);
       }
+      
+      console.log('[StylesInfo] Final map:', Object.entries(map).map(([k, v]) => ({
+        style_no: k,
+        name: v.name,
+        has_image: !!v.image_url,
+        image_url: v.image_url
+      })));
+      
       return map;
     }
   );
@@ -590,6 +624,15 @@ export default function AnalysisDetailPage() {
             <div className="grid grid-cols-5 gap-4">
               {analysis.metrics.top_styles.slice(0, 5).map((s: any, i: number) => {
                 const styleInfo = stylesInfo?.[s.style_no];
+                // Debug log for each style
+                if (i === 0) {
+                  console.log('[TopStyles Render] stylesInfo loaded:', !!stylesInfo, 'keys:', Object.keys(stylesInfo || {}));
+                }
+                console.log(`[TopStyles Render] #${i + 1} ${s.style_no}:`, {
+                  styleInfo,
+                  has_image_url: !!styleInfo?.image_url,
+                  image_url: styleInfo?.image_url
+                });
                 return (
                   <div key={i} className="text-center group">
                     {/* Large Image */}
@@ -601,6 +644,8 @@ export default function AnalysisDetailPage() {
                           fill
                           className="object-cover"
                           sizes="(max-width: 768px) 50vw, 20vw"
+                          onError={(e) => console.error('[Image Error]', s.style_no, styleInfo.image_url, e)}
+                          onLoad={() => console.log('[Image Loaded]', s.style_no)}
                         />
                       ) : (
                         <div className="absolute inset-0 flex items-center justify-center text-slate-400 text-sm">
