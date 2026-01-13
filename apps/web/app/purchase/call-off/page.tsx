@@ -324,10 +324,10 @@ export default function CallOffPage() {
           <Button 
             variant="outline" 
             size="sm"
-            onClick={() => router.push('/purchase/make-order')}
+            onClick={() => router.push('/ai-analysis')}
             className="border-slate-300"
           >
-            Switch to Make Order
+            AI Purchase Analysis
           </Button>
         </div>
       </div>

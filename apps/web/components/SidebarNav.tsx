@@ -147,13 +147,13 @@ export function SidebarNav() {
   ].filter(Boolean) as any[];
   const purchaseLinks = [
     can('/purchase/dashboard') ? <NavLink key="pd" href="/purchase/dashboard" label="Dashboard" /> : null,
-    <NavLink key="pai" href="/ai-analysis" label="AI Analysis" />, // Always visible (new feature)
+    <NavLink key="pai" href="/ai-analysis" label="AI Analysis" />, // Always visible - purchase round suggestions
     can('/purchase/orders') ? <NavLink key="po" href="/purchase/orders" label="Purchase Orders" /> : null,
     can('/purchase/packinglists') ? <NavLink key="ppl" href="/purchase/packinglists" label="Packinglists" /> : null,
-    can('/purchase/make-order') ? <NavLink key="pmo" href="/purchase/make-order" label="AI Suggestions" /> : null,
     can('/purchase/smart-draft') ? <NavLink key="psd" href="/purchase/smart-draft" label="Smart Draft" /> : null,
     can('/purchase/conversations') ? <NavLink key="pconv" href="/purchase/conversations" label="Conversations" /> : null,
     can('/purchase/suppliers') ? <NavLink key="psup" href="/purchase/suppliers" label="Suppliers" /> : null,
+    can('/purchase/feedback') ? <NavLink key="pfb" href="/purchase/feedback" label="AI Feedback" /> : null,
   ].filter(Boolean) as any[];
   const salesLinks = [
     can('/sales/nielsens') ? <NavLink key="sn" href="/sales/nielsens" label="Nielsens" /> : null,

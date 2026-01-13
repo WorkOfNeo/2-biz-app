@@ -41,6 +41,7 @@ export default function AIAnalysisDashboard() {
   const [currentJobId, setCurrentJobId] = useState<string | null>(null);
   const [jobLogs, setJobLogs] = useState<JobLog[]>([]);
   const [generatingPdfFor, setGeneratingPdfFor] = useState<Set<string>>(new Set());
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   // Fetch latest analyses
   const { data: analyses, mutate, error: analysesError } = useSWR('ai-analyses', async () => {
@@ -292,6 +293,34 @@ export default function AIAnalysisDashboard() {
         next.delete(analysisId);
         return next;
       });
+    }
+  }
+
+  async function deleteAnalysis(analysisId: string, analysisType: string) {
+    const typeLabel = analysisType === 'purchase_round' ? 'purchase round' : 'daily analysis';
+    if (!confirm(`Are you sure you want to delete this ${typeLabel}? This cannot be undone.`)) {
+      return;
+    }
+    
+    setDeletingId(analysisId);
+    setAnalysisError(null);
+    
+    try {
+      const res = await fetch(`/api/ai-analysis/${analysisId}`, {
+        method: 'DELETE',
+      });
+      
+      const data = await res.json();
+      
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to delete');
+      }
+      
+      await mutate(); // Refresh the list
+    } catch (e: any) {
+      setAnalysisError(`Failed to delete: ${e.message}`);
+    } finally {
+      setDeletingId(null);
     }
   }
 
@@ -684,6 +713,24 @@ export default function AIAnalysisDashboard() {
                     )}
                   </button>
                 )}
+                
+                {/* Delete Button */}
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    deleteAnalysis(a.id, a.analysis_type);
+                  }}
+                  disabled={deletingId === a.id}
+                  className="inline-flex items-center gap-1 px-2 py-1.5 text-sm text-red-600 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
+                  title="Delete this analysis"
+                >
+                  {deletingId === a.id ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Trash2 className="h-4 w-4" />
+                  )}
+                </button>
                 
                 <Link href={`/ai-analysis/${a.id}`}>
                   <ChevronRight className="h-5 w-5 text-slate-300" />
