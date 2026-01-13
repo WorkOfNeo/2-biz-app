@@ -3,6 +3,15 @@ import type { JobRow } from '@shared/types';
 import React from 'react';
 import { pdf, Document, Page as PdfPage, Text, StyleSheet, View, Image } from '@react-pdf/renderer';
 
+/** Scale SPY image URL to specified size for PDF rendering */
+function scaleImageUrl(input?: string | null, size = 100): string | null {
+  if (!input) return null;
+  const token = `s${size}`;
+  let next = input.replace(/\/s\d+(?:-[a-z])?\//gi, `/${token}/`);
+  next = next.replace(/=s\d+/gi, `=${token}`);
+  return next;
+}
+
 /** Get formatted timestamp in Copenhagen timezone: DD/MM/YYYY - HH:MM */
 function getCopenhagenTimestamp(): string {
   const now = new Date();
@@ -87,16 +96,18 @@ export async function exportAiAnalysis(ctx: Ctx) {
     const topStyles = analysis.metrics?.top_styles || [];
     const styleNos = topStyles.slice(0, 10).map((s: any) => s.style_no).filter(Boolean);
     
-    // Fetch style info (name, image_url)
+    // Fetch style info (style_name, image_url)
     let stylesInfo: Record<string, { name: string | null; image_url: string | null }> = {};
     if (styleNos.length > 0) {
       const { data: styles } = await supabase
         .from('styles')
-        .select('style_no, name, image_url')
+        .select('style_no, style_name, image_url')
         .in('style_no', styleNos);
       
       for (const s of (styles || [])) {
-        stylesInfo[s.style_no] = { name: s.name, image_url: s.image_url };
+        // Scale image URL for PDF rendering
+        const scaledImage = scaleImageUrl(s.image_url);
+        stylesInfo[s.style_no] = { name: s.style_name, image_url: scaledImage };
       }
     }
     
@@ -333,36 +344,6 @@ export async function exportAiAnalysis(ctx: Ctx) {
             E(Text, { style: [styles.tableHeaderCell, { width: '20%' }, styles.right] }, 'Kunder')
           ),
           ...topStylesRows
-        ),
-        
-        // Footer
-        E(View, { style: styles.footer },
-          E(Text, null, `Genereret: ${getCopenhagenTimestamp()}`),
-          E(Text, null, '2-BIZ AI Analyse')
-        )
-      ),
-      
-      // Page 2: Warnings & Recommendations
-      ((analysis.warnings && analysis.warnings.length > 0) || (analysis.recommendations && analysis.recommendations.length > 0)) &&
-      E(PdfPage, { size: 'A4', style: styles.page },
-        // Warnings
-        analysis.warnings && analysis.warnings.length > 0 && E(View, null,
-          E(Text, { style: styles.h2 }, '⚠️ Advarsler'),
-          ...analysis.warnings.map((w: string, i: number) => 
-            E(View, { key: i, style: styles.warningBox },
-              E(Text, { style: styles.warningText }, w)
-            )
-          )
-        ),
-        
-        // Recommendations
-        analysis.recommendations && analysis.recommendations.length > 0 && E(View, null,
-          E(Text, { style: styles.h2 }, '💡 Anbefalinger'),
-          ...analysis.recommendations.map((r: string, i: number) =>
-            E(View, { key: i, style: styles.recommendBox },
-              E(Text, { style: styles.recommendText }, r)
-            )
-          )
         ),
         
         // Footer

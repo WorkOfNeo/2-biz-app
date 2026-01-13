@@ -14,7 +14,7 @@ interface AiAnalysisPayload {
 // Default prompts (fallback if not in DB)
 const DEFAULT_PROMPTS = {
   daily_analysis_v1: {
-    version: 5,
+    version: 6,
     content: `Du er en AI-analytiker for 2-BIZ, en dansk mode-grossistvirksomhed der sporer sæsonens salgsfremgang.
 
 Analyser de leverede data og svar med JSON på DANSK.
@@ -25,7 +25,7 @@ Analyser de leverede data og svar med JSON på DANSK.
     "headline": "Kort overskrift der opsummerer status (max 10 ord)",
     "bullets": [
       "📦 Stk solgt: X total | +Y siden sidst | Z% index",
-      "💰 Omsætning: X DKK total | +Y siden sidst | Z% index",
+      "💰 Omsætning: X DKK total | +Y DKK siden sidst | Z% index",
       "👥 Besøgsrate: X% (Y af Z kunder) | +N siden sidst",
       "🔥 Top styles: STYLENAME1 (styleNo) X stk, STYLENAME2 (styleNo) Y stk",
       "👤 Sælgere: X aktive af Y total | bedste: NAVN (index Z%)"
@@ -34,24 +34,28 @@ Analyser de leverede data og svar med JSON på DANSK.
   "progress_note": "En sætning om hvad der ændrede sig siden sidste analyse",
   "salesperson_summaries": {
     "salesperson_id": { "note": "Kort observation om deres fremgang på dansk" }
-  },
-  "warnings": ["Eventuelle advarsler på dansk"],
-  "recommendations": ["Eventuelle anbefalinger på dansk"]
+  }
 }
 
 ## BULLET FORMAT REGLER:
-1. 📦 Stk solgt: [total] | [+/- siden sidst] | [index vs sidste år %]
-2. 💰 Omsætning: [total DKK] | [+/- siden sidst] | [index vs sidste år %]
-3. 👥 Besøgsrate: [procent] ([besøgte] af [total]) | [+/- siden sidst]
+1. 📦 Stk solgt: [total stk] | [+/- stk siden sidst] | [index %]
+2. 💰 Omsætning: [total DKK] | [+/- DKK siden sidst] | [index %]
+3. 👥 Besøgsrate: [procent] ([besøgte] af [total]) | [+/- kunder siden sidst]
 4. 🔥 Top styles: Nævn top 2-3 styles med NAVN (styleNo) og antal
 5. 👤 Sælgere: Antal aktive, bedste performer med navn og index
+
+## INDEX BEREGNING (VIGTIGT):
+- Index 100 = sidste sæsons SLUTRESULTAT for de BESØGTE kunder
+- Kun kunder besøgt I ÅR indgår i sammenligningen
+- Index = (denne sæsons salg / sidste sæsons FINALE for besøgte kunder) * 100
+- Eksempel: 5 kunder besøgt i år solgte 500 stk. Samme 5 kunder købte 600 stk TOTAL sidste sæson → index = 83%
 
 ## VIGTIGE REGLER:
 - ALLE tekster på DANSK
 - Brug | som separator i bullets for nem scanning
 - Hvis "changes_since_last" mangler, skriv "første analyse"
-- Index = (denne sæson / sidste sæson) * 100 for besøgte kunder
-- Inkluder ALTID style_name før style_no i parentes`,
+- Inkluder ALTID style_name før style_no i parentes
+- INGEN advarsler eller anbefalinger - kun fakta og status`,
     model: 'gpt-5-mini',
     temperature: 1, // GPT-5 only supports default
     maxTokens: 4096,
