@@ -242,7 +242,7 @@ function ScrapesTab() {
     }
   };
 
-  const runNow = async (schedule: ScrapeSchedule) => {
+  const runNow = async (schedule: ScrapeSchedule, withStyleDetails = false) => {
     setRunningJob(schedule.id);
     try {
       // Map schedule key to job type
@@ -261,13 +261,21 @@ function ScrapesTab() {
         return;
       }
 
+      // Build payload with appropriate toggles
+      let payload: Record<string, any> = { requestedBy: 'manual_dashboard', ...schedule.config };
+      
+      // For scrape_statistics, add the toggles for deep mode
+      if (schedule.key === 'scrape_statistics') {
+        payload.toggles = { 
+          deep: true,
+          style_details: withStyleDetails 
+        };
+      }
+
       const res = await fetch('/api/enqueue', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          type: jobType,
-          payload: { requestedBy: 'manual_dashboard', ...schedule.config },
-        }),
+        body: JSON.stringify({ type: jobType, payload }),
       });
       
       if (!res.ok) throw new Error('Failed to enqueue');
@@ -352,6 +360,23 @@ function ScrapesTab() {
                               <Play className="h-4 w-4" />
                             )}
                           </Button>
+                          {/* Show "Run with Style Details" button for scrape_statistics */}
+                          {schedule.key === 'scrape_statistics' && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => runNow(schedule, true)}
+                              disabled={runningJob === schedule.id}
+                              title="Run with Style Details (full deep scrape)"
+                              className="text-xs"
+                            >
+                              {runningJob === schedule.id ? (
+                                <RefreshCw className="h-3 w-3 animate-spin" />
+                              ) : (
+                                <>+ Details</>
+                              )}
+                            </Button>
+                          )}
                           <Button
                             size="sm"
                             variant="ghost"
