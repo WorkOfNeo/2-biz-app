@@ -382,7 +382,7 @@ export async function exportAiAnalysis(ctx: Ctx) {
     await log(job.id, 'info', 'STEP:generating_pdf', { 
       hasSummary: !!analysis.executive_summary,
       summaryType: typeof analysis.executive_summary,
-      topStylesCount: topStylesRows.length,
+      topStylesCount: top5Styles.length,
       salespersonCount: salespersonRows.length
     });
     

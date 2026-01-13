@@ -416,101 +416,94 @@ export default function AIAnalysisDashboard() {
         </div>
       )}
 
-      {/* Job Progress Panel - Modern soothing design */}
+      {/* Job Progress Panel - Clean single-step display with fade */}
       {currentJobId && (
-        <div className="mb-6 bg-gradient-to-br from-slate-50 to-indigo-50 border border-indigo-100 rounded-2xl overflow-hidden shadow-sm">
-          {/* Header */}
-          <div className="p-4 border-b border-indigo-100/50 flex items-center justify-between bg-white/50">
-            <div className="flex items-center gap-3">
-              <div className="relative">
-                <div className="w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center">
-                  <Brain className="h-5 w-5 text-indigo-600" />
-                </div>
-                <div className="absolute -bottom-0.5 -right-0.5 w-4 h-4 bg-indigo-500 rounded-full flex items-center justify-center">
-                  <Loader2 className="h-2.5 w-2.5 animate-spin text-white" />
-                </div>
+        <div className="mb-6 bg-gradient-to-br from-indigo-50 via-white to-purple-50 border border-indigo-100 rounded-2xl overflow-hidden shadow-sm">
+          <div className="p-6 flex items-center gap-4">
+            {/* Animated brain icon */}
+            <div className="relative shrink-0">
+              <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-lg">
+                <Brain className="h-7 w-7 text-white" />
               </div>
-              <div>
-                <div className="font-semibold text-slate-900">AI Analysis in Progress</div>
-                <div className="text-xs text-slate-500">Processing season data...</div>
+              <div className="absolute -bottom-1 -right-1 w-5 h-5 bg-white rounded-full flex items-center justify-center shadow">
+                <Loader2 className="h-3 w-3 animate-spin text-indigo-600" />
               </div>
             </div>
-            <span className="px-2.5 py-1 bg-indigo-100 text-indigo-700 text-xs rounded-full font-mono">
-              {currentJobId.slice(0, 8)}
-            </span>
-          </div>
-          
-          {/* Progress Steps */}
-          <div className="p-4">
-            {jobLogs.length === 0 ? (
-              <div className="flex items-center gap-3 text-slate-500">
-                <div className="w-2 h-2 bg-indigo-400 rounded-full animate-pulse"></div>
-                <span className="text-sm">Initializing analysis...</span>
+            
+            {/* Current step - single headline with fade animation */}
+            <div className="flex-1 min-w-0">
+              <div className="text-xs text-indigo-600 font-medium uppercase tracking-wide mb-1">
+                AI Analysis Running
               </div>
-            ) : (
-              <div className="space-y-2">
-                {jobLogs.map((log, idx) => {
-                  const isLatest = idx === jobLogs.length - 1;
-                  const isError = log.level === 'error';
-                  const isStep = log.msg.startsWith('STEP:') || log.msg.startsWith('AI_ANALYSIS:');
-                  const cleanMsg = log.msg.replace('STEP:', '').replace('AI_ANALYSIS:', '').replace(/_/g, ' ');
-                  
-                  // Parse step for nicer display
-                  const stepLabels: Record<string, string> = {
-                    'start': '🚀 Starting analysis',
-                    'fetching seasons': '📅 Loading season data',
-                    'fetching sales stats': '📊 Fetching sales statistics',
-                    'fetching customers': '👥 Loading customer data',
-                    'fetching salespersons': '👤 Loading salesperson data',
-                    'fetching comparison data': '📈 Comparing with last season',
-                    'calculating metrics': '🧮 Calculating metrics',
-                    'calling openai': '🤖 AI analyzing data...',
-                    'openai complete': '✅ AI analysis complete',
-                    'saving analysis': '💾 Saving results',
-                    'complete': '🎉 Analysis complete!',
-                  };
-                  
-                  const displayMsg = stepLabels[cleanMsg.toLowerCase()] || cleanMsg;
+              {(() => {
+                // Get the latest meaningful step
+                const stepLabels: Record<string, { emoji: string; label: string }> = {
+                  'start': { emoji: '🚀', label: 'Starting analysis...' },
+                  'fetching_seasons': { emoji: '📅', label: 'Loading season data...' },
+                  'fetching_sales_stats': { emoji: '📊', label: 'Fetching sales statistics...' },
+                  'fetching_customers': { emoji: '👥', label: 'Loading customer data...' },
+                  'fetching_salespersons': { emoji: '👤', label: 'Loading salesperson data...' },
+                  'fetching_comparison_data': { emoji: '📈', label: 'Comparing with last season...' },
+                  'calculating_metrics': { emoji: '🧮', label: 'Calculating metrics...' },
+                  'calling_openai': { emoji: '🤖', label: 'AI is analyzing your data...' },
+                  'openai_complete': { emoji: '✨', label: 'AI analysis complete!' },
+                  'saving_analysis': { emoji: '💾', label: 'Saving results...' },
+                  'complete': { emoji: '🎉', label: 'Analysis complete!' },
+                  'enqueuing_pdf': { emoji: '📄', label: 'Generating PDF report...' },
+                };
+                
+                const latestLog = jobLogs.length > 0 ? jobLogs[jobLogs.length - 1] : null;
+                const latestStep = latestLog?.msg
+                  ?.replace('AI_ANALYSIS:', '')
+                  .replace('STEP:', '')
+                  .toLowerCase()
+                  .trim() || '';
+                
+                const stepInfo = stepLabels[latestStep] || { emoji: '⏳', label: latestLog?.msg || 'Initializing...' };
+                const isError = latestLog?.level === 'error';
+                
+                return (
+                  <div 
+                    key={latestStep}
+                    className={`text-xl font-semibold transition-all duration-500 animate-in fade-in slide-in-from-bottom-2 ${
+                      isError ? 'text-red-600' : 'text-slate-800'
+                    }`}
+                  >
+                    <span className="mr-2">{isError ? '❌' : stepInfo.emoji}</span>
+                    {isError ? latestLog?.msg : stepInfo.label}
+                  </div>
+                );
+              })()}
+              
+              {/* Progress dots */}
+              <div className="flex gap-1.5 mt-3">
+                {['start', 'data', 'ai', 'save'].map((phase, i) => {
+                  const latestLog = jobLogs.length > 0 ? jobLogs[jobLogs.length - 1] : null;
+                  const step = latestLog?.msg?.toLowerCase() || '';
+                  const phaseCompleted = 
+                    (phase === 'start' && step.includes('fetching')) ||
+                    (phase === 'data' && (step.includes('openai') || step.includes('calculating'))) ||
+                    (phase === 'ai' && (step.includes('saving') || step.includes('complete'))) ||
+                    (phase === 'save' && step.includes('complete'));
+                  const phaseCurrent = 
+                    (phase === 'start' && step.includes('start')) ||
+                    (phase === 'data' && step.includes('fetching')) ||
+                    (phase === 'ai' && step.includes('openai')) ||
+                    (phase === 'save' && step.includes('saving'));
                   
                   return (
-                    <div 
-                      key={log.id} 
-                      className={`flex items-start gap-3 p-2 rounded-lg transition-all ${
-                        isLatest ? 'bg-white shadow-sm border border-indigo-100' : 'opacity-60'
-                      } ${isError ? 'bg-red-50 border-red-200' : ''}`}
-                    >
-                      {/* Step indicator */}
-                      <div className={`mt-0.5 w-5 h-5 rounded-full flex items-center justify-center shrink-0 ${
-                        isError ? 'bg-red-100' : isLatest ? 'bg-indigo-100' : 'bg-slate-100'
-                      }`}>
-                        {isLatest && !isError ? (
-                          <Loader2 className="h-3 w-3 animate-spin text-indigo-600" />
-                        ) : isError ? (
-                          <span className="text-red-500 text-xs">✕</span>
-                        ) : (
-                          <span className="text-green-500 text-xs">✓</span>
-                        )}
-                      </div>
-                      
-                      <div className="flex-1 min-w-0">
-                        <div className={`text-sm ${isLatest ? 'font-medium text-slate-900' : 'text-slate-600'} ${isError ? 'text-red-700' : ''}`}>
-                          {displayMsg}
-                        </div>
-                        {log.data && Object.keys(log.data).length > 0 && isStep && (
-                          <div className="text-xs text-slate-400 mt-0.5 truncate">
-                            {Object.entries(log.data).slice(0, 3).map(([k, v]) => `${k}: ${v}`).join(' • ')}
-                          </div>
-                        )}
-                      </div>
-                      
-                      <span className="text-xs text-slate-400 shrink-0">
-                        {new Date(log.created_at).toLocaleTimeString('da-DK', { hour: '2-digit', minute: '2-digit' })}
-                      </span>
-                    </div>
+                    <div
+                      key={phase}
+                      className={`h-1.5 rounded-full transition-all duration-300 ${
+                        phaseCompleted ? 'w-8 bg-green-400' :
+                        phaseCurrent ? 'w-8 bg-indigo-500 animate-pulse' :
+                        'w-4 bg-slate-200'
+                      }`}
+                    />
                   );
                 })}
               </div>
-            )}
+            </div>
           </div>
         </div>
       )}

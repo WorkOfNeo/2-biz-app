@@ -453,6 +453,8 @@ export async function runAiAnalysis(
             customers_visited: 0,
             customers_total: customersBySalesperson[sp.id] || 0,
             visit_rate_percent: 0,
+            qty_index: null,
+            revenue_index: null,
             index: null
           }
         });
