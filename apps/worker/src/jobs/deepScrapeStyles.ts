@@ -117,67 +117,79 @@ export async function deepScrapeStyles(ctx: Ctx) {
     if (boxes.length) {
       try {
         // Use pre-fetched seasons map (optimization: no repeated queries)
-        // Map UI color names to our style_colors ids
-        const { data: styleColorRows } = await supabase.from('style_colors').select('id, color').eq('style_id', s.id as string).limit(1000);
-        const colorMap = new Map<string, string>();
-        for (const r of (styleColorRows ?? []) as any[]) colorMap.set(String(r.color || '').trim().toLowerCase(), String(r.id));
+        // Map UI color names to our style_colors ids and current image_url
+        const { data: styleColorRows } = await supabase
+          .from('style_colors')
+          .select('id, color, image_url')
+          .eq('style_id', s.id as string)
+          .limit(1000);
+        const colorMap = new Map<string, { id: string; image_url: string | null }>();
+        for (const r of (styleColorRows ?? []) as any[]) {
+          colorMap.set(String(r.color || '').trim().toLowerCase(), { 
+            id: String(r.id), 
+            image_url: r.image_url || null 
+          });
+        }
         
-        // Build desired target data: {style_color_id|season_id} -> imageUrl
-        const targetData = new Map<string, string | null>();
+        // Collect color images (take first non-null image per color)
+        const colorImages = new Map<string, string>(); // color lowercase -> imageUrl
+        for (const box of boxes) {
+          for (const row of box.colorRows) {
+            const key = row.color.toLowerCase();
+            if (row.imageUrl && !colorImages.has(key)) {
+              colorImages.set(key, row.imageUrl);
+            }
+          }
+        }
+        
+        // Update style_colors.image_url if changed
+        for (const [colorKey, newImageUrl] of colorImages) {
+          const colorInfo = colorMap.get(colorKey);
+          if (colorInfo && newImageUrl !== colorInfo.image_url) {
+            const { error: imgErr } = await supabase
+              .from('style_colors')
+              .update({ image_url: newImageUrl })
+              .eq('id', colorInfo.id);
+            if (!imgErr) imagesUpdated++;
+          }
+        }
+        
+        // Build desired target pairs for style_color_seasons: {style_color_id|season_id}
+        const targetPairs = new Set<string>();
         for (const box of boxes) {
           const appSeasonId = globalSpyToApp.get(box.spySeasonId);
           if (!appSeasonId) continue;
           for (const row of box.colorRows) {
-            const cid = colorMap.get(row.color.toLowerCase());
-            if (!cid) continue;
-            const key = `${cid}|${appSeasonId}`;
-            targetData.set(key, row.imageUrl);
+            const colorInfo = colorMap.get(row.color.toLowerCase());
+            if (!colorInfo) continue;
+            targetPairs.add(`${colorInfo.id}|${appSeasonId}`);
           }
         }
-        const targetPairs = new Set(targetData.keys());
         
         // Fetch existing pairs for this style
-        const styleColorIds = Array.from(colorMap.values());
-        let existing: Array<{ style_color_id: string; season_id: string; image_url?: string | null }> = [];
+        const styleColorIds = Array.from(colorMap.values()).map(c => c.id);
+        let existing: Array<{ style_color_id: string; season_id: string }> = [];
         if (styleColorIds.length) {
           const { data: existRows } = await supabase
             .from('style_color_seasons')
-            .select('style_color_id, season_id, image_url')
+            .select('style_color_id, season_id')
             .in('style_color_id', styleColorIds);
           existing = (existRows ?? []) as any[];
         }
         const existingSet = new Set(existing.map((r) => `${r.style_color_id}|${r.season_id}`));
-        const existingImages = new Map(existing.map((r) => [`${r.style_color_id}|${r.season_id}`, r.image_url]));
         
         // Inserts (in target but not existing) - batch insert for performance
         const toInsert = Array.from(targetPairs)
           .filter(pair => !existingSet.has(pair))
           .map(pair => {
             const [cid, sid] = pair.split('|');
-            return { style_color_id: cid, season_id: sid, image_url: targetData.get(pair) || null };
+            return { style_color_id: cid, season_id: sid };
           });
         
         if (toInsert.length > 0) {
           const { error: upErr } = await supabase.from('style_color_seasons').insert(toInsert as any);
           if (!upErr) {
             colorLinksInserted += toInsert.length;
-          }
-        }
-        
-        // Update existing rows if image URL changed
-        for (const pair of Array.from(targetPairs)) {
-          if (existingSet.has(pair)) {
-            const newImg = targetData.get(pair);
-            const existingImg = existingImages.get(pair);
-            if (newImg && newImg !== existingImg) {
-              const [cid, sid] = pair.split('|');
-              const { error: updErr } = await supabase
-                .from('style_color_seasons')
-                .update({ image_url: newImg, last_seen_at: new Date().toISOString() })
-                .eq('style_color_id', cid)
-                .eq('season_id', sid);
-              if (!updErr) imagesUpdated++;
-            }
           }
         }
         
