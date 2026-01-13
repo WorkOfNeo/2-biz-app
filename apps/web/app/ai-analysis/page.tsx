@@ -535,7 +535,38 @@ export default function AIAnalysisDashboard() {
             {/* Executive Summary */}
             <div className="mb-5">
               <h3 className="text-sm font-medium text-slate-500 mb-2">Executive Summary</h3>
-              <p className="text-slate-900">{latestAnalysis.executive_summary || 'No summary available'}</p>
+              {(() => {
+                // Parse executive_summary - it may be stored as JSON string in TEXT column
+                let summary = latestAnalysis.executive_summary;
+                if (typeof summary === 'string' && summary.startsWith('{')) {
+                  try {
+                    summary = JSON.parse(summary);
+                  } catch {
+                    // Keep as string if parsing fails
+                  }
+                }
+                
+                if (typeof summary === 'string') {
+                  return <p className="text-slate-900">{summary || 'No summary available'}</p>;
+                } else if (summary && typeof summary === 'object') {
+                  const s = summary as { headline?: string; bullets?: string[] };
+                  return (
+                    <div className="space-y-2">
+                      {s.headline && (
+                        <p className="font-semibold text-slate-900">{s.headline}</p>
+                      )}
+                      {s.bullets && Array.isArray(s.bullets) && (
+                        <ul className="space-y-1">
+                          {s.bullets.slice(0, 3).map((bullet: string, idx: number) => (
+                            <li key={idx} className="text-sm text-slate-700">{bullet}</li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  );
+                }
+                return <p className="text-slate-900">No summary available</p>;
+              })()}
             </div>
 
             {/* Key Metrics with Changes */}

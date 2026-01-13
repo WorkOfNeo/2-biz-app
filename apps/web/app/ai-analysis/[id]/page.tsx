@@ -17,7 +17,7 @@ type Analysis = {
   comparison_season_id: string | null;
   analysis_type: 'daily' | 'purchase_round';
   analysis_date: string;
-  executive_summary: string | null;
+  executive_summary: string | { headline?: string; bullets?: string[] } | null;
   metrics: any;
   salesperson_reports: Record<string, any>;
   style_insights: any;
@@ -251,28 +251,40 @@ export default function AnalysisDetailPage() {
       <div className="bg-gradient-to-br from-indigo-50 to-purple-50 border border-indigo-100 rounded-xl p-6 mb-6">
         <h2 className="text-sm font-medium text-indigo-600 mb-2">Opsummering</h2>
         {/* Handle both old (string) and new (object) executive_summary format */}
-        {typeof analysis.executive_summary === 'string' ? (
-          <p className="text-lg text-slate-900">{analysis.executive_summary || 'Ingen opsummering tilgængelig'}</p>
-        ) : analysis.executive_summary && typeof analysis.executive_summary === 'object' ? (
-          <div className="space-y-3">
-            {(analysis.executive_summary as any).headline && (
-              <p className="text-xl font-semibold text-slate-900">
-                {(analysis.executive_summary as any).headline}
-              </p>
-            )}
-            {(analysis.executive_summary as any).bullets && Array.isArray((analysis.executive_summary as any).bullets) && (
-              <ul className="space-y-2">
-                {(analysis.executive_summary as any).bullets.map((bullet: string, idx: number) => (
-                  <li key={idx} className="text-base text-slate-700 flex items-start gap-2">
-                    <span className="mt-0.5">{bullet}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        ) : (
-          <p className="text-lg text-slate-900">Ingen opsummering tilgængelig</p>
-        )}
+        {(() => {
+          // Parse executive_summary - it may be stored as JSON string in TEXT column
+          let summary = analysis.executive_summary;
+          if (typeof summary === 'string' && summary.startsWith('{')) {
+            try {
+              summary = JSON.parse(summary);
+            } catch {
+              // Keep as string if parsing fails
+            }
+          }
+          
+          if (typeof summary === 'string') {
+            return <p className="text-lg text-slate-900">{summary || 'Ingen opsummering tilgængelig'}</p>;
+          } else if (summary && typeof summary === 'object') {
+            const s = summary as { headline?: string; bullets?: string[] };
+            return (
+              <div className="space-y-3">
+                {s.headline && (
+                  <p className="text-xl font-semibold text-slate-900">{s.headline}</p>
+                )}
+                {s.bullets && Array.isArray(s.bullets) && (
+                  <ul className="space-y-2">
+                    {s.bullets.map((bullet: string, idx: number) => (
+                      <li key={idx} className="text-base text-slate-700 flex items-start gap-2">
+                        <span className="mt-0.5">{bullet}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            );
+          }
+          return <p className="text-lg text-slate-900">Ingen opsummering tilgængelig</p>;
+        })()}
         {analysis.comparison_note && (
           <p className="mt-4 text-sm text-indigo-700 flex items-center gap-1 pt-3 border-t border-indigo-100">
             <TrendingUp className="h-4 w-4" />
