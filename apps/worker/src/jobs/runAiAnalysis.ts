@@ -3,6 +3,14 @@ import OpenAI from 'openai';
 
 type LogFn = (level: 'info' | 'error' | 'progress', msg: string, data?: Record<string, any>) => Promise<void>;
 
+// Format numbers in Danish style (1.000,50)
+function formatDK(n: number, decimals = 0): string {
+  return new Intl.NumberFormat('da-DK', { 
+    minimumFractionDigits: decimals, 
+    maximumFractionDigits: decimals 
+  }).format(n);
+}
+
 interface AiAnalysisPayload {
   analysisType: 'daily' | 'purchase_round';
   seasonId: string;
@@ -14,7 +22,7 @@ interface AiAnalysisPayload {
 // Default prompts (fallback if not in DB)
 const DEFAULT_PROMPTS = {
   daily_analysis_v1: {
-    version: 6,
+    version: 7,
     content: `Du er en AI-analytiker for 2-BIZ, en dansk mode-grossistvirksomhed der sporer sæsonens salgsfremgang.
 
 Analyser de leverede data og svar med JSON på DANSK.
@@ -24,8 +32,8 @@ Analyser de leverede data og svar med JSON på DANSK.
   "executive_summary": {
     "headline": "Kort overskrift der opsummerer status (max 10 ord)",
     "bullets": [
-      "📦 Stk solgt: X total | +Y siden sidst | Z% index",
-      "💰 Omsætning: X DKK total | +Y DKK siden sidst | Z% index",
+      "📦 Stk solgt: X.XXX total | +Y.YYY siden sidst | Z% index",
+      "💰 Omsætning: X.XXX DKK total | +Y.YYY DKK siden sidst | Z% index",
       "👥 Besøgsrate: X% (Y af Z kunder) | +N siden sidst",
       "🔥 Top styles: STYLENAME1 (styleNo) X stk, STYLENAME2 (styleNo) Y stk",
       "👤 Sælgere: X aktive af Y total | bedste: NAVN (index Z%)"
@@ -37,18 +45,22 @@ Analyser de leverede data og svar med JSON på DANSK.
   }
 }
 
+## TAL FORMAT:
+- Brug ALTID dansk talformat med punktum som tusindtalsseparator: 1.234 (ikke 1234 eller 1,234)
+- Brug de FORMATEREDE tal fra data (felter der ender på _formatted)
+
+## INDEX - BRUG DISSE TAL:
+Brug data fra "index_for_visited_customers" sektionen:
+- qty_index_percent = index for stk solgt (kun besøgte kunders sidste sæson som baseline)
+- revenue_index_percent = index for omsætning (kun besøgte kunders sidste sæson som baseline)
+- Hvis null = ingen data fra sidste sæson for disse kunder
+
 ## BULLET FORMAT REGLER:
-1. 📦 Stk solgt: [total stk] | [+/- stk siden sidst] | [index %]
-2. 💰 Omsætning: [total DKK] | [+/- DKK siden sidst] | [index %]
+1. 📦 Stk solgt: [total_formatted] | [+/- stk siden sidst] | [qty_index_percent]% index
+2. 💰 Omsætning: [revenue_formatted] DKK | [+/- DKK siden sidst] | [revenue_index_percent]% index
 3. 👥 Besøgsrate: [procent] ([besøgte] af [total]) | [+/- kunder siden sidst]
 4. 🔥 Top styles: Nævn top 2-3 styles med NAVN (styleNo) og antal
 5. 👤 Sælgere: Antal aktive, bedste performer med navn og index
-
-## INDEX BEREGNING (VIGTIGT):
-- Index 100 = sidste sæsons SLUTRESULTAT for de BESØGTE kunder
-- Kun kunder besøgt I ÅR indgår i sammenligningen
-- Index = (denne sæsons salg / sidste sæsons FINALE for besøgte kunder) * 100
-- Eksempel: 5 kunder besøgt i år solgte 500 stk. Samme 5 kunder købte 600 stk TOTAL sidste sæson → index = 83%
 
 ## VIGTIGE REGLER:
 - ALLE tekster på DANSK
@@ -150,7 +162,7 @@ export async function runAiAnalysis(
   const { analysisType, seasonId, comparisonSeasonId, purchaseRoundNumber, sendEmail } = payload;
 
   try {
-    await log('info', 'AI_ANALYSIS:start', { analysisType, seasonId, comparisonSeasonId });
+    await log('info', 'start', { analysisType, seasonId, comparisonSeasonId });
 
     // Get OpenAI API key
     const openaiApiKey = process.env.OPENAI_API_KEY;
@@ -159,7 +171,7 @@ export async function runAiAnalysis(
     }
 
     // ========== STEP 1: Fetch Season Info ==========
-    await log('info', 'AI_ANALYSIS:fetching_seasons');
+    await log('info', 'fetching_seasons');
     
     const { data: currentSeason } = await supabase
       .from('seasons')
@@ -181,13 +193,13 @@ export async function runAiAnalysis(
       comparisonSeason = data;
     }
 
-    await log('info', 'AI_ANALYSIS:seasons_loaded', { 
+    await log('info', 'seasons_loaded', { 
       current: currentSeason.name, 
       comparison: comparisonSeason?.name || 'none' 
     });
 
     // ========== STEP 2: Fetch Sales Stats ==========
-    await log('info', 'AI_ANALYSIS:fetching_sales_stats');
+    await log('info', 'fetching_sales_stats');
     
     const logProgress = async (msg: string, data?: any) => log('progress', msg, data);
     
@@ -199,10 +211,10 @@ export async function runAiAnalysis(
       { cap: 50000, logFn: logProgress }
     );
     
-    await log('info', 'AI_ANALYSIS:sales_stats_loaded', { count: salesStats.length });
+    await log('info', 'sales_stats_loaded', { count: salesStats.length });
 
     // ========== STEP 3: Fetch Style Details ==========
-    await log('info', 'AI_ANALYSIS:fetching_style_details');
+    await log('info', 'fetching_style_details');
     
     const styleDetails = await fetchAllRows<any>(
       supabase,
@@ -212,10 +224,10 @@ export async function runAiAnalysis(
       { cap: 100000, logFn: logProgress }
     );
     
-    await log('info', 'AI_ANALYSIS:style_details_loaded', { count: styleDetails.length });
+    await log('info', 'style_details_loaded', { count: styleDetails.length });
 
     // ========== STEP 4: Fetch Customers ==========
-    await log('info', 'AI_ANALYSIS:fetching_customers');
+    await log('info', 'fetching_customers');
     
     const customers = await fetchAllRows<any>(
       supabase,
@@ -225,20 +237,20 @@ export async function runAiAnalysis(
       { cap: 10000, logFn: logProgress }
     );
     
-    await log('info', 'AI_ANALYSIS:customers_loaded', { count: customers.length });
+    await log('info', 'customers_loaded', { count: customers.length });
 
     // ========== STEP 5: Fetch Salespersons ==========
-    await log('info', 'AI_ANALYSIS:fetching_salespersons');
+    await log('info', 'fetching_salespersons');
     
     const { data: salespersons } = await supabase
       .from('salespersons')
       .select('id, name, email')
       .limit(100);
 
-    await log('info', 'AI_ANALYSIS:salespersons_loaded', { count: salespersons?.length || 0 });
+    await log('info', 'salespersons_loaded', { count: salespersons?.length || 0 });
 
     // ========== STEP 6: Fetch Stock Data ==========
-    await log('info', 'AI_ANALYSIS:fetching_stock_data');
+    await log('info', 'fetching_stock_data');
     
     const styleNos = Array.from(new Set(styleDetails.map((r: any) => r.style_no).filter(Boolean)));
     let stockData: any[] = [];
@@ -260,14 +272,14 @@ export async function runAiAnalysis(
       }
     }
     
-    await log('info', 'AI_ANALYSIS:stock_data_loaded', { count: stockData.length });
+    await log('info', 'stock_data_loaded', { count: stockData.length });
 
     // ========== STEP 7: Fetch Comparison Data ==========
     let comparisonStats: any[] = [];
     let comparisonStyleDetails: any[] = [];
     
     if (comparisonSeasonId) {
-      await log('info', 'AI_ANALYSIS:fetching_comparison_data');
+      await log('info', 'fetching_comparison_data');
       
       comparisonStats = await fetchAllRows<any>(
         supabase,
@@ -285,14 +297,14 @@ export async function runAiAnalysis(
         { cap: 100000, logFn: logProgress }
       );
       
-      await log('info', 'AI_ANALYSIS:comparison_data_loaded', { 
+      await log('info', 'comparison_data_loaded', { 
         stats: comparisonStats.length, 
         styles: comparisonStyleDetails.length 
       });
     }
 
     // ========== STEP 7b: Fetch Last Analysis for Progress Comparison ==========
-    await log('info', 'AI_ANALYSIS:fetching_last_analysis');
+    await log('info', 'fetching_last_analysis');
     
     const { data: lastAnalysis } = await supabase
       .from('ai_season_analyses')
@@ -303,13 +315,13 @@ export async function runAiAnalysis(
       .limit(1)
       .maybeSingle();
     
-    await log('info', 'AI_ANALYSIS:last_analysis_loaded', { 
+    await log('info', 'last_analysis_loaded', { 
       hasLast: !!lastAnalysis,
       lastDate: lastAnalysis?.analysis_date 
     });
 
     // ========== STEP 8: Calculate Metrics ==========
-    await log('info', 'AI_ANALYSIS:calculating_metrics');
+    await log('info', 'calculating_metrics');
 
     // Current season totals
     const totalQty = salesStats.reduce((sum: number, r: any) => sum + (Number(r.qty) || 0), 0);
@@ -492,13 +504,57 @@ export async function runAiAnalysis(
         style_no,
         style_name: data.style_name || style_no, // Fallback to style_no if no name
         total_qty: data.qty,
+        total_qty_formatted: formatDK(data.qty),
         colors_count: data.colors.size,
         customer_count: data.customers.size
       }))
       .sort((a, b) => b.total_qty - a.total_qty)
       .slice(0, 20);
 
-    // Comparison totals
+    // Calculate overall index based on VISITED CUSTOMERS ONLY
+    // This is the key metric: how are we doing vs last year for the customers we've actually visited?
+    let visitedCustomersIndex = {
+      this_season_qty: 0,
+      this_season_revenue: 0,
+      last_season_qty: 0,
+      last_season_revenue: 0,
+      qty_index: null as number | null,
+      revenue_index: null as number | null,
+    };
+    
+    // Get all unique customers visited this season
+    const visitedCustomerIds = new Set(salesStats.map((r: any) => r.account_no).filter(Boolean));
+    
+    // Sum up this season totals for visited customers
+    for (const row of salesStats) {
+      if (row.account_no && visitedCustomerIds.has(row.account_no)) {
+        visitedCustomersIndex.this_season_qty += Number(row.qty) || 0;
+        visitedCustomersIndex.this_season_revenue += Number(row.price) || 0;
+      }
+    }
+    
+    // Sum up LAST season totals for those same visited customers
+    for (const custId of visitedCustomerIds) {
+      const lastSeason = lastSeasonByCustomer.get(custId);
+      if (lastSeason) {
+        visitedCustomersIndex.last_season_qty += lastSeason.qty;
+        visitedCustomersIndex.last_season_revenue += lastSeason.revenue;
+      }
+    }
+    
+    // Calculate indexes
+    if (visitedCustomersIndex.last_season_qty > 0) {
+      visitedCustomersIndex.qty_index = Math.round(
+        (visitedCustomersIndex.this_season_qty / visitedCustomersIndex.last_season_qty) * 1000
+      ) / 10;
+    }
+    if (visitedCustomersIndex.last_season_revenue > 0) {
+      visitedCustomersIndex.revenue_index = Math.round(
+        (visitedCustomersIndex.this_season_revenue / visitedCustomersIndex.last_season_revenue) * 1000
+      ) / 10;
+    }
+
+    // Comparison totals (full season - for reference only)
     let comparisonTotals = null;
     if (comparisonSeasonId && comparisonStats.length > 0) {
       const cQty = comparisonStats.reduce((sum: number, r: any) => sum + (Number(r.qty) || 0), 0);
@@ -510,7 +566,7 @@ export async function runAiAnalysis(
       };
     }
 
-    await log('info', 'AI_ANALYSIS:metrics_calculated', { 
+    await log('info', 'metrics_calculated', { 
       totalQty, 
       totalRevenue, 
       uniqueCustomers, 
@@ -524,16 +580,20 @@ export async function runAiAnalysis(
       const lastTotals = lastMetrics.totals || {};
       const lastCoverage = lastMetrics.customer_coverage || {};
       
+      const qtyChange = totalQty - (lastTotals.qty_sold || 0);
+      const revenueChange = Math.round((totalRevenue - (lastTotals.revenue || 0)) * 100) / 100;
       changesSinceLast = {
         last_analysis_date: lastAnalysis.analysis_date,
-        qty_change: totalQty - (lastTotals.qty_sold || 0),
-        revenue_change: Math.round((totalRevenue - (lastTotals.revenue || 0)) * 100) / 100,
+        qty_change: qtyChange,
+        qty_change_formatted: (qtyChange >= 0 ? '+' : '') + formatDK(qtyChange),
+        revenue_change: revenueChange,
+        revenue_change_formatted: (revenueChange >= 0 ? '+' : '') + formatDK(Math.round(revenueChange)),
         customers_change: uniqueCustomers - (lastCoverage.visited_customers || 0),
         visit_rate_change: Math.round((visitRatePercent - (lastCoverage.visit_rate_percent || 0)) * 10) / 10
       };
     }
 
-    // Build context object
+    // Build context object with Danish-formatted numbers for clarity
     const currentSeasonData = {
       current_season: {
         id: currentSeason.id,
@@ -551,9 +611,25 @@ export async function runAiAnalysis(
       is_first_season: !comparisonSeasonId,
       totals: {
         qty_sold: totalQty,
+        qty_sold_formatted: formatDK(totalQty),
         revenue: Math.round(totalRevenue * 100) / 100,
+        revenue_formatted: formatDK(Math.round(totalRevenue)),
         unique_customers: uniqueCustomers,
         unique_styles: uniqueStyles
+      },
+      // INDEX DATA: Based on VISITED CUSTOMERS ONLY
+      index_for_visited_customers: {
+        this_season_qty: visitedCustomersIndex.this_season_qty,
+        this_season_qty_formatted: formatDK(visitedCustomersIndex.this_season_qty),
+        this_season_revenue: Math.round(visitedCustomersIndex.this_season_revenue),
+        this_season_revenue_formatted: formatDK(Math.round(visitedCustomersIndex.this_season_revenue)),
+        last_season_qty_for_these_customers: visitedCustomersIndex.last_season_qty,
+        last_season_qty_formatted: formatDK(visitedCustomersIndex.last_season_qty),
+        last_season_revenue_for_these_customers: Math.round(visitedCustomersIndex.last_season_revenue),
+        last_season_revenue_formatted: formatDK(Math.round(visitedCustomersIndex.last_season_revenue)),
+        qty_index_percent: visitedCustomersIndex.qty_index,
+        revenue_index_percent: visitedCustomersIndex.revenue_index,
+        explanation: 'Index = (denne sæson / sidste sæson for SAMME besøgte kunder) * 100'
       },
       customer_coverage: {
         total_customers: totalCustomers,
@@ -570,7 +646,9 @@ export async function runAiAnalysis(
         salesperson: sp.name,
         visited_customers: sp.metrics.customers_visited,
         qty: sp.metrics.qty_sold,
+        qty_formatted: formatDK(sp.metrics.qty_sold),
         price: sp.metrics.revenue,
+        price_formatted: formatDK(Math.round(sp.metrics.revenue)),
         index: sp.metrics.index,
         qty_index: sp.metrics.qty_index,
         revenue_index: sp.metrics.revenue_index
@@ -581,7 +659,7 @@ export async function runAiAnalysis(
     };
 
     // ========== STEP 9: Call OpenAI ==========
-    await log('info', 'AI_ANALYSIS:calling_openai');
+    await log('info', 'calling_openai');
 
     const promptKey = analysisType === 'purchase_round' ? 'purchase_round_v1' : 'daily_analysis_v1';
     const promptConfig = DEFAULT_PROMPTS[promptKey];
@@ -597,7 +675,7 @@ ${currentSeasonData.comparison_season
   : 'First season - no comparison available'}
 `;
 
-    await log('info', 'AI_ANALYSIS:openai_request', { 
+    await log('info', 'openai_request', { 
       model: promptConfig.model, 
       contextLength: userMessage.length 
     });
@@ -625,18 +703,18 @@ ${currentSeasonData.comparison_season
     try {
       aiOutput = JSON.parse(rawResponse);
     } catch (e) {
-      await log('error', 'AI_ANALYSIS:parse_error', { error: String(e), raw: rawResponse.slice(0, 500) });
+      await log('error', 'parse_error', { error: String(e), raw: rawResponse.slice(0, 500) });
       aiOutput = { error: 'Failed to parse AI response', raw: rawResponse.slice(0, 500) };
     }
 
     const durationMs = Date.now() - startTime;
-    await log('info', 'AI_ANALYSIS:openai_complete', { 
+    await log('info', 'openai_complete', { 
       durationMs, 
       usage: completion.usage 
     });
 
     // ========== STEP 10: Save Results ==========
-    await log('info', 'AI_ANALYSIS:saving_results');
+    await log('info', 'saving_results');
 
     // Create ai_runs entry
     const { data: aiRun, error: runError } = await supabase
@@ -660,7 +738,7 @@ ${currentSeasonData.comparison_season
       .single();
 
     if (runError) {
-      await log('error', 'AI_ANALYSIS:ai_run_insert_error', { error: runError.message });
+      await log('error', 'ai_run_insert_error', { error: runError.message });
     }
 
     // Create ai_season_analyses entry
@@ -698,7 +776,7 @@ ${currentSeasonData.comparison_season
       throw new Error(`Failed to save analysis: ${analysisError.message}`);
     }
 
-    await log('info', 'AI_ANALYSIS:complete', { 
+    await log('info', 'complete', { 
       analysisId: analysis?.id, 
       aiRunId: aiRun?.id, 
       durationMs 
@@ -707,7 +785,7 @@ ${currentSeasonData.comparison_season
     return { success: true, analysisId: analysis?.id };
 
   } catch (e: any) {
-    await log('error', 'AI_ANALYSIS:failed', { error: e?.message || String(e) });
+    await log('error', 'failed', { error: e?.message || String(e) });
     return { success: false, error: e?.message || 'Analysis failed' };
   }
 }
