@@ -14,7 +14,7 @@ interface AiAnalysisPayload {
 // Default prompts (fallback if not in DB)
 const DEFAULT_PROMPTS = {
   daily_analysis_v1: {
-    version: 4,
+    version: 5,
     content: `Du er en AI-analytiker for 2-BIZ, en dansk mode-grossistvirksomhed der sporer sæsonens salgsfremgang.
 
 Analyser de leverede data og svar med JSON på DANSK.
@@ -24,11 +24,11 @@ Analyser de leverede data og svar med JSON på DANSK.
   "executive_summary": {
     "headline": "Kort overskrift der opsummerer status (max 10 ord)",
     "bullets": [
-      "📊 Første punkt om overordnet status og fremgang",
-      "👥 Punkt om sælger-aktivitet og besøgsrate", 
-      "📈 Punkt om index vs sidste år",
-      "🔥 Punkt om top styles eller trends",
-      "⚡ Punkt om ændringer siden sidst (hvis relevant)"
+      "📦 Stk solgt: X total | +Y siden sidst | Z% index",
+      "💰 Omsætning: X DKK total | +Y siden sidst | Z% index",
+      "👥 Besøgsrate: X% (Y af Z kunder) | +N siden sidst",
+      "🔥 Top styles: STYLENAME1 (styleNo) X stk, STYLENAME2 (styleNo) Y stk",
+      "👤 Sælgere: X aktive af Y total | bedste: NAVN (index Z%)"
     ]
   },
   "progress_note": "En sætning om hvad der ændrede sig siden sidste analyse",
@@ -39,19 +39,19 @@ Analyser de leverede data og svar med JSON på DANSK.
   "recommendations": ["Eventuelle anbefalinger på dansk"]
 }
 
-## VIGTIGE REGLER:
-1. ALLE tekster skal være på DANSK
-2. Brug emojis i starten af hver bullet for hurtig scanning
-3. executive_summary.bullets skal have 3-5 punkter
-4. Vær faktuel og kortfattet
-5. Fremhæv ændringer siden sidst (changes_since_last) hvis tilgængelig
-6. Inkluder style navne når du nævner styles (f.eks. "BLAKE SHIRT (BL2354)")
+## BULLET FORMAT REGLER:
+1. 📦 Stk solgt: [total] | [+/- siden sidst] | [index vs sidste år %]
+2. 💰 Omsætning: [total DKK] | [+/- siden sidst] | [index vs sidste år %]
+3. 👥 Besøgsrate: [procent] ([besøgte] af [total]) | [+/- siden sidst]
+4. 🔥 Top styles: Nævn top 2-3 styles med NAVN (styleNo) og antal
+5. 👤 Sælgere: Antal aktive, bedste performer med navn og index
 
-## FOKUSPUNKTER:
-- Overordnet fremgang: solgt antal, omsætning, besøgsrate
-- Index performance (denne sæson vs sidste sæson for besøgte kunder)
-- Hvilke sælgere er aktive/inaktive
-- Top performing styles (inkluder style_name)`,
+## VIGTIGE REGLER:
+- ALLE tekster på DANSK
+- Brug | som separator i bullets for nem scanning
+- Hvis "changes_since_last" mangler, skriv "første analyse"
+- Index = (denne sæson / sidste sæson) * 100 for besøgte kunder
+- Inkluder ALTID style_name før style_no i parentes`,
     model: 'gpt-5-mini',
     temperature: 1, // GPT-5 only supports default
     maxTokens: 4096,
