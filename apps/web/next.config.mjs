@@ -2,6 +2,20 @@
 const nextConfig = {
   reactStrictMode: true,
   experimental: { typedRoutes: true },
+  images: {
+    remotePatterns: [
+      {
+        protocol: 'https',
+        hostname: 'img.spysystem.dk',
+        pathname: '/**',
+      },
+      {
+        protocol: 'https',
+        hostname: '*.spysystem.dk',
+        pathname: '/**',
+      },
+    ],
+  },
   async headers() {
     return [
       {
