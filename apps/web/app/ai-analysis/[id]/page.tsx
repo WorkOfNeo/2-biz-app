@@ -397,8 +397,9 @@ export default function AnalysisDetailPage() {
                   <th className="text-left p-3 font-medium text-slate-600">Salesperson</th>
                   <th className="text-right p-3 font-medium text-slate-600">Visited</th>
                   <th className="text-right p-3 font-medium text-slate-600">Qty</th>
-                  <th className="text-right p-3 font-medium text-slate-600">Price</th>
-                  <th className="text-right p-3 font-medium text-slate-600">Index</th>
+                  <th className="text-right p-3 font-medium text-slate-600">Qty Index</th>
+                  <th className="text-right p-3 font-medium text-slate-600">Revenue</th>
+                  <th className="text-right p-3 font-medium text-slate-600">Rev Index</th>
                 </tr>
               </thead>
               <tbody>
@@ -407,11 +408,20 @@ export default function AnalysisDetailPage() {
                     <td className="p-3 font-medium text-slate-900">{sp.salesperson}</td>
                     <td className="p-3 text-right text-slate-700">{sp.visited_customers}</td>
                     <td className="p-3 text-right text-slate-700">{sp.qty.toLocaleString()}</td>
+                    <td className="p-3 text-right">
+                      {(sp.qty_index ?? sp.index) != null ? (
+                        <span className={`font-medium ${(sp.qty_index ?? sp.index) >= 100 ? 'text-green-600' : (sp.qty_index ?? sp.index) >= 80 ? 'text-amber-600' : 'text-red-600'}`}>
+                          {sp.qty_index ?? sp.index}%
+                        </span>
+                      ) : (
+                        <span className="text-slate-400">—</span>
+                      )}
+                    </td>
                     <td className="p-3 text-right text-slate-700">{sp.price.toLocaleString('da-DK', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</td>
                     <td className="p-3 text-right">
-                      {sp.index != null ? (
-                        <span className={`font-medium ${sp.index >= 100 ? 'text-green-600' : sp.index >= 80 ? 'text-amber-600' : 'text-red-600'}`}>
-                          {sp.index}%
+                      {sp.revenue_index != null ? (
+                        <span className={`font-medium ${sp.revenue_index >= 100 ? 'text-green-600' : sp.revenue_index >= 80 ? 'text-amber-600' : 'text-red-600'}`}>
+                          {sp.revenue_index}%
                         </span>
                       ) : (
                         <span className="text-slate-400">—</span>
@@ -423,7 +433,7 @@ export default function AnalysisDetailPage() {
             </table>
           </div>
           <div className="p-3 bg-slate-50 border-t text-xs text-slate-500">
-            Index = This season qty / Last season qty for visited customers (100% = same as last year)
+            Index = This season / Last season for visited customers (100% = same as last year)
           </div>
         </div>
       )}
@@ -528,63 +538,54 @@ export default function AnalysisDetailPage() {
         </div>
       )}
 
-      {/* Top Styles */}
+      {/* Top Styles - Grid of 5 */}
       {analysis.metrics?.top_styles && analysis.metrics.top_styles.length > 0 && (
         <div className="bg-white border rounded-xl overflow-hidden mb-6">
           <div className="p-4 border-b bg-slate-50">
             <h2 className="font-semibold text-slate-900 flex items-center gap-2">
               <TrendingUp className="h-5 w-5 text-slate-400" />
-              Top Selling Styles
+              Top 5 Best Selling Styles
             </h2>
           </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b bg-slate-50">
-                  <th className="text-left p-3 font-medium text-slate-600">Style</th>
-                  <th className="text-right p-3 font-medium text-slate-600">Qty Sold</th>
-                  <th className="text-right p-3 font-medium text-slate-600">Colors</th>
-                  <th className="text-right p-3 font-medium text-slate-600">Customers</th>
-                </tr>
-              </thead>
-              <tbody>
-                {analysis.metrics.top_styles.slice(0, 15).map((s: any, i: number) => {
-                  const styleInfo = stylesInfo?.[s.style_no];
-                  return (
-                    <tr key={i} className="border-b hover:bg-slate-50">
-                      <td className="p-3">
-                        <div className="flex items-center gap-3">
-                          {styleInfo?.image_url ? (
-                            <div className="relative w-12 h-12 rounded overflow-hidden bg-slate-100 shrink-0">
-                              <Image
-                                src={styleInfo.image_url}
-                                alt={s.style_no}
-                                fill
-                                className="object-cover"
-                                sizes="48px"
-                              />
-                            </div>
-                          ) : (
-                            <div className="w-12 h-12 rounded bg-slate-100 flex items-center justify-center text-slate-400 text-xs shrink-0">
-                              No img
-                            </div>
-                          )}
-                          <div>
-                            <div className="font-medium text-slate-900">
-                              {styleInfo?.name || s.style_no}
-                            </div>
-                            <div className="text-xs text-slate-500 font-mono">{s.style_no}</div>
-                          </div>
+          <div className="p-4">
+            <div className="grid grid-cols-5 gap-4">
+              {analysis.metrics.top_styles.slice(0, 5).map((s: any, i: number) => {
+                const styleInfo = stylesInfo?.[s.style_no];
+                return (
+                  <div key={i} className="text-center group">
+                    {/* Large Image */}
+                    <div className="relative aspect-square rounded-lg overflow-hidden bg-slate-100 mb-3 shadow-sm group-hover:shadow-md transition-shadow">
+                      {styleInfo?.image_url ? (
+                        <Image
+                          src={styleInfo.image_url}
+                          alt={styleInfo?.name || s.style_no}
+                          fill
+                          className="object-cover"
+                          sizes="(max-width: 768px) 50vw, 20vw"
+                        />
+                      ) : (
+                        <div className="absolute inset-0 flex items-center justify-center text-slate-400 text-sm">
+                          No image
                         </div>
-                      </td>
-                      <td className="p-3 text-right font-semibold">{s.total_qty.toLocaleString()}</td>
-                      <td className="p-3 text-right">{s.colors_count}</td>
-                      <td className="p-3 text-right">{s.customer_count}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                      )}
+                      {/* Rank badge */}
+                      <div className="absolute top-2 left-2 w-7 h-7 bg-indigo-600 text-white rounded-full flex items-center justify-center text-sm font-bold shadow">
+                        {i + 1}
+                      </div>
+                    </div>
+                    {/* Info below image */}
+                    <div className="font-semibold text-slate-900 text-sm truncate" title={styleInfo?.name || s.style_no}>
+                      {styleInfo?.name || s.style_no}
+                    </div>
+                    <div className="text-xs text-slate-500 font-mono mb-1">{s.style_no}</div>
+                    <div className="text-lg font-bold text-indigo-600">{s.total_qty.toLocaleString()} stk</div>
+                    <div className="text-xs text-slate-500">
+                      {s.colors_count} farver • {s.customer_count} kunder
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         </div>
       )}

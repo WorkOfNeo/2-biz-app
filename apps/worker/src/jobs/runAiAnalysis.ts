@@ -396,22 +396,29 @@ export async function runAiAnalysis(
     const salespersonData = Object.values(bySalesperson).map(sp => {
       const totalCustomers = customersBySalesperson[sp.id] || 0;
       
-      // Calculate index: sum of this season qty for visited customers / sum of last season qty for same customers
+      // Calculate index: sum of this season data for visited customers / sum of last season data for same customers
       let thisSeasonQtyForVisited = 0;
       let lastSeasonQtyForVisited = 0;
+      let thisSeasonRevenueForVisited = 0;
+      let lastSeasonRevenueForVisited = 0;
       
       for (const [custId, custData] of sp.customerData) {
         thisSeasonQtyForVisited += custData.qty;
+        thisSeasonRevenueForVisited += custData.revenue;
         const lastSeason = lastSeasonByCustomer.get(custId);
         if (lastSeason) {
           lastSeasonQtyForVisited += lastSeason.qty;
+          lastSeasonRevenueForVisited += lastSeason.revenue;
         }
       }
       
       // Index: if last season was 100%, what is this season?
       // If no last season data, index is null
-      const index = lastSeasonQtyForVisited > 0 
+      const qtyIndex = lastSeasonQtyForVisited > 0 
         ? Math.round((thisSeasonQtyForVisited / lastSeasonQtyForVisited) * 1000) / 10 
+        : null;
+      const revenueIndex = lastSeasonRevenueForVisited > 0
+        ? Math.round((thisSeasonRevenueForVisited / lastSeasonRevenueForVisited) * 1000) / 10
         : null;
       
       return {
@@ -426,7 +433,9 @@ export async function runAiAnalysis(
           visit_rate_percent: totalCustomers > 0 
             ? Math.round((sp.customers.size / totalCustomers) * 1000) / 10 
             : 0,
-          index // null if no comparison data, otherwise percentage (e.g., 85 means 85% of last season)
+          qty_index: qtyIndex, // null if no comparison data, otherwise percentage (e.g., 85 means 85% of last season)
+          revenue_index: revenueIndex,
+          index: qtyIndex // Keep for backward compatibility
         }
       };
     }).sort((a, b) => b.metrics.qty_sold - a.metrics.qty_sold);
@@ -560,7 +569,9 @@ export async function runAiAnalysis(
         visited_customers: sp.metrics.customers_visited,
         qty: sp.metrics.qty_sold,
         price: sp.metrics.revenue,
-        index: sp.metrics.index
+        index: sp.metrics.index,
+        qty_index: sp.metrics.qty_index,
+        revenue_index: sp.metrics.revenue_index
       })),
       salespersons: salespersonData,
       by_country: countryData,

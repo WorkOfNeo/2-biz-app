@@ -228,49 +228,57 @@ export async function exportAiAnalysis(ctx: Ctx) {
     const customerCoverage = metrics.customer_coverage || {};
     const velocity = metrics.velocity || {};
     
-    // Top styles rows with images
-    const topStylesRows = topStyles.slice(0, 10).map((s: any, i: number) => {
+    // Top 5 styles as grid cards
+    const top5Styles = topStyles.slice(0, 5).map((s: any, i: number) => {
       const info = stylesInfo[s.style_no];
       const displayName = info?.name || s.style_name || s.style_no;
       
       return E(View, { 
         key: i, 
-        style: [styles.tableRow, i % 2 === 1 ? styles.tableRowAlt : {}] 
+        style: { 
+          width: '19%', 
+          alignItems: 'center',
+          padding: 6,
+          backgroundColor: '#f8fafc',
+          borderRadius: 4,
+          marginRight: i < 4 ? '1%' : 0
+        } 
       },
-        // Image + Name column
-        E(View, { style: { width: '40%', flexDirection: 'row', alignItems: 'center' } },
-          info?.image_url 
-            ? E(Image, { src: info.image_url, style: styles.styleImage })
-            : E(View, { style: styles.styleImage }),
-          E(View, { style: styles.styleInfo },
-            E(Text, { style: styles.styleName }, displayName),
-            E(Text, { style: styles.styleNo }, s.style_no)
-          )
+        // Large image
+        info?.image_url 
+          ? E(Image, { src: info.image_url, style: { width: 70, height: 70, borderRadius: 4, marginBottom: 6 } })
+          : E(View, { style: { width: 70, height: 70, backgroundColor: '#e2e8f0', borderRadius: 4, marginBottom: 6 } }),
+        // Rank badge
+        E(View, { style: { position: 'absolute', top: 4, left: 4, width: 16, height: 16, backgroundColor: '#6366f1', borderRadius: 8, alignItems: 'center', justifyContent: 'center' } },
+          E(Text, { style: { color: '#ffffff', fontSize: 8, fontWeight: 'bold' } }, String(i + 1))
         ),
-        E(Text, { style: [styles.tableCell, { width: '20%' }, styles.right] }, fmt(s.total_qty || 0)),
-        E(Text, { style: [styles.tableCell, { width: '20%' }, styles.right] }, String(s.colors_count || '-')),
-        E(Text, { style: [styles.tableCell, { width: '20%' }, styles.right] }, String(s.customer_count || '-'))
+        // Name + style no
+        E(Text, { style: { fontSize: 8, fontWeight: 'bold', textAlign: 'center', marginBottom: 2, maxLines: 1 } }, displayName.slice(0, 15)),
+        E(Text, { style: { fontSize: 6, color: '#64748b', marginBottom: 4 } }, s.style_no),
+        // Stats
+        E(Text, { style: { fontSize: 10, fontWeight: 'bold', color: '#6366f1' } }, `${fmt(s.total_qty || 0)} stk`),
+        E(Text, { style: { fontSize: 6, color: '#64748b' } }, `${s.colors_count || 0} farver • ${s.customer_count || 0} kunder`)
       );
     });
     
     // Salesperson table
     const salespersonTable = metrics.salesperson_table || [];
     const salespersonRows = salespersonTable.map((sp: any, i: number) => {
-      const indexStyle = sp.index != null 
-        ? (sp.index >= 100 ? styles.green : sp.index >= 80 ? {} : styles.red)
-        : {};
+      const qtyIdx = sp.qty_index ?? sp.index;
+      const revIdx = sp.revenue_index;
+      const qtyStyle = qtyIdx != null ? (qtyIdx >= 100 ? styles.green : qtyIdx >= 80 ? {} : styles.red) : {};
+      const revStyle = revIdx != null ? (revIdx >= 100 ? styles.green : revIdx >= 80 ? {} : styles.red) : {};
       
       return E(View, { 
         key: i, 
         style: [styles.tableRow, i % 2 === 1 ? styles.tableRowAlt : {}] 
       },
-        E(Text, { style: [styles.tableCell, { width: '30%' }] }, sp.salesperson || '-'),
-        E(Text, { style: [styles.tableCell, { width: '15%' }, styles.right] }, String(sp.visited_customers || 0)),
-        E(Text, { style: [styles.tableCell, { width: '20%' }, styles.right] }, fmt(sp.qty || 0)),
-        E(Text, { style: [styles.tableCell, { width: '20%' }, styles.right] }, fmt(sp.price || 0)),
-        E(Text, { style: [styles.tableCell, { width: '15%' }, styles.right, indexStyle] }, 
-          sp.index != null ? `${sp.index}%` : '—'
-        )
+        E(Text, { style: [styles.tableCell, { width: '22%' }] }, sp.salesperson || '-'),
+        E(Text, { style: [styles.tableCell, { width: '12%' }, styles.right] }, String(sp.visited_customers || 0)),
+        E(Text, { style: [styles.tableCell, { width: '16%' }, styles.right] }, fmt(sp.qty || 0)),
+        E(Text, { style: [styles.tableCell, { width: '12%' }, styles.right, qtyStyle] }, qtyIdx != null ? `${qtyIdx}%` : '—'),
+        E(Text, { style: [styles.tableCell, { width: '22%' }, styles.right] }, fmt(sp.price || 0)),
+        E(Text, { style: [styles.tableCell, { width: '12%' }, styles.right, revStyle] }, revIdx != null ? `${revIdx}%` : '—')
       );
     });
     
@@ -335,25 +343,22 @@ export async function exportAiAnalysis(ctx: Ctx) {
         salespersonRows.length > 0 && E(View, null,
           E(Text, { style: styles.h2 }, 'Sælger Fremgang'),
           E(View, { style: styles.tableHeader },
-            E(Text, { style: [styles.tableHeaderCell, { width: '30%' }] }, 'Sælger'),
-            E(Text, { style: [styles.tableHeaderCell, { width: '15%' }, styles.right] }, 'Besøgt'),
-            E(Text, { style: [styles.tableHeaderCell, { width: '20%' }, styles.right] }, 'Antal'),
-            E(Text, { style: [styles.tableHeaderCell, { width: '20%' }, styles.right] }, 'Pris'),
-            E(Text, { style: [styles.tableHeaderCell, { width: '15%' }, styles.right] }, 'Index')
+            E(Text, { style: [styles.tableHeaderCell, { width: '22%' }] }, 'Sælger'),
+            E(Text, { style: [styles.tableHeaderCell, { width: '12%' }, styles.right] }, 'Besøgt'),
+            E(Text, { style: [styles.tableHeaderCell, { width: '16%' }, styles.right] }, 'Stk'),
+            E(Text, { style: [styles.tableHeaderCell, { width: '12%' }, styles.right] }, 'Stk Idx'),
+            E(Text, { style: [styles.tableHeaderCell, { width: '22%' }, styles.right] }, 'Omsætning'),
+            E(Text, { style: [styles.tableHeaderCell, { width: '12%' }, styles.right] }, 'Oms Idx')
           ),
           ...salespersonRows
         ),
         
-        // Top Selling Styles
-        topStylesRows.length > 0 && E(View, null,
-          E(Text, { style: styles.h2 }, 'Bedst Sælgende Styles'),
-          E(View, { style: styles.tableHeader },
-            E(Text, { style: [styles.tableHeaderCell, { width: '40%' }] }, 'Style'),
-            E(Text, { style: [styles.tableHeaderCell, { width: '20%' }, styles.right] }, 'Solgt'),
-            E(Text, { style: [styles.tableHeaderCell, { width: '20%' }, styles.right] }, 'Farver'),
-            E(Text, { style: [styles.tableHeaderCell, { width: '20%' }, styles.right] }, 'Kunder')
-          ),
-          ...topStylesRows
+        // Top 5 Selling Styles - Grid layout
+        top5Styles.length > 0 && E(View, null,
+          E(Text, { style: styles.h2 }, 'Top 5 Bedst Sælgende Styles'),
+          E(View, { style: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 8 } },
+            ...top5Styles
+          )
         ),
         
         // Footer
