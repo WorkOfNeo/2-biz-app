@@ -460,7 +460,7 @@ export default function AnalysisDetailPage() {
 
       {/* Top Styles */}
       {analysis.metrics?.top_styles && analysis.metrics.top_styles.length > 0 && (
-        <div className="bg-white border rounded-xl overflow-hidden">
+        <div className="bg-white border rounded-xl overflow-hidden mb-6">
           <div className="p-4 border-b bg-slate-50">
             <h2 className="font-semibold text-slate-900 flex items-center gap-2">
               <TrendingUp className="h-5 w-5 text-slate-400" />
@@ -518,6 +518,197 @@ export default function AnalysisDetailPage() {
           </div>
         </div>
       )}
+
+      {/* Purchase Recommendations (for purchase round analyses) */}
+      {analysis.analysis_type === 'purchase_round' && analysis.purchase_recommendations && 
+       Array.isArray(analysis.purchase_recommendations) && analysis.purchase_recommendations.length > 0 && (
+        <PurchaseRecommendationsSection recommendations={analysis.purchase_recommendations} />
+      )}
+
+      {/* Warnings & Recommendations */}
+      {((analysis.warnings && analysis.warnings.length > 0) || 
+        (analysis.recommendations && analysis.recommendations.length > 0)) && (
+        <div className="grid md:grid-cols-2 gap-4">
+          {analysis.warnings && analysis.warnings.length > 0 && (
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+              <h3 className="font-semibold text-amber-800 mb-2">⚠️ Advarsler</h3>
+              <ul className="space-y-1">
+                {analysis.warnings.map((w, i) => (
+                  <li key={i} className="text-sm text-amber-700">{w}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {analysis.recommendations && analysis.recommendations.length > 0 && (
+            <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4">
+              <h3 className="font-semibold text-emerald-800 mb-2">💡 Anbefalinger</h3>
+              <ul className="space-y-1">
+                {analysis.recommendations.map((r, i) => (
+                  <li key={i} className="text-sm text-emerald-700">{r}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Component to display detailed purchase recommendations from AI Suggestions
+function PurchaseRecommendationsSection({ recommendations }: { recommendations: any[] }) {
+  const [expandedSuppliers, setExpandedSuppliers] = useState<Set<string>>(new Set());
+
+  const toggleSupplier = (supplierName: string) => {
+    const next = new Set(expandedSuppliers);
+    if (next.has(supplierName)) next.delete(supplierName);
+    else next.add(supplierName);
+    setExpandedSuppliers(next);
+  };
+
+  // Calculate totals
+  const totalUnits = recommendations.reduce((sum, s) => sum + (s.total_units || 0), 0);
+  const totalLines = recommendations.reduce((sum, s) => sum + (s.lines?.length || 0), 0);
+
+  return (
+    <div className="bg-white border rounded-xl overflow-hidden">
+      <div className="p-4 border-b bg-emerald-50">
+        <div className="flex items-center justify-between">
+          <h2 className="font-semibold text-emerald-900 flex items-center gap-2">
+            <Package className="h-5 w-5 text-emerald-600" />
+            Indkøbsanbefalinger ({recommendations.length} leverandører)
+          </h2>
+          <div className="flex items-center gap-4 text-sm">
+            <span className="text-emerald-700">
+              <strong>{totalUnits.toLocaleString()}</strong> stk. anbefalet
+            </span>
+            <span className="text-slate-500">
+              {totalLines} style/farve linjer
+            </span>
+          </div>
+        </div>
+      </div>
+      <div className="divide-y">
+        {recommendations.map((supplier, idx) => {
+          const isExpanded = expandedSuppliers.has(supplier.supplier_name);
+          const nonSkipLines = (supplier.lines || []).filter((l: any) => !l.skip_reason && l.suggested_qty > 0);
+          const skipLines = (supplier.lines || []).filter((l: any) => l.skip_reason || l.suggested_qty === 0);
+          
+          return (
+            <div key={idx}>
+              <button
+                onClick={() => toggleSupplier(supplier.supplier_name)}
+                className="w-full p-4 flex items-center justify-between hover:bg-slate-50 transition-colors text-left"
+              >
+                <div className="flex items-center gap-3">
+                  <div className={`w-10 h-10 rounded-lg flex items-center justify-center font-bold text-lg
+                    ${supplier.moq_status === 'met' ? 'bg-green-100 text-green-700' : 
+                      supplier.moq_status === 'under' ? 'bg-amber-100 text-amber-700' : 
+                      'bg-slate-100 text-slate-600'}`}>
+                    {supplier.supplier_name?.charAt(0) || '?'}
+                  </div>
+                  <div>
+                    <div className="font-medium text-slate-900">{supplier.supplier_name}</div>
+                    <div className="text-sm text-slate-500">
+                      {nonSkipLines.length} stk at bestille • {skipLines.length} sprunget over
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-4">
+                  <div className="text-right">
+                    <div className="font-bold text-lg text-slate-900">{(supplier.total_units || 0).toLocaleString()}</div>
+                    <div className="text-xs text-slate-500">stk. total</div>
+                  </div>
+                  <span className={`px-2 py-1 text-xs rounded-full ${
+                    supplier.moq_status === 'met' ? 'bg-green-100 text-green-700' : 
+                    supplier.moq_status === 'under' ? 'bg-amber-100 text-amber-700' : 
+                    'bg-slate-100 text-slate-600'
+                  }`}>
+                    MOQ {supplier.moq_status === 'met' ? '✓' : supplier.moq_status === 'under' ? '⚠' : '—'}
+                  </span>
+                  {isExpanded ? <ChevronUp className="h-5 w-5 text-slate-400" /> : <ChevronDown className="h-5 w-5 text-slate-400" />}
+                </div>
+              </button>
+              
+              {isExpanded && (
+                <div className="bg-slate-50 border-t p-4">
+                  {supplier.recommendation_summary && (
+                    <p className="text-sm text-slate-600 mb-4 bg-white p-3 rounded-lg border">
+                      {supplier.recommendation_summary}
+                    </p>
+                  )}
+                  
+                  {/* Lines to order */}
+                  {nonSkipLines.length > 0 && (
+                    <div className="mb-4">
+                      <h4 className="text-xs font-medium text-slate-500 uppercase mb-2">Til bestilling</h4>
+                      <div className="bg-white rounded-lg border overflow-hidden">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="bg-slate-50 border-b">
+                              <th className="text-left p-2 font-medium text-slate-600">Style</th>
+                              <th className="text-left p-2 font-medium text-slate-600">Farve</th>
+                              <th className="text-right p-2 font-medium text-slate-600">Solgt</th>
+                              <th className="text-right p-2 font-medium text-slate-600">Anbefalet</th>
+                              <th className="text-left p-2 font-medium text-slate-600">Begrundelse</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {nonSkipLines.slice(0, 20).map((line: any, lineIdx: number) => (
+                              <tr key={lineIdx} className="border-b last:border-0 hover:bg-slate-50">
+                                <td className="p-2">
+                                  <div className="flex items-center gap-2">
+                                    {line.image_url && (
+                                      <div className="relative w-8 h-8 rounded overflow-hidden bg-slate-100 shrink-0">
+                                        <Image src={line.image_url} alt="" fill className="object-cover" sizes="32px" />
+                                      </div>
+                                    )}
+                                    <div>
+                                      <div className="font-medium text-slate-900">{line.style_name || line.style_no}</div>
+                                      <div className="text-xs text-slate-400 font-mono">{line.style_no}</div>
+                                    </div>
+                                  </div>
+                                </td>
+                                <td className="p-2 text-slate-700">{line.color}</td>
+                                <td className="p-2 text-right text-slate-700">{(line.current_sold || 0).toLocaleString()}</td>
+                                <td className="p-2 text-right">
+                                  <span className="font-semibold text-emerald-600">{(line.suggested_qty || 0).toLocaleString()}</span>
+                                </td>
+                                <td className="p-2 text-xs text-slate-500 max-w-[200px] truncate">{line.reasoning || '—'}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                        {nonSkipLines.length > 20 && (
+                          <div className="p-2 text-center text-sm text-slate-500 bg-slate-50 border-t">
+                            + {nonSkipLines.length - 20} flere linjer
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* Skipped lines summary */}
+                  {skipLines.length > 0 && (
+                    <div>
+                      <h4 className="text-xs font-medium text-slate-500 uppercase mb-2">Sprunget over ({skipLines.length})</h4>
+                      <div className="text-xs text-slate-500 bg-white p-2 rounded-lg border">
+                        {skipLines.slice(0, 5).map((line: any, i: number) => (
+                          <span key={i} className="inline-flex items-center gap-1 mr-3">
+                            <span className="font-mono">{line.style_no}/{line.color}</span>
+                            <span className="text-slate-400">({line.skip_reason || 'skipped'})</span>
+                          </span>
+                        ))}
+                        {skipLines.length > 5 && <span className="text-slate-400">+{skipLines.length - 5} more</span>}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

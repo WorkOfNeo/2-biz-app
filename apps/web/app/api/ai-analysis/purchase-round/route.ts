@@ -1,5 +1,6 @@
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
+export const maxDuration = 180; // Allow up to 3 minutes for import + AI suggestions
 
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { cookies } from 'next/headers';
@@ -8,9 +9,12 @@ import { NextResponse } from 'next/server';
 interface PurchaseRoundRequest {
   seasonId?: string;
   comparisonSeasonId?: string;
+  useDetailedAI?: boolean; // Set to true to use AI Suggestions flow instead of simple analysis
 }
 
 export async function POST(req: Request) {
+  const startTime = Date.now();
+  
   try {
     const supabase = createRouteHandlerClient({ cookies });
     const body: PurchaseRoundRequest = await req.json();
@@ -18,6 +22,7 @@ export async function POST(req: Request) {
     // Get season IDs
     let seasonId = body.seasonId;
     let comparisonSeasonId = body.comparisonSeasonId;
+    const useDetailedAI = body.useDetailedAI !== false; // Default to true
 
     if (!seasonId) {
       const { data: setting } = await supabase
@@ -33,6 +38,8 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'No season configured' }, { status: 400 });
     }
 
+    console.log('[Purchase Round] Starting for season:', seasonId, 'useDetailedAI:', useDetailedAI);
+
     // Get next purchase round number
     const { data: lastRound } = await supabase
       .from('ai_season_analyses')
@@ -44,7 +51,141 @@ export async function POST(req: Request) {
       .maybeSingle();
 
     const nextRoundNumber = ((lastRound as any)?.purchase_round_number || 0) + 1;
+    console.log('[Purchase Round] Round number:', nextRoundNumber);
 
+    // =========================================================================
+    // DETAILED AI FLOW: Use AI Suggestions with auto-created import from season data
+    // =========================================================================
+    if (useDetailedAI) {
+      // Step 1: Create import from season data
+      console.log('[Purchase Round] Step 1: Creating import from season data...');
+      
+      const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 
+                      process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 
+                      'http://localhost:3000';
+      
+      const importRes = await fetch(`${baseUrl}/api/purchase/create-import-from-season`, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Cookie': req.headers.get('cookie') || '', // Forward auth cookies
+        },
+        body: JSON.stringify({ seasonId }),
+      });
+
+      const importData = await importRes.json();
+      
+      if (!importRes.ok || !importData.importId) {
+        console.error('[Purchase Round] Failed to create import:', importData);
+        return NextResponse.json({ 
+          error: 'Failed to create import from season data',
+          detail: importData.error || 'Unknown error',
+        }, { status: 500 });
+      }
+
+      const importId = importData.importId;
+      console.log('[Purchase Round] Import created/reused:', importId, importData.reused ? '(reused)' : '(new)');
+
+      // Step 2: Run AI Suggestions with the import
+      console.log('[Purchase Round] Step 2: Running AI Suggestions...');
+      
+      const suggestionsRes = await fetch(`${baseUrl}/api/purchase/ai-suggestions/run`, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Cookie': req.headers.get('cookie') || '',
+        },
+        body: JSON.stringify({
+          importId,
+          seasonId,
+          comparisonSeasonId: comparisonSeasonId || undefined,
+          topNPerSupplier: 200,
+          runNumber: nextRoundNumber,
+        }),
+      });
+
+      const suggestionsData = await suggestionsRes.json();
+      
+      if (!suggestionsRes.ok) {
+        console.error('[Purchase Round] AI Suggestions failed:', suggestionsData);
+        return NextResponse.json({ 
+          error: 'AI Suggestions analysis failed',
+          detail: suggestionsData.error || 'Unknown error',
+        }, { status: 500 });
+      }
+
+      console.log('[Purchase Round] AI Suggestions complete:', {
+        purchaseRunId: suggestionsData.purchaseRunId,
+        totalUnits: suggestionsData.suggestions?.total_units,
+        suppliersCount: suggestionsData.suggestions?.suppliers?.length,
+      });
+
+      // Step 3: Save analysis record (for the AI Analysis history)
+      const executiveSummary = suggestionsData.suggestions?.overall_summary || 
+        `Purchase Round #${nextRoundNumber}: ${suggestionsData.suggestions?.total_units?.toLocaleString() || 0} units recommended across ${suggestionsData.suggestions?.suppliers?.length || 0} suppliers.`;
+
+      const { data: analysis, error: analysisError } = await supabase
+        .from('ai_season_analyses')
+        .insert({
+          season_id: seasonId,
+          comparison_season_id: comparisonSeasonId || null,
+          analysis_type: 'purchase_round',
+          analysis_date: new Date().toISOString().split('T')[0],
+          executive_summary: executiveSummary,
+          metrics: {
+            totals: {
+              qty_sold: suggestionsData.analysisBackground?.computedFeatures?.overall?.totalQty || 0,
+              revenue: suggestionsData.analysisBackground?.computedFeatures?.overall?.totalAmount || 0,
+              unique_styles: suggestionsData.analysisBackground?.computedFeatures?.overall?.styleCount || 0,
+            },
+            customer_coverage: {
+              visit_rate_percent: parseFloat(suggestionsData.analysisBackground?.visitRatePercent || '0'),
+            },
+            purchase_stage: suggestionsData.analysisBackground?.purchaseStage,
+            total_recommended_units: suggestionsData.suggestions?.total_units || 0,
+            suppliers_count: suggestionsData.suggestions?.suppliers?.length || 0,
+            yoy_analysis: suggestionsData.yoyAnalysis || null,
+          },
+          purchase_round_number: nextRoundNumber,
+          purchase_recommendations: suggestionsData.suggestions?.suppliers || null,
+          warnings: suggestionsData.suggestions?.warnings || [],
+        })
+        .select('id')
+        .single();
+
+      if (analysisError) {
+        console.error('[Purchase Round] Failed to save analysis record:', analysisError);
+      }
+
+      const durationMs = Date.now() - startTime;
+      console.log('[Purchase Round] Complete in', durationMs, 'ms');
+
+      return NextResponse.json({
+        success: true,
+        message: 'Purchase round analysis complete with detailed AI suggestions.',
+        analysisId: analysis?.id,
+        purchaseRunId: suggestionsData.purchaseRunId,
+        aiRunId: suggestionsData.aiRunId,
+        importId,
+        purchaseRoundNumber: nextRoundNumber,
+        seasonId,
+        comparisonSeasonId,
+        summary: {
+          totalUnits: suggestionsData.suggestions?.total_units || 0,
+          suppliersCount: suggestionsData.suggestions?.suppliers?.length || 0,
+          purchaseStage: suggestionsData.analysisBackground?.purchaseStage,
+          visitRatePercent: suggestionsData.analysisBackground?.visitRatePercent,
+        },
+        stats: {
+          durationMs,
+          tokensUsed: suggestionsData.stats?.tokensUsed || 0,
+        },
+      });
+    }
+
+    // =========================================================================
+    // SIMPLE FLOW: Use existing worker-based analysis (legacy)
+    // =========================================================================
     // Check for existing running analysis job
     const { data: existingJobs } = await supabase
       .from('jobs')

@@ -205,20 +205,29 @@ export default function AIAnalysisDashboard() {
       const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(type === 'daily' ? { analysisType: 'daily' } : {})
+        body: JSON.stringify(type === 'daily' ? { analysisType: 'daily' } : { useDetailedAI: true })
       });
       
       const data = await res.json();
       
       if (!res.ok) {
-        throw new Error(data.error || 'Analysis failed');
+        throw new Error(data.error || data.detail || 'Analysis failed');
       }
 
-      // Job has been queued - start polling
+      // Purchase round now returns directly with detailed results (no job polling needed)
+      if (type === 'purchase_round' && data.analysisId) {
+        setRunningAnalysis(false);
+        await mutate();
+        // Optionally redirect to the analysis detail page
+        // Or show a success message with link to review suggestions
+        return;
+      }
+
+      // Daily analysis still uses job-based approach - start polling
       if (data.jobId) {
         setCurrentJobId(data.jobId);
       } else {
-        // Direct response (shouldn't happen with new worker-based approach)
+        // Direct response
         setRunningAnalysis(false);
         await mutate();
       }
