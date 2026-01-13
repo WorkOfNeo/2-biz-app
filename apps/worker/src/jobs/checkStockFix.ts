@@ -364,30 +364,48 @@ export async function checkStockFix(ctx: Ctx) {
         chunks.push(mismatchedStyleNos.slice(i, i + BATCH_SIZE));
       }
       
+      // First, create a "root" update_style_stock job ID to link all batches
+      // This allows the export_stock_list_after_update_stock waiter to track all batches
+      let rootJobId: string | null = null;
+      
       // Enqueue update_style_stock jobs for each chunk
       for (let i = 0; i < chunks.length; i++) {
         const chunk = chunks[i];
         if (!chunk) continue;
         try {
-          const { error: insertErr } = await supabase
+          const isFirstBatch = i === 0;
+          const payload: Record<string, any> = {
+            styleNos: chunk,
+            requestedBy: 'check_stock_fix_autofix',
+            batchIndex: i + 1,
+            batchTotal: chunks.length
+          };
+          
+          // First batch is the "root", subsequent batches reference rootId
+          if (!isFirstBatch && rootJobId) {
+            payload.rootId = rootJobId;
+          }
+          
+          const { data: insertedJob, error: insertErr } = await supabase
             .from('jobs')
             .insert({
               type: 'update_style_stock',
-              payload: {
-                styleNos: chunk,
-                requestedBy: 'check_stock_fix_autofix',
-                triggerJobId: job.id,
-                batchIndex: i + 1,
-                batchTotal: chunks.length
-              },
+              payload,
               status: 'queued',
               max_attempts: 3,
               queue: 'stock',
               priority: 150 // Medium-high priority
-            });
-          if (!insertErr) {
+            })
+            .select('id')
+            .single();
+          
+          if (!insertErr && insertedJob) {
             fixJobsEnqueued++;
-          } else {
+            // Save the first job's ID as the root
+            if (isFirstBatch) {
+              rootJobId = insertedJob.id;
+            }
+          } else if (insertErr) {
             await log(job.id, 'error', 'STEP:check_stock_fix_autofix_enqueue_error', { 
               batchIndex: i + 1, 
               error: insertErr.message 
@@ -404,35 +422,16 @@ export async function checkStockFix(ctx: Ctx) {
       await log(job.id, 'info', 'STEP:check_stock_fix_autofix_enqueued', { 
         jobsEnqueued: fixJobsEnqueued,
         totalBatches: chunks.length,
-        totalStyles: mismatchedStyleNos.length
+        totalStyles: mismatchedStyleNos.length,
+        rootJobId
       });
       
-      // Enqueue export_stock_list to run after fixes complete (with delay)
-      // Use a waiter job pattern similar to export_stock_list_after_update_stock
-      try {
-        const runAfter = new Date(Date.now() + 180_000).toISOString(); // 3 min delay
-        const { error: exportErr } = await supabase
-          .from('jobs')
-          .insert({
-            type: 'export_stock_list',
-            payload: {
-              requestedBy: 'check_stock_fix_autofix',
-              triggerJobId: job.id
-            },
-            status: 'queued',
-            max_attempts: 3,
-            queue: 'default',
-            priority: 80,
-            run_after: runAfter
-          });
-        if (!exportErr) {
-          await log(job.id, 'info', 'STEP:check_stock_fix_export_enqueued', { runAfter });
-        } else {
-          await log(job.id, 'error', 'STEP:check_stock_fix_export_enqueue_error', { error: exportErr.message });
-        }
-      } catch (e: any) {
-        await log(job.id, 'error', 'STEP:check_stock_fix_export_enqueue_exception', { error: e?.message || String(e) });
-      }
+      // NOTE: export_stock_list will be automatically enqueued by the first update_style_stock job
+      // via the export_stock_list_after_update_stock waiter pattern. No need to enqueue here.
+      await log(job.id, 'info', 'STEP:check_stock_fix_export_will_follow', { 
+        message: 'export_stock_list will be triggered after update_style_stock batches complete',
+        rootJobId 
+      });
       
     } else if (mismatches.length > 0) {
       // Manual review mode (autoFix disabled)
