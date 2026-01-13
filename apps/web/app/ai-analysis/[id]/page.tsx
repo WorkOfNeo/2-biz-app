@@ -243,10 +243,32 @@ export default function AnalysisDetailPage() {
 
       {/* Executive Summary */}
       <div className="bg-gradient-to-br from-indigo-50 to-purple-50 border border-indigo-100 rounded-xl p-6 mb-6">
-        <h2 className="text-sm font-medium text-indigo-600 mb-2">Executive Summary</h2>
-        <p className="text-lg text-slate-900">{analysis.executive_summary || 'No summary available'}</p>
+        <h2 className="text-sm font-medium text-indigo-600 mb-2">Opsummering</h2>
+        {/* Handle both old (string) and new (object) executive_summary format */}
+        {typeof analysis.executive_summary === 'string' ? (
+          <p className="text-lg text-slate-900">{analysis.executive_summary || 'Ingen opsummering tilgængelig'}</p>
+        ) : analysis.executive_summary && typeof analysis.executive_summary === 'object' ? (
+          <div className="space-y-3">
+            {(analysis.executive_summary as any).headline && (
+              <p className="text-xl font-semibold text-slate-900">
+                {(analysis.executive_summary as any).headline}
+              </p>
+            )}
+            {(analysis.executive_summary as any).bullets && Array.isArray((analysis.executive_summary as any).bullets) && (
+              <ul className="space-y-2">
+                {(analysis.executive_summary as any).bullets.map((bullet: string, idx: number) => (
+                  <li key={idx} className="text-base text-slate-700 flex items-start gap-2">
+                    <span className="mt-0.5">{bullet}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        ) : (
+          <p className="text-lg text-slate-900">Ingen opsummering tilgængelig</p>
+        )}
         {analysis.comparison_note && (
-          <p className="mt-3 text-sm text-indigo-700 flex items-center gap-1">
+          <p className="mt-4 text-sm text-indigo-700 flex items-center gap-1 pt-3 border-t border-indigo-100">
             <TrendingUp className="h-4 w-4" />
             {analysis.comparison_note}
           </p>

@@ -242,50 +242,64 @@ export async function exportAiAnalysis(ctx: Ctx) {
         E(View, { style: styles.header },
           E(Text, { style: styles.h1 }, 
             analysis.analysis_type === 'purchase_round' 
-              ? `Purchase Round #${analysis.purchase_round_number || '?'}` 
-              : 'Daily Season Analysis'
+              ? `Indkøbsrunde #${analysis.purchase_round_number || '?'}` 
+              : 'Daglig Sæsonanalyse'
           ),
           E(Text, { style: styles.subtitle }, `${seasonLabel} • ${analysisDate}${comparisonLabel ? ` • vs ${comparisonLabel}` : ''}`)
         ),
         
-        // Executive Summary
+        // Executive Summary - handle both string and object formats
         analysis.executive_summary && E(View, { style: styles.summaryBox },
-          E(Text, { style: styles.summaryText }, analysis.executive_summary)
+          typeof analysis.executive_summary === 'string' 
+            ? E(Text, { style: styles.summaryText }, analysis.executive_summary)
+            : E(View, null,
+                // Headline
+                analysis.executive_summary.headline && E(Text, { 
+                  style: [styles.summaryText, { fontWeight: 'bold', fontSize: 12, marginBottom: 6 }] 
+                }, analysis.executive_summary.headline),
+                // Bullets
+                ...(Array.isArray(analysis.executive_summary.bullets) 
+                  ? analysis.executive_summary.bullets.map((bullet: string, i: number) => 
+                      E(Text, { key: i, style: [styles.summaryText, { marginBottom: 3 }] }, bullet)
+                    )
+                  : []
+                )
+              )
         ),
         
         // Key Metrics
-        E(Text, { style: styles.h2 }, 'Key Metrics'),
+        E(Text, { style: styles.h2 }, 'Nøgletal'),
         E(View, { style: styles.metricsRow },
           E(View, { style: styles.metricCard },
-            E(Text, { style: styles.metricLabel }, 'Total Sold'),
+            E(Text, { style: styles.metricLabel }, 'Solgt i alt'),
             E(Text, { style: styles.metricValue }, fmt(totals.qty_sold || 0)),
-            E(Text, { style: styles.metricUnit }, 'pieces')
+            E(Text, { style: styles.metricUnit }, 'stk.')
           ),
           E(View, { style: styles.metricCard },
-            E(Text, { style: styles.metricLabel }, 'Revenue'),
+            E(Text, { style: styles.metricLabel }, 'Omsætning'),
             E(Text, { style: styles.metricValue }, fmtK(totals.revenue || 0)),
             E(Text, { style: styles.metricUnit }, 'DKK')
           ),
           E(View, { style: styles.metricCard },
-            E(Text, { style: styles.metricLabel }, 'Visit Rate'),
+            E(Text, { style: styles.metricLabel }, 'Besøgsrate'),
             E(Text, { style: styles.metricValue }, `${customerCoverage.visit_rate_percent || 0}%`),
-            E(Text, { style: styles.metricUnit }, `${customerCoverage.visited_customers || 0} / ${customerCoverage.total_customers || 0}`)
+            E(Text, { style: styles.metricUnit }, `${customerCoverage.visited_customers || 0} af ${customerCoverage.total_customers || 0}`)
           ),
           E(View, { style: styles.metricCard },
-            E(Text, { style: styles.metricLabel }, 'Daily Velocity'),
+            E(Text, { style: styles.metricLabel }, 'Daglig hastighed'),
             E(Text, { style: styles.metricValue }, String(velocity.avg_daily_qty || 0)),
-            E(Text, { style: styles.metricUnit }, 'pcs/day')
+            E(Text, { style: styles.metricUnit }, 'stk./dag')
           )
         ),
         
         // Salesperson Progress
         salespersonRows.length > 0 && E(View, null,
-          E(Text, { style: styles.h2 }, 'Salesperson Progress'),
+          E(Text, { style: styles.h2 }, 'Sælger Fremgang'),
           E(View, { style: styles.tableHeader },
-            E(Text, { style: [styles.tableHeaderCell, { width: '30%' }] }, 'Salesperson'),
-            E(Text, { style: [styles.tableHeaderCell, { width: '15%' }, styles.right] }, 'Visited'),
-            E(Text, { style: [styles.tableHeaderCell, { width: '20%' }, styles.right] }, 'Qty'),
-            E(Text, { style: [styles.tableHeaderCell, { width: '20%' }, styles.right] }, 'Price'),
+            E(Text, { style: [styles.tableHeaderCell, { width: '30%' }] }, 'Sælger'),
+            E(Text, { style: [styles.tableHeaderCell, { width: '15%' }, styles.right] }, 'Besøgt'),
+            E(Text, { style: [styles.tableHeaderCell, { width: '20%' }, styles.right] }, 'Antal'),
+            E(Text, { style: [styles.tableHeaderCell, { width: '20%' }, styles.right] }, 'Pris'),
             E(Text, { style: [styles.tableHeaderCell, { width: '15%' }, styles.right] }, 'Index')
           ),
           ...salespersonRows
@@ -293,20 +307,20 @@ export async function exportAiAnalysis(ctx: Ctx) {
         
         // Top Selling Styles
         topStylesRows.length > 0 && E(View, null,
-          E(Text, { style: styles.h2 }, 'Top Selling Styles'),
+          E(Text, { style: styles.h2 }, 'Bedst Sælgende Styles'),
           E(View, { style: styles.tableHeader },
             E(Text, { style: [styles.tableHeaderCell, { width: '40%' }] }, 'Style'),
-            E(Text, { style: [styles.tableHeaderCell, { width: '20%' }, styles.right] }, 'Qty Sold'),
-            E(Text, { style: [styles.tableHeaderCell, { width: '20%' }, styles.right] }, 'Colors'),
-            E(Text, { style: [styles.tableHeaderCell, { width: '20%' }, styles.right] }, 'Customers')
+            E(Text, { style: [styles.tableHeaderCell, { width: '20%' }, styles.right] }, 'Solgt'),
+            E(Text, { style: [styles.tableHeaderCell, { width: '20%' }, styles.right] }, 'Farver'),
+            E(Text, { style: [styles.tableHeaderCell, { width: '20%' }, styles.right] }, 'Kunder')
           ),
           ...topStylesRows
         ),
         
         // Footer
         E(View, { style: styles.footer },
-          E(Text, null, `Generated: ${getCopenhagenTimestamp()}`),
-          E(Text, null, '2-BIZ AI Analysis')
+          E(Text, null, `Genereret: ${getCopenhagenTimestamp()}`),
+          E(Text, null, '2-BIZ AI Analyse')
         )
       ),
       
@@ -315,7 +329,7 @@ export async function exportAiAnalysis(ctx: Ctx) {
       E(PdfPage, { size: 'A4', style: styles.page },
         // Warnings
         analysis.warnings && analysis.warnings.length > 0 && E(View, null,
-          E(Text, { style: styles.h2 }, '⚠️ Warnings'),
+          E(Text, { style: styles.h2 }, '⚠️ Advarsler'),
           ...analysis.warnings.map((w: string, i: number) => 
             E(View, { key: i, style: styles.warningBox },
               E(Text, { style: styles.warningText }, w)
@@ -325,7 +339,7 @@ export async function exportAiAnalysis(ctx: Ctx) {
         
         // Recommendations
         analysis.recommendations && analysis.recommendations.length > 0 && E(View, null,
-          E(Text, { style: styles.h2 }, '💡 Recommendations'),
+          E(Text, { style: styles.h2 }, '💡 Anbefalinger'),
           ...analysis.recommendations.map((r: string, i: number) =>
             E(View, { key: i, style: styles.recommendBox },
               E(Text, { style: styles.recommendText }, r)
@@ -335,8 +349,8 @@ export async function exportAiAnalysis(ctx: Ctx) {
         
         // Footer
         E(View, { style: styles.footer },
-          E(Text, null, `Generated: ${getCopenhagenTimestamp()}`),
-          E(Text, null, '2-BIZ AI Analysis')
+          E(Text, null, `Genereret: ${getCopenhagenTimestamp()}`),
+          E(Text, null, '2-BIZ AI Analyse')
         )
       )
     );
