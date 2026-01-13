@@ -99,19 +99,39 @@ export async function exportAiAnalysis(ctx: Ctx) {
     // Fetch style info (style_name, image_url)
     let stylesInfo: Record<string, { name: string | null; image_url: string | null }> = {};
     if (styleNos.length > 0) {
+      // Fetch basic style info
       const { data: styles } = await supabase
         .from('styles')
         .select('style_no, style_name, image_url')
         .in('style_no', styleNos);
       
+      // Fetch color images as fallback (from deep scrape)
+      const { data: colorImages } = await supabase
+        .from('style_colors')
+        .select('style_id, image_url, styles!inner(style_no)')
+        .not('image_url', 'is', null);
+      
+      // Build color image lookup by style_no
+      const colorImageMap: Record<string, string> = {};
+      for (const c of (colorImages || [])) {
+        const styleNo = (c.styles as any)?.style_no;
+        if (styleNo && c.image_url && !colorImageMap[styleNo]) {
+          colorImageMap[styleNo] = c.image_url;
+        }
+      }
+      
       for (const s of (styles || [])) {
-        // Scale image URL for PDF rendering
-        const scaledImage = scaleImageUrl(s.image_url);
+        // Prefer style image, fallback to color image
+        const imageUrl = s.image_url || colorImageMap[s.style_no] || null;
+        const scaledImage = scaleImageUrl(imageUrl);
         stylesInfo[s.style_no] = { name: s.style_name, image_url: scaledImage };
       }
     }
     
-    await log(job.id, 'info', 'STEP:styles_loaded', { count: Object.keys(stylesInfo).length });
+    await log(job.id, 'info', 'STEP:styles_loaded', { 
+      count: Object.keys(stylesInfo).length,
+      withImages: Object.values(stylesInfo).filter(s => s.image_url).length 
+    });
     
     // Parse executive_summary if stored as JSON string (TEXT column, not JSONB)
     let executiveSummary: string | { headline?: string; bullets?: string[] } | null = analysis.executive_summary;

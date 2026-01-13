@@ -125,14 +125,34 @@ export default function AnalysisDetailPage() {
   const { data: stylesInfo } = useSWR(
     topStyleNos.length > 0 ? ['styles-info', topStyleNos.join(',')] : null,
     async () => {
-      const { data } = await supabase
+      // Fetch basic style info
+      const { data: styles } = await supabase
         .from('styles')
         .select('style_no, name, image_url')
         .in('style_no', topStyleNos);
-      // Build a lookup map
+      
+      // Fetch color images as fallback (from deep scrape)
+      const { data: colorImages } = await supabase
+        .from('style_colors')
+        .select('style_id, image_url, styles!inner(style_no)')
+        .not('image_url', 'is', null);
+      
+      // Build color image lookup by style_no
+      const colorImageMap: Record<string, string> = {};
+      for (const c of (colorImages || [])) {
+        const styleNo = (c.styles as any)?.style_no;
+        if (styleNo && c.image_url && !colorImageMap[styleNo]) {
+          colorImageMap[styleNo] = c.image_url;
+        }
+      }
+      
+      // Build final lookup - prefer style image, fallback to color image
       const map: Record<string, { name: string | null; image_url: string | null }> = {};
-      for (const s of (data || [])) {
-        map[s.style_no] = { name: s.name, image_url: s.image_url };
+      for (const s of (styles || [])) {
+        map[s.style_no] = { 
+          name: s.name, 
+          image_url: s.image_url || colorImageMap[s.style_no] || null 
+        };
       }
       return map;
     }
@@ -349,34 +369,53 @@ export default function AnalysisDetailPage() {
       {analysis.metrics && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
           <div className="bg-white border rounded-xl p-4">
-            <div className="text-xs text-slate-500 uppercase tracking-wide">Total Sold</div>
+            <div className="text-xs text-slate-500 uppercase tracking-wide">Solgt i alt</div>
             <div className="text-3xl font-bold text-slate-900 mt-1">
-              {(analysis.metrics.totals?.qty_sold || 0).toLocaleString()}
+              {(analysis.metrics.totals?.qty_sold || 0).toLocaleString('da-DK')} stk
             </div>
-            <div className="text-sm text-slate-500">pieces</div>
+            {analysis.metrics.index_for_visited_customers?.last_season_qty_for_these_customers > 0 && (
+              <div className="text-sm text-slate-500">
+                Sidste år: {(analysis.metrics.index_for_visited_customers.last_season_qty_for_these_customers || 0).toLocaleString('da-DK')} stk
+              </div>
+            )}
           </div>
           <div className="bg-white border rounded-xl p-4">
-            <div className="text-xs text-slate-500 uppercase tracking-wide">Revenue</div>
+            <div className="text-xs text-slate-500 uppercase tracking-wide">Omsætning</div>
             <div className="text-3xl font-bold text-slate-900 mt-1">
-              {((analysis.metrics.totals?.revenue || 0) / 1000).toFixed(0)}K
+              {(analysis.metrics.totals?.revenue || 0).toLocaleString('da-DK', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} DKK
             </div>
-            <div className="text-sm text-slate-500">DKK</div>
+            {analysis.metrics.index_for_visited_customers?.last_season_revenue_for_these_customers > 0 && (
+              <div className="text-sm text-slate-500">
+                Sidste år: {(analysis.metrics.index_for_visited_customers.last_season_revenue_for_these_customers || 0).toLocaleString('da-DK', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} DKK
+              </div>
+            )}
           </div>
           <div className="bg-white border rounded-xl p-4">
-            <div className="text-xs text-slate-500 uppercase tracking-wide">Customer Visit Rate</div>
+            <div className="text-xs text-slate-500 uppercase tracking-wide">Besøgsrate</div>
             <div className="text-3xl font-bold text-slate-900 mt-1">
               {analysis.metrics.customer_coverage?.visit_rate_percent || 0}%
             </div>
             <div className="text-sm text-slate-500">
-              {analysis.metrics.customer_coverage?.visited_customers || 0} / {analysis.metrics.customer_coverage?.total_customers || 0}
+              {analysis.metrics.customer_coverage?.visited_customers || 0} af {analysis.metrics.customer_coverage?.total_customers || 0} kunder
             </div>
           </div>
           <div className="bg-white border rounded-xl p-4">
-            <div className="text-xs text-slate-500 uppercase tracking-wide">Daily Velocity</div>
-            <div className="text-3xl font-bold text-slate-900 mt-1">
-              {analysis.metrics.velocity?.avg_daily_qty || 0}
+            <div className="text-xs text-slate-500 uppercase tracking-wide">Index (stk)</div>
+            <div className={`text-3xl font-bold mt-1 ${
+              (analysis.metrics.index_for_visited_customers?.qty_index_percent ?? 0) >= 100 
+                ? 'text-green-600' 
+                : (analysis.metrics.index_for_visited_customers?.qty_index_percent ?? 0) >= 80 
+                  ? 'text-amber-600' 
+                  : 'text-red-600'
+            }`}>
+              {analysis.metrics.index_for_visited_customers?.qty_index_percent != null 
+                ? `${analysis.metrics.index_for_visited_customers.qty_index_percent}%`
+                : '—'
+              }
             </div>
-            <div className="text-sm text-slate-500">pcs/day</div>
+            <div className="text-sm text-slate-500">
+              vs. besøgte kunders sidste år
+            </div>
           </div>
         </div>
       )}
