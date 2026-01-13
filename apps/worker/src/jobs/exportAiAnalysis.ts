@@ -228,7 +228,7 @@ export async function exportAiAnalysis(ctx: Ctx) {
     const customerCoverage = metrics.customer_coverage || {};
     const velocity = metrics.velocity || {};
     
-    // Top 5 styles as grid cards
+    // Top 5 styles as grid cards - matching frontend layout
     const top5Styles = topStyles.slice(0, 5).map((s: any, i: number) => {
       const info = stylesInfo[s.style_no];
       const displayName = info?.name || s.style_name || s.style_no;
@@ -236,28 +236,38 @@ export async function exportAiAnalysis(ctx: Ctx) {
       return E(View, { 
         key: i, 
         style: { 
-          width: '19%', 
+          width: '18.5%', 
           alignItems: 'center',
-          padding: 6,
+          padding: 8,
           backgroundColor: '#f8fafc',
-          borderRadius: 4,
-          marginRight: i < 4 ? '1%' : 0
+          borderRadius: 6,
+          borderWidth: 1,
+          borderColor: '#e2e8f0',
+          marginRight: i < 4 ? '1.5%' : 0
         } 
       },
-        // Large image
-        info?.image_url 
-          ? E(Image, { src: info.image_url, style: { width: 70, height: 70, borderRadius: 4, marginBottom: 6 } })
-          : E(View, { style: { width: 70, height: 70, backgroundColor: '#e2e8f0', borderRadius: 4, marginBottom: 6 } }),
-        // Rank badge
-        E(View, { style: { position: 'absolute', top: 4, left: 4, width: 16, height: 16, backgroundColor: '#6366f1', borderRadius: 8, alignItems: 'center', justifyContent: 'center' } },
-          E(Text, { style: { color: '#ffffff', fontSize: 8, fontWeight: 'bold' } }, String(i + 1))
+        // Large square image container
+        E(View, { style: { width: '100%', aspectRatio: 1, marginBottom: 8, position: 'relative' } },
+          info?.image_url 
+            ? E(Image, { src: info.image_url, style: { width: '100%', height: '100%', borderRadius: 6 } })
+            : E(View, { style: { width: '100%', height: '100%', backgroundColor: '#e2e8f0', borderRadius: 6, alignItems: 'center', justifyContent: 'center' } },
+                E(Text, { style: { fontSize: 7, color: '#94a3b8' } }, 'No image')
+              ),
+          // Rank badge - positioned top left
+          E(View, { style: { position: 'absolute', top: 4, left: 4, width: 18, height: 18, backgroundColor: '#6366f1', borderRadius: 9, alignItems: 'center', justifyContent: 'center' } },
+            E(Text, { style: { color: '#ffffff', fontSize: 9, fontWeight: 'bold' } }, String(i + 1))
+          )
         ),
-        // Name + style no
-        E(Text, { style: { fontSize: 8, fontWeight: 'bold', textAlign: 'center', marginBottom: 2, maxLines: 1 } }, displayName.slice(0, 15)),
-        E(Text, { style: { fontSize: 6, color: '#64748b', marginBottom: 4 } }, s.style_no),
-        // Stats
-        E(Text, { style: { fontSize: 10, fontWeight: 'bold', color: '#6366f1' } }, `${fmt(s.total_qty || 0)} stk`),
-        E(Text, { style: { fontSize: 6, color: '#64748b' } }, `${s.colors_count || 0} farver • ${s.customer_count || 0} kunder`)
+        // Name (truncated)
+        E(Text, { style: { fontSize: 9, fontWeight: 'bold', textAlign: 'center', marginBottom: 2, color: '#0f172a' } }, 
+          displayName.length > 12 ? displayName.slice(0, 12) + '…' : displayName
+        ),
+        // Style number
+        E(Text, { style: { fontSize: 7, color: '#64748b', marginBottom: 6, fontFamily: 'Courier' } }, s.style_no),
+        // Qty sold - prominent
+        E(Text, { style: { fontSize: 12, fontWeight: 'bold', color: '#6366f1', marginBottom: 2 } }, `${fmt(s.total_qty || 0)} stk`),
+        // Colors + customers
+        E(Text, { style: { fontSize: 7, color: '#64748b', textAlign: 'center' } }, `${s.colors_count || 0} farver • ${s.customer_count || 0} kunder`)
       );
     });
     

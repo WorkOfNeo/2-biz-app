@@ -416,34 +416,100 @@ export default function AIAnalysisDashboard() {
         </div>
       )}
 
-      {/* Job Progress Panel */}
+      {/* Job Progress Panel - Modern soothing design */}
       {currentJobId && (
-        <div className="mb-6 bg-slate-900 text-white rounded-xl overflow-hidden">
-          <div className="p-4 border-b border-slate-700 flex items-center justify-between">
+        <div className="mb-6 bg-gradient-to-br from-slate-50 to-indigo-50 border border-indigo-100 rounded-2xl overflow-hidden shadow-sm">
+          {/* Header */}
+          <div className="p-4 border-b border-indigo-100/50 flex items-center justify-between bg-white/50">
             <div className="flex items-center gap-3">
-              <Loader2 className="h-5 w-5 animate-spin text-indigo-400" />
-              <span className="font-medium">AI Analysis Running...</span>
-            </div>
-            <span className="text-xs text-slate-400 font-mono">Job: {currentJobId.slice(0, 8)}...</span>
-          </div>
-          <div className="p-4 max-h-64 overflow-y-auto font-mono text-sm space-y-1">
-            {jobLogs.length === 0 ? (
-              <div className="text-slate-500">Waiting for logs...</div>
-            ) : (
-              jobLogs.map((log) => (
-                <div key={log.id} className={`flex gap-2 ${log.level === 'error' ? 'text-red-400' : log.level === 'progress' ? 'text-yellow-400' : 'text-slate-300'}`}>
-                  <span className="text-slate-500 shrink-0">
-                    {new Date(log.created_at).toLocaleTimeString('da-DK', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                  </span>
-                  <span className={`shrink-0 w-12 uppercase text-xs ${log.level === 'error' ? 'text-red-500' : log.level === 'progress' ? 'text-yellow-500' : 'text-indigo-400'}`}>
-                    [{log.level}]
-                  </span>
-                  <span>{log.msg}</span>
-                  {log.data && Object.keys(log.data).length > 0 && (
-                    <span className="text-slate-500 truncate">{JSON.stringify(log.data)}</span>
-                  )}
+              <div className="relative">
+                <div className="w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center">
+                  <Brain className="h-5 w-5 text-indigo-600" />
                 </div>
-              ))
+                <div className="absolute -bottom-0.5 -right-0.5 w-4 h-4 bg-indigo-500 rounded-full flex items-center justify-center">
+                  <Loader2 className="h-2.5 w-2.5 animate-spin text-white" />
+                </div>
+              </div>
+              <div>
+                <div className="font-semibold text-slate-900">AI Analysis in Progress</div>
+                <div className="text-xs text-slate-500">Processing season data...</div>
+              </div>
+            </div>
+            <span className="px-2.5 py-1 bg-indigo-100 text-indigo-700 text-xs rounded-full font-mono">
+              {currentJobId.slice(0, 8)}
+            </span>
+          </div>
+          
+          {/* Progress Steps */}
+          <div className="p-4">
+            {jobLogs.length === 0 ? (
+              <div className="flex items-center gap-3 text-slate-500">
+                <div className="w-2 h-2 bg-indigo-400 rounded-full animate-pulse"></div>
+                <span className="text-sm">Initializing analysis...</span>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {jobLogs.map((log, idx) => {
+                  const isLatest = idx === jobLogs.length - 1;
+                  const isError = log.level === 'error';
+                  const isStep = log.msg.startsWith('STEP:') || log.msg.startsWith('AI_ANALYSIS:');
+                  const cleanMsg = log.msg.replace('STEP:', '').replace('AI_ANALYSIS:', '').replace(/_/g, ' ');
+                  
+                  // Parse step for nicer display
+                  const stepLabels: Record<string, string> = {
+                    'start': '🚀 Starting analysis',
+                    'fetching seasons': '📅 Loading season data',
+                    'fetching sales stats': '📊 Fetching sales statistics',
+                    'fetching customers': '👥 Loading customer data',
+                    'fetching salespersons': '👤 Loading salesperson data',
+                    'fetching comparison data': '📈 Comparing with last season',
+                    'calculating metrics': '🧮 Calculating metrics',
+                    'calling openai': '🤖 AI analyzing data...',
+                    'openai complete': '✅ AI analysis complete',
+                    'saving analysis': '💾 Saving results',
+                    'complete': '🎉 Analysis complete!',
+                  };
+                  
+                  const displayMsg = stepLabels[cleanMsg.toLowerCase()] || cleanMsg;
+                  
+                  return (
+                    <div 
+                      key={log.id} 
+                      className={`flex items-start gap-3 p-2 rounded-lg transition-all ${
+                        isLatest ? 'bg-white shadow-sm border border-indigo-100' : 'opacity-60'
+                      } ${isError ? 'bg-red-50 border-red-200' : ''}`}
+                    >
+                      {/* Step indicator */}
+                      <div className={`mt-0.5 w-5 h-5 rounded-full flex items-center justify-center shrink-0 ${
+                        isError ? 'bg-red-100' : isLatest ? 'bg-indigo-100' : 'bg-slate-100'
+                      }`}>
+                        {isLatest && !isError ? (
+                          <Loader2 className="h-3 w-3 animate-spin text-indigo-600" />
+                        ) : isError ? (
+                          <span className="text-red-500 text-xs">✕</span>
+                        ) : (
+                          <span className="text-green-500 text-xs">✓</span>
+                        )}
+                      </div>
+                      
+                      <div className="flex-1 min-w-0">
+                        <div className={`text-sm ${isLatest ? 'font-medium text-slate-900' : 'text-slate-600'} ${isError ? 'text-red-700' : ''}`}>
+                          {displayMsg}
+                        </div>
+                        {log.data && Object.keys(log.data).length > 0 && isStep && (
+                          <div className="text-xs text-slate-400 mt-0.5 truncate">
+                            {Object.entries(log.data).slice(0, 3).map(([k, v]) => `${k}: ${v}`).join(' • ')}
+                          </div>
+                        )}
+                      </div>
+                      
+                      <span className="text-xs text-slate-400 shrink-0">
+                        {new Date(log.created_at).toLocaleTimeString('da-DK', { hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
             )}
           </div>
         </div>
