@@ -3,7 +3,7 @@
 import { useEffect, useState, useMemo } from 'react';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Truck, PackageCheck } from 'lucide-react';
 
 type PoRow = {
   status: string | null;
@@ -82,6 +82,8 @@ function normalizeEta(eta: string | null | undefined): string | null {
   return null;
 }
 
+type TabType = 'running' | 'delivered';
+
 export default function PurchaseDashboardPage() {
   const supabase = createClientComponentClient();
   const [rows, setRows] = useState<PoRow[]>([]);
@@ -89,6 +91,7 @@ export default function PurchaseDashboardPage() {
   const [selectedSupplier, setSelectedSupplier] = useState<string | null>(null);
   const [weekOffset, setWeekOffset] = useState(0); // 0 = current week, -1 = last week, 1 = next week
   const [showWeekends, setShowWeekends] = useState(false);
+  const [activeTab, setActiveTab] = useState<TabType>('running');
 
   async function fetchRows() {
     setLoading(true);
@@ -125,20 +128,36 @@ export default function PurchaseDashboardPage() {
     return { weekDates: dates, weekKeys: keys, today: todayKey };
   }, [weekOffset]);
 
-  // Get unique suppliers sorted alphabetically
+  // Filter rows by active tab first
+  const tabFilteredRows = useMemo(() => {
+    if (activeTab === 'delivered') {
+      return rows.filter((po) => po.status === 'Delivered');
+    }
+    // 'running' tab shows Shipped, Running, or any other non-delivered status
+    return rows.filter((po) => po.status !== 'Delivered');
+  }, [rows, activeTab]);
+
+  // Count for tabs
+  const tabCounts = useMemo(() => {
+    const delivered = rows.filter((po) => po.status === 'Delivered').length;
+    const running = rows.length - delivered;
+    return { running, delivered };
+  }, [rows]);
+
+  // Get unique suppliers sorted alphabetically (from tab-filtered rows)
   const suppliers = useMemo(() => {
     const set = new Set<string>();
-    for (const po of rows) {
+    for (const po of tabFilteredRows) {
       set.add(po.supplier || 'Unknown');
     }
     return Array.from(set).sort((a, b) => a.localeCompare(b));
-  }, [rows]);
+  }, [tabFilteredRows]);
 
-  // Filter rows by selected supplier
+  // Filter rows by selected supplier (after tab filter)
   const filteredRows = useMemo(() => {
-    if (!selectedSupplier) return rows;
-    return rows.filter((po) => (po.supplier || 'Unknown') === selectedSupplier);
-  }, [rows, selectedSupplier]);
+    if (!selectedSupplier) return tabFilteredRows;
+    return tabFilteredRows.filter((po) => (po.supplier || 'Unknown') === selectedSupplier);
+  }, [tabFilteredRows, selectedSupplier]);
 
   // Group POs by weekday column, then by supplier
   const { columns, outsideWeek } = useMemo(() => {
@@ -257,6 +276,54 @@ export default function PurchaseDashboardPage() {
           </div>
         </div>
       </div>
+
+      {/* Status Tabs */}
+      <div className="flex items-center gap-2 border-b border-slate-200">
+        <button
+          onClick={() => {
+            setActiveTab('running');
+            setSelectedSupplier(null); // Reset supplier filter on tab change
+          }}
+          className={`
+            flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors -mb-px
+            ${activeTab === 'running'
+              ? 'border-blue-600 text-blue-600'
+              : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
+            }
+          `}
+        >
+          <Truck className="w-4 h-4" />
+          Shipped / Running
+          <span className={`
+            px-2 py-0.5 text-xs rounded-full
+            ${activeTab === 'running' ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-600'}
+          `}>
+            {tabCounts.running}
+          </span>
+        </button>
+        <button
+          onClick={() => {
+            setActiveTab('delivered');
+            setSelectedSupplier(null); // Reset supplier filter on tab change
+          }}
+          className={`
+            flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors -mb-px
+            ${activeTab === 'delivered'
+              ? 'border-emerald-600 text-emerald-600'
+              : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
+            }
+          `}
+        >
+          <PackageCheck className="w-4 h-4" />
+          Delivered
+          <span className={`
+            px-2 py-0.5 text-xs rounded-full
+            ${activeTab === 'delivered' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}
+          `}>
+            {tabCounts.delivered}
+          </span>
+        </button>
+      </div>
       
       {/* Week Label */}
       <p className="text-sm text-slate-600">
@@ -286,10 +353,10 @@ export default function PurchaseDashboardPage() {
               }
             `}
           >
-            All ({rows.length})
+            All ({tabFilteredRows.length})
           </button>
           {suppliers.map((supplier) => {
-            const count = rows.filter((po) => (po.supplier || 'Unknown') === supplier).length;
+            const count = tabFilteredRows.filter((po) => (po.supplier || 'Unknown') === supplier).length;
             const isActive = selectedSupplier === supplier;
             return (
               <button
@@ -374,7 +441,11 @@ export default function PurchaseDashboardPage() {
                               <span
                                 className={`
                                   px-1.5 py-0.5 rounded text-xs
-                                  ${po.status === 'Shipped' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}
+                                  ${po.status === 'Delivered' 
+                                    ? 'bg-emerald-100 text-emerald-700' 
+                                    : po.status === 'Shipped' 
+                                      ? 'bg-amber-100 text-amber-700' 
+                                      : 'bg-blue-100 text-blue-700'}
                                 `}
                               >
                                 {po.status}
