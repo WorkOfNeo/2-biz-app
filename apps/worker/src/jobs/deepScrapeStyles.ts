@@ -60,9 +60,10 @@ export async function deepScrapeStyles(ctx: Ctx) {
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
     // We do NOT change the season selects – we read what is already on the page across all boxes
     try {
-      await page.waitForSelector('.colorDeliveryBox', { timeout: 30_000 });
+      await page.waitForSelector('.colorDeliveryBox', { timeout: 5_000 });
     } catch (e: any) {
-      await log(job.id, 'error', 'STEP:deep_styles_no_color_box', { style_no: s.style_no, error: e?.message || String(e) });
+      // Style may not have materials tab - skip quickly (5s timeout)
+      await log(job.id, 'error', 'STEP:deep_styles_no_color_box', { style_no: s.style_no });
       continue;
     }
     // Read the season selects present in materials tab (unique spy season ids)
