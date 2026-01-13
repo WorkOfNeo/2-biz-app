@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import useSWR from 'swr';
 import { supabase } from '../../lib/supabaseClient';
 import Link from 'next/link';
-import { Brain, Play, TrendingUp, Package, Calendar, Clock, ChevronRight, Trash2, Database, RefreshCw, Loader2 } from 'lucide-react';
+import { Brain, Play, TrendingUp, Package, Calendar, Clock, ChevronRight, Trash2, Database, RefreshCw, Loader2, FileDown, FileText } from 'lucide-react';
 
 type AnalysisRaw = {
   id: string;
@@ -18,6 +18,7 @@ type AnalysisRaw = {
   created_at: string;
   email_sent_at: string | null;
   purchase_round_number: number | null;
+  pdf_url: string | null;
   season: { name: string; year: number | null }[] | null;
 };
 
@@ -39,6 +40,7 @@ export default function AIAnalysisDashboard() {
   const [clearing, setClearing] = useState(false);
   const [currentJobId, setCurrentJobId] = useState<string | null>(null);
   const [jobLogs, setJobLogs] = useState<JobLog[]>([]);
+  const [generatingPdfFor, setGeneratingPdfFor] = useState<Set<string>>(new Set());
 
   // Fetch latest analyses
   const { data: analyses, mutate, error: analysesError } = useSWR('ai-analyses', async () => {
@@ -47,7 +49,7 @@ export default function AIAnalysisDashboard() {
       .from('ai_season_analyses')
       .select(`
         id, season_id, analysis_type, analysis_date, executive_summary, 
-        metrics, warnings, recommendations, created_at, email_sent_at, purchase_round_number,
+        metrics, warnings, recommendations, created_at, email_sent_at, purchase_round_number, pdf_url,
         season:seasons!season_id(name, year)
       `)
       .order('created_at', { ascending: false })
@@ -223,6 +225,64 @@ export default function AIAnalysisDashboard() {
     } catch (e: any) {
       setAnalysisError(e?.message || 'Failed to run analysis');
       setRunningAnalysis(false);
+    }
+  }
+
+  async function generatePdf(analysisId: string) {
+    // Add to generating set
+    setGeneratingPdfFor(prev => new Set(prev).add(analysisId));
+    
+    try {
+      // Enqueue the export job
+      const { data: job, error } = await supabase
+        .from('jobs')
+        .insert({
+          type: 'export_ai_analysis',
+          payload: { analysisId },
+          status: 'queued',
+          max_attempts: 2
+        })
+        .select('id')
+        .single();
+      
+      if (error) throw error;
+      
+      // Poll for job completion
+      const pollForCompletion = async () => {
+        const maxAttempts = 60; // 2 minutes max
+        let attempts = 0;
+        
+        while (attempts < maxAttempts) {
+          await new Promise(r => setTimeout(r, 2000)); // Wait 2 seconds
+          
+          const { data: jobStatus } = await supabase
+            .from('jobs')
+            .select('status')
+            .eq('id', job.id)
+            .single();
+          
+          if (jobStatus?.status === 'succeeded') {
+            // Refresh to get the new pdf_url
+            await mutate();
+            break;
+          } else if (jobStatus?.status === 'failed' || jobStatus?.status === 'cancelled') {
+            throw new Error('PDF generation failed');
+          }
+          
+          attempts++;
+        }
+      };
+      
+      await pollForCompletion();
+    } catch (e: any) {
+      console.error('PDF generation failed:', e);
+      setAnalysisError(`Failed to generate PDF: ${e.message}`);
+    } finally {
+      setGeneratingPdfFor(prev => {
+        const next = new Set(prev);
+        next.delete(analysisId);
+        return next;
+      });
     }
   }
 
@@ -541,12 +601,14 @@ export default function AIAnalysisDashboard() {
         </div>
         <div className="divide-y">
           {(analyses ?? []).slice(0, 20).map((a) => (
-            <Link
+            <div
               key={a.id}
-              href={`/ai-analysis/${a.id}`}
               className="flex items-center justify-between p-4 hover:bg-slate-50 transition-colors"
             >
-              <div className="flex items-center gap-3">
+              <Link
+                href={`/ai-analysis/${a.id}`}
+                className="flex items-center gap-3 flex-1"
+              >
                 <div className={`p-2 rounded-lg ${a.analysis_type === 'purchase_round' ? 'bg-emerald-100' : 'bg-indigo-100'}`}>
                   {a.analysis_type === 'purchase_round' ? (
                     <Package className="h-4 w-4 text-emerald-600" />
@@ -569,7 +631,7 @@ export default function AIAnalysisDashboard() {
                     {a.email_sent_at && <span className="ml-2 text-green-600">📧 Sent</span>}
                   </div>
                 </div>
-              </div>
+              </Link>
               <div className="flex items-center gap-4">
                 {a.metrics?.totals && (
                   <div className="text-right text-sm">
@@ -577,9 +639,48 @@ export default function AIAnalysisDashboard() {
                     <div className="text-slate-500">{a.metrics.customer_coverage?.visit_rate_percent || 0}% visited</div>
                   </div>
                 )}
-                <ChevronRight className="h-5 w-5 text-slate-300" />
+                
+                {/* PDF Button */}
+                {a.pdf_url ? (
+                  <a
+                    href={a.pdf_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm bg-green-50 text-green-700 hover:bg-green-100 rounded-lg transition-colors"
+                  >
+                    <FileDown className="h-4 w-4" />
+                    Download
+                  </a>
+                ) : (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      e.preventDefault();
+                      generatePdf(a.id);
+                    }}
+                    disabled={generatingPdfFor.has(a.id)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm bg-slate-100 text-slate-700 hover:bg-slate-200 rounded-lg transition-colors disabled:opacity-50"
+                  >
+                    {generatingPdfFor.has(a.id) ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Generating...
+                      </>
+                    ) : (
+                      <>
+                        <FileText className="h-4 w-4" />
+                        Generate PDF
+                      </>
+                    )}
+                  </button>
+                )}
+                
+                <Link href={`/ai-analysis/${a.id}`}>
+                  <ChevronRight className="h-5 w-5 text-slate-300" />
+                </Link>
               </div>
-            </Link>
+            </div>
           ))}
           {(!analyses || analyses.length === 0) && (
             <div className="p-8 text-center text-slate-500">
