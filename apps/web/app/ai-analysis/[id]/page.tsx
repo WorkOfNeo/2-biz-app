@@ -225,6 +225,12 @@ export default function AnalysisDetailPage() {
                   Download PDF
                 </a>
               )}
+              {/* Prompt version badge */}
+              {analysis.metrics?.prompt_info && (
+                <span className="px-2 py-0.5 bg-slate-100 text-slate-600 text-xs rounded-full" title={`Model: ${analysis.metrics.prompt_info.model}`}>
+                  v{analysis.metrics.prompt_info.version} • {analysis.metrics.prompt_info.model}
+                </span>
+              )}
             </div>
           </div>
           <div className="text-right">

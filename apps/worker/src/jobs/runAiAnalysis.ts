@@ -14,43 +14,77 @@ interface AiAnalysisPayload {
 // Default prompts (fallback if not in DB)
 const DEFAULT_PROMPTS = {
   daily_analysis_v1: {
-    version: 2,
-    content: `You are an AI analyst for 2-BIZ, a Danish fashion wholesale company tracking season sales progress.
+    version: 4,
+    content: `Du er en AI-analytiker for 2-BIZ, en dansk mode-grossistvirksomhed der sporer sæsonens salgsfremgang.
 
-Analyze the provided data and respond with JSON containing:
-- executive_summary: A concise 2-3 paragraph progress report. Focus on what changed since the last analysis and current trajectory.
-- progress_note: One sentence about what changed since last analysis (use changes_since_last if provided)
-- salesperson_summaries: Object with salesperson IDs as keys, each containing { note: string } - a brief observation about their progress
+Analyser de leverede data og svar med JSON på DANSK.
 
-Key metrics to highlight:
-1. Overall progress: qty sold, revenue, visit rate
-2. Changes since last analysis (if available)
-3. Index performance (this season vs last season for visited customers)
-4. Which salespeople are active/inactive
-5. Top performing styles
+## OUTPUT FORMAT (valid JSON, ingen markdown):
+{
+  "executive_summary": {
+    "headline": "Kort overskrift der opsummerer status (max 10 ord)",
+    "bullets": [
+      "📊 Første punkt om overordnet status og fremgang",
+      "👥 Punkt om sælger-aktivitet og besøgsrate", 
+      "📈 Punkt om index vs sidste år",
+      "🔥 Punkt om top styles eller trends",
+      "⚡ Punkt om ændringer siden sidst (hvis relevant)"
+    ]
+  },
+  "progress_note": "En sætning om hvad der ændrede sig siden sidste analyse",
+  "salesperson_summaries": {
+    "salesperson_id": { "note": "Kort observation om deres fremgang på dansk" }
+  },
+  "warnings": ["Eventuelle advarsler på dansk"],
+  "recommendations": ["Eventuelle anbefalinger på dansk"]
+}
 
-Keep it factual and concise. No warnings or recommendations needed.`,
+## VIGTIGE REGLER:
+1. ALLE tekster skal være på DANSK
+2. Brug emojis i starten af hver bullet for hurtig scanning
+3. executive_summary.bullets skal have 3-5 punkter
+4. Vær faktuel og kortfattet
+5. Fremhæv ændringer siden sidst (changes_since_last) hvis tilgængelig
+6. Inkluder style navne når du nævner styles (f.eks. "BLAKE SHIRT (BL2354)")
+
+## FOKUSPUNKTER:
+- Overordnet fremgang: solgt antal, omsætning, besøgsrate
+- Index performance (denne sæson vs sidste sæson for besøgte kunder)
+- Hvilke sælgere er aktive/inaktive
+- Top performing styles (inkluder style_name)`,
     model: 'gpt-5-mini',
     temperature: 1, // GPT-5 only supports default
     maxTokens: 4096,
   },
   purchase_round_v1: {
-    version: 1,
-    content: `You are an AI purchasing analyst for 2-BIZ, a Danish fashion wholesale company.
-This is a PURCHASE ROUND - we are making actual buying decisions for stock replenishment.
+    version: 2,
+    content: `Du er en AI-indkøbsanalytiker for 2-BIZ, en dansk mode-grossistvirksomhed.
+Dette er en INDKØBSRUNDE - vi træffer faktiske købsbeslutninger for lageropfyldning.
 
-Analyze the provided data and provide purchase recommendations in JSON format:
-- executive_summary: Brief overview of the purchase round context
-- purchase_recommendations: Array of { supplier, styles: [{ style_no, recommended_qty, reasoning }], total_qty, priority }
-- style_insights: { urgent_restock: [...], watch_list: [...], skip: [...] }
-- warnings: Array of risks or concerns
-- total_recommended_units: Number
-- estimated_investment: Number (if calculable)
+Analyser de leverede data og giv indkøbsanbefalinger på DANSK i JSON format:
 
-Apply these rules based on purchase_stage:
-- EARLY (< 40% visit rate): Add 10-30% buffer to remaining need
-- MID (40-75% visit rate): Cover remaining need exactly or +10%
-- CLOSING (> 75% visit rate): Exact match only, skip if below MOQ`,
+## OUTPUT FORMAT:
+{
+  "executive_summary": {
+    "headline": "Kort overskrift for indkøbsrunden",
+    "bullets": [
+      "📦 Punkt om total anbefalet mængde",
+      "🏭 Punkt om leverandører",
+      "📊 Punkt om indkøbs-stadie baseret på besøgsrate",
+      "⚠️ Eventuelle advarsler"
+    ]
+  },
+  "purchase_recommendations": [{ "supplier": "...", "styles": [...], "total_qty": 0, "priority": "high/medium/low" }],
+  "style_insights": { "urgent_restock": [...], "watch_list": [...], "skip": [...] },
+  "warnings": ["Advarsler på dansk"],
+  "recommendations": ["Anbefalinger på dansk"],
+  "total_recommended_units": 0
+}
+
+## INDKØBS-REGLER baseret på besøgsrate:
+- EARLY (< 40% besøgt): Tilføj 10-30% buffer til resterende behov
+- MID (40-75% besøgt): Dæk resterende behov præcist eller +10%
+- CLOSING (> 75% besøgt): Kun præcis match, spring over hvis under MOQ`,
     model: 'gpt-5',
     temperature: 1, // GPT-5 only supports default
     maxTokens: 16384,
@@ -613,6 +647,16 @@ ${currentSeasonData.comparison_season
     }
 
     // Create ai_season_analyses entry
+    // Add prompt info to metrics for frontend display
+    const metricsWithPromptInfo = {
+      ...currentSeasonData,
+      prompt_info: {
+        key: promptKey,
+        version: promptConfig.version,
+        model: promptConfig.model,
+      }
+    };
+    
     const { data: analysis, error: analysisError } = await supabase
       .from('ai_season_analyses')
       .insert({
@@ -621,7 +665,7 @@ ${currentSeasonData.comparison_season
         comparison_season_id: comparisonSeasonId || null,
         analysis_type: analysisType,
         analysis_date: new Date().toISOString().split('T')[0],
-        metrics: currentSeasonData,
+        metrics: metricsWithPromptInfo,
         executive_summary: aiOutput.executive_summary || null,
         salesperson_reports: aiOutput.salesperson_reports || {},
         style_insights: aiOutput.style_insights || {},

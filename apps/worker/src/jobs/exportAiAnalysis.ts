@@ -21,7 +21,25 @@ async function ensureBuffer(val: unknown): Promise<Buffer> {
   if (val instanceof Uint8Array) return Buffer.from(val);
   if (val instanceof ArrayBuffer) return Buffer.from(val);
   if (typeof val === 'string') return Buffer.from(val, 'utf8');
-  throw new Error('Cannot convert to Buffer');
+  // Handle ReadableStream from @react-pdf/renderer
+  if (val && typeof val === 'object' && 'pipe' in val) {
+    // It's a stream - collect chunks
+    const chunks: Buffer[] = [];
+    return new Promise((resolve, reject) => {
+      const stream = val as NodeJS.ReadableStream;
+      stream.on('data', (chunk: Buffer | Uint8Array) => {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      });
+      stream.on('end', () => resolve(Buffer.concat(chunks)));
+      stream.on('error', reject);
+    });
+  }
+  // Handle blob-like objects
+  if (val && typeof val === 'object' && 'arrayBuffer' in val && typeof (val as any).arrayBuffer === 'function') {
+    const ab = await (val as any).arrayBuffer();
+    return Buffer.from(ab);
+  }
+  throw new Error(`Cannot convert to Buffer: ${typeof val} ${val?.constructor?.name || 'unknown'}`);
 }
 
 type Ctx = {
@@ -355,10 +373,27 @@ export async function exportAiAnalysis(ctx: Ctx) {
       )
     );
     
-    await log(job.id, 'info', 'STEP:generating_pdf');
+    await log(job.id, 'info', 'STEP:generating_pdf', { 
+      hasSummary: !!analysis.executive_summary,
+      summaryType: typeof analysis.executive_summary,
+      topStylesCount: topStylesRows.length,
+      salespersonCount: salespersonRows.length
+    });
     
-    const pdfOut = await pdf(doc).toBuffer();
+    let pdfOut: unknown;
+    try {
+      pdfOut = await pdf(doc).toBuffer();
+      await log(job.id, 'info', 'STEP:pdf_rendered', { 
+        outputType: typeof pdfOut,
+        constructorName: pdfOut?.constructor?.name || 'unknown'
+      });
+    } catch (renderErr: any) {
+      await log(job.id, 'error', 'STEP:pdf_render_failed', { error: renderErr?.message || String(renderErr) });
+      throw renderErr;
+    }
+    
     const pdfBuf = await ensureBuffer(pdfOut);
+    await log(job.id, 'info', 'STEP:buffer_created', { bufferSize: pdfBuf.length });
     
     // Upload to storage
     const dateStr = new Date().toISOString().split('T')[0];
