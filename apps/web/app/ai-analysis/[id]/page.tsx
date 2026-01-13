@@ -130,7 +130,7 @@ export default function AnalysisDetailPage() {
       // Fetch basic style info
       const { data: styles, error: stylesError } = await supabase
         .from('styles')
-        .select('style_no, name, image_url')
+        .select('style_no, style_name, image_url')
         .in('style_no', topStyleNos);
       
       console.log('[StylesInfo] Styles table result:', { 
@@ -138,7 +138,7 @@ export default function AnalysisDetailPage() {
         error: stylesError,
         sample: styles?.slice(0, 2).map(s => ({ 
           style_no: s.style_no, 
-          name: s.name, 
+          style_name: s.style_name, 
           has_image: !!s.image_url,
           image_url: s.image_url?.substring(0, 60) + '...'
         }))
@@ -175,7 +175,7 @@ export default function AnalysisDetailPage() {
       for (const s of (styles || [])) {
         const finalImageUrl = s.image_url || colorImageMap[s.style_no] || null;
         map[s.style_no] = { 
-          name: s.name, 
+          name: s.style_name, 
           image_url: finalImageUrl 
         };
         console.log(`[StylesInfo] ${s.style_no}: style_img=${!!s.image_url}, color_img=${!!colorImageMap[s.style_no]}, final=${!!finalImageUrl}`);
