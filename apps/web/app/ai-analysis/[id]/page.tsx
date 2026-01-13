@@ -6,7 +6,7 @@ import { supabase } from '../../../lib/supabaseClient';
 import Link from 'next/link';
 import { 
   ArrowLeft, Brain, TrendingUp, Users, Package, Calendar, 
-  ChevronDown, ChevronUp, User, Globe, BarChart3, Clock, Mail, FileDown
+  ChevronDown, ChevronUp, User, Globe, BarChart3, Clock, Mail, FileDown, RefreshCw
 } from 'lucide-react';
 import { useState, useMemo } from 'react';
 import Image from 'next/image';
@@ -96,8 +96,9 @@ export default function AnalysisDetailPage() {
   const router = useRouter();
   const analysisId = params.id as string;
   const [expandedSalespersons, setExpandedSalespersons] = useState<Set<string>>(new Set());
+  const [regeneratingPdf, setRegeneratingPdf] = useState(false);
 
-  const { data: analysis, error } = useSWR(
+  const { data: analysis, error, mutate } = useSWR(
     analysisId ? ['ai-analysis', analysisId] : null,
     async () => {
       const { data, error } = await supabase
@@ -166,6 +167,38 @@ export default function AnalysisDetailPage() {
     setExpandedSalespersons(next);
   };
 
+  const handleRegeneratePdf = async () => {
+    if (regeneratingPdf) return;
+    setRegeneratingPdf(true);
+    try {
+      // Clear existing PDF URL
+      await supabase
+        .from('ai_season_analyses')
+        .update({ pdf_url: null })
+        .eq('id', analysisId);
+      
+      // Enqueue new export job
+      const { error: jobErr } = await supabase.from('jobs').insert({
+        type: 'export_ai_analysis',
+        payload: { analysisId },
+        status: 'queued',
+        max_attempts: 3,
+        queue: 'default',
+        priority: 100,
+      });
+      
+      if (jobErr) throw new Error(jobErr.message);
+      
+      // Refresh data
+      mutate();
+      alert('PDF regeneration started. Refresh in a moment to see the new PDF.');
+    } catch (e: any) {
+      alert(`Failed to regenerate PDF: ${e.message}`);
+    } finally {
+      setRegeneratingPdf(false);
+    }
+  };
+
   const salespersonReports = Object.entries(analysis.salesperson_reports || {}).map(([id, report]) => ({
     id,
     ...(report as any)
@@ -214,16 +247,35 @@ export default function AnalysisDetailPage() {
                   Email sent
                 </span>
               )}
-              {analysis.pdf_url && (
-                <a 
-                  href={analysis.pdf_url} 
-                  target="_blank" 
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-1 text-indigo-600 hover:text-indigo-700"
+              {analysis.pdf_url ? (
+                <span className="flex items-center gap-2">
+                  <a 
+                    href={analysis.pdf_url} 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-1 text-indigo-600 hover:text-indigo-700"
+                  >
+                    <FileDown className="h-4 w-4" />
+                    Download PDF
+                  </a>
+                  <button
+                    onClick={handleRegeneratePdf}
+                    disabled={regeneratingPdf}
+                    className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors disabled:opacity-50"
+                    title="Regenerate PDF"
+                  >
+                    <RefreshCw className={`h-4 w-4 ${regeneratingPdf ? 'animate-spin' : ''}`} />
+                  </button>
+                </span>
+              ) : (
+                <button
+                  onClick={handleRegeneratePdf}
+                  disabled={regeneratingPdf}
+                  className="flex items-center gap-1 text-slate-500 hover:text-indigo-600"
                 >
-                  <FileDown className="h-4 w-4" />
-                  Download PDF
-                </a>
+                  <RefreshCw className={`h-4 w-4 ${regeneratingPdf ? 'animate-spin' : ''}`} />
+                  {regeneratingPdf ? 'Generating...' : 'Generate PDF'}
+                </button>
               )}
               {/* Prompt version badge */}
               {analysis.metrics?.prompt_info && (

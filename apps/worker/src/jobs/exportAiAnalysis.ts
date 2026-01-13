@@ -113,6 +113,16 @@ export async function exportAiAnalysis(ctx: Ctx) {
     
     await log(job.id, 'info', 'STEP:styles_loaded', { count: Object.keys(stylesInfo).length });
     
+    // Parse executive_summary if stored as JSON string (TEXT column, not JSONB)
+    let executiveSummary: string | { headline?: string; bullets?: string[] } | null = analysis.executive_summary;
+    if (typeof executiveSummary === 'string' && executiveSummary.startsWith('{')) {
+      try {
+        executiveSummary = JSON.parse(executiveSummary);
+      } catch {
+        // Keep as string if parsing fails
+      }
+    }
+    
     // Build the PDF
     const seasonLabel = analysis.season 
       ? `${analysis.season.name}${analysis.season.year ? ' ' + analysis.season.year : ''}`
@@ -278,17 +288,17 @@ export async function exportAiAnalysis(ctx: Ctx) {
         ),
         
         // Executive Summary - handle both string and object formats
-        analysis.executive_summary && E(View, { style: styles.summaryBox },
-          typeof analysis.executive_summary === 'string' 
-            ? E(Text, { style: styles.summaryText }, analysis.executive_summary)
+        executiveSummary && E(View, { style: styles.summaryBox },
+          typeof executiveSummary === 'string' 
+            ? E(Text, { style: styles.summaryText }, executiveSummary)
             : E(View, null,
                 // Headline
-                analysis.executive_summary.headline && E(Text, { 
+                executiveSummary.headline && E(Text, { 
                   style: [styles.summaryText, { fontWeight: 'bold', fontSize: 12, marginBottom: 6 }] 
-                }, analysis.executive_summary.headline),
+                }, executiveSummary.headline),
                 // Bullets
-                ...(Array.isArray(analysis.executive_summary.bullets) 
-                  ? analysis.executive_summary.bullets.map((bullet: string, i: number) => 
+                ...(Array.isArray(executiveSummary.bullets) 
+                  ? executiveSummary.bullets.map((bullet: string, i: number) => 
                       E(Text, { key: i, style: [styles.summaryText, { marginBottom: 3 }] }, bullet)
                     )
                   : []
