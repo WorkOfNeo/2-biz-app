@@ -36,6 +36,7 @@ export async function deepScrapeStyles(ctx: Ctx) {
   
   let updated = 0;
   let colorLinksInserted = 0;
+  let imagesUpdated = 0;
   const total = (styles as any[])?.length || 0;
   let idx = 0;
   for (const s of styles as any[]) {
@@ -48,7 +49,8 @@ export async function deepScrapeStyles(ctx: Ctx) {
           total, 
           percent: Math.round((idx / total) * 100),
           updated,
-          colorLinksInserted
+          colorLinksInserted,
+          imagesUpdated
         }); 
       } catch {}
     }
@@ -75,17 +77,39 @@ export async function deepScrapeStyles(ctx: Ctx) {
       }
       return out;
     });
-    // For each materials box: read the SELECTed SPY season and the colors listed in the table for that box.
-    const boxes: Array<{ spySeasonId: number; colors: string[] }> = await page.evaluate(() => {
-      const list: Array<{ spySeasonId: number; colors: string[] }> = [];
+    // For each materials box: read the SPY season, colors, and images from each row
+    const boxes: Array<{ 
+      spySeasonId: number; 
+      colorRows: Array<{ color: string; imageUrl: string | null }> 
+    }> = await page.evaluate(() => {
+      const list: Array<{ spySeasonId: number; colorRows: Array<{ color: string; imageUrl: string | null }> }> = [];
       const boxes = Array.from(document.querySelectorAll('.colorDeliveryBox')) as HTMLElement[];
       for (const box of boxes) {
         const sel = box.querySelector('.materials-bar select.season_id') as HTMLSelectElement | null;
         const val = sel?.value || sel?.selectedOptions?.[0]?.value || '';
         const spySeasonId = Number(val || 0) || 0;
-        const spans = Array.from(box.querySelectorAll('table.standardList tbody tr td:nth-child(4) span')) as HTMLSpanElement[];
-        const colors = spans.map((el) => (el?.textContent || '').trim()).filter(Boolean);
-        if (spySeasonId > 0 && colors.length) list.push({ spySeasonId, colors });
+        if (spySeasonId <= 0) continue;
+        
+        const colorRows: Array<{ color: string; imageUrl: string | null }> = [];
+        const rows = Array.from(box.querySelectorAll('table.standardList tbody tr')) as HTMLTableRowElement[];
+        for (const row of rows) {
+          // Get color name from 4th td span
+          const colorSpan = row.querySelector('td:nth-child(4) span') as HTMLSpanElement | null;
+          const color = (colorSpan?.textContent || '').trim();
+          if (!color) continue;
+          
+          // Get image URL from first td img, replace s24 with s1024 for full size
+          const img = row.querySelector('td:first-child img.color-image') as HTMLImageElement | null;
+          let imageUrl: string | null = img?.src || null;
+          if (imageUrl) {
+            // Replace thumbnail size with full size
+            imageUrl = imageUrl.replace(/tr:n-s\d+/i, 'tr:n-s1024');
+          }
+          
+          colorRows.push({ color, imageUrl });
+        }
+        
+        if (colorRows.length) list.push({ spySeasonId, colorRows });
       }
       return list;
     });
@@ -97,34 +121,40 @@ export async function deepScrapeStyles(ctx: Ctx) {
         const { data: styleColorRows } = await supabase.from('style_colors').select('id, color').eq('style_id', s.id as string).limit(1000);
         const colorMap = new Map<string, string>();
         for (const r of (styleColorRows ?? []) as any[]) colorMap.set(String(r.color || '').trim().toLowerCase(), String(r.id));
-        // Build desired target pairs {style_color_id|season_id}
-        const targetPairs = new Set<string>();
+        
+        // Build desired target data: {style_color_id|season_id} -> imageUrl
+        const targetData = new Map<string, string | null>();
         for (const box of boxes) {
           const appSeasonId = globalSpyToApp.get(box.spySeasonId);
           if (!appSeasonId) continue;
-          for (const cname of box.colors) {
-            const cid = colorMap.get(cname.toLowerCase());
+          for (const row of box.colorRows) {
+            const cid = colorMap.get(row.color.toLowerCase());
             if (!cid) continue;
-            targetPairs.add(`${cid}|${appSeasonId}`);
+            const key = `${cid}|${appSeasonId}`;
+            targetData.set(key, row.imageUrl);
           }
         }
+        const targetPairs = new Set(targetData.keys());
+        
         // Fetch existing pairs for this style
         const styleColorIds = Array.from(colorMap.values());
-        let existing: Array<{ style_color_id: string; season_id: string }> = [];
+        let existing: Array<{ style_color_id: string; season_id: string; image_url?: string | null }> = [];
         if (styleColorIds.length) {
           const { data: existRows } = await supabase
             .from('style_color_seasons')
-            .select('style_color_id, season_id')
+            .select('style_color_id, season_id, image_url')
             .in('style_color_id', styleColorIds);
           existing = (existRows ?? []) as any[];
         }
         const existingSet = new Set(existing.map((r) => `${r.style_color_id}|${r.season_id}`));
+        const existingImages = new Map(existing.map((r) => [`${r.style_color_id}|${r.season_id}`, r.image_url]));
+        
         // Inserts (in target but not existing) - batch insert for performance
         const toInsert = Array.from(targetPairs)
           .filter(pair => !existingSet.has(pair))
           .map(pair => {
             const [cid, sid] = pair.split('|');
-            return { style_color_id: cid, season_id: sid };
+            return { style_color_id: cid, season_id: sid, image_url: targetData.get(pair) || null };
           });
         
         if (toInsert.length > 0) {
@@ -133,6 +163,24 @@ export async function deepScrapeStyles(ctx: Ctx) {
             colorLinksInserted += toInsert.length;
           }
         }
+        
+        // Update existing rows if image URL changed
+        for (const pair of Array.from(targetPairs)) {
+          if (existingSet.has(pair)) {
+            const newImg = targetData.get(pair);
+            const existingImg = existingImages.get(pair);
+            if (newImg && newImg !== existingImg) {
+              const [cid, sid] = pair.split('|');
+              const { error: updErr } = await supabase
+                .from('style_color_seasons')
+                .update({ image_url: newImg, last_seen_at: new Date().toISOString() })
+                .eq('style_color_id', cid)
+                .eq('season_id', sid);
+              if (!updErr) imagesUpdated++;
+            }
+          }
+        }
+        
         // Deletions (in existing but not target): remove seasons that are not shown in any materials box
         for (const pair of Array.from(existingSet)) {
           if (!targetPairs.has(pair)) {
@@ -154,8 +202,8 @@ export async function deepScrapeStyles(ctx: Ctx) {
     }
     updated++;
   }
-  await saveResult(job.id, 'Deep styles completed', { updated, colorLinksInserted });
-  await log(job.id, 'info', 'STEP:complete', { updated, colorLinksInserted });
+  await saveResult(job.id, 'Deep styles completed', { updated, colorLinksInserted, imagesUpdated });
+  await log(job.id, 'info', 'STEP:complete', { updated, colorLinksInserted, imagesUpdated });
 }
 
 
