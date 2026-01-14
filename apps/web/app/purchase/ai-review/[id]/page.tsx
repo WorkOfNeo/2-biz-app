@@ -528,7 +528,7 @@ export default function AIPurchaseReviewPage() {
             </div>
 
             <div className="flex items-center gap-3">
-              <Badge variant={purchaseRun?.status === 'completed' ? 'default' : 'secondary'}>
+              <Badge className={purchaseRun?.status === 'completed' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-600'}>
                 {purchaseRun?.status}
               </Badge>
               
@@ -621,11 +621,11 @@ export default function AIPurchaseReviewPage() {
                         )}
                         <Building2 className="h-5 w-5 text-slate-600" />
                         <span className="font-semibold text-slate-900">{supplier.supplier}</span>
-                        <Badge variant="outline" className="ml-2">
+                        <Badge className="ml-2 bg-slate-50 border-slate-200">
                           {supplier.styles.length} styles
                         </Badge>
                         {supplier.priority && (
-                          <Badge variant={supplier.priority === 'high' ? 'destructive' : supplier.priority === 'medium' ? 'default' : 'secondary'}>
+                          <Badge className={supplier.priority === 'high' ? 'bg-red-100 text-red-800' : supplier.priority === 'medium' ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-600'}>
                             {supplier.priority}
                           </Badge>
                         )}
