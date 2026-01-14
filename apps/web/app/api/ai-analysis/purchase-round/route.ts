@@ -60,18 +60,39 @@ export async function POST(req: Request) {
       // Step 1: Create import from season data
       console.log('[Purchase Round] Step 1: Creating import from season data...');
       
-      const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 
-                      process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 
-                      'http://localhost:3000';
+      // Construct base URL - use request origin for most reliable internal calls
+      const requestUrl = new URL(req.url);
+      const baseUrl = requestUrl.origin;
+      console.log('[Purchase Round] Using base URL:', baseUrl);
       
-      const importRes = await fetch(`${baseUrl}/api/purchase/create-import-from-season`, {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Cookie': req.headers.get('cookie') || '', // Forward auth cookies
-        },
-        body: JSON.stringify({ seasonId }),
-      });
+      let importRes: Response;
+      try {
+        importRes = await fetch(`${baseUrl}/api/purchase/create-import-from-season`, {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json',
+            'Cookie': req.headers.get('cookie') || '', // Forward auth cookies
+          },
+          body: JSON.stringify({ seasonId }),
+        });
+      } catch (fetchError: any) {
+        console.error('[Purchase Round] Fetch error for create-import:', fetchError);
+        return NextResponse.json({ 
+          error: 'Failed to connect to import service',
+          detail: fetchError?.message || 'Network error',
+        }, { status: 500 });
+      }
+
+      // Check if response is actually JSON before parsing
+      const importContentType = importRes.headers.get('content-type') || '';
+      if (!importContentType.includes('application/json')) {
+        const text = await importRes.text();
+        console.error('[Purchase Round] Import returned non-JSON:', importRes.status, text.slice(0, 200));
+        return NextResponse.json({ 
+          error: 'Import service returned invalid response',
+          detail: `Status ${importRes.status}: ${text.slice(0, 100)}`,
+        }, { status: 500 });
+      }
 
       const importData = await importRes.json();
       
@@ -89,20 +110,40 @@ export async function POST(req: Request) {
       // Step 2: Run AI Suggestions with the import
       console.log('[Purchase Round] Step 2: Running AI Suggestions...');
       
-      const suggestionsRes = await fetch(`${baseUrl}/api/purchase/ai-suggestions/run`, {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Cookie': req.headers.get('cookie') || '',
-        },
-        body: JSON.stringify({
-          importId,
-          seasonId,
-          comparisonSeasonId: comparisonSeasonId || undefined,
-          topNPerSupplier: 200,
-          runNumber: nextRoundNumber,
-        }),
-      });
+      let suggestionsRes: Response;
+      try {
+        suggestionsRes = await fetch(`${baseUrl}/api/purchase/ai-suggestions/run`, {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json',
+            'Cookie': req.headers.get('cookie') || '',
+          },
+          body: JSON.stringify({
+            importId,
+            seasonId,
+            comparisonSeasonId: comparisonSeasonId || undefined,
+            topNPerSupplier: 200,
+            runNumber: nextRoundNumber,
+          }),
+        });
+      } catch (fetchError: any) {
+        console.error('[Purchase Round] Fetch error for ai-suggestions:', fetchError);
+        return NextResponse.json({ 
+          error: 'Failed to connect to AI suggestions service',
+          detail: fetchError?.message || 'Network error',
+        }, { status: 500 });
+      }
+
+      // Check if response is actually JSON before parsing
+      const suggestionsContentType = suggestionsRes.headers.get('content-type') || '';
+      if (!suggestionsContentType.includes('application/json')) {
+        const text = await suggestionsRes.text();
+        console.error('[Purchase Round] Suggestions returned non-JSON:', suggestionsRes.status, text.slice(0, 200));
+        return NextResponse.json({ 
+          error: 'AI suggestions service returned invalid response',
+          detail: `Status ${suggestionsRes.status}: ${text.slice(0, 100)}`,
+        }, { status: 500 });
+      }
 
       const suggestionsData = await suggestionsRes.json();
       
