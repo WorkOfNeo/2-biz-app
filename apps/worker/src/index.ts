@@ -339,10 +339,7 @@ async function runJob(job: JobRow) {
         const list = (stockJobs ?? []) as Array<{ id: string; status: string }>;
         const pending = list.filter((j) => j.status === 'queued' || j.status === 'running');
         if (pending.length > 0) {
-          const nextRun = new Date(Date.now() + waitMs).toISOString();
-          // Keep run_after even though we fail/requeue (setJobFailedOrRequeue doesn't clear it)
-          try { await supabase.from('jobs').update({ run_after: nextRun }).eq('id', job.id); } catch {}
-          await log(job.id, 'info', 'WAITING:update_style_stock_batches', { triggerJobId, pending: pending.length, nextRun });
+          await log(job.id, 'info', 'WAITING:update_style_stock_batches', { triggerJobId, pending: pending.length });
           throw new Error('WAITING_FOR_UPDATE_STYLE_STOCK');
         }
 
@@ -1130,7 +1127,7 @@ async function runJob(job: JobRow) {
         try {
           await log(job.id, 'info', 'STEP:check_stock_fix_enqueuing', { rootId, mode, requestedBy });
           
-          // Enqueue check_stock_fix job with a delay to allow other batches to complete
+          // Enqueue check_stock_fix job (lower priority so other batches complete first)
           await supabase
             .from('jobs')
             .insert({
@@ -1139,13 +1136,11 @@ async function runJob(job: JobRow) {
                 triggerJobId: rootId,
                 mode,
                 requestedBy,
-                scheduledFor: new Date(Date.now() + 120_000).toISOString() // Delay 2 minutes
               },
               status: 'queued',
               max_attempts: 2,
               queue: 'default',
-              priority: 80, // Lower priority
-              run_after: new Date(Date.now() + 120_000).toISOString() // Delay 2 minutes
+              priority: 80, // Lower priority so it runs after other batches
             });
           
           await log(job.id, 'info', 'STEP:check_stock_fix_enqueued', { rootId });
@@ -1170,7 +1165,6 @@ async function runJob(job: JobRow) {
           .in('status', ['queued', 'running'])
           .maybeSingle();
         if (!existingFollowup) {
-          const runAfter = new Date(Date.now() + 120_000).toISOString();
           const { data: followup, error: followErr } = await supabase
             .from('jobs')
             .insert({
@@ -1180,12 +1174,11 @@ async function runJob(job: JobRow) {
               max_attempts: 120, // ~4 hours at 2-min intervals
               queue: 'default',
               priority: 90,
-              run_after: runAfter,
-            } as any)
+            })
             .select('id')
             .single();
           if (!followErr) {
-            await log(job.id, 'info', 'STEP:export_stock_list_after_enqueued', { triggerJobId: rootId, followupJobId: (followup as any)?.id, runAfter });
+            await log(job.id, 'info', 'STEP:export_stock_list_after_enqueued', { triggerJobId: rootId, followupJobId: (followup as any)?.id });
           } else {
             await log(job.id, 'error', 'STEP:export_stock_list_after_insert_error', { error: followErr.message, triggerJobId: rootId });
           }
