@@ -245,15 +245,29 @@ export default function AIPurchaseReviewPage() {
 
   function handleVerdict(supplier: string, style: StyleSuggestion, verdict: 'approved' | 'skipped') {
     const key = `${supplier}|${style.style_no}|${style.color}`;
-    setFeedback(prev => ({
-      ...prev,
-      [key]: {
-        ...prev[key],
-        verdict,
-        adjusted_breakdown: verdict === 'skipped' ? null : prev[key]?.adjusted_breakdown,
-        adjusted_qty: verdict === 'skipped' ? null : prev[key]?.adjusted_qty,
-      }
-    }));
+    setFeedback(prev => {
+      const existing = prev[key] || {
+        style_no: style.style_no,
+        color: style.color,
+        supplier_name: supplier,
+        suggested_qty: style.suggested_qty_total,
+        adjusted_qty: null,
+        sizes: style.sizes,
+        suggested_breakdown: style.size_breakdown,
+        adjusted_breakdown: null,
+        verdict: 'approved' as const,
+      };
+      
+      return {
+        ...prev,
+        [key]: {
+          ...existing,
+          verdict,
+          adjusted_breakdown: verdict === 'skipped' ? null : existing.adjusted_breakdown,
+          adjusted_qty: verdict === 'skipped' ? null : existing.adjusted_qty,
+        }
+      };
+    });
   }
 
   function handleSizeQtyChange(supplier: string, style: StyleSuggestion, sizeIndex: number, value: number) {
