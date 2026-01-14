@@ -443,6 +443,53 @@ export async function checkStockFix(ctx: Ctx) {
       await log(job.id, 'info', 'STEP:check_stock_fix_no_mismatches', { message: 'All styles match!' });
     }
     
+    // Enqueue export_stock_list if we're NOT in autoFix mode OR if there were no mismatches
+    // When autoFix + mismatches: the update_style_stock waiter will handle the export
+    const shouldEnqueueExportDirectly = !autoFix || mismatches.length === 0;
+    
+    if (shouldEnqueueExportDirectly) {
+      try {
+        // Check if there's already a pending export_stock_list job from the last few minutes
+        const recentCutoff = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+        const { data: existingExport } = await supabase
+          .from('jobs')
+          .select('id')
+          .eq('type', 'export_stock_list')
+          .in('status', ['queued', 'running'])
+          .gte('created_at', recentCutoff)
+          .maybeSingle();
+        
+        if (!existingExport) {
+          const { data: exportJob, error: exportErr } = await supabase
+            .from('jobs')
+            .insert({
+              type: 'export_stock_list',
+              payload: { requestedBy: 'check_stock_fix' },
+              status: 'queued',
+              max_attempts: 3,
+              queue: 'default',
+              priority: 100
+            })
+            .select('id')
+            .single();
+          
+          if (exportErr) {
+            await log(job.id, 'error', 'STEP:check_stock_fix_export_enqueue_error', { error: exportErr.message });
+          } else {
+            await log(job.id, 'info', 'STEP:check_stock_fix_export_enqueued', { exportJobId: exportJob?.id });
+          }
+        } else {
+          await log(job.id, 'info', 'STEP:check_stock_fix_export_already_queued', { existingJobId: existingExport.id });
+        }
+      } catch (e: any) {
+        await log(job.id, 'error', 'STEP:check_stock_fix_export_enqueue_exception', { error: e?.message || String(e) });
+      }
+    } else {
+      await log(job.id, 'info', 'STEP:check_stock_fix_export_via_autofix', { 
+        message: 'export_stock_list will be triggered after update_style_stock completes' 
+      });
+    }
+    
     // Save the complete result
     // Include ALL styles from SPY in details (not just mismatches) so frontend can properly categorize them
     await saveResult(job.id, 'check_stock_fix_complete', {
