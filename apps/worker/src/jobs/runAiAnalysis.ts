@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import OpenAI from 'openai';
-import { runPurchaseRoundEngine } from './purchaseRoundEngine';
+import { runPurchaseRoundEngine } from './purchaseRoundEngine.js';
 
 type LogFn = (level: 'info' | 'error' | 'progress', msg: string, data?: Record<string, any>) => Promise<void>;
 
