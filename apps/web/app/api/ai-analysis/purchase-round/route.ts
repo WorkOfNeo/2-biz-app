@@ -92,12 +92,23 @@ export async function POST(req: Request) {
 
     if (jobError) {
       console.error('[Purchase Round] Failed to enqueue job:', jobError);
-      // Update purchase run status
-      await supabase.from('purchase_ai_runs').update({ status: 'failed' }).eq('id', purchaseRun.id);
+      // Update purchase run status to cancelled (valid enum value)
+      await supabase.from('purchase_ai_runs').update({ status: 'cancelled' }).eq('id', purchaseRun.id);
       return NextResponse.json({ error: 'Failed to enqueue analysis job' }, { status: 500 });
     }
 
     console.log('[Purchase Round] Enqueued job:', job.id);
+
+    // IMPORTANT: Update purchase_ai_runs with job_id so UI can poll job logs
+    const { error: updateError } = await supabase
+      .from('purchase_ai_runs')
+      .update({ job_id: job.id })
+      .eq('id', purchaseRun.id);
+
+    if (updateError) {
+      console.error('[Purchase Round] Failed to update job_id:', updateError);
+      // Continue anyway - the job is enqueued
+    }
 
     return NextResponse.json({
       success: true,

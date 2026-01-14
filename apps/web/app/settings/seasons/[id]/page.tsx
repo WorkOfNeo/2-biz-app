@@ -40,13 +40,23 @@ function parseEuroNumber(value: string | number | null | undefined): number {
   return parseInt(digitsOnly, 10) || 0;
 }
 
+type SeasonData = {
+  id: string;
+  name: string;
+  year: number | null;
+  created_at: string;
+  start_sale: string | null;
+  end_sale: string | null;
+  latest_delivery: string | null;
+};
+
 export default function SeasonDetailPage() {
   const params = useParams<{ id: string }>();
   const id = params.id;
-  const { data: season } = useSWR(id ? `season:${id}` : null, async () => {
+  const { data: season, mutate: mutateSeason } = useSWR(id ? `season:${id}` : null, async () => {
     const { data, error } = await supabase.from('seasons').select('*').eq('id', id).single();
     if (error) throw new Error(error.message);
-    return data as { id: string; name: string; year: number | null; created_at: string };
+    return data as SeasonData;
   });
   const { data: rates, mutate } = useSWR(id ? `season:${id}:currency-rates` : null, async () => {
     const key = `currency_rates:${id}`;
@@ -95,6 +105,14 @@ export default function SeasonDetailPage() {
   const [isClearing, setIsClearing] = useState(false);
   const [clearResult, setClearResult] = useState<{ success: boolean; message: string } | null>(null);
 
+  // Season dates state
+  const [startSale, setStartSale] = useState<string>('');
+  const [endSale, setEndSale] = useState<string>('');
+  const [latestDelivery, setLatestDelivery] = useState<string>('');
+  const [savingDates, setSavingDates] = useState(false);
+  const [datesChanged, setDatesChanged] = useState(false);
+  const [datesSaveSuccess, setDatesSaveSuccess] = useState(false);
+
   // Compare data state
   const [compareSalespersonId, setCompareSalespersonId] = useState<string>('');
   const [compareInput, setCompareInput] = useState<string>('');
@@ -114,6 +132,46 @@ export default function SeasonDetailPage() {
       setHasChanges(false);
     }
   }, [rates?.value]);
+
+  // Initialize season dates from fetched season
+  useEffect(() => {
+    if (season) {
+      setStartSale(season.start_sale || '');
+      setEndSale(season.end_sale || '');
+      setLatestDelivery(season.latest_delivery || '');
+      setDatesChanged(false);
+    }
+  }, [season?.id, season?.start_sale, season?.end_sale, season?.latest_delivery]);
+
+  async function saveSeasonDates() {
+    if (!id) return;
+    setSavingDates(true);
+    setDatesSaveSuccess(false);
+    try {
+      const { error } = await supabase.from('seasons').update({
+        start_sale: startSale || null,
+        end_sale: endSale || null,
+        latest_delivery: latestDelivery || null,
+      }).eq('id', id);
+      if (error) throw new Error(error.message);
+      await mutateSeason();
+      setDatesChanged(false);
+      setDatesSaveSuccess(true);
+      setTimeout(() => setDatesSaveSuccess(false), 3000);
+    } catch (err: any) {
+      alert(err?.message || 'Failed to save dates');
+    } finally {
+      setSavingDates(false);
+    }
+  }
+
+  function handleDateChange(field: 'start_sale' | 'end_sale' | 'latest_delivery', value: string) {
+    if (field === 'start_sale') setStartSale(value);
+    if (field === 'end_sale') setEndSale(value);
+    if (field === 'latest_delivery') setLatestDelivery(value);
+    setDatesChanged(true);
+    setDatesSaveSuccess(false);
+  }
   
   async function saveRates() {
     if (!id) return;
@@ -885,6 +943,61 @@ export default function SeasonDetailPage() {
             <span className="text-sm text-green-600 font-medium">✓ Saved successfully!</span>
           )}
           {hasChanges && !saving && !saveSuccess && (
+            <span className="text-sm text-amber-600">Unsaved changes</span>
+          )}
+        </div>
+      </div>
+
+      {/* Season Dates Section */}
+      <div className="border rounded-md p-4 space-y-3">
+        <div className="text-sm font-medium text-gray-700">Season Dates</div>
+        <div className="text-xs text-gray-500">Define the sale period and delivery deadline for purchase planning.</div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <label className="block text-sm">
+            <div className="mb-1 text-gray-600">Start Sale</div>
+            <input
+              className="w-full rounded border px-2 py-1 text-sm"
+              type="date"
+              value={startSale}
+              onChange={(e) => handleDateChange('start_sale', e.target.value)}
+            />
+          </label>
+          <label className="block text-sm">
+            <div className="mb-1 text-gray-600">End Sale</div>
+            <input
+              className="w-full rounded border px-2 py-1 text-sm"
+              type="date"
+              value={endSale}
+              onChange={(e) => handleDateChange('end_sale', e.target.value)}
+            />
+          </label>
+          <label className="block text-sm">
+            <div className="mb-1 text-gray-600">Latest Delivery</div>
+            <input
+              className="w-full rounded border px-2 py-1 text-sm"
+              type="date"
+              value={latestDelivery}
+              onChange={(e) => handleDateChange('latest_delivery', e.target.value)}
+            />
+          </label>
+        </div>
+        <div className="flex items-center gap-3 pt-2">
+          <button
+            onClick={saveSeasonDates}
+            disabled={!datesChanged || savingDates}
+            className={
+              'rounded-md px-4 py-2 text-sm font-medium transition-colors ' +
+              (datesChanged && !savingDates
+                ? 'bg-slate-900 text-white hover:bg-slate-800'
+                : 'bg-gray-200 text-gray-400 cursor-not-allowed')
+            }
+          >
+            {savingDates ? 'Saving...' : 'Save Dates'}
+          </button>
+          {datesSaveSuccess && (
+            <span className="text-sm text-green-600 font-medium">✓ Saved successfully!</span>
+          )}
+          {datesChanged && !savingDates && !datesSaveSuccess && (
             <span className="text-sm text-amber-600">Unsaved changes</span>
           )}
         </div>

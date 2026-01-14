@@ -165,7 +165,13 @@ export default function AIPurchaseReviewPage() {
 
   // Poll job logs while pending
   useEffect(() => {
-    if (!purchaseRun?.job_id || purchaseRun.status !== 'pending') return;
+    if (purchaseRun?.status !== 'pending') return;
+
+    // If we don't have job_id yet, just keep polling the main record
+    if (!purchaseRun?.job_id) {
+      const pollInterval = setInterval(() => mutate(), 2000);
+      return () => clearInterval(pollInterval);
+    }
 
     const fetchLogs = async () => {
       const { data } = await supabase
@@ -179,7 +185,7 @@ export default function AIPurchaseReviewPage() {
     fetchLogs();
     const pollInterval = setInterval(fetchLogs, 2000);
     return () => clearInterval(pollInterval);
-  }, [purchaseRun?.job_id, purchaseRun?.status]);
+  }, [purchaseRun?.job_id, purchaseRun?.status, mutate]);
 
   // Auto-expand first supplier
   useEffect(() => {
@@ -465,7 +471,10 @@ export default function AIPurchaseReviewPage() {
 
   // Pending state
   if (purchaseRun?.status === 'pending') {
-    const currentStep = jobLogs.length > 0 ? jobLogs[jobLogs.length - 1]?.msg || 'Starting...' : 'Starting...';
+    const hasJobId = !!purchaseRun?.job_id;
+    const lastLog = jobLogs.length > 0 ? jobLogs[jobLogs.length - 1] : null;
+    const currentStep = lastLog?.msg || (hasJobId ? 'Starting...' : 'Waiting for worker...');
+    const lastUpdated = lastLog?.created_at ? new Date(lastLog.created_at).toLocaleTimeString('da-DK') : null;
     
     const stepMessages: Record<string, string> = {
       'purchase_engine_start': 'Starting purchase engine...',
@@ -513,7 +522,13 @@ export default function AIPurchaseReviewPage() {
                 </p>
                 <p className="text-slate-500 text-sm">
                   {purchaseRun.season?.name} {purchaseRun.season?.year}
+                  {lastUpdated && <> • Opdateret {lastUpdated}</>}
                 </p>
+                {!hasJobId && (
+                  <p className="text-amber-400/80 text-xs mt-1">
+                    Venter på at worker starter jobbet...
+                  </p>
+                )}
               </div>
             </div>
 
