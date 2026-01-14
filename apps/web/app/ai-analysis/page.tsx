@@ -206,7 +206,7 @@ export default function AIAnalysisDashboard() {
       const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(type === 'daily' ? { analysisType: 'daily' } : { useDetailedAI: true })
+        body: JSON.stringify(type === 'daily' ? { analysisType: 'daily' } : {})
       });
       
       const data = await res.json();
@@ -215,16 +215,14 @@ export default function AIAnalysisDashboard() {
         throw new Error(data.error || data.detail || 'Analysis failed');
       }
 
-      // Purchase round now returns directly with detailed results (no job polling needed)
-      if (type === 'purchase_round' && data.analysisId) {
-        setRunningAnalysis(false);
-        await mutate();
-        // Optionally redirect to the analysis detail page
-        // Or show a success message with link to review suggestions
+      // Purchase round now redirects to the review page
+      if (type === 'purchase_round' && data.purchaseRunId) {
+        // Redirect to the new AI Purchase Review page
+        window.location.href = `/purchase/ai-review/${data.purchaseRunId}`;
         return;
       }
 
-      // Daily analysis still uses job-based approach - start polling
+      // Daily analysis uses job-based approach - start polling
       if (data.jobId) {
         setCurrentJobId(data.jobId);
       } else {

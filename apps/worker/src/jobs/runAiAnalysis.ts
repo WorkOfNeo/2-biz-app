@@ -16,6 +16,7 @@ interface AiAnalysisPayload {
   seasonId: string;
   comparisonSeasonId?: string;
   purchaseRoundNumber?: number;
+  purchaseRunId?: string; // Link to purchase_ai_runs record
   sendEmail?: boolean;
 }
 
@@ -776,9 +777,32 @@ ${currentSeasonData.comparison_season
       throw new Error(`Failed to save analysis: ${analysisError.message}`);
     }
 
+    // If this is a purchase round, update the purchase_ai_runs record
+    if (analysisType === 'purchase_round' && payload.purchaseRunId) {
+      await log('info', 'updating_purchase_run', { purchaseRunId: payload.purchaseRunId });
+      
+      const { error: purchaseRunError } = await supabase
+        .from('purchase_ai_runs')
+        .update({
+          ai_run_id: aiRun?.id || null,
+          status: 'reviewing',
+          supplier_suggestions: aiOutput.purchase_recommendations || null,
+          run_completed_at: new Date().toISOString(),
+          computed_features_snapshot: currentSeasonData,
+        })
+        .eq('id', payload.purchaseRunId);
+
+      if (purchaseRunError) {
+        await log('error', 'purchase_run_update_error', { error: purchaseRunError.message });
+      } else {
+        await log('info', 'purchase_run_updated', { status: 'reviewing' });
+      }
+    }
+
     await log('info', 'complete', { 
       analysisId: analysis?.id, 
       aiRunId: aiRun?.id, 
+      purchaseRunId: payload.purchaseRunId,
       durationMs 
     });
 
