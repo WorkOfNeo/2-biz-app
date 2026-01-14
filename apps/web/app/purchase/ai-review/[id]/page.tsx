@@ -173,8 +173,9 @@ export default function AIPurchaseReviewPage() {
 
   // Auto-expand first supplier with suggestions
   useEffect(() => {
-    if (purchaseRun?.supplier_suggestions && purchaseRun.supplier_suggestions.length > 0) {
-      setExpandedSuppliers(new Set([purchaseRun.supplier_suggestions[0].supplier]));
+    const suggestions = purchaseRun?.supplier_suggestions;
+    if (suggestions && suggestions.length > 0 && suggestions[0]) {
+      setExpandedSuppliers(new Set([suggestions[0].supplier]));
     }
   }, [purchaseRun?.supplier_suggestions]);
 
