@@ -40,6 +40,8 @@ type SupplierSuggestion = {
   priority?: 'high' | 'medium' | 'low';
   commentary?: string;
   flags?: string[];
+  decision?: 'buy' | 'skip' | 'wait';
+  days_until_must_order?: number | null;
   styles: StyleSuggestion[];
 };
 
@@ -696,8 +698,20 @@ export default function AIPurchaseReviewPage() {
                         <Building2 className="h-5 w-5 text-slate-600" />
                         <span className="font-semibold text-slate-900">{supplier.supplier}</span>
                         <Badge className="bg-slate-100 text-slate-600">{supplier.styles.length} styles</Badge>
-                        {supplier.below_moq && (
-                          <Badge className="bg-amber-100 text-amber-800">Under MOQ ({supplier.moq})</Badge>
+                        {supplier.moq > 0 && (
+                          <Badge className={supplier.below_moq ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'}>
+                            MOQ: {supplier.moq.toLocaleString('da-DK')} stk
+                            {supplier.below_moq && ` (mangler ${Math.max(0, supplier.moq - supplierTotal).toLocaleString('da-DK')})`}
+                          </Badge>
+                        )}
+                        {supplier.decision && (
+                          <Badge className={
+                            supplier.decision === 'buy' ? 'bg-emerald-100 text-emerald-800' : 
+                            supplier.decision === 'skip' ? 'bg-red-100 text-red-800' : 
+                            'bg-blue-100 text-blue-800'
+                          }>
+                            {supplier.decision === 'buy' ? 'KØB' : supplier.decision === 'skip' ? 'SPRING OVER' : 'VENT'}
+                          </Badge>
                         )}
                         {supplier.priority && (
                           <Badge className={supplier.priority === 'high' ? 'bg-red-100 text-red-800' : supplier.priority === 'medium' ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-600'}>
@@ -707,9 +721,10 @@ export default function AIPurchaseReviewPage() {
                       </div>
                       <div className="flex items-center gap-4">
                         <div className="text-right">
-                          <div className="text-lg font-bold text-slate-900">{supplierTotal.toLocaleString('da-DK')}</div>
+                          <div className="text-lg font-bold text-slate-900">{supplierTotal.toLocaleString('da-DK')} stk</div>
                           <div className="text-xs text-slate-500">
-                            {supplier.lead_time_days > 0 && `${supplier.lead_time_days}d lead`}
+                            {supplier.lead_time_days > 0 && `${supplier.lead_time_days + (supplier.travel_time_days || 0)}d levering`}
+                            {supplier.days_until_must_order && ` • bestil senest om ${supplier.days_until_must_order}d`}
                           </div>
                         </div>
                         <Button variant="outline" size="sm" onClick={(e) => { e.stopPropagation(); approveAllForSupplier(supplier); }}>
