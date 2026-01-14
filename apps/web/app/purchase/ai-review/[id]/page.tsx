@@ -361,7 +361,8 @@ export default function AIPurchaseReviewPage() {
 
     try {
       const createdPoIds: number[] = [];
-      const today = new Date().toISOString().split('T')[0].replace(/-/g, '');
+      const today = new Date().toISOString().split('T')[0] || '';
+      const todayClean = today.replace(/-/g, '');
       
       for (const supplier of purchaseRun.supplier_suggestions) {
         const items: any[] = [];
@@ -390,7 +391,7 @@ export default function AIPurchaseReviewPage() {
         if (items.length === 0) continue;
 
         // Generate PO number
-        const poNo = `AI-${purchaseRun.run_number}-${supplier.supplier.substring(0, 10).toUpperCase()}-${today}`;
+        const poNo = `AI-${purchaseRun.run_number}-${supplier.supplier.substring(0, 10).toUpperCase()}-${todayClean}`;
 
         const { data: po, error } = await supabase
           .from('app_pos')
