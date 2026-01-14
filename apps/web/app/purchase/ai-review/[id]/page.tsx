@@ -80,6 +80,9 @@ export default function AIPurchaseReviewPage() {
   const [creatingPOs, setCreatingPOs] = useState(false);
   const [jobLogs, setJobLogs] = useState<JobLog[]>([]);
 
+  // Track if we should poll (for pending status)
+  const [shouldPoll, setShouldPoll] = useState(true);
+
   // Fetch the purchase run
   const { data: purchaseRun, mutate, error } = useSWR<PurchaseRun>(
     purchaseRunId ? `purchase-run-${purchaseRunId}` : null,
@@ -104,8 +107,15 @@ export default function AIPurchaseReviewPage() {
         season: Array.isArray(row.season) && row.season.length > 0 ? row.season[0] : undefined
       } as PurchaseRun;
     },
-    { refreshInterval: purchaseRun?.status === 'pending' ? 2000 : 0 }
+    { refreshInterval: shouldPoll ? 2000 : 0 }
   );
+
+  // Stop polling once no longer pending
+  useEffect(() => {
+    if (purchaseRun && purchaseRun.status !== 'pending') {
+      setShouldPoll(false);
+    }
+  }, [purchaseRun?.status]);
 
   // Fetch existing line feedback
   const { data: existingFeedback } = useSWR(
