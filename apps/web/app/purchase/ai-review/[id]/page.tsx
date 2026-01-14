@@ -92,19 +92,29 @@ export default function AIPurchaseReviewPage() {
         .select(`
           id, season_id, comparison_season_id, run_label, run_number, status,
           supplier_suggestions, computed_features_snapshot,
-          run_started_at, run_completed_at, job_id, created_at,
-          season:seasons!season_id(name, year)
+          run_started_at, run_completed_at, job_id, created_at
         `)
         .eq('id', purchaseRunId)
         .single();
 
       if (error) throw new Error(error.message);
       
-      // Flatten season array
-      const row = data as any;
+      // Fetch season info separately (no FK relationship)
+      let season: { name: string; year: number | null } | undefined;
+      if (data.season_id) {
+        const { data: seasonData } = await supabase
+          .from('seasons')
+          .select('name, year')
+          .eq('id', data.season_id)
+          .single();
+        if (seasonData) {
+          season = seasonData;
+        }
+      }
+      
       return {
-        ...row,
-        season: Array.isArray(row.season) && row.season.length > 0 ? row.season[0] : undefined
+        ...data,
+        season
       } as PurchaseRun;
     },
     { refreshInterval: shouldPoll ? 2000 : 0 }
