@@ -319,16 +319,17 @@ export default function AIPurchaseReviewPage() {
               bySupplier[supplier.supplier] = { styles: [], totalQty: 0 };
             }
             
+            const supplierEntry = bySupplier[supplier.supplier]!;
             const qty = fb?.verdict === 'adjusted' ? (fb.adjusted_qty || 0) : style.suggested_qty;
             if (qty > 0) {
-              bySupplier[supplier.supplier].styles.push({
+              supplierEntry.styles.push({
                 style_no: style.style_no,
                 style_name: style.style_name,
                 color: style.color,
                 qty,
                 size_breakdown: style.size_breakdown,
               });
-              bySupplier[supplier.supplier].totalQty += qty;
+              supplierEntry.totalQty += qty;
             }
           }
         });
