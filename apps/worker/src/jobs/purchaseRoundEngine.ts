@@ -87,8 +87,12 @@ function roundPreservingSum(values: number[], targetSum: number): number[] {
   // Add 1 to the top 'remainder' items
   for (let i = 0; i < remainder && i < fractions.length; i++) {
     const frac = fractions[i];
-    if (frac !== undefined && floored[frac.index] !== undefined) {
-      floored[frac.index] = floored[frac.index] + 1;
+    if (frac !== undefined) {
+      const idx = frac.index;
+      const current = floored[idx];
+      if (current !== undefined) {
+        floored[idx] = current + 1;
+      }
     }
   }
   
