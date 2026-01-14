@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import OpenAI from 'openai';
+import { runPurchaseRoundEngine } from './purchaseRoundEngine';
 
 type LogFn = (level: 'info' | 'error' | 'progress', msg: string, data?: Record<string, any>) => Promise<void>;
 
@@ -164,6 +165,49 @@ export async function runAiAnalysis(
 
   try {
     await log('info', 'start', { analysisType, seasonId, comparisonSeasonId });
+
+    // ========== PURCHASE ROUND: Use deterministic engine ==========
+    if (analysisType === 'purchase_round' && payload.purchaseRunId) {
+      await log('info', 'using_purchase_round_engine', { purchaseRunId: payload.purchaseRunId });
+      
+      const result = await runPurchaseRoundEngine(supabase, {
+        seasonId,
+        comparisonSeasonId,
+        purchaseRoundNumber,
+        purchaseRunId: payload.purchaseRunId
+      }, log);
+
+      if (!result.success) {
+        // Update purchase run status to failed
+        await supabase
+          .from('purchase_ai_runs')
+          .update({ status: 'cancelled' })
+          .eq('id', payload.purchaseRunId);
+        
+        return { success: false, error: result.error };
+      }
+
+      // Enqueue PDF export job if needed
+      const { data: pdfJob } = await supabase
+        .from('jobs')
+        .insert({
+          type: 'export_ai_analysis',
+          payload: { purchaseRunId: payload.purchaseRunId },
+          status: 'queued',
+          queue: 'default',
+          priority: 50
+        })
+        .select('id')
+        .single();
+
+      if (pdfJob) {
+        await log('info', 'pdf_export_enqueued', { jobId: pdfJob.id });
+      }
+
+      return { success: true };
+    }
+
+    // ========== DAILY ANALYSIS: Use LLM-based approach ==========
 
     // Get OpenAI API key
     const openaiApiKey = process.env.OPENAI_API_KEY;
