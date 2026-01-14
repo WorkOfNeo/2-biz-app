@@ -134,6 +134,51 @@ function formatScrapeSchedule(schedule: ScrapeSchedule): string {
   return `${days.join(', ')} at ${hoursWithOffset.join(', ')}`;
 }
 
+// Map schedule keys to job types
+const SCHEDULE_JOB_TYPE_MAP: Record<string, string> = {
+  check_stock_fix: 'check_stock_fix',
+  scrape_statistics: 'scrape_statistics',
+  scrape_purchase_orders: 'scrape_purchase_orders',
+  export_statistics: 'export_overview',
+  weekly_style_refresh: 'scrape_styles',
+  weekly_customer_sync: 'scrape_customers',
+};
+
+interface JobStatus {
+  id: string;
+  type: string;
+  status: 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+  error_message: string | null;
+  result_summary: string | null;
+}
+
+function formatElapsedTime(startedAt: string | null): string {
+  if (!startedAt) return '';
+  const start = new Date(startedAt).getTime();
+  const now = Date.now();
+  const elapsed = Math.floor((now - start) / 1000);
+  if (elapsed < 60) return `${elapsed}s`;
+  const mins = Math.floor(elapsed / 60);
+  const secs = elapsed % 60;
+  return `${mins}m ${secs}s`;
+}
+
+function formatLastRunTime(completedAt: string | null): string {
+  if (!completedAt) return '—';
+  const d = new Date(completedAt);
+  const now = new Date();
+  const isToday = d.toDateString() === now.toDateString();
+  const hh = d.getHours().toString().padStart(2, '0');
+  const mm = d.getMinutes().toString().padStart(2, '0');
+  if (isToday) return `Today ${hh}:${mm}`;
+  const day = d.getDate().toString().padStart(2, '0');
+  const month = (d.getMonth() + 1).toString().padStart(2, '0');
+  return `${day}/${month} ${hh}:${mm}`;
+}
+
 function ScrapesTab() {
   const [schedules, setSchedules] = React.useState<ScrapeSchedule[]>([]);
   const [loading, setLoading] = React.useState(true);
@@ -143,6 +188,10 @@ function ScrapesTab() {
   const [editDays, setEditDays] = React.useState<number[] | null>(null);
   const [editMinuteOffset, setEditMinuteOffset] = React.useState<number>(0);
   const [runningJob, setRunningJob] = React.useState<string | null>(null);
+  
+  // Track job statuses by schedule key
+  const [jobStatuses, setJobStatuses] = React.useState<Record<string, JobStatus | null>>({});
+  const [elapsedTimes, setElapsedTimes] = React.useState<Record<string, string>>({});
 
   const fetchSchedules = React.useCallback(async () => {
     try {
@@ -157,9 +206,68 @@ function ScrapesTab() {
     }
   }, []);
 
+  // Fetch latest job status for each schedule
+  const fetchJobStatuses = React.useCallback(async () => {
+    const jobTypes = Object.values(SCHEDULE_JOB_TYPE_MAP);
+    try {
+      const { data: jobs, error } = await supabase
+        .from('jobs')
+        .select('id, type, status, created_at, started_at, completed_at, error_message, result_summary')
+        .in('type', jobTypes)
+        .order('created_at', { ascending: false })
+        .limit(50);
+      
+      if (error) {
+        console.error('Failed to fetch job statuses:', error);
+        return;
+      }
+      
+      // Group by type, keeping the latest for each
+      const latestByType: Record<string, JobStatus> = {};
+      for (const job of (jobs || [])) {
+        if (!latestByType[job.type]) {
+          latestByType[job.type] = job as JobStatus;
+        }
+      }
+      
+      // Map to schedule keys
+      const statusByKey: Record<string, JobStatus | null> = {};
+      for (const [scheduleKey, jobType] of Object.entries(SCHEDULE_JOB_TYPE_MAP)) {
+        statusByKey[scheduleKey] = latestByType[jobType] || null;
+      }
+      
+      setJobStatuses(statusByKey);
+    } catch (e: any) {
+      console.error('Failed to fetch job statuses:', e);
+    }
+  }, []);
+
   React.useEffect(() => {
     fetchSchedules();
-  }, [fetchSchedules]);
+    fetchJobStatuses();
+  }, [fetchSchedules, fetchJobStatuses]);
+  
+  // Poll for job statuses every 5 seconds
+  React.useEffect(() => {
+    const interval = setInterval(() => {
+      fetchJobStatuses();
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [fetchJobStatuses]);
+  
+  // Update elapsed times every second for running jobs
+  React.useEffect(() => {
+    const interval = setInterval(() => {
+      const newElapsed: Record<string, string> = {};
+      for (const [key, job] of Object.entries(jobStatuses)) {
+        if (job && job.status === 'running' && job.started_at) {
+          newElapsed[key] = formatElapsedTime(job.started_at);
+        }
+      }
+      setElapsedTimes(newElapsed);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [jobStatuses]);
 
   const toggleEnabled = async (schedule: ScrapeSchedule) => {
     setSaving(schedule.id);
@@ -319,17 +427,34 @@ function ScrapesTab() {
                   <TableHead className="w-[200px]">Name</TableHead>
                   <TableHead>Schedule</TableHead>
                   <TableHead className="w-[100px]">Status</TableHead>
+                  <TableHead className="w-[160px]">Last Run</TableHead>
                   <TableHead className="w-[180px] text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {schedules.map(schedule => (
+                {schedules.map(schedule => {
+                  const jobStatus = jobStatuses[schedule.key];
+                  const isJobRunning = jobStatus?.status === 'running';
+                  const isJobQueued = jobStatus?.status === 'queued';
+                  const isJobFailed = jobStatus?.status === 'failed';
+                  const elapsedTime = elapsedTimes[schedule.key];
+                  
+                  return (
                   <React.Fragment key={schedule.id}>
                     <TableRow className={editingId === schedule.id ? 'bg-slate-50' : ''}>
                       <TableCell>
                         <div className="font-medium">{schedule.name}</div>
                         {schedule.description && (
                           <div className="text-xs text-slate-500 mt-0.5">{schedule.description}</div>
+                        )}
+                        {/* Show running indicator under name */}
+                        {(isJobRunning || isJobQueued) && (
+                          <div className="flex items-center gap-1.5 mt-1">
+                            <div className="h-2 w-2 rounded-full bg-blue-500 animate-pulse" />
+                            <span className="text-xs text-blue-600">
+                              {isJobQueued ? 'Queued...' : `Running${elapsedTime ? ` (${elapsedTime})` : '...'}`}
+                            </span>
+                          </div>
                         )}
                       </TableCell>
                       <TableCell>
@@ -344,6 +469,32 @@ function ScrapesTab() {
                         >
                           {schedule.enabled ? 'Active' : 'Disabled'}
                         </Badge>
+                      </TableCell>
+                      <TableCell>
+                        {jobStatus ? (
+                          <div className="space-y-0.5">
+                            <div className="text-xs text-slate-600">
+                              {formatLastRunTime(jobStatus.completed_at || jobStatus.started_at)}
+                            </div>
+                            {jobStatus.status === 'done' && (
+                              <Badge className="bg-green-50 text-green-700 border-green-200 text-[10px] py-0">
+                                Success
+                              </Badge>
+                            )}
+                            {isJobFailed && (
+                              <Badge className="bg-red-50 text-red-700 border-red-200 text-[10px] py-0" title={jobStatus.error_message || 'Unknown error'}>
+                                Failed
+                              </Badge>
+                            )}
+                            {jobStatus.status === 'cancelled' && (
+                              <Badge className="bg-slate-50 text-slate-600 border-slate-200 text-[10px] py-0">
+                                Cancelled
+                              </Badge>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-xs text-slate-400">—</span>
+                        )}
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex items-center justify-end gap-1">
@@ -493,7 +644,8 @@ function ScrapesTab() {
                       </TableRow>
                     )}
                   </React.Fragment>
-                ))}
+                  );
+                })}
               </TableBody>
             </Table>
           </div>

@@ -1186,6 +1186,8 @@ async function runJob(job: JobRow) {
             .single();
           if (!followErr) {
             await log(job.id, 'info', 'STEP:export_stock_list_after_enqueued', { triggerJobId: rootId, followupJobId: (followup as any)?.id, runAfter });
+          } else {
+            await log(job.id, 'error', 'STEP:export_stock_list_after_insert_error', { error: followErr.message, triggerJobId: rootId });
           }
         } else {
           await log(job.id, 'info', 'STEP:export_stock_list_after_already_enqueued', { triggerJobId: rootId, existingJobId: (existingFollowup as any)?.id });
