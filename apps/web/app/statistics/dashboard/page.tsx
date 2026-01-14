@@ -147,12 +147,11 @@ const SCHEDULE_JOB_TYPE_MAP: Record<string, string> = {
 interface JobStatus {
   id: string;
   type: string;
-  status: 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
+  status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
   created_at: string;
   started_at: string | null;
-  completed_at: string | null;
-  error_message: string | null;
-  result_summary: string | null;
+  finished_at: string | null;
+  error: string | null;
 }
 
 function formatElapsedTime(startedAt: string | null): string {
@@ -212,7 +211,7 @@ function ScrapesTab() {
     try {
       const { data: jobs, error } = await supabase
         .from('jobs')
-        .select('id, type, status, created_at, started_at, completed_at, error_message, result_summary')
+        .select('id, type, status, created_at, started_at, finished_at, error')
         .in('type', jobTypes)
         .order('created_at', { ascending: false })
         .limit(50);
@@ -474,15 +473,15 @@ function ScrapesTab() {
                         {jobStatus ? (
                           <div className="space-y-0.5">
                             <div className="text-xs text-slate-600">
-                              {formatLastRunTime(jobStatus.completed_at || jobStatus.started_at)}
+                              {formatLastRunTime(jobStatus.finished_at || jobStatus.started_at)}
                             </div>
-                            {jobStatus.status === 'done' && (
+                            {jobStatus.status === 'succeeded' && (
                               <Badge className="bg-green-50 text-green-700 border-green-200 text-[10px] py-0">
                                 Success
                               </Badge>
                             )}
                             {isJobFailed && (
-                              <Badge className="bg-red-50 text-red-700 border-red-200 text-[10px] py-0" title={jobStatus.error_message || 'Unknown error'}>
+                              <Badge className="bg-red-50 text-red-700 border-red-200 text-[10px] py-0" title={jobStatus.error || 'Unknown error'}>
                                 Failed
                               </Badge>
                             )}
