@@ -4,6 +4,11 @@
 -- - Season date context (start_sale, end_sale, latest_delivery)
 -- - Enhanced EARLY stage supplier-level messaging
 
+-- FIRST: Deactivate all existing version 1 prompts to avoid unique constraint violation
+UPDATE public.ai_prompts 
+SET active = false 
+WHERE key IN ('purchase_round_early_v1', 'purchase_round_mid_v1', 'purchase_round_closing_v1');
+
 -- Early stage prompt v2 (< 40% visit rate) - aggressive, with MOQ emphasis
 INSERT INTO public.ai_prompts (key, version, content, schema, model, temperature, max_tokens, active, notes)
 VALUES (
@@ -211,11 +216,9 @@ ON CONFLICT (key, version) DO UPDATE SET
   notes = EXCLUDED.notes,
   updated_at = now();
 
--- Update which version is active (prefer v2)
-UPDATE public.ai_prompts 
-SET active = false 
-WHERE key LIKE 'purchase_round_%_v1' AND version = 1;
-
+-- Ensure v2 prompts are active (they were inserted with active=true)
+-- This is a safety check in case of re-runs
 UPDATE public.ai_prompts 
 SET active = true 
-WHERE key LIKE 'purchase_round_%_v1' AND version = 2;
+WHERE key IN ('purchase_round_early_v1', 'purchase_round_mid_v1', 'purchase_round_closing_v1') 
+  AND version = 2;
