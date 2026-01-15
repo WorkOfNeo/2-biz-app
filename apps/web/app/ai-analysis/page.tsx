@@ -816,7 +816,7 @@ export default function AIAnalysisDashboard() {
               className="flex items-center justify-between p-4 hover:bg-slate-50 transition-colors"
             >
               <Link
-                href={item.link}
+                href={item.link as any}
                 className="flex items-center gap-3 flex-1"
               >
                 <div className={`p-2 rounded-lg ${item.type === 'purchase_round' ? 'bg-emerald-100' : 'bg-indigo-100'}`}>
@@ -917,7 +917,7 @@ export default function AIAnalysisDashboard() {
                   </button>
                 )}
                 
-                <Link href={item.link}>
+                <Link href={item.link as any}>
                   <ChevronRight className="h-5 w-5 text-slate-300" />
                 </Link>
               </div>
