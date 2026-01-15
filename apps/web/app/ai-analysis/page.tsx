@@ -43,7 +43,7 @@ type PurchaseRun = {
   purchase_stage: string | null;
   created_at: string;
   run_completed_at: string | null;
-  pdf_url: string | null;
+  pdf_url?: string | null;
   season?: { name: string; year: number | null };
 };
 
@@ -101,7 +101,7 @@ export default function AIAnalysisDashboard() {
       .from('purchase_ai_runs')
       .select(`
         id, season_id, run_label, run_number, status,
-        purchase_stage, created_at, run_completed_at, pdf_url,
+        purchase_stage, created_at, run_completed_at,
         season:seasons!season_id(name, year)
       `)
       .order('created_at', { ascending: false })

@@ -75,7 +75,7 @@ type PurchaseRun = {
   run_completed_at: string | null;
   job_id: string | null;
   created_at: string;
-  pdf_url: string | null;
+  pdf_url?: string | null;
   season?: { name: string; year: number | null };
 };
 
@@ -125,7 +125,7 @@ export default function AIPurchaseReviewPage() {
           id, season_id, run_label, run_number, status,
           purchase_stage, prompt_key, prompt_version, model,
           supplier_suggestions, computed_features_snapshot,
-          run_started_at, run_completed_at, job_id, created_at, pdf_url
+          run_started_at, run_completed_at, job_id, created_at
         `)
         .eq('id', purchaseRunId)
         .single();
