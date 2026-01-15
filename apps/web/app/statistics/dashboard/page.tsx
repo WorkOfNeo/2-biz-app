@@ -139,6 +139,7 @@ const SCHEDULE_JOB_TYPE_MAP: Record<string, string> = {
   check_stock_fix: 'check_stock_fix',
   scrape_statistics: 'scrape_statistics',
   scrape_purchase_orders: 'scrape_purchase_orders',
+  scrape_top_styles: 'scrape_top_styles',
   export_statistics: 'export_overview',
   weekly_style_refresh: 'scrape_styles',
   weekly_customer_sync: 'scrape_customers',
@@ -357,6 +358,7 @@ function ScrapesTab() {
         check_stock_fix: 'check_stock_fix',
         scrape_statistics: 'scrape_statistics',
         scrape_purchase_orders: 'scrape_purchase_orders',
+        scrape_top_styles: 'scrape_top_styles',
         export_statistics: 'export_overview',
         weekly_style_refresh: 'scrape_styles',
         weekly_customer_sync: 'scrape_customers',
@@ -377,6 +379,11 @@ function ScrapesTab() {
           deep: true,
           style_details: withStyleDetails 
         };
+      }
+      
+      // For scrape_top_styles, auto-export the PDF after the scrape completes
+      if (schedule.key === 'scrape_top_styles') {
+        payload.autoExport = true;
       }
 
       const res = await fetch('/api/enqueue', {

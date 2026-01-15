@@ -432,6 +432,43 @@ export async function scrapeTopStyles(ctx: Ctx) {
     }
     await log(job.id, 'info', 'STEP:topstyles_saved', { season_id: currentSeasonId, count: parsed.length });
     await saveResult(job.id, 'top_styles_saved', { season_id: currentSeasonId, count: parsed.length });
+
+    // Optional: auto-enqueue PDF export after a successful scrape (used by manual dashboard run)
+    try {
+      const autoExport = Boolean((job.payload as any)?.autoExport);
+      if (autoExport) {
+        await log(job.id, 'info', 'STEP:topstyles_autoexport_check', { autoExport: true });
+        const { data: existing } = await supabase
+          .from('jobs')
+          .select('id,status')
+          .eq('type', 'export_top_styles')
+          .contains('payload', { afterScrapeJobId: job.id })
+          .order('created_at', { ascending: false })
+          .limit(1);
+
+        if (!existing || existing.length === 0) {
+          const requestedBy = String((job.payload as any)?.requestedBy || 'auto_export');
+          const runKey = (job.payload as any)?.runKey;
+          const { error: insErr } = await supabase.from('jobs').insert({
+            type: 'export_top_styles',
+            payload: { requestedBy: `${requestedBy}_auto_export_top_styles`, ...(runKey ? { runKey } : {}), afterScrapeJobId: job.id },
+            status: 'queued',
+            max_attempts: 3,
+            queue: ((job as any)?.queue || 'default'),
+            priority: ((job as any)?.priority ?? 100),
+          } as any);
+          if (insErr) {
+            await log(job.id, 'error', 'STEP:topstyles_autoexport_enqueue_failed', { error: insErr.message });
+          } else {
+            await log(job.id, 'info', 'STEP:topstyles_autoexport_enqueued');
+          }
+        } else {
+          await log(job.id, 'info', 'STEP:topstyles_autoexport_already_exists', { existingJobId: (existing as any)[0]?.id, status: (existing as any)[0]?.status });
+        }
+      }
+    } catch (e: any) {
+      await log(job.id, 'error', 'STEP:topstyles_autoexport_error', { error: e?.message || String(e) });
+    }
     await setJobSucceeded(job.id);
   } catch (e: any) {
     await setJobFailedOrRequeue(job, e?.message || String(e));

@@ -12,6 +12,7 @@ const DEFAULT_SCHEDULES = [
   { id: 'default-4', key: 'export_statistics', name: 'Export Statistics PDFs', description: 'Generate and export statistics PDFs', enabled: true, hours: [7, 15], days_of_week: null, config: {}, updated_at: new Date().toISOString() },
   { id: 'default-5', key: 'weekly_style_refresh', name: 'Weekly Style Refresh', description: 'Full style data refresh pipeline (scrape → enrich → EANs → stock)', enabled: true, hours: [2], days_of_week: [0], config: {}, updated_at: new Date().toISOString() },
   { id: 'default-6', key: 'weekly_customer_sync', name: 'Weekly Customer Sync', description: 'Sync customer data and flag orphaned customers', enabled: true, hours: [4], days_of_week: [0], config: {}, updated_at: new Date().toISOString() },
+  { id: 'default-7', key: 'scrape_top_styles', name: 'Scrape Top Styles', description: 'Scrape Top Styles from SPY (used for Top Styles PDFs)', enabled: true, hours: [7, 15], days_of_week: null, config: {}, updated_at: new Date().toISOString() },
 ];
 
 export async function GET() {
