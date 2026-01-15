@@ -115,6 +115,38 @@ export default function AIPurchaseReviewPage() {
   const [showReviewModal, setShowReviewModal] = useState(false);
   const [generatingPdf, setGeneratingPdf] = useState(false);
 
+  // Fetch the purchase run
+  const { data: purchaseRun, mutate, error } = useSWR<PurchaseRun>(
+    purchaseRunId ? `purchase-run-${purchaseRunId}` : null,
+    async () => {
+      const { data, error } = await supabase
+        .from('purchase_ai_runs')
+        .select(`
+          id, season_id, run_label, run_number, status,
+          purchase_stage, prompt_key, prompt_version, model,
+          supplier_suggestions, computed_features_snapshot,
+          run_started_at, run_completed_at, job_id, created_at, pdf_url
+        `)
+        .eq('id', purchaseRunId)
+        .single();
+
+      if (error) throw new Error(error.message);
+      
+      let season: { name: string; year: number | null } | undefined;
+      if (data.season_id) {
+        const { data: seasonData } = await supabase
+          .from('seasons')
+          .select('name, year')
+          .eq('id', data.season_id)
+          .single();
+        if (seasonData) season = seasonData;
+      }
+      
+      return { ...data, season } as PurchaseRun;
+    },
+    { refreshInterval: shouldPoll ? 2000 : 0 }
+  );
+
   // Fetch style data (images, spy_style_id) for all styles in the suggestions
   const allStyleNos = useMemo(() => {
     if (!purchaseRun?.supplier_suggestions) return [];
@@ -154,38 +186,6 @@ export default function AIPurchaseReviewPage() {
       
       return map;
     }
-  );
-
-  // Fetch the purchase run
-  const { data: purchaseRun, mutate, error } = useSWR<PurchaseRun>(
-    purchaseRunId ? `purchase-run-${purchaseRunId}` : null,
-    async () => {
-      const { data, error } = await supabase
-        .from('purchase_ai_runs')
-        .select(`
-          id, season_id, run_label, run_number, status,
-          purchase_stage, prompt_key, prompt_version, model,
-          supplier_suggestions, computed_features_snapshot,
-          run_started_at, run_completed_at, job_id, created_at, pdf_url
-        `)
-        .eq('id', purchaseRunId)
-        .single();
-
-      if (error) throw new Error(error.message);
-      
-      let season: { name: string; year: number | null } | undefined;
-      if (data.season_id) {
-        const { data: seasonData } = await supabase
-          .from('seasons')
-          .select('name, year')
-          .eq('id', data.season_id)
-          .single();
-        if (seasonData) season = seasonData;
-      }
-      
-      return { ...data, season } as PurchaseRun;
-    },
-    { refreshInterval: shouldPoll ? 2000 : 0 }
   );
 
   useEffect(() => {
