@@ -48,7 +48,8 @@ function NielsensPanel() {
   const [qtyCol, setQtyCol] = React.useState<string>('');
   const [extOrderCol, setExtOrderCol] = React.useState<string>('');
   const [delivery, setDelivery] = React.useState<string>('');
-  const [rowsOut, setRowsOut] = React.useState<Array<{ ShopID: string; SpyAccountNo: string; Delivery: string; EAN: string; QTY: number; ExternalOrderNo: string | null }>>([]);
+  const [orderComment, setOrderComment] = React.useState<string>('');
+  const [rowsOut, setRowsOut] = React.useState<Array<{ ShopID: string; SpyAccountNo: string; Delivery: string; EAN: string; QTY: number; ExternalOrderNo: string | null; OrderComment: string }>>([]);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
@@ -91,7 +92,7 @@ function NielsensPanel() {
       if (!shopIdCol || !eanCol || !qtyCol) throw new Error('Map required columns (ShopID, EAN, QTY)');
       const XLSX = await import('xlsx');
       const map: ShopMap = (shopMapResp?.value || {}) as ShopMap;
-      const allRows: Array<{ ShopID: string; SpyAccountNo: string; Delivery: string; EAN: string; QTY: number; ExternalOrderNo: string | null }> = [];
+      const allRows: Array<{ ShopID: string; SpyAccountNo: string; Delivery: string; EAN: string; QTY: number; ExternalOrderNo: string | null; OrderComment: string }> = [];
       for (const f of files) {
         const buf = await f.arrayBuffer();
         const wb = XLSX.read(buf, { type: 'array' });
@@ -113,7 +114,8 @@ function NielsensPanel() {
             Delivery: delivery || '',
             EAN: ean,
             QTY: qty,
-            ExternalOrderNo: ext
+            ExternalOrderNo: ext,
+            OrderComment: orderComment || ''
           });
         }
       }
@@ -172,7 +174,7 @@ function NielsensPanel() {
         '',                      // Phone
         '',                      // Price
         '',                      // Discount
-        '',                      // Order Comment
+        r.OrderComment,          // Order Comment
       ]));
       const wb = XLSX.utils.book_new();
       const ws = XLSX.utils.aoa_to_sheet([header, ...data]);
@@ -236,15 +238,27 @@ function NielsensPanel() {
               </select>
             </div>
           </div>
-          <div className="space-y-2">
-            <div className="text-sm font-medium">Delivery</div>
-            <input
-              className="w-full border rounded px-2 py-1 text-sm"
-              placeholder="Delivery date/text"
-              value={delivery}
-              onChange={(e)=>setDelivery(e.target.value)}
-            />
-            <div className="text-xs text-gray-600">Applied to all rows in the converted file.</div>
+          <div className="space-y-3">
+            <div className="space-y-2">
+              <div className="text-sm font-medium">Delivery</div>
+              <input
+                className="w-full border rounded px-2 py-1 text-sm"
+                placeholder="Delivery date/text"
+                value={delivery}
+                onChange={(e)=>setDelivery(e.target.value)}
+              />
+              <div className="text-xs text-gray-600">Applied to all rows in the converted file.</div>
+            </div>
+            <div className="space-y-2">
+              <div className="text-sm font-medium">Order Comment</div>
+              <input
+                className="w-full border rounded px-2 py-1 text-sm"
+                placeholder="Order comment (optional)"
+                value={orderComment}
+                onChange={(e)=>setOrderComment(e.target.value)}
+              />
+              <div className="text-xs text-gray-600">Appears in &quot;Order Comment&quot; column.</div>
+            </div>
           </div>
         </div>
         <div className="flex items-center gap-2">
