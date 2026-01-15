@@ -67,6 +67,7 @@ export default function AIAnalysisDashboard() {
   const [jobLogs, setJobLogs] = useState<JobLog[]>([]);
   const [generatingPdfFor, setGeneratingPdfFor] = useState<Set<string>>(new Set());
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [ignoreOpenPOs, setIgnoreOpenPOs] = useState(false);
 
   // Fetch latest analyses
   const { data: analyses, mutate, error: analysesError } = useSWR('ai-analyses', async () => {
@@ -276,7 +277,9 @@ export default function AIAnalysisDashboard() {
       const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(type === 'daily' ? { analysisType: 'daily' } : {})
+        body: JSON.stringify(type === 'daily' 
+          ? { analysisType: 'daily' } 
+          : { ignoreOpenPOs })
       });
       
       const data = await res.json();
@@ -444,14 +447,27 @@ export default function AIAnalysisDashboard() {
               </>
             )}
           </button>
-          <button
-            onClick={() => runAnalysis('purchase_round')}
-            disabled={runningAnalysis || clearing}
-            className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50"
-          >
-            <Package className="h-4 w-4" />
-            Start Purchase Round
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => runAnalysis('purchase_round')}
+              disabled={runningAnalysis || clearing}
+              className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50"
+            >
+              <Package className="h-4 w-4" />
+              Start Purchase Round
+            </button>
+            <label className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer hover:text-slate-800">
+              <input
+                type="checkbox"
+                checked={ignoreOpenPOs}
+                onChange={(e) => setIgnoreOpenPOs(e.target.checked)}
+                className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                disabled={runningAnalysis || clearing}
+              />
+              <span>Ignore open POs</span>
+              <span className="text-xs text-slate-400" title="Skip netting against existing open purchase orders">(?)</span>
+            </label>
+          </div>
           <button
             onClick={clearAllData}
             disabled={runningAnalysis || clearing}

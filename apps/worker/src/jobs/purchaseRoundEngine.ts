@@ -53,6 +53,7 @@ interface PurchaseRoundPayload {
   comparisonSeasonId?: string;
   purchaseRoundNumber?: number;
   purchaseRunId: string;
+  ignoreOpenPOs?: boolean; // If true, don't subtract open PO quantities from suggestions
 }
 
 interface SupplierMaster {
@@ -351,45 +352,55 @@ export async function runPurchaseRoundEngine(
     });
 
     // ========== STEP 4: Load Open POs (SPY + APP) ==========
-    await log('info', 'STEP_4_LOAD_OPEN_POS');
-
-    const { data: openSpyPoItems } = await supabase
-      .from('purchase_order_items')
-      .select('style_no, color, qty, po_no');
-
-    const { data: openSpyPos } = await supabase
-      .from('purchase_orders')
-      .select('po_no, status')
-      .in('status', ['Running', 'Shipped']);
-
-    const openSpyPoNos = new Set((openSpyPos || []).map(p => p.po_no));
-    
     const openPoTotals = new Map<string, number>();
-    for (const item of openSpyPoItems || []) {
-      if (!item.style_no || !openSpyPoNos.has(item.po_no)) continue;
-      const key = `${item.style_no}|${(item.color || '').toLowerCase()}`;
-      openPoTotals.set(key, (openPoTotals.get(key) || 0) + (item.qty || 0));
-    }
+    
+    // Check if we should ignore open POs
+    const ignoreOpenPOs = payload.ignoreOpenPOs === true;
+    
+    if (ignoreOpenPOs) {
+      await log('info', 'STEP_4_SKIP_OPEN_POS', { 
+        reason: 'ignoreOpenPOs flag is set - not subtracting open PO quantities' 
+      });
+    } else {
+      await log('info', 'STEP_4_LOAD_OPEN_POS');
 
-    const { data: openAppPos } = await supabase
-      .from('app_pos')
-      .select('id, meta, status, confirmed')
-      .in('status', ['Running', 'Shipped']);
+      const { data: openSpyPoItems } = await supabase
+        .from('purchase_order_items')
+        .select('style_no, color, qty, po_no');
 
-    for (const appPo of openAppPos || []) {
-      const items = appPo.meta?.items as any[] || [];
-      for (const item of items) {
-        if (!item.style_no) continue;
+      const { data: openSpyPos } = await supabase
+        .from('purchase_orders')
+        .select('po_no, status')
+        .in('status', ['Running', 'Shipped']);
+
+      const openSpyPoNos = new Set((openSpyPos || []).map(p => p.po_no));
+      
+      for (const item of openSpyPoItems || []) {
+        if (!item.style_no || !openSpyPoNos.has(item.po_no)) continue;
         const key = `${item.style_no}|${(item.color || '').toLowerCase()}`;
-        openPoTotals.set(key, (openPoTotals.get(key) || 0) + (item.total || 0));
+        openPoTotals.set(key, (openPoTotals.get(key) || 0) + (item.qty || 0));
       }
-    }
 
-    await log('info', 'OPEN_POS_LOADED', { 
-      spyPoItems: openSpyPoItems?.length || 0, 
-      appPos: openAppPos?.length || 0,
-      uniqueStyleColors: openPoTotals.size
-    });
+      const { data: openAppPos } = await supabase
+        .from('app_pos')
+        .select('id, meta, status, confirmed')
+        .in('status', ['Running', 'Shipped']);
+
+      for (const appPo of openAppPos || []) {
+        const items = appPo.meta?.items as any[] || [];
+        for (const item of items) {
+          if (!item.style_no) continue;
+          const key = `${item.style_no}|${(item.color || '').toLowerCase()}`;
+          openPoTotals.set(key, (openPoTotals.get(key) || 0) + (item.total || 0));
+        }
+      }
+
+      await log('info', 'OPEN_POS_LOADED', { 
+        spyPoItems: openSpyPoItems?.length || 0, 
+        appPos: openAppPos?.length || 0,
+        uniqueStyleColors: openPoTotals.size
+      });
+    }
 
     // ========== STEP 4.5: Load Current Stock Levels ==========
     await log('info', 'STEP_4_5_LOAD_STOCK');

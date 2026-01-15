@@ -9,6 +9,7 @@ import { NextResponse } from 'next/server';
 interface PurchaseRoundRequest {
   seasonId?: string;
   comparisonSeasonId?: string;
+  ignoreOpenPOs?: boolean; // If true, don't subtract open PO quantities from suggestions
 }
 
 export async function POST(req: Request) {
@@ -81,6 +82,7 @@ export async function POST(req: Request) {
           purchaseRoundNumber: nextRoundNumber,
           purchaseRunId: purchaseRun.id, // Link to the purchase run
           sendEmail: false,
+          ignoreOpenPOs: body.ignoreOpenPOs || false, // Pass through to engine
         },
         status: 'queued',
         max_attempts: 2,

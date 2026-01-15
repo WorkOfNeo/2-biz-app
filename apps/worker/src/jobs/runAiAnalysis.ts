@@ -19,6 +19,7 @@ interface AiAnalysisPayload {
   purchaseRoundNumber?: number;
   purchaseRunId?: string; // Link to purchase_ai_runs record
   sendEmail?: boolean;
+  ignoreOpenPOs?: boolean; // If true, don't subtract open PO quantities
 }
 
 // Default prompts (fallback if not in DB)
@@ -174,7 +175,8 @@ export async function runAiAnalysis(
         seasonId,
         comparisonSeasonId,
         purchaseRoundNumber,
-        purchaseRunId: payload.purchaseRunId
+        purchaseRunId: payload.purchaseRunId,
+        ignoreOpenPOs: payload.ignoreOpenPOs
       }, log);
 
       if (!result.success) {

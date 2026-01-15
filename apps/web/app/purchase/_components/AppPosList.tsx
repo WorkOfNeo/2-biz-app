@@ -52,14 +52,26 @@ export function AppPosList({ embedded = false }: { embedded?: boolean }) {
     setDeleting(po.id);
 
     try {
-      const { error } = await supabase.from('app_pos').delete().eq('id', po.id);
+      const { error, count } = await supabase
+        .from('app_pos')
+        .delete()
+        .eq('id', po.id)
+        .select();
 
-      if (error) throw error;
+      if (error) {
+        console.error('Delete error:', error);
+        throw new Error(error.message || 'Database error');
+      }
+
+      // Check if anything was actually deleted (RLS might silently block)
+      if (count === 0) {
+        throw new Error('No rows deleted - you may not have permission to delete this PO');
+      }
 
       await mutate();
     } catch (err: any) {
       console.error('Delete error:', err);
-      alert(`Failed to delete APP PO: ${err.message || 'Unknown error'}`);
+      alert(`Failed to delete APP PO: ${err.message || 'Unknown error'}\n\nIf this persists, check the browser console for details.`);
     } finally {
       setDeleting(null);
     }
