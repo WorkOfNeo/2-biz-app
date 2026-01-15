@@ -34,6 +34,31 @@ type JobLog = {
   created_at: string;
 };
 
+type PurchaseRun = {
+  id: string;
+  season_id: string;
+  run_label: string | null;
+  run_number: number | null;
+  status: 'pending' | 'reviewing' | 'completed' | 'cancelled';
+  purchase_stage: string | null;
+  created_at: string;
+  run_completed_at: string | null;
+  pdf_url: string | null;
+  season?: { name: string; year: number | null };
+};
+
+type CombinedHistoryItem = {
+  id: string;
+  type: 'daily_analysis' | 'purchase_round';
+  seasonName: string;
+  seasonYear: number | null;
+  date: string;
+  status: string;
+  purchaseStage?: string | null;
+  pdfUrl?: string | null;
+  link: string;
+};
+
 export default function AIAnalysisDashboard() {
   const [runningAnalysis, setRunningAnalysis] = useState(false);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
@@ -69,6 +94,51 @@ export default function AIAnalysisDashboard() {
       season: Array.isArray(row.season) && row.season.length > 0 ? row.season[0] : undefined
     })) as Analysis[];
   });
+
+  // Fetch purchase runs for the history list
+  const { data: purchaseRuns } = useSWR('purchase-runs', async () => {
+    const { data, error } = await supabase
+      .from('purchase_ai_runs')
+      .select(`
+        id, season_id, run_label, run_number, status,
+        purchase_stage, created_at, run_completed_at, pdf_url,
+        season:seasons!season_id(name, year)
+      `)
+      .order('created_at', { ascending: false })
+      .limit(50);
+    
+    if (error) throw new Error(error.message);
+    
+    return ((data ?? []) as any[]).map(row => ({
+      ...row,
+      season: Array.isArray(row.season) && row.season.length > 0 ? row.season[0] : undefined
+    })) as PurchaseRun[];
+  });
+
+  // Combine analyses and purchase runs for history
+  const combinedHistory: CombinedHistoryItem[] = [
+    ...((analyses ?? []).map(a => ({
+      id: a.id,
+      type: 'daily_analysis' as const,
+      seasonName: a.season?.name || 'Unknown',
+      seasonYear: a.season?.year ?? null,
+      date: a.analysis_date,
+      status: 'completed',
+      pdfUrl: a.pdf_url,
+      link: `/ai-analysis/${a.id}`,
+    }))),
+    ...((purchaseRuns ?? []).map(p => ({
+      id: p.id,
+      type: 'purchase_round' as const,
+      seasonName: p.season?.name || 'Unknown',
+      seasonYear: p.season?.year ?? null,
+      date: p.created_at.split('T')[0] || '',
+      status: p.status,
+      purchaseStage: p.purchase_stage,
+      pdfUrl: p.pdf_url,
+      link: `/purchase/ai-review/${p.id}`,
+    }))),
+  ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
   // Fetch seasons for context
   const { data: seasonCompare } = useSWR('season-compare', async () => {
@@ -740,50 +810,61 @@ export default function AIAnalysisDashboard() {
           </h2>
         </div>
         <div className="divide-y">
-          {(analyses ?? []).slice(0, 20).map((a) => (
+          {combinedHistory.slice(0, 30).map((item) => (
             <div
-              key={a.id}
+              key={`${item.type}-${item.id}`}
               className="flex items-center justify-between p-4 hover:bg-slate-50 transition-colors"
             >
               <Link
-                href={`/ai-analysis/${a.id}`}
+                href={item.link}
                 className="flex items-center gap-3 flex-1"
               >
-                <div className={`p-2 rounded-lg ${a.analysis_type === 'purchase_round' ? 'bg-emerald-100' : 'bg-indigo-100'}`}>
-                  {a.analysis_type === 'purchase_round' ? (
+                <div className={`p-2 rounded-lg ${item.type === 'purchase_round' ? 'bg-emerald-100' : 'bg-indigo-100'}`}>
+                  {item.type === 'purchase_round' ? (
                     <Package className="h-4 w-4 text-emerald-600" />
                   ) : (
                     <TrendingUp className="h-4 w-4 text-indigo-600" />
                   )}
                 </div>
                 <div>
-                  <div className="font-medium text-slate-900">
-                    {a.analysis_type === 'purchase_round' 
-                      ? `Purchase Round #${a.purchase_round_number || '?'}`
+                  <div className="font-medium text-slate-900 flex items-center gap-2">
+                    {item.type === 'purchase_round' 
+                      ? 'Purchase Round'
                       : 'Daily Analysis'
                     }
-                    <span className="text-slate-400 font-normal ml-2">
-                      {(a.season as any)?.name} {(a.season as any)?.year}
+                    <span className="text-slate-400 font-normal">
+                      {item.seasonName} {item.seasonYear}
                     </span>
+                    {item.type === 'purchase_round' && item.status && (
+                      <span className={`text-xs px-2 py-0.5 rounded-full ${
+                        item.status === 'completed' ? 'bg-emerald-100 text-emerald-700' :
+                        item.status === 'reviewing' ? 'bg-blue-100 text-blue-700' :
+                        item.status === 'pending' ? 'bg-amber-100 text-amber-700' :
+                        'bg-slate-100 text-slate-700'
+                      }`}>
+                        {item.status}
+                      </span>
+                    )}
+                    {item.purchaseStage && (
+                      <span className={`text-xs px-2 py-0.5 rounded-full ${
+                        item.purchaseStage === 'early' ? 'bg-amber-100 text-amber-700' :
+                        item.purchaseStage === 'mid' ? 'bg-blue-100 text-blue-700' :
+                        'bg-emerald-100 text-emerald-700'
+                      }`}>
+                        {item.purchaseStage}
+                      </span>
+                    )}
                   </div>
                   <div className="text-sm text-slate-500">
-                    {new Date(a.analysis_date).toLocaleDateString('da-DK')}
-                    {a.email_sent_at && <span className="ml-2 text-green-600">📧 Sent</span>}
+                    {new Date(item.date).toLocaleDateString('da-DK')}
                   </div>
                 </div>
               </Link>
               <div className="flex items-center gap-4">
-                {a.metrics?.totals && (
-                  <div className="text-right text-sm">
-                    <div className="font-medium text-slate-900">{(a.metrics.totals.qty_sold || 0).toLocaleString()} pcs</div>
-                    <div className="text-slate-500">{a.metrics.customer_coverage?.visit_rate_percent || 0}% visited</div>
-                  </div>
-                )}
-                
                 {/* PDF Button */}
-                {a.pdf_url ? (
+                {item.pdfUrl ? (
                   <a
-                    href={a.pdf_url}
+                    href={item.pdfUrl}
                     target="_blank"
                     rel="noopener noreferrer"
                     onClick={(e) => e.stopPropagation()}
@@ -792,17 +873,17 @@ export default function AIAnalysisDashboard() {
                     <FileDown className="h-4 w-4" />
                     Download
                   </a>
-                ) : (
+                ) : item.type === 'daily_analysis' ? (
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
                       e.preventDefault();
-                      generatePdf(a.id);
+                      generatePdf(item.id);
                     }}
-                    disabled={generatingPdfFor.has(a.id)}
+                    disabled={generatingPdfFor.has(item.id)}
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm bg-slate-100 text-slate-700 hover:bg-slate-200 rounded-lg transition-colors disabled:opacity-50"
                   >
-                    {generatingPdfFor.has(a.id) ? (
+                    {generatingPdfFor.has(item.id) ? (
                       <>
                         <Loader2 className="h-4 w-4 animate-spin" />
                         Generating...
@@ -814,33 +895,35 @@ export default function AIAnalysisDashboard() {
                       </>
                     )}
                   </button>
+                ) : null}
+                
+                {/* Delete Button (only for daily analyses) */}
+                {item.type === 'daily_analysis' && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      e.preventDefault();
+                      deleteAnalysis(item.id, 'daily');
+                    }}
+                    disabled={deletingId === item.id}
+                    className="inline-flex items-center gap-1 px-2 py-1.5 text-sm text-red-600 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
+                    title="Delete this analysis"
+                  >
+                    {deletingId === item.id ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Trash2 className="h-4 w-4" />
+                    )}
+                  </button>
                 )}
                 
-                {/* Delete Button */}
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    e.preventDefault();
-                    deleteAnalysis(a.id, a.analysis_type);
-                  }}
-                  disabled={deletingId === a.id}
-                  className="inline-flex items-center gap-1 px-2 py-1.5 text-sm text-red-600 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
-                  title="Delete this analysis"
-                >
-                  {deletingId === a.id ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Trash2 className="h-4 w-4" />
-                  )}
-                </button>
-                
-                <Link href={`/ai-analysis/${a.id}`}>
+                <Link href={item.link}>
                   <ChevronRight className="h-5 w-5 text-slate-300" />
                 </Link>
               </div>
             </div>
           ))}
-          {(!analyses || analyses.length === 0) && (
+          {combinedHistory.length === 0 && (
             <div className="p-8 text-center text-slate-500">
               No analyses yet. Click "Run Analysis Now" to get started.
             </div>

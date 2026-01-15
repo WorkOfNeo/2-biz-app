@@ -37,13 +37,14 @@ Dette er IKKE kun en kommentar - du BESLUTTER mængderne!
 - Hvis du springer over, angiv hvor mange dage til vi senest kan bestille (baseret på lead time og sæsonens slutdato)
 
 ### Mængder per Style/Farve
-- Basér mængder på: solgte stk, åbne PO\'er, nuværende lager
+- Basér mængder på: solgte stk (sold_qty), åbne PO\'er (open_po_qty), nuværende lager (current_stock)
+- current_stock er det vi har på lager NU - dette er vigtigt at tage højde for!
 - Brug visit_rate til at estimere resterende potentiale:
   - Under 40% besøgt = tidligt, køb aggressivt (x1.3-1.5 af solgt)
   - 40-75% besøgt = midt, balanceret (x1.1-1.3 af solgt)
   - Over 75% besøgt = sent, konservativt (x1.0-1.1 af solgt)
-- Træk åbne PO\'er fra dit mål
-- Hvis nuværende lager + åbne PO\'er dækker behovet, køb 0
+- Træk åbne PO\'er OG nuværende lager fra dit mål
+- Hvis current_stock + open_po_qty dækker behovet, køb 0
 
 ### Størrelses-fordeling
 - Fordel mængden på størrelser baseret på historisk salg

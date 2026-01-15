@@ -12,8 +12,10 @@ import Link from 'next/link';
 import { 
   ArrowLeft, Check, X, Package, Loader2, 
   ChevronDown, ChevronRight, Building2, CheckCircle2, 
-  AlertTriangle, Clock, XCircle, ShoppingCart, Info
+  AlertTriangle, Clock, XCircle, ShoppingCart, Info, ExternalLink,
+  FileDown, FileText
 } from 'lucide-react';
+import Image from 'next/image';
 
 const supabase = createClientComponentClient();
 
@@ -23,11 +25,23 @@ type StyleSuggestion = {
   color: string;
   sold_qty: number;
   open_po_qty: number;
+  current_stock: number;
   suggested_qty_total: number;
   sizes: string[];
   size_breakdown: number[];
   active_salespeople_count: number;
   reasoning?: string;
+};
+
+// Grouped style with colors
+type GroupedStyle = {
+  style_no: string;
+  style_name: string;
+  image_url?: string;
+  spy_style_id?: number;
+  colors: StyleSuggestion[];
+  total_suggested: number;
+  total_sold: number;
 };
 
 type SupplierSuggestion = {
@@ -61,6 +75,7 @@ type PurchaseRun = {
   run_completed_at: string | null;
   job_id: string | null;
   created_at: string;
+  pdf_url: string | null;
   season?: { name: string; year: number | null };
 };
 
@@ -97,6 +112,49 @@ export default function AIPurchaseReviewPage() {
   const [creatingPOs, setCreatingPOs] = useState(false);
   const [jobLogs, setJobLogs] = useState<JobLog[]>([]);
   const [shouldPoll, setShouldPoll] = useState(true);
+  const [showReviewModal, setShowReviewModal] = useState(false);
+  const [generatingPdf, setGeneratingPdf] = useState(false);
+
+  // Fetch style data (images, spy_style_id) for all styles in the suggestions
+  const allStyleNos = useMemo(() => {
+    if (!purchaseRun?.supplier_suggestions) return [];
+    const nos = new Set<string>();
+    purchaseRun.supplier_suggestions.forEach(s => {
+      s.styles.forEach(st => nos.add(st.style_no));
+    });
+    return Array.from(nos);
+  }, [purchaseRun?.supplier_suggestions]);
+
+  const { data: styleData } = useSWR<Record<string, { image_url?: string; spy_style_id?: number }>>(
+    allStyleNos.length > 0 ? `style-data-${allStyleNos.join(',')}` : null,
+    async () => {
+      const { data } = await supabase
+        .from('styles')
+        .select('style_no, image_url, spy_style_id')
+        .in('style_no', allStyleNos);
+      
+      const map: Record<string, { image_url?: string; spy_style_id?: number }> = {};
+      for (const s of data || []) {
+        map[s.style_no] = { image_url: s.image_url, spy_style_id: s.spy_style_id };
+      }
+      
+      // Also try style_colors for images
+      const { data: colorImages } = await supabase
+        .from('style_colors')
+        .select('style_id, image_url, styles!inner(style_no)')
+        .in('styles.style_no', allStyleNos)
+        .not('image_url', 'is', null);
+      
+      for (const ci of colorImages || []) {
+        const styleNo = (ci.styles as any)?.style_no;
+        if (styleNo && ci.image_url && !map[styleNo]?.image_url) {
+          map[styleNo] = { ...map[styleNo], image_url: ci.image_url };
+        }
+      }
+      
+      return map;
+    }
+  );
 
   // Fetch the purchase run
   const { data: purchaseRun, mutate, error } = useSWR<PurchaseRun>(
@@ -108,7 +166,7 @@ export default function AIPurchaseReviewPage() {
           id, season_id, run_label, run_number, status,
           purchase_stage, prompt_key, prompt_version, model,
           supplier_suggestions, computed_features_snapshot,
-          run_started_at, run_completed_at, job_id, created_at
+          run_started_at, run_completed_at, job_id, created_at, pdf_url
         `)
         .eq('id', purchaseRunId)
         .single();
@@ -233,6 +291,44 @@ export default function AIPurchaseReviewPage() {
     return { suggested, adjusted, approved: approvedCount, skipped: skippedCount };
   }, [purchaseRun?.supplier_suggestions, feedback]);
 
+  // Group styles by style_no within each supplier
+  type SupplierWithGroupedStyles = SupplierSuggestion & { 
+    groupedStyles: GroupedStyle[];
+  };
+  
+  const suppliersWithGroupedStyles = useMemo<SupplierWithGroupedStyles[]>(() => {
+    if (!purchaseRun?.supplier_suggestions) return [];
+    
+    return purchaseRun.supplier_suggestions.map(supplier => {
+      const byStyleNo = new Map<string, GroupedStyle>();
+      
+      for (const style of supplier.styles) {
+        if (!byStyleNo.has(style.style_no)) {
+          const sd = styleData?.[style.style_no];
+          byStyleNo.set(style.style_no, {
+            style_no: style.style_no,
+            style_name: style.style_name,
+            image_url: sd?.image_url,
+            spy_style_id: sd?.spy_style_id,
+            colors: [],
+            total_suggested: 0,
+            total_sold: 0,
+          });
+        }
+        
+        const group = byStyleNo.get(style.style_no)!;
+        group.colors.push(style);
+        group.total_suggested += style.suggested_qty_total;
+        group.total_sold += style.sold_qty;
+      }
+      
+      return {
+        ...supplier,
+        groupedStyles: Array.from(byStyleNo.values()).sort((a, b) => b.total_sold - a.total_sold),
+      };
+    });
+  }, [purchaseRun?.supplier_suggestions, styleData]);
+
   function toggleSupplier(supplier: string) {
     setExpandedSuppliers(prev => {
       const next = new Set(prev);
@@ -355,6 +451,50 @@ export default function AIPurchaseReviewPage() {
       alert('Failed to save feedback: ' + e.message);
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function generatePdf() {
+    if (!purchaseRunId) return;
+    setGeneratingPdf(true);
+    
+    try {
+      const { data: job, error } = await supabase
+        .from('jobs')
+        .insert({
+          type: 'export_purchase_round_pdf',
+          payload: { purchaseRunId },
+          status: 'queued',
+          max_attempts: 2
+        })
+        .select('id')
+        .single();
+      
+      if (error) throw error;
+      
+      // Poll for completion
+      const checkJob = async () => {
+        const { data } = await supabase
+          .from('jobs')
+          .select('status, error')
+          .eq('id', job.id)
+          .single();
+        
+        if (data?.status === 'succeeded') {
+          setGeneratingPdf(false);
+          mutate(); // Refresh to get the pdf_url
+        } else if (data?.status === 'failed') {
+          setGeneratingPdf(false);
+          alert('PDF generation failed: ' + (data.error || 'Unknown error'));
+        } else {
+          setTimeout(checkJob, 2000);
+        }
+      };
+      
+      setTimeout(checkJob, 2000);
+    } catch (e: any) {
+      setGeneratingPdf(false);
+      alert('Failed to start PDF generation: ' + e.message);
     }
   }
 
@@ -611,6 +751,33 @@ export default function AIPurchaseReviewPage() {
                 {purchaseRun?.status}
               </Badge>
               
+              {/* PDF Button */}
+              {purchaseRun?.pdf_url ? (
+                <a
+                  href={purchaseRun.pdf_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm bg-green-50 text-green-700 hover:bg-green-100 rounded-lg transition-colors"
+                >
+                  <FileDown className="h-4 w-4" />
+                  Download PDF
+                </a>
+              ) : (
+                <Button variant="outline" onClick={generatePdf} disabled={generatingPdf}>
+                  {generatingPdf ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                      Generating...
+                    </>
+                  ) : (
+                    <>
+                      <FileText className="h-4 w-4 mr-2" />
+                      Generate PDF
+                    </>
+                  )}
+                </Button>
+              )}
+              
               {purchaseRun?.status === 'reviewing' && (
                 <>
                   <Button variant="outline" onClick={saveFeedback} disabled={saving}>
@@ -666,7 +833,7 @@ export default function AIPurchaseReviewPage() {
         </div>
 
         {/* Suppliers */}
-        {suppliers.length === 0 ? (
+        {suppliersWithGroupedStyles.length === 0 ? (
           <Card>
             <CardContent className="py-12 text-center">
               <AlertTriangle className="h-12 w-12 text-amber-500 mx-auto mb-4" />
@@ -676,7 +843,7 @@ export default function AIPurchaseReviewPage() {
           </Card>
         ) : (
           <div className="space-y-4">
-            {suppliers.map((supplier) => {
+            {suppliersWithGroupedStyles.map((supplier) => {
               const isExpanded = expandedSuppliers.has(supplier.supplier);
               const supplierTotal = supplier.styles.reduce((sum, s) => {
                 const key = `${supplier.supplier}|${s.style_no}|${s.color}`;
@@ -697,7 +864,7 @@ export default function AIPurchaseReviewPage() {
                         {isExpanded ? <ChevronDown className="h-5 w-5 text-slate-400" /> : <ChevronRight className="h-5 w-5 text-slate-400" />}
                         <Building2 className="h-5 w-5 text-slate-600" />
                         <span className="font-semibold text-slate-900">{supplier.supplier}</span>
-                        <Badge className="bg-slate-100 text-slate-600">{supplier.styles.length} styles</Badge>
+                        <Badge className="bg-slate-100 text-slate-600">{supplier.groupedStyles.length} styles</Badge>
                         {supplier.moq > 0 && (
                           <Badge className={supplier.below_moq ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'}>
                             MOQ: {supplier.moq.toLocaleString('da-DK')} stk
@@ -739,93 +906,179 @@ export default function AIPurchaseReviewPage() {
 
                   {isExpanded && (
                     <div className="divide-y">
-                      {supplier.styles.map((style, idx) => {
-                        const key = `${supplier.supplier}|${style.style_no}|${style.color}`;
-                        const fb = feedback[key];
-                        const isStyleExpanded = expandedStyles.has(key);
-                        const breakdown = fb?.adjusted_breakdown || style.size_breakdown;
-                        const styleTotal = breakdown.reduce((a, b) => a + b, 0);
-
+                      {/* Grouped by Style */}
+                      {supplier.groupedStyles.map((groupedStyle) => {
+                        const styleKey = `${supplier.supplier}|${groupedStyle.style_no}`;
+                        const isStyleGroupExpanded = expandedStyles.has(styleKey);
+                        const spyUrl = groupedStyle.spy_style_id 
+                          ? `https://2-biz.spysystem.dk/styles/${groupedStyle.spy_style_id}#statAndStock`
+                          : null;
+                        
+                        // Calculate grouped totals
+                        const groupTotal = groupedStyle.colors.reduce((sum, c) => {
+                          const key = `${supplier.supplier}|${c.style_no}|${c.color}`;
+                          const fb = feedback[key];
+                          if (fb?.verdict === 'skipped') return sum;
+                          const breakdown = fb?.adjusted_breakdown || c.size_breakdown;
+                          return sum + breakdown.reduce((a, b) => a + b, 0);
+                        }, 0);
+                        
                         return (
-                          <div 
-                            key={idx} 
-                            className={`${fb?.verdict === 'skipped' ? 'bg-red-50/50' : fb?.verdict === 'adjusted' ? 'bg-amber-50/50' : ''}`}
-                          >
-                            <div className="px-6 py-4 flex items-center gap-4">
-                              <button 
-                                className="text-slate-400 hover:text-slate-600"
-                                onClick={() => toggleStyle(key)}
-                              >
-                                {isStyleExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-                              </button>
-                              
-                              <div className="flex-1 min-w-0">
-                                <div className="font-medium text-slate-900">{style.style_name}</div>
-                                <div className="text-sm text-slate-500">{style.style_no} • {style.color}</div>
-                                {style.reasoning && (
-                                  <div className="text-xs text-slate-400 mt-1 flex items-center gap-1">
-                                    <Info className="h-3 w-3" /> {style.reasoning}
+                          <div key={groupedStyle.style_no}>
+                            {/* Style Group Header */}
+                            <div 
+                              className="px-6 py-4 flex items-center gap-4 bg-white hover:bg-slate-50 cursor-pointer"
+                              onClick={() => toggleStyle(styleKey)}
+                            >
+                              {/* Style Image */}
+                              <div className="w-16 h-16 rounded-lg overflow-hidden bg-slate-100 flex-shrink-0">
+                                {groupedStyle.image_url ? (
+                                  <Image
+                                    src={groupedStyle.image_url.replace('/tr:n-s24/', '/tr:n-s128/')}
+                                    alt={groupedStyle.style_name}
+                                    width={64}
+                                    height={64}
+                                    className="w-full h-full object-cover"
+                                    unoptimized
+                                  />
+                                ) : (
+                                  <div className="w-full h-full flex items-center justify-center text-slate-400">
+                                    <Package className="h-6 w-6" />
                                   </div>
                                 )}
                               </div>
-
-                              <div className="text-right min-w-[80px]">
-                                <div className="text-lg font-bold text-slate-900">{styleTotal.toLocaleString('da-DK')}</div>
-                                <div className="text-xs text-slate-500">
-                                  {style.active_salespeople_count} sælgere
+                              
+                              <button className="text-slate-400 hover:text-slate-600">
+                                {isStyleGroupExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                              </button>
+                              
+                              <div className="flex-1 min-w-0">
+                                <div className="font-medium text-slate-900">{groupedStyle.style_name}</div>
+                                <div className="text-sm text-slate-500 flex items-center gap-2">
+                                  {groupedStyle.style_no}
+                                  <span>•</span>
+                                  <span>{groupedStyle.colors.length} farver</span>
+                                  {spyUrl && (
+                                    <a 
+                                      href={spyUrl} 
+                                      target="_blank" 
+                                      rel="noopener noreferrer"
+                                      onClick={(e) => e.stopPropagation()}
+                                      className="text-indigo-600 hover:text-indigo-800 flex items-center gap-1"
+                                    >
+                                      <ExternalLink className="h-3 w-3" />
+                                      SPY
+                                    </a>
+                                  )}
                                 </div>
                               </div>
 
-                              <div className="flex items-center gap-2">
-                                <Button
-                                  variant={fb?.verdict === 'approved' && !fb?.adjusted_breakdown ? 'default' : 'outline'}
-                                  size="sm"
-                                  onClick={() => handleVerdict(supplier.supplier, style, 'approved')}
-                                >
-                                  <Check className="h-4 w-4" />
-                                </Button>
-                                <Button
-                                  variant={fb?.verdict === 'skipped' ? 'destructive' : 'outline'}
-                                  size="sm"
-                                  onClick={() => handleVerdict(supplier.supplier, style, 'skipped')}
-                                >
-                                  <X className="h-4 w-4" />
-                                </Button>
+                              <div className="text-right min-w-[100px]">
+                                <div className="text-lg font-bold text-slate-900">{groupTotal.toLocaleString('da-DK')} stk</div>
+                                <div className="text-xs text-slate-500">
+                                  Solgt: {groupedStyle.total_sold.toLocaleString('da-DK')}
+                                </div>
                               </div>
                             </div>
+                            
+                            {/* Color Variants */}
+                            {isStyleGroupExpanded && (
+                              <div className="border-l-4 border-slate-200 ml-20">
+                                {groupedStyle.colors.map((style) => {
+                                  const key = `${supplier.supplier}|${style.style_no}|${style.color}`;
+                                  const fb = feedback[key];
+                                  const isColorExpanded = expandedStyles.has(key);
+                                  const breakdown = fb?.adjusted_breakdown || style.size_breakdown;
+                                  const styleTotal = breakdown.reduce((a, b) => a + b, 0);
 
-                            {/* Size breakdown */}
-                            {isStyleExpanded && style.sizes.length > 0 && (
-                              <div className="px-6 pb-4 ml-8">
-                                <div className="bg-slate-50 rounded-lg p-3">
-                                  <div className="text-xs text-slate-500 mb-2">Per-size quantities:</div>
-                                  <div className="flex flex-wrap gap-2">
-                                    {style.sizes.map((size, sizeIdx) => (
-                                      <div key={size} className="flex flex-col items-center">
-                                        <div className="text-xs text-slate-600 font-medium mb-1">{size}</div>
-                                        <Input
-                                          type="number"
-                                          className="w-16 text-center text-sm h-8"
-                                          value={breakdown[sizeIdx] || 0}
-                                          min={0}
-                                          onChange={(e) => handleSizeQtyChange(
-                                            supplier.supplier, 
-                                            style, 
-                                            sizeIdx, 
-                                            parseInt(e.target.value) || 0
+                                  return (
+                                    <div 
+                                      key={style.color} 
+                                      className={`${fb?.verdict === 'skipped' ? 'bg-red-50/50' : fb?.verdict === 'adjusted' ? 'bg-amber-50/50' : ''}`}
+                                    >
+                                      <div className="px-6 py-3 flex items-center gap-4">
+                                        <button 
+                                          className="text-slate-400 hover:text-slate-600"
+                                          onClick={() => toggleStyle(key)}
+                                        >
+                                          {isColorExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                                        </button>
+                                        
+                                        <div className="flex-1 min-w-0">
+                                          <div className="font-medium text-slate-700">{style.color}</div>
+                                          <div className="text-xs text-slate-500 flex items-center gap-2">
+                                            <span>Solgt: {style.sold_qty}</span>
+                                            <span>•</span>
+                                            <span>Lager: {style.current_stock || 0}</span>
+                                            <span>•</span>
+                                            <span>{style.active_salespeople_count} sælgere</span>
+                                          </div>
+                                          {style.reasoning && (
+                                            <div className="text-xs text-slate-400 mt-1 flex items-center gap-1">
+                                              <Info className="h-3 w-3" /> {style.reasoning}
+                                            </div>
                                           )}
-                                          disabled={fb?.verdict === 'skipped'}
-                                        />
-                                        <div className="text-xs text-slate-400 mt-1">
-                                          ({style.size_breakdown[sizeIdx]})
+                                        </div>
+
+                                        <div className="text-right min-w-[80px]">
+                                          <div className="text-lg font-bold text-slate-900">{styleTotal.toLocaleString('da-DK')}</div>
+                                        </div>
+
+                                        <div className="flex items-center gap-2">
+                                          <Button
+                                            variant={fb?.verdict === 'approved' && !fb?.adjusted_breakdown ? 'default' : 'outline'}
+                                            size="sm"
+                                            onClick={() => handleVerdict(supplier.supplier, style, 'approved')}
+                                          >
+                                            <Check className="h-4 w-4" />
+                                          </Button>
+                                          <Button
+                                            variant={fb?.verdict === 'skipped' ? 'destructive' : 'outline'}
+                                            size="sm"
+                                            onClick={() => handleVerdict(supplier.supplier, style, 'skipped')}
+                                          >
+                                            <X className="h-4 w-4" />
+                                          </Button>
                                         </div>
                                       </div>
-                                    ))}
-                                  </div>
-                                  <div className="mt-2 text-xs text-slate-500">
-                                    Solgt: {style.sold_qty} • Åbne PO: {style.open_po_qty}
-                                  </div>
-                                </div>
+
+                                      {/* Size breakdown */}
+                                      {isColorExpanded && style.sizes.length > 0 && (
+                                        <div className="px-6 pb-4 ml-8">
+                                          <div className="bg-slate-50 rounded-lg p-3">
+                                            <div className="text-xs text-slate-500 mb-2">Per-size quantities:</div>
+                                            <div className="flex flex-wrap gap-2">
+                                              {style.sizes.map((size, sizeIdx) => (
+                                                <div key={size} className="flex flex-col items-center">
+                                                  <div className="text-xs text-slate-600 font-medium mb-1">{size}</div>
+                                                  <Input
+                                                    type="number"
+                                                    className="w-16 text-center text-sm h-8"
+                                                    value={breakdown[sizeIdx] || 0}
+                                                    min={0}
+                                                    onChange={(e) => handleSizeQtyChange(
+                                                      supplier.supplier, 
+                                                      style, 
+                                                      sizeIdx, 
+                                                      parseInt(e.target.value) || 0
+                                                    )}
+                                                    disabled={fb?.verdict === 'skipped'}
+                                                  />
+                                                  <div className="text-xs text-slate-400 mt-1">
+                                                    ({style.size_breakdown[sizeIdx]})
+                                                  </div>
+                                                </div>
+                                              ))}
+                                            </div>
+                                            <div className="mt-2 text-xs text-slate-500">
+                                              Solgt: {style.sold_qty} • Åbne PO: {style.open_po_qty} • Lager: {style.current_stock || 0}
+                                            </div>
+                                          </div>
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })}
                               </div>
                             )}
                           </div>
@@ -840,17 +1093,20 @@ export default function AIPurchaseReviewPage() {
         )}
 
         {/* Bottom action bar */}
-        {suppliers.length > 0 && purchaseRun?.status === 'reviewing' && (
+        {suppliersWithGroupedStyles.length > 0 && purchaseRun?.status === 'reviewing' && (
           <div className="fixed bottom-0 left-0 right-0 bg-white border-t shadow-lg">
             <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
               <div className="text-sm text-slate-600">
                 <strong>{totals.adjusted.toLocaleString('da-DK')}</strong> units from{' '}
-                <strong>{suppliers.filter(s => s.styles.some(st => feedback[`${s.supplier}|${st.style_no}|${st.color}`]?.verdict !== 'skipped')).length}</strong> suppliers
+                <strong>{suppliersWithGroupedStyles.filter(s => s.styles.some(st => feedback[`${s.supplier}|${st.style_no}|${st.color}`]?.verdict !== 'skipped')).length}</strong> suppliers
               </div>
               <div className="flex items-center gap-3">
                 <Button variant="outline" onClick={saveFeedback} disabled={saving}>
                   {saving && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
                   Save Progress
+                </Button>
+                <Button onClick={() => setShowReviewModal(true)} className="bg-indigo-600 hover:bg-indigo-700">
+                  Review Order
                 </Button>
                 <Button onClick={createAppPOs} disabled={creatingPOs} className="bg-emerald-600 hover:bg-emerald-700">
                   {creatingPOs && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
@@ -873,6 +1129,110 @@ export default function AIPurchaseReviewPage() {
           </div>
         )}
       </div>
+
+      {/* Review Modal */}
+      {showReviewModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+            <div className="px-6 py-4 border-b flex items-center justify-between">
+              <h2 className="text-xl font-semibold text-slate-900">Review Purchase Order</h2>
+              <Button variant="outline" size="sm" onClick={() => setShowReviewModal(false)}>
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+            
+            <div className="flex-1 overflow-auto p-6">
+              <div className="space-y-6">
+                {/* Summary */}
+                <div className="grid grid-cols-3 gap-4">
+                  <div className="bg-slate-50 rounded-lg p-4 text-center">
+                    <div className="text-2xl font-bold text-slate-900">{totals.adjusted.toLocaleString('da-DK')}</div>
+                    <div className="text-sm text-slate-500">Total Units</div>
+                  </div>
+                  <div className="bg-emerald-50 rounded-lg p-4 text-center">
+                    <div className="text-2xl font-bold text-emerald-600">{totals.approved}</div>
+                    <div className="text-sm text-slate-500">Approved Lines</div>
+                  </div>
+                  <div className="bg-red-50 rounded-lg p-4 text-center">
+                    <div className="text-2xl font-bold text-red-600">{totals.skipped}</div>
+                    <div className="text-sm text-slate-500">Skipped Lines</div>
+                  </div>
+                </div>
+                
+                {/* Per Supplier Summary */}
+                <div>
+                  <h3 className="text-lg font-medium text-slate-900 mb-4">Per Supplier</h3>
+                  <div className="space-y-3">
+                    {suppliersWithGroupedStyles.map(supplier => {
+                      const supplierTotal = supplier.styles.reduce((sum, s) => {
+                        const key = `${supplier.supplier}|${s.style_no}|${s.color}`;
+                        const fb = feedback[key];
+                        if (fb?.verdict === 'skipped') return sum;
+                        const breakdown = fb?.adjusted_breakdown || s.size_breakdown;
+                        return sum + breakdown.reduce((a, b) => a + b, 0);
+                      }, 0);
+                      
+                      const approvedStyles = supplier.styles.filter(s => {
+                        const key = `${supplier.supplier}|${s.style_no}|${s.color}`;
+                        return feedback[key]?.verdict !== 'skipped';
+                      }).length;
+                      
+                      if (supplierTotal === 0) return null;
+                      
+                      return (
+                        <div key={supplier.supplier} className="bg-white border rounded-lg p-4 flex items-center justify-between">
+                          <div>
+                            <div className="font-medium text-slate-900">{supplier.supplier}</div>
+                            <div className="text-sm text-slate-500">{approvedStyles} styles • MOQ: {supplier.moq}</div>
+                          </div>
+                          <div className="text-right">
+                            <div className="text-lg font-bold text-slate-900">{supplierTotal.toLocaleString('da-DK')} stk</div>
+                            {supplier.below_moq && supplierTotal < supplier.moq && (
+                              <div className="text-xs text-amber-600">Under MOQ</div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+                
+                {/* Important Note */}
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+                  <div className="flex items-start gap-3">
+                    <AlertTriangle className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                    <div>
+                      <div className="font-medium text-amber-800">Before Confirming</div>
+                      <div className="text-sm text-amber-700 mt-1">
+                        This will create draft APP Purchase Orders for all approved items. 
+                        The feedback will be saved for AI learning in future purchase rounds.
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            <div className="px-6 py-4 border-t flex items-center justify-end gap-3">
+              <Button variant="outline" onClick={() => setShowReviewModal(false)}>
+                Cancel
+              </Button>
+              <Button 
+                onClick={async () => {
+                  await saveFeedback();
+                  await createAppPOs();
+                  setShowReviewModal(false);
+                }} 
+                disabled={creatingPOs || saving} 
+                className="bg-emerald-600 hover:bg-emerald-700"
+              >
+                {(creatingPOs || saving) && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+                Confirm & Create APP POs
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

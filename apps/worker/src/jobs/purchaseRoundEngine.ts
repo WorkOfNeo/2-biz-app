@@ -70,6 +70,7 @@ interface StyleColorSuggestion {
   color: string;
   sold_qty: number;
   open_po_qty: number;
+  current_stock: number;
   suggested_qty_total: number;
   sizes: string[];
   size_breakdown: number[];
@@ -142,7 +143,7 @@ function roundToStep(value: number, step: number): number {
 // Validate and fix AI response for a supplier
 function validateAndFixAIDecision(
   aiDecision: AISupplierDecision,
-  inputStyles: Map<string, { sizes: string[]; sold_qty: number; open_po_qty: number; style_name: string }>,
+  inputStyles: Map<string, { sizes: string[]; sold_qty: number; open_po_qty: number; current_stock: number; style_name: string; active_salespeople: number }>,
   moq: number,
   log: (msg: string, data?: any) => void
 ): { styles: StyleColorSuggestion[]; totalQty: number; corrections: string[] } {
@@ -210,10 +211,11 @@ function validateAndFixAIDecision(
       color: aiStyle.color,
       sold_qty: inputData.sold_qty,
       open_po_qty: inputData.open_po_qty,
+      current_stock: inputData.current_stock,
       suggested_qty_total: qty,
       sizes,
       size_breakdown: sizeBreakdown,
-      active_salespeople_count: 0, // Will be filled later if needed
+      active_salespeople_count: inputData.active_salespeople,
       rounding_step: step,
       reasoning: aiStyle.reasoning || ''
     });
@@ -389,6 +391,32 @@ export async function runPurchaseRoundEngine(
       uniqueStyleColors: openPoTotals.size
     });
 
+    // ========== STEP 4.5: Load Current Stock Levels ==========
+    await log('info', 'STEP_4_5_LOAD_STOCK');
+
+    // Fetch stock levels from style_stock (section = 'Stock', row_label = 'Total sold' or null for current stock)
+    const { data: stockRows } = await supabase
+      .from('style_stock')
+      .select('style_no, color, section, row_label, values')
+      .in('style_no', styleNos.slice(0, 1000))
+      .eq('section', 'Stock');
+
+    // Build stock totals by style+color (sum of all stock values)
+    const currentStockTotals = new Map<string, number>();
+    for (const row of stockRows || []) {
+      if (!row.style_no || !row.color) continue;
+      const key = `${row.style_no}|${(row.color || '').toLowerCase()}`;
+      // Values is an array of numbers per size, sum them for total stock
+      const values = Array.isArray(row.values) ? row.values : [];
+      const total = values.reduce((sum: number, v: any) => sum + (Number(v) || 0), 0);
+      currentStockTotals.set(key, (currentStockTotals.get(key) || 0) + total);
+    }
+
+    await log('info', 'STOCK_LOADED', { 
+      stockRowsCount: stockRows?.length || 0,
+      uniqueStyleColorsWithStock: currentStockTotals.size
+    });
+
     // ========== STEP 5: Aggregate Sales by Style+Color with Size Mix ==========
     await log('info', 'STEP_5_AGGREGATE_SALES');
 
@@ -443,22 +471,32 @@ export async function runPurchaseRoundEngine(
       color: string;
       sold_qty: number;
       open_po_qty: number;
+      current_stock: number;
       sizes: string[];
       size_distribution: Record<string, number>;
       active_salespeople: number;
     };
 
     const bySupplier = new Map<string, SupplierStyleData[]>();
+    let skippedZeroStock = 0;
     
     for (const [key, data] of styleColorAgg) {
       const styleMeta = styleSupplierMap.get(data.style_no);
       const supplierName = styleMeta?.supplier || 'Unknown';
       
+      const openQty = openPoTotals.get(key) || 0;
+      const currentStock = currentStockTotals.get(key) || 0;
+      
+      // Skip styles with 0 current stock (nothing to sell from)
+      if (currentStock === 0) {
+        skippedZeroStock++;
+        continue;
+      }
+      
       if (!bySupplier.has(supplierName)) {
         bySupplier.set(supplierName, []);
       }
 
-      const openQty = openPoTotals.get(key) || 0;
       const sizes = sortSizes(Array.from(data.sizeMix.keys()));
       
       // Build size distribution as percentages
@@ -474,13 +512,17 @@ export async function runPurchaseRoundEngine(
         color: data.color,
         sold_qty: data.total_qty,
         open_po_qty: openQty,
+        current_stock: currentStock,
         sizes,
         size_distribution: sizeDistribution,
         active_salespeople: data.salespeople.size
       });
     }
 
-    await log('info', 'GROUPED_BY_SUPPLIER', { supplierCount: bySupplier.size });
+    await log('info', 'GROUPED_BY_SUPPLIER', { 
+      supplierCount: bySupplier.size,
+      skippedZeroStock
+    });
 
     // ========== STEP 7: Call AI for Each Supplier ==========
     await log('info', 'STEP_7_AI_DECISIONS');
@@ -533,14 +575,16 @@ export async function runPurchaseRoundEngine(
         const travelTime = supplierMaster?.travel_time_days || 0;
 
         // Build input styles map for validation
-        const inputStylesMap = new Map<string, { sizes: string[]; sold_qty: number; open_po_qty: number; style_name: string }>();
+        const inputStylesMap = new Map<string, { sizes: string[]; sold_qty: number; open_po_qty: number; current_stock: number; style_name: string; active_salespeople: number }>();
         for (const s of supplierStyles) {
           const key = `${s.style_no}|${s.color.toLowerCase()}`;
           inputStylesMap.set(key, { 
             sizes: s.sizes, 
             sold_qty: s.sold_qty, 
             open_po_qty: s.open_po_qty,
-            style_name: s.style_name
+            current_stock: s.current_stock,
+            style_name: s.style_name,
+            active_salespeople: s.active_salespeople
           });
         }
 
@@ -574,6 +618,7 @@ export async function runPurchaseRoundEngine(
           color: s.color,
           sold_qty: s.sold_qty,
           open_po_qty: s.open_po_qty,
+          current_stock: s.current_stock,
           net_need: Math.max(0, s.sold_qty - s.open_po_qty),
           sizes: s.sizes,
           size_distribution_percent: s.size_distribution,

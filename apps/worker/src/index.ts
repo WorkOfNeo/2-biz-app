@@ -31,6 +31,7 @@ import { sendEmail } from './jobs/sendEmail.js';
 import { analyzeConversationMessage } from './jobs/analyzeConversationMessage.js';
 import { runAiAnalysis } from './jobs/runAiAnalysis.js';
 import { exportAiAnalysis } from './jobs/exportAiAnalysis.js';
+import { exportPurchaseRoundPdf } from './jobs/exportPurchaseRoundPdf.js';
 // (imported with .js extension above)
 
 const SUPABASE_URL = process.env.SUPABASE_URL!;
@@ -208,6 +209,7 @@ async function maybeGetLoginFrame(page: Page): Promise<Page> {
 const BROWSERLESS_JOB_TYPES = new Set([
   'run_ai_analysis',
   'export_ai_analysis',
+  'export_purchase_round_pdf',
   'send_email',
   'send_stock_list_email',
   'analyze_conversation_message',
@@ -264,6 +266,24 @@ async function runJob(job: JobRow) {
         // But we can try without first - React-PDF can fetch images directly
         try {
           await exportAiAnalysis({
+            job,
+            page: null as any, // Not used for this job
+            log: async (_, level, msg, data) => log(job.id, level, msg, data),
+            saveResult,
+            setJobFailedOrRequeue,
+            setJobSucceeded,
+            supabase
+          });
+        } catch (e: any) {
+          await setJobFailedOrRequeue(job, e.message || 'Export failed');
+        }
+        return;
+      }
+
+      // Handle export_purchase_round_pdf job
+      if ((job.type as any) === 'export_purchase_round_pdf') {
+        try {
+          await exportPurchaseRoundPdf({
             job,
             page: null as any, // Not used for this job
             log: async (_, level, msg, data) => log(job.id, level, msg, data),
