@@ -277,7 +277,12 @@ export async function runPurchaseRoundEngine(
       .limit(10000);
 
     const totalCustomers = customers?.length || 0;
-    await log('info', 'SEASON_LOADED', { name: season.name, totalCustomers, seasonDates });
+    
+    // Get unique salespeople from customers (total active salespeople)
+    const allSalespersonIds = new Set((customers || []).map(c => c.salesperson_id).filter(Boolean));
+    const totalSalespeople = allSalespersonIds.size;
+    
+    await log('info', 'SEASON_LOADED', { name: season.name, totalCustomers, totalSalespeople, seasonDates });
 
     // ========== STEP 2: Load Sales Stats + Style Details ==========
     await log('info', 'STEP_2_LOAD_SALES');
@@ -291,9 +296,23 @@ export async function runPurchaseRoundEngine(
     const visitRatePercent = totalCustomers > 0 
       ? Math.round((visitedCustomers / totalCustomers) * 1000) / 10 
       : 0;
+    const remainingCustomers = totalCustomers - visitedCustomers;
+    const remainingPotentialPercent = Math.round((100 - visitRatePercent) * 10) / 10;
+
+    // Salespeople who have made sales this season
+    const activeSalespersonIds = new Set((salesStats || []).map(r => r.salesperson_id).filter(Boolean));
+    const activeSalespeople = activeSalespersonIds.size;
 
     const purchaseStage = computePurchaseStage(visitRatePercent);
-    await log('info', 'STAGE_COMPUTED', { visitRatePercent, purchaseStage, visitedCustomers, totalCustomers });
+    await log('info', 'STAGE_COMPUTED', { 
+      visitRatePercent, 
+      purchaseStage, 
+      visitedCustomers, 
+      totalCustomers,
+      remainingCustomers,
+      activeSalespeople,
+      totalSalespeople
+    });
 
     // Build account -> salesperson map
     const accountSalesperson = new Map<string, string>();
@@ -540,6 +559,58 @@ export async function runPurchaseRoundEngine(
       missingStockRowCount
     });
 
+    // ========== STEP 6.5: Load Historical Feedback for Learning ==========
+    await log('info', 'STEP_6_5_LOAD_FEEDBACK');
+    
+    // Get all style_no + color combinations we're processing
+    const allStyleColorKeys = Array.from(styleColorAgg.keys());
+    const styleNosForFeedback = Array.from(new Set(allStyleColorKeys.map(k => k.split('|')[0])));
+    
+    // Load recent feedback from previous purchase rounds (same season)
+    const { data: historicalFeedback } = await supabase
+      .from('purchase_ai_line_feedback')
+      .select('style_no, color, suggested_qty, adjusted_qty, verdict, created_at')
+      .eq('season_id', seasonId)
+      .in('style_no', styleNosForFeedback.slice(0, 500))
+      .order('created_at', { ascending: false });
+    
+    // Build feedback map: key -> { suggested, adjusted, verdict, adjustment_ratio }
+    type FeedbackEntry = { 
+      suggested: number; 
+      adjusted: number | null; 
+      verdict: string;
+      adjustment_ratio: number | null;
+    };
+    const feedbackMap = new Map<string, FeedbackEntry>();
+    
+    for (const fb of historicalFeedback || []) {
+      const key = `${fb.style_no}|${(fb.color || '').toLowerCase()}`;
+      // Only keep the most recent feedback per style/color
+      if (!feedbackMap.has(key)) {
+        const adjustmentRatio = fb.adjusted_qty && fb.suggested_qty > 0 
+          ? Math.round((fb.adjusted_qty / fb.suggested_qty) * 100) / 100
+          : null;
+        feedbackMap.set(key, {
+          suggested: fb.suggested_qty,
+          adjusted: fb.adjusted_qty,
+          verdict: fb.verdict,
+          adjustment_ratio: adjustmentRatio
+        });
+      }
+    }
+    
+    // Calculate overall adjustment trend (how much does user typically adjust?)
+    const adjustedEntries = Array.from(feedbackMap.values()).filter(f => f.adjusted !== null && f.suggested > 0);
+    const avgAdjustmentRatio = adjustedEntries.length > 0
+      ? Math.round((adjustedEntries.reduce((sum, f) => sum + (f.adjustment_ratio || 1), 0) / adjustedEntries.length) * 100) / 100
+      : null;
+    
+    await log('info', 'FEEDBACK_LOADED', { 
+      feedbackCount: feedbackMap.size,
+      adjustedCount: adjustedEntries.length,
+      avgAdjustmentRatio
+    });
+
     // ========== STEP 7: Call AI for Each Supplier ==========
     await log('info', 'STEP_7_AI_DECISIONS');
 
@@ -613,12 +684,18 @@ export async function runPurchaseRoundEngine(
           total_lead_time: leadTime + travelTime
         }, null, 2);
 
-        // Prepare season context
+        // Prepare season context with customer/salespeople growth potential
         const seasonContext = JSON.stringify({
           season_name: season.name,
           season_year: season.year,
           purchase_stage: purchaseStage,
           visit_rate_percent: visitRatePercent,
+          remaining_potential_percent: remainingPotentialPercent,
+          total_customers: totalCustomers,
+          visited_customers: visitedCustomers,
+          remaining_customers: remainingCustomers,
+          total_salespeople: totalSalespeople,
+          active_salespeople: activeSalespeople,
           start_sale: seasonDates.start_sale,
           end_sale: seasonDates.end_sale,
           latest_delivery: seasonDates.latest_delivery,
@@ -629,24 +706,51 @@ export async function runPurchaseRoundEngine(
 
         // Prepare styles data
         // net_need = max(0, sold_qty - open_po_qty - current_stock) per prompt definition
-        const stylesData = JSON.stringify(supplierStyles.map(s => ({
-          style_no: s.style_no,
-          style_name: s.style_name,
-          color: s.color,
-          sold_qty: s.sold_qty,
-          open_po_qty: s.open_po_qty,
-          current_stock: s.current_stock,
-          net_need: Math.max(0, s.sold_qty - s.open_po_qty - s.current_stock),
-          sizes: s.sizes,
-          size_distribution_percent: s.size_distribution,
-          active_salespeople: s.active_salespeople
-        })), null, 2);
+        const stylesData = JSON.stringify(supplierStyles.map(s => {
+          const key = `${s.style_no}|${s.color.toLowerCase()}`;
+          const prevFeedback = feedbackMap.get(key);
+          return {
+            style_no: s.style_no,
+            style_name: s.style_name,
+            color: s.color,
+            sold_qty: s.sold_qty,
+            open_po_qty: s.open_po_qty,
+            current_stock: s.current_stock,
+            net_need: Math.max(0, s.sold_qty - s.open_po_qty - s.current_stock),
+            sizes: s.sizes,
+            size_distribution_percent: s.size_distribution,
+            active_salespeople_for_style: s.active_salespeople,
+            total_salespeople: totalSalespeople,
+            salespeople_coverage_percent: totalSalespeople > 0 
+              ? Math.round((s.active_salespeople / totalSalespeople) * 100) 
+              : 0,
+            // Previous feedback for learning (if any)
+            previous_ai_suggested: prevFeedback?.suggested || null,
+            previous_user_adjusted: prevFeedback?.adjusted || null,
+            previous_adjustment_ratio: prevFeedback?.adjustment_ratio || null
+          };
+        }), null, 2);
+
+        // Prepare feedback context summary
+        const feedbackContext = JSON.stringify({
+          has_previous_feedback: feedbackMap.size > 0,
+          styles_with_feedback: feedbackMap.size,
+          avg_adjustment_ratio: avgAdjustmentRatio,
+          interpretation: avgAdjustmentRatio !== null 
+            ? (avgAdjustmentRatio > 1.1 
+              ? `User typically INCREASES AI suggestions by ${Math.round((avgAdjustmentRatio - 1) * 100)}%` 
+              : avgAdjustmentRatio < 0.9 
+                ? `User typically DECREASES AI suggestions by ${Math.round((1 - avgAdjustmentRatio) * 100)}%`
+                : 'User typically accepts AI suggestions as-is')
+            : 'No previous feedback available'
+        }, null, 2);
 
         // Build prompt
         const prompt = promptTemplate
           .replace('{{supplier_info}}', supplierInfo)
           .replace('{{season_context}}', seasonContext)
           .replace('{{styles_data}}', stylesData)
+          .replace('{{feedback_context}}', feedbackContext)
           .replace('{{moq}}', String(moq))
           .replace('{{supplier_name}}', supplierName);
 

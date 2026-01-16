@@ -38,7 +38,7 @@ type GroupedStyle = {
   style_no: string;
   style_name: string;
   image_url?: string;
-  spy_style_id?: number;
+  spy_id?: string;
   colors: StyleSuggestion[];
   total_suggested: number;
   total_sold: number;
@@ -147,7 +147,7 @@ export default function AIPurchaseReviewPage() {
     { refreshInterval: shouldPoll ? 2000 : 0 }
   );
 
-  // Fetch style data (images, spy_style_id) for all styles in the suggestions
+  // Fetch style data (images, spy_id) for all styles in the suggestions
   const allStyleNos = useMemo(() => {
     if (!purchaseRun?.supplier_suggestions) return [];
     const nos = new Set<string>();
@@ -157,20 +157,20 @@ export default function AIPurchaseReviewPage() {
     return Array.from(nos);
   }, [purchaseRun?.supplier_suggestions]);
 
-  const { data: styleData } = useSWR<Record<string, { image_url?: string; spy_style_id?: number }>>(
+  const { data: styleData } = useSWR<Record<string, { image_url?: string; spy_id?: string }>>(
     allStyleNos.length > 0 ? `style-data-${allStyleNos.join(',')}` : null,
     async () => {
       const { data } = await supabase
         .from('styles')
-        .select('style_no, image_url, spy_style_id')
+        .select('style_no, image_url, spy_id')
         .in('style_no', allStyleNos);
       
-      const map: Record<string, { image_url?: string; spy_style_id?: number }> = {};
+      const map: Record<string, { image_url?: string; spy_id?: string }> = {};
       for (const s of data || []) {
-        map[s.style_no] = { image_url: s.image_url, spy_style_id: s.spy_style_id };
+        map[s.style_no] = { image_url: s.image_url, spy_id: s.spy_id };
       }
       
-      // Also try style_colors for images
+      // Also try style_colors for images (fallback if styles.image_url is null)
       const { data: colorImages } = await supabase
         .from('style_colors')
         .select('style_id, image_url, styles!inner(style_no)')
@@ -309,7 +309,7 @@ export default function AIPurchaseReviewPage() {
             style_no: style.style_no,
             style_name: style.style_name,
             image_url: sd?.image_url,
-            spy_style_id: sd?.spy_style_id,
+            spy_id: sd?.spy_id,
             colors: [],
             total_suggested: 0,
             total_sold: 0,
@@ -910,8 +910,8 @@ export default function AIPurchaseReviewPage() {
                       {supplier.groupedStyles.map((groupedStyle) => {
                         const styleKey = `${supplier.supplier}|${groupedStyle.style_no}`;
                         const isStyleGroupExpanded = expandedStyles.has(styleKey);
-                        const spyUrl = groupedStyle.spy_style_id 
-                          ? `https://2-biz.spysystem.dk/styles/${groupedStyle.spy_style_id}#statAndStock`
+                        const spyUrl = groupedStyle.spy_id 
+                          ? `https://2-biz.spysystem.dk/styles/${groupedStyle.spy_id}#statAndStock`
                           : null;
                         
                         // Calculate grouped totals
