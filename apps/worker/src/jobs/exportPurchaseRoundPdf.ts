@@ -208,6 +208,18 @@ export async function exportPurchaseRoundPdf(ctx: Ctx) {
       styleName: { fontSize: 9, fontWeight: 'bold', color: '#0f172a' },
       styleNo: { fontSize: 7, color: '#64748b' },
       styleQty: { fontSize: 11, fontWeight: 'bold', color: '#0f172a', textAlign: 'right', minWidth: 50 },
+      sizeBreakdownRow: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 2, gap: 4 },
+      sizeBox: { 
+        flexDirection: 'row', 
+        backgroundColor: '#f1f5f9', 
+        borderRadius: 2, 
+        paddingHorizontal: 4, 
+        paddingVertical: 1,
+        marginRight: 4,
+        marginBottom: 2
+      },
+      sizeLabel: { fontSize: 6, color: '#64748b', marginRight: 2 },
+      sizeQty: { fontSize: 6, fontWeight: 'bold', color: '#0f172a' },
       badge: { 
         paddingHorizontal: 4, 
         paddingVertical: 2, 
@@ -256,6 +268,18 @@ export async function exportPurchaseRoundPdf(ctx: Ctx) {
         const info = stylesInfo[style.style_no];
         const displayName = info?.name || style.style_name || style.style_no;
         
+        // Build size breakdown display
+        const sizes: string[] = style.sizes || [];
+        const sizeBreakdown: number[] = style.size_breakdown || [];
+        const sizeElements = sizes.map((size: string, sIdx: number) => {
+          const qty = sizeBreakdown[sIdx] || 0;
+          if (qty === 0) return null; // Skip zero quantities
+          return E(View, { key: sIdx, style: styles.sizeBox },
+            E(Text, { style: styles.sizeLabel }, size),
+            E(Text, { style: styles.sizeQty }, String(qty))
+          );
+        }).filter(Boolean);
+        
         return E(View, { 
           key: idx, 
           style: [styles.styleRow, idx % 2 === 1 ? styles.styleRowAlt : {}] 
@@ -267,7 +291,11 @@ export async function exportPurchaseRoundPdf(ctx: Ctx) {
             E(Text, { style: styles.styleName }, `${displayName} - ${style.color}`),
             E(Text, { style: styles.styleNo }, 
               `${style.style_no} • Solgt: ${fmt(style.sold_qty || 0)} • Lager: ${fmt(style.current_stock || 0)} • ${style.active_salespeople_count || 0} sælgere`
-            )
+            ),
+            // Size breakdown row
+            sizeElements.length > 0 
+              ? E(View, { style: styles.sizeBreakdownRow }, ...sizeElements)
+              : null
           ),
           E(Text, { style: styles.styleQty }, `${fmt(style.suggested_qty_total || 0)} stk`)
         );
