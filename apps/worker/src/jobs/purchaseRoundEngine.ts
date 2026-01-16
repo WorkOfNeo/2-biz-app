@@ -489,19 +489,22 @@ export async function runPurchaseRoundEngine(
     };
 
     const bySupplier = new Map<string, SupplierStyleData[]>();
-    let skippedZeroStock = 0;
+    let zeroStockCount = 0;
+    let missingStockRowCount = 0;
     
     for (const [key, data] of styleColorAgg) {
       const styleMeta = styleSupplierMap.get(data.style_no);
       const supplierName = styleMeta?.supplier || 'Unknown';
       
       const openQty = openPoTotals.get(key) || 0;
+      const hasStockRow = currentStockTotals.has(key);
       const currentStock = currentStockTotals.get(key) || 0;
       
-      // Skip styles with 0 current stock (nothing to sell from)
-      if (currentStock === 0) {
-        skippedZeroStock++;
-        continue;
+      // Track diagnostics (but don't skip - zero stock styles often need buying!)
+      if (!hasStockRow) {
+        missingStockRowCount++;
+      } else if (currentStock === 0) {
+        zeroStockCount++;
       }
       
       if (!bySupplier.has(supplierName)) {
@@ -532,7 +535,9 @@ export async function runPurchaseRoundEngine(
 
     await log('info', 'GROUPED_BY_SUPPLIER', { 
       supplierCount: bySupplier.size,
-      skippedZeroStock
+      totalStyleColors: styleColorAgg.size,
+      zeroStockCount,
+      missingStockRowCount
     });
 
     // ========== STEP 7: Call AI for Each Supplier ==========
@@ -623,6 +628,7 @@ export async function runPurchaseRoundEngine(
         }, null, 2);
 
         // Prepare styles data
+        // net_need = max(0, sold_qty - open_po_qty - current_stock) per prompt definition
         const stylesData = JSON.stringify(supplierStyles.map(s => ({
           style_no: s.style_no,
           style_name: s.style_name,
@@ -630,7 +636,7 @@ export async function runPurchaseRoundEngine(
           sold_qty: s.sold_qty,
           open_po_qty: s.open_po_qty,
           current_stock: s.current_stock,
-          net_need: Math.max(0, s.sold_qty - s.open_po_qty),
+          net_need: Math.max(0, s.sold_qty - s.open_po_qty - s.current_stock),
           sizes: s.sizes,
           size_distribution_percent: s.size_distribution,
           active_salespeople: s.active_salespeople
@@ -690,11 +696,16 @@ export async function runPurchaseRoundEngine(
             });
           }
 
+          // Compute actual moq_status from validation totals (more accurate than AI claim)
+          const computedMoqStatus = moq === 0 ? 'not_applicable' : 
+            (validation.totalQty >= moq ? 'met' : 'below');
+
           await log('info', 'AI_DECISION', { 
             supplier: supplierName, 
             decision: aiDecision.decision,
             total_qty: validation.totalQty,
-            moq_status: aiDecision.moq_status,
+            moq_status: computedMoqStatus,
+            moq,
             styles_count: validation.styles.length,
             flags: aiDecision.flags
           });
