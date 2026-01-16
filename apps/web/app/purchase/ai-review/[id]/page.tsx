@@ -125,7 +125,7 @@ export default function AIPurchaseReviewPage() {
           id, season_id, run_label, run_number, status,
           purchase_stage, prompt_key, prompt_version, model,
           supplier_suggestions, computed_features_snapshot,
-          run_started_at, run_completed_at, job_id, created_at
+          run_started_at, run_completed_at, job_id, created_at, pdf_url
         `)
         .eq('id', purchaseRunId)
         .single();
@@ -236,9 +236,9 @@ export default function AIPurchaseReviewPage() {
     const fetchLogs = async () => {
       const { data } = await supabase
         .from('job_logs')
-        .select('id, level, msg, data, created_at')
+        .select('id, level, msg, data, ts')
         .eq('job_id', purchaseRun.job_id)
-        .order('created_at', { ascending: true });
+        .order('ts', { ascending: true });
       if (data) setJobLogs(data);
     };
 
