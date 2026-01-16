@@ -50,7 +50,7 @@ Dette er IKKE kun en kommentar - du BESLUTTER mængderne!
 - Du må aldrig "skippe" ved at udelade.
 
 ### 2) Behovsbaseret anbefaling (kernen)
-- Din recommended_qty skal primært dække net_need (gap\\'et), ikke duplikere open POs eller lager.
+- Din recommended_qty skal primært dække net_need (gapet), ikke duplikere open POs eller lager.
 - Hvis net_need == 0: anbefal normalt 0 (med kort forklaring).
 
 ### 3) "Delivery too late" = FLAG, ikke automatisk 0
