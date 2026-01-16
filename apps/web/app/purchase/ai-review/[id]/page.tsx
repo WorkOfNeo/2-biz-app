@@ -911,7 +911,7 @@ export default function AIPurchaseReviewPage() {
                         const styleKey = `${supplier.supplier}|${groupedStyle.style_no}`;
                         const isStyleGroupExpanded = expandedStyles.has(styleKey);
                         const spyUrl = groupedStyle.spy_id 
-                          ? `https://2-biz.spysystem.dk/styles/${groupedStyle.spy_id}#statAndStock`
+                          ? `https://2-biz.spysystem.dk/?controller=Style%5CIndex&action=List&Spy\\Model\\Style\\Index\\ListReportSearch[bForceSearch]=true&table_uuid[]=${groupedStyle.spy_id}`
                           : null;
                         
                         // Calculate grouped totals
