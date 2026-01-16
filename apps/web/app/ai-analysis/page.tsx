@@ -97,7 +97,7 @@ export default function AIAnalysisDashboard() {
   });
 
   // Fetch purchase runs for the history list
-  const { data: purchaseRuns } = useSWR('purchase-runs', async () => {
+  const { data: purchaseRuns, mutate: mutatePurchaseRuns } = useSWR('purchase-runs', async () => {
     const { data, error } = await supabase
       .from('purchase_ai_runs')
       .select(`
@@ -388,6 +388,34 @@ export default function AIAnalysisDashboard() {
       }
       
       await mutate(); // Refresh the list
+    } catch (e: any) {
+      setAnalysisError(`Failed to delete: ${e.message}`);
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
+  async function deletePurchaseRound(purchaseRunId: string) {
+    if (!confirm('Are you sure you want to delete this purchase round? This cannot be undone.')) {
+      return;
+    }
+    
+    setDeletingId(purchaseRunId);
+    setAnalysisError(null);
+    
+    try {
+      const res = await fetch(`/api/ai-analysis/purchase-round/${purchaseRunId}`, {
+        method: 'DELETE',
+      });
+      
+      const data = await res.json();
+      
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to delete purchase round');
+      }
+      
+      // Refresh both sources powering the history list
+      await Promise.all([mutate(), mutatePurchaseRuns()]);
     } catch (e: any) {
       setAnalysisError(`Failed to delete: ${e.message}`);
     } finally {
@@ -913,17 +941,21 @@ export default function AIAnalysisDashboard() {
                   </button>
                 ) : null}
                 
-                {/* Delete Button (only for daily analyses) */}
-                {item.type === 'daily_analysis' && (
+                {/* Delete Button */}
+                {(item.type === 'daily_analysis' || item.type === 'purchase_round') && (
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
                       e.preventDefault();
-                      deleteAnalysis(item.id, 'daily');
+                      if (item.type === 'daily_analysis') {
+                        deleteAnalysis(item.id, 'daily');
+                      } else {
+                        deletePurchaseRound(item.id);
+                      }
                     }}
                     disabled={deletingId === item.id}
                     className="inline-flex items-center gap-1 px-2 py-1.5 text-sm text-red-600 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
-                    title="Delete this analysis"
+                    title={item.type === 'daily_analysis' ? 'Delete this analysis' : 'Delete this purchase round'}
                   >
                     {deletingId === item.id ? (
                       <Loader2 className="h-4 w-4 animate-spin" />
