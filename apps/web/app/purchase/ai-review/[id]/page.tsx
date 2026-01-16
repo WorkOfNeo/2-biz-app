@@ -84,7 +84,7 @@ type JobLog = {
   level: string;
   msg: string;
   data: any;
-  created_at: string;
+  ts: string;
 };
 
 // Feedback per style with size breakdown
@@ -616,7 +616,7 @@ export default function AIPurchaseReviewPage() {
     const hasJobId = !!purchaseRun?.job_id;
     const lastLog = jobLogs.length > 0 ? jobLogs[jobLogs.length - 1] : null;
     const currentStep = lastLog?.msg || (hasJobId ? 'Starting...' : 'Waiting for worker...');
-    const lastUpdated = lastLog?.created_at ? new Date(lastLog.created_at).toLocaleTimeString('da-DK') : null;
+    const lastUpdated = lastLog?.ts ? new Date(lastLog.ts).toLocaleTimeString('da-DK') : null;
     
     const stepMessages: Record<string, string> = {
       'purchase_engine_start': 'Starting purchase engine...',
