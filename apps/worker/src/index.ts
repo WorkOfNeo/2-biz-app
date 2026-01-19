@@ -27,6 +27,7 @@ import { pushAppPoToSpy } from './jobs/pushAppPoToSpy.js';
 import { syncAppPoFromSpy } from './jobs/syncAppPoFromSpy.js';
 import { createSpyStockOrder } from './jobs/createSpyStockOrder.js';
 import { scrapeStyleRawCosts } from './jobs/scrapeStyleRawCosts.js';
+import { scrapeXlsxSalesOrders } from './jobs/scrapeXlsxSalesOrders.js';
 import { sendEmail } from './jobs/sendEmail.js';
 import { analyzeConversationMessage } from './jobs/analyzeConversationMessage.js';
 import { runAiAnalysis } from './jobs/runAiAnalysis.js';
@@ -534,6 +535,20 @@ async function runJob(job: JobRow) {
       log, 
       saveResult, 
       setJobFailedOrRequeue, 
+      setJobSucceeded, 
+      ensureNotCancelled, 
+      supabase, 
+      SPY_BASE_URL
+    });
+    return;
+  }
+  if ((job.type as any) === 'scrape_xlsx_sales_orders') {
+    await scrapeXlsxSalesOrders({ 
+      job, 
+      page: page!, 
+      log, 
+      saveResult, 
+      setJobFailedOrRequeue: async (jobId: string, error: string) => setJobFailedOrRequeue(job, error), 
       setJobSucceeded, 
       ensureNotCancelled, 
       supabase, 

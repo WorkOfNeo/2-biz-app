@@ -158,6 +158,7 @@ export function SidebarNav() {
   const salesLinks = [
     can('/sales/nielsens') ? <NavLink key="sn" href="/sales/nielsens" label="Nielsens" /> : null,
     can('/sales/make-purchase-order') ? <NavLink key="smpo" href="/sales/make-purchase-order" label="Make Purchase Order" /> : null,
+    can('/sales/sales-orders') ? <NavLink key="sso" href="/sales/sales-orders" label="Sales Orders" /> : null,
   ].filter(Boolean) as any[];
   // PDF'er and Exports moved to Settings
   const settingsLinks = [
