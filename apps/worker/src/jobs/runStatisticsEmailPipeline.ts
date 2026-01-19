@@ -95,13 +95,7 @@ export async function runStatisticsEmailPipeline(
     return;
   }
 
-  await log(job.id, 'info', 'PIPELINE:schedule_loaded', { 
-    name: schedule.name, 
-    stockLists: schedule.stockLists,
-    salespersonCount: schedule.salespersonIds.length,
-    sendToSalespersons: schedule.sendToSalespersons,
-    sendToOverall: schedule.sendToOverall
-  });
+  // Reduced logging - only log on start and completion
 
   // ========== STEP 2: Determine season ID ==========
   let seasonId: string | null = null;
@@ -145,11 +139,6 @@ export async function runStatisticsEmailPipeline(
       }
     }
     
-    await log(job.id, 'info', 'PIPELINE:stock_lists_resolved', { 
-      listNames: schedule.stockLists, 
-      listIds, 
-      styleNosCount: styleNos.length 
-    });
   }
 
   // ========== STEP 4: Enqueue parallel jobs (dedupe) ==========
@@ -179,7 +168,6 @@ export async function runStatisticsEmailPipeline(
       queue: 'default',
       priority: 100,
     });
-    await log(job.id, 'info', 'PIPELINE:enqueued_scrape_statistics', { seasonId });
   }
 
   // Enqueue update_style_stock if we have stock lists
@@ -197,7 +185,6 @@ export async function runStatisticsEmailPipeline(
       queue: 'stock',
       priority: 200,
     });
-    await log(job.id, 'info', 'PIPELINE:enqueued_update_style_stock', { styleNosCount: styleNos.length });
   }
 
   // ========== STEP 5: Wait for scrape_statistics to complete ==========
@@ -214,7 +201,6 @@ export async function runStatisticsEmailPipeline(
   }
 
   if (statsJob.status === 'queued' || statsJob.status === 'running') {
-    await log(job.id, 'info', 'PIPELINE:waiting_scrape_statistics', { statsJobId: statsJob.id, status: statsJob.status });
     throw new Error('WAITING_FOR_SCRAPE_STATISTICS');
   }
 
@@ -251,7 +237,6 @@ export async function runStatisticsEmailPipeline(
     );
 
     if (pendingStock.length > 0) {
-      await log(job.id, 'info', 'PIPELINE:waiting_update_style_stock', { pending: pendingStock.length });
       throw new Error('WAITING_FOR_UPDATE_STYLE_STOCK');
     }
 
@@ -265,13 +250,10 @@ export async function runStatisticsEmailPipeline(
     const stockExportJob = (stockExportJobs ?? [])[0] as any | undefined;
     
     if (!stockExportJob) {
-      // The waiter job export_stock_list_after_update_stock should enqueue this
-      await log(job.id, 'info', 'PIPELINE:waiting_export_stock_list', { stockRootId });
       throw new Error('WAITING_FOR_EXPORT_STOCK_LIST');
     }
 
     if (stockExportJob.status === 'queued' || stockExportJob.status === 'running') {
-      await log(job.id, 'info', 'PIPELINE:waiting_export_stock_list_running', { exportJobId: stockExportJob.id });
       throw new Error('WAITING_FOR_EXPORT_STOCK_LIST');
     }
   }
@@ -326,7 +308,6 @@ export async function runStatisticsEmailPipeline(
       exportModes.push('overview_react_pdf');
     }
 
-    await log(job.id, 'info', 'PIPELINE:enqueued_exports', { exportModes });
   }
 
   // Enqueue top styles scrape + export if needed
@@ -343,7 +324,6 @@ export async function runStatisticsEmailPipeline(
       status: 'queued',
       max_attempts: 3,
     });
-    await log(job.id, 'info', 'PIPELINE:enqueued_top_styles', {});
   }
 
   // ========== STEP 8: Wait for export jobs to complete ==========
@@ -359,7 +339,6 @@ export async function runStatisticsEmailPipeline(
   );
 
   if (pendingExports.length > 0) {
-    await log(job.id, 'info', 'PIPELINE:waiting_exports', { pending: pendingExports.length, types: pendingExports.map((j: any) => j.type) });
     throw new Error('WAITING_FOR_EXPORTS');
   }
 
@@ -395,14 +374,7 @@ export async function runStatisticsEmailPipeline(
     }
   }
 
-  await log(job.id, 'info', 'PIPELINE:exports_gathered', {
-    hasGeneralSalesmen: !!generalSalesmenExport,
-    hasCountries: !!countriesExport,
-    hasOverview: !!overviewExport,
-    hasTop15Salesmen: !!top15SalesmenExport,
-    hasTop15Overall: !!top15OverallExport,
-    stockListCount: stockListExports.length,
-  });
+  // exports gathered - log only on completion
 
   // ========== STEP 10: Check for already-sent emails (dedupe) ==========
   const { data: existingEmails } = await supabase
@@ -412,7 +384,6 @@ export async function runStatisticsEmailPipeline(
     .contains('payload', { pipelineRootJobId });
 
   if ((existingEmails ?? []).length > 0) {
-    await log(job.id, 'info', 'PIPELINE:emails_already_sent', { count: (existingEmails ?? []).length });
     await saveResult(job.id, 'Pipeline completed (emails already sent)', { 
       scheduleId, 
       emailCount: (existingEmails ?? []).length 
@@ -490,7 +461,6 @@ export async function runStatisticsEmailPipeline(
       });
       emailCount++;
     }
-    await log(job.id, 'info', 'PIPELINE:salesperson_emails_queued', { count: emailCount });
   }
 
   // Overall mode: single email to comma-separated list
@@ -526,7 +496,6 @@ export async function runStatisticsEmailPipeline(
         queue: 'default',
       });
       emailCount++;
-      await log(job.id, 'info', 'PIPELINE:overall_email_queued', { recipientCount: overallEmails.length });
     }
   }
 

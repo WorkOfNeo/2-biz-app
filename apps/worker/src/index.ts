@@ -407,8 +407,7 @@ async function runJob(job: JobRow) {
       throw new Error(`Unhandled browser-less job type: ${job.type}`);
     }
 
-    // For browser-based jobs, connect to Browserless
-    await log(job.id, 'info', 'Connecting to Browserless');
+    // For browser-based jobs, connect to Browserless (silent)
     browser = await chromium.connectOverCDP(BROWSERLESS_WS);
     context = await browser.newContext({ timezoneId: TIMEZONE, viewport: { width: 1280, height: 800 } });
     page = await context.newPage();
@@ -2743,13 +2742,16 @@ async function mainLoop() {
       await log(job.id, 'info', 'Job cancelled (post-run check)');
     } else {
       await setJobSucceeded(job.id);
-      await log(job.id, 'info', 'Job succeeded');
+      // Skip verbose "Job succeeded" logs - only log errors and key milestones
     }
     } catch (err: any) {
       const message = err?.message ?? String(err);
     if (err?.name === 'CancelledError' || message === 'JOB_CANCELLED') {
       await log(job.id, 'info', 'Job cancelled by request');
       await setJobCancelled(job.id, 'Stopped by staff');
+    } else if (message.startsWith('WAITING_')) {
+      // Silent requeue for pipeline waits - no error logging
+      await setJobFailedOrRequeue(job, message);
     } else {
       await log(job.id, 'error', 'Job failed', { error: message });
       await setJobFailedOrRequeue(job, message);
