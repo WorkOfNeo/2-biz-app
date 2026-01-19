@@ -149,7 +149,7 @@ export function SidebarNav() {
     can('/purchase/dashboard') ? <NavLink key="pd" href="/purchase/dashboard" label="Dashboard" /> : null,
     <NavLink key="pai" href="/ai-analysis" label="AI Analysis" />, // Always visible - purchase round suggestions
     can('/purchase/orders') ? <NavLink key="po" href="/purchase/orders" label="Purchase Orders" /> : null,
-    can('/purchase/packinglists') ? <NavLink key="ppl" href="/purchase/packinglists" label="Packinglists" /> : null,
+    can('/purchase/noos') ? <NavLink key="pnoos" href="/purchase/noos" label="NOOS" /> : null,
     can('/purchase/smart-draft') ? <NavLink key="psd" href="/purchase/smart-draft" label="Smart Draft" /> : null,
     can('/purchase/conversations') ? <NavLink key="pconv" href="/purchase/conversations" label="Conversations" /> : null,
     can('/purchase/suppliers') ? <NavLink key="psup" href="/purchase/suppliers" label="Suppliers" /> : null,
