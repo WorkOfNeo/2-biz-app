@@ -493,6 +493,7 @@ export default function NoosPage() {
         
         for (let i = 0; i < sheet.sizes.length; i++) {
           const excelSize = sheet.sizes[i];
+          if (!excelSize) continue; // Skip if size is undefined
           const excelVal = sheet.totalsBySize[i] || 0;
           
           // Find matching size in DB
