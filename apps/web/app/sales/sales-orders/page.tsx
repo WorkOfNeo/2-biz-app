@@ -20,6 +20,7 @@ export default function SalesOrdersPage() {
   const supabase = createClientComponentClient();
   const [runningJobId, setRunningJobId] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
+  const [rowLimit, setRowLimit] = React.useState<string>('');
 
   // Get running job
   const { data: running, mutate: mutateRunning } = useSWR('sales-orders:running', async () => {
@@ -55,7 +56,7 @@ export default function SalesOrdersPage() {
       .from('job_logs')
       .select('msg, data, ts')
       .eq('job_id', running.id)
-      .in('msg', ['STEP:processing_customer', 'STEP:scrape_complete', 'STEP:scrape_error'])
+      .in('msg', ['STEP:processing_customer', 'STEP:scrape_complete', 'STEP:scrape_error', 'STEP:customer_ids_extracted', 'STEP:row_limit_applied'])
       .order('ts', { ascending: false })
       .limit(100);
     
@@ -65,13 +66,22 @@ export default function SalesOrdersPage() {
     let current = 0;
     let total = 0;
     let currentCustomerId: string | null = null;
+    let stage: string = 'initializing';
     
     for (const log of (logs || [])) {
       if (log.msg === 'STEP:processing_customer' && log.data) {
         current = log.data.current || 0;
         total = log.data.total || 0;
         currentCustomerId = log.data.customer_id || null;
+        stage = 'processing';
         break;
+      } else if (log.msg === 'STEP:customer_ids_extracted' && log.data) {
+        total = log.data.count || 0;
+        if (stage === 'initializing') {
+          stage = 'extracted';
+        }
+      } else if (log.msg === 'STEP:row_limit_applied' && log.data) {
+        total = log.data.limited_count || 0;
       }
     }
     
@@ -79,6 +89,7 @@ export default function SalesOrdersPage() {
       current,
       total,
       customer_id: currentCustomerId,
+      stage,
       percent: total > 0 ? Math.floor((current / total) * 100) : 0
     };
   }, { refreshInterval: 2000 });
@@ -113,6 +124,12 @@ export default function SalesOrdersPage() {
         return;
       }
 
+      const limit = rowLimit.trim() ? parseInt(rowLimit.trim(), 10) : null;
+      if (limit !== null && (isNaN(limit) || limit <= 0)) {
+        alert('Row limit must be a positive number');
+        return;
+      }
+
       const res = await fetch('/api/enqueue', {
         method: 'POST',
         headers: { 
@@ -121,7 +138,10 @@ export default function SalesOrdersPage() {
         },
         body: JSON.stringify({ 
           type: 'scrape_xlsx_sales_orders',
-          payload: { requestedBy: session.user.email || 'manual' }
+          payload: { 
+            requestedBy: session.user.email || 'manual',
+            rowLimit: limit
+          }
         })
       });
 
@@ -163,29 +183,54 @@ export default function SalesOrdersPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <Button
-            onClick={handleStartScrape}
-            disabled={busy || isRunning}
-            className="w-full sm:w-auto"
-          >
-            {busy ? 'Starting...' : isRunning ? 'Scraping in progress...' : 'Start Scrape'}
-          </Button>
+          <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-end">
+            <div className="flex-1 space-y-2">
+              <label htmlFor="rowLimit" className="text-sm font-medium">
+                Row Limit (for testing - leave empty for all rows)
+              </label>
+              <input
+                id="rowLimit"
+                type="number"
+                min="1"
+                value={rowLimit}
+                onChange={(e) => setRowLimit(e.target.value)}
+                placeholder="e.g., 10"
+                disabled={busy || isRunning}
+                className="w-full px-3 py-2 border rounded-md text-sm disabled:bg-gray-100 disabled:cursor-not-allowed"
+              />
+            </div>
+            <Button
+              onClick={handleStartScrape}
+              disabled={busy || isRunning}
+              className="w-full sm:w-auto"
+            >
+              {busy ? 'Starting...' : isRunning ? 'Scraping in progress...' : 'Start Scrape'}
+            </Button>
+          </div>
 
-          {isRunning && progress && (
+          {isRunning && (
             <div className="space-y-2 p-4 bg-blue-50 rounded-lg border border-blue-200">
-              <div className="flex items-center justify-between text-sm">
-                <span className="font-medium">Progress</span>
-                <span>{progress.current} / {progress.total} customers</span>
-              </div>
-              <div className="w-full bg-gray-200 rounded-full h-2.5">
-                <div
-                  className="bg-blue-600 h-2.5 rounded-full transition-all"
-                  style={{ width: `${progress.percent}%` }}
-                />
-              </div>
-              {progress.customer_id && (
-                <div className="text-xs text-gray-600">
-                  Processing customer: {progress.customer_id}
+              {progress && progress.total > 0 ? (
+                <>
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="font-medium">Progress</span>
+                    <span>{progress.current} / {progress.total} customers ({progress.percent}%)</span>
+                  </div>
+                  <div className="w-full bg-gray-200 rounded-full h-2.5">
+                    <div
+                      className="bg-blue-600 h-2.5 rounded-full transition-all"
+                      style={{ width: `${progress.percent}%` }}
+                    />
+                  </div>
+                  {progress.customer_id && (
+                    <div className="text-xs text-gray-600">
+                      Processing customer: {progress.customer_id}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="text-sm text-gray-600">
+                  {progress?.stage === 'extracted' ? 'Extracted customer IDs, starting to process...' : 'Initializing...'}
                 </div>
               )}
             </div>
@@ -203,9 +248,21 @@ export default function SalesOrdersPage() {
                   {latest.status}
                 </span>
               </div>
-              {latest.finished_at && (
-                <div className="text-xs text-gray-600">
-                  Finished: {new Date(latest.finished_at).toLocaleString()}
+              {latest.finished_at && latest.started_at && (
+                <div className="text-xs text-gray-600 space-y-1">
+                  <div>Finished: {new Date(latest.finished_at).toLocaleString()}</div>
+                  {(() => {
+                    const startTime = new Date(latest.started_at).getTime();
+                    const endTime = new Date(latest.finished_at).getTime();
+                    const durationMs = endTime - startTime;
+                    const durationSec = Math.floor(durationMs / 1000);
+                    const minutes = Math.floor(durationSec / 60);
+                    const seconds = durationSec % 60;
+                    const durationStr = minutes > 0 
+                      ? `${minutes}m ${seconds}s` 
+                      : `${seconds}s`;
+                    return <div className="font-medium">Duration: {durationStr}</div>;
+                  })()}
                 </div>
               )}
               {latest.result && typeof latest.result === 'object' && (

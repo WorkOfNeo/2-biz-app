@@ -85,6 +85,19 @@ export async function scrapeXlsxSalesOrders(ctx: Ctx) {
       throw new Error('No customer IDs found in table');
     }
     
+    // Apply row limit if specified (for testing)
+    const payload = job.payload as any;
+    const rowLimit = payload?.rowLimit ? parseInt(String(payload.rowLimit), 10) : null;
+    let customersToProcess = customerIds;
+    if (rowLimit && rowLimit > 0 && rowLimit < customerIds.length) {
+      customersToProcess = customerIds.slice(0, rowLimit);
+      await log(job.id, 'info', 'STEP:row_limit_applied', { 
+        original_count: customerIds.length, 
+        limited_count: customersToProcess.length,
+        limit: rowLimit
+      });
+    }
+    
     // Aggregate data across all customers
     const aggregatedData = new Map<string, ParsedRow>(); // key: style_no|color|size
     
@@ -93,14 +106,14 @@ export async function scrapeXlsxSalesOrders(ctx: Ctx) {
     let failureCount = 0;
     
     // Process each customer sequentially
-    for (const customerId of customerIds) {
+    for (const customerId of customersToProcess) {
       await ensureNotCancelled(job.id);
       
       processedCount++;
       await log(job.id, 'progress', 'STEP:processing_customer', { 
         customer_id: customerId, 
         current: processedCount, 
-        total: customerIds.length 
+        total: customersToProcess.length 
       });
       
       let tempFilePath: string | null = null;
@@ -237,7 +250,8 @@ export async function scrapeXlsxSalesOrders(ctx: Ctx) {
     }
     
     await log(job.id, 'info', 'STEP:all_customers_processed', { 
-      total: customerIds.length,
+      total: customersToProcess.length,
+      original_total: customerIds.length,
       success: successCount,
       failure: failureCount,
       aggregated_keys: aggregatedData.size
@@ -294,7 +308,9 @@ export async function scrapeXlsxSalesOrders(ctx: Ctx) {
     
     await log(job.id, 'info', 'STEP:scrape_complete');
     await saveResult(job.id, 'Scrape XLSX Sales Orders completed', {
-      total_customers: customerIds.length,
+      total_customers: customersToProcess.length,
+      original_total_customers: customerIds.length,
+      row_limit_applied: rowLimit || null,
       processed: processedCount,
       success: successCount,
       failure: failureCount,
