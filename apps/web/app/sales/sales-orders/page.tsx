@@ -4,6 +4,7 @@ import useSWR from 'swr';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { Button } from '../../../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../../components/ui/card';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../components/ui/table';
 
 type Job = { 
   id: string; 
@@ -21,6 +22,7 @@ export default function SalesOrdersPage() {
   const [runningJobId, setRunningJobId] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
   const [rowLimit, setRowLimit] = React.useState<string>('');
+  const [clearing, setClearing] = React.useState(false);
 
   // Get running job
   const { data: running, mutate: mutateRunning } = useSWR('sales-orders:running', async () => {
@@ -94,26 +96,109 @@ export default function SalesOrdersPage() {
     };
   }, { refreshInterval: 2000 });
 
-  // Get aggregated data summary
-  const { data: dataSummary } = useSWR('sales-orders:summary', async () => {
+  // Get aggregated data with style names
+  const { data: salesData, mutate: mutateSalesData } = useSWR('sales-orders:data', async () => {
     const { data, error } = await supabase
       .from('stock_sales_data')
       .select('style_no, color, size, total_qty, updated_at')
-      .order('updated_at', { ascending: false })
-      .limit(1000);
+      .order('style_no', { ascending: true })
+      .order('color', { ascending: true })
+      .order('size', { ascending: true });
     
     if (error) throw new Error(error.message);
+    return data || [];
+  }, { refreshInterval: isRunning ? 2000 : 10000 });
+
+  // Get style names for the style_nos
+  const styleNos = React.useMemo(() => {
+    if (!salesData) return [];
+    return Array.from(new Set(salesData.map((r: any) => r.style_no).filter(Boolean)));
+  }, [salesData]);
+
+  const { data: styleNames } = useSWR(
+    styleNos.length > 0 ? ['sales-orders:styles', styleNos.join(',')] : null,
+    async () => {
+      const { data, error } = await supabase
+        .from('styles')
+        .select('style_no, style_name')
+        .in('style_no', styleNos);
+      if (error) throw new Error(error.message);
+      const map = new Map<string, string | null>();
+      (data || []).forEach((r: any) => {
+        map.set(r.style_no, r.style_name);
+      });
+      return map;
+    },
+    { refreshInterval: 0 }
+  );
+
+  // Transform data into grouped structure by style_no -> color -> size
+  const groupedData = React.useMemo(() => {
+    if (!salesData || !styleNames) return [];
     
-    const totalRows = data?.length || 0;
-    const totalQty = (data || []).reduce((sum, row) => sum + (Number(row.total_qty) || 0), 0);
-    const lastUpdated = data?.[0]?.updated_at || null;
-    
-    return {
-      totalRows,
-      totalQty,
-      lastUpdated
-    };
-  }, { refreshInterval: 30000 });
+    const grouped = new Map<string, {
+      style_no: string;
+      style_name: string | null;
+      colors: Map<string, Map<string, number>>;
+      allSizes: Set<string>;
+    }>();
+
+    for (const row of salesData) {
+      const styleNo = row.style_no;
+      const color = row.color || '';
+      const size = row.size || '';
+      const qty = Number(row.total_qty) || 0;
+
+      if (!grouped.has(styleNo)) {
+        grouped.set(styleNo, {
+          style_no: styleNo,
+          style_name: styleNames.get(styleNo) || null,
+          colors: new Map(),
+          allSizes: new Set()
+        });
+      }
+
+      const styleGroup = grouped.get(styleNo)!;
+      styleGroup.allSizes.add(size);
+
+      if (!styleGroup.colors.has(color)) {
+        styleGroup.colors.set(color, new Map());
+      }
+
+      const colorMap = styleGroup.colors.get(color)!;
+      colorMap.set(size, (colorMap.get(size) || 0) + qty);
+    }
+
+    // Convert to array and sort sizes
+    return Array.from(grouped.values()).map(style => ({
+      ...style,
+      allSizes: Array.from(style.allSizes).sort((a, b) => {
+        // Try to sort sizes naturally (XS, S, M, L, XL, etc.)
+        const sizeOrder = ['XS', 'S', 'M', 'L', 'XL', 'XXL', 'XXXL'];
+        const aIdx = sizeOrder.indexOf(a.toUpperCase());
+        const bIdx = sizeOrder.indexOf(b.toUpperCase());
+        if (aIdx !== -1 && bIdx !== -1) return aIdx - bIdx;
+        if (aIdx !== -1) return -1;
+        if (bIdx !== -1) return 1;
+        return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
+      })
+    }));
+  }, [salesData, styleNames]);
+
+  // Calculate summary stats
+  const dataSummary = React.useMemo(() => {
+    if (!salesData) return null;
+    const totalRows = salesData.length;
+    const totalQty = salesData.reduce((sum: number, row: any) => sum + (Number(row.total_qty) || 0), 0);
+    const lastUpdated = salesData.length > 0 
+      ? salesData.reduce((latest: string | null, row: any) => {
+          const rowTime = row.updated_at;
+          if (!latest) return rowTime;
+          return rowTime > latest ? rowTime : latest;
+        }, null)
+      : null;
+    return { totalRows, totalQty, lastUpdated };
+  }, [salesData]);
 
   const handleStartScrape = async () => {
     try {
@@ -159,6 +244,42 @@ export default function SalesOrdersPage() {
       alert(`Failed to start scrape: ${error.message}`);
     } finally {
       setBusy(false);
+    }
+  };
+
+  const handleClearData = async () => {
+    if (!confirm('Are you sure you want to clear all sales orders data? This cannot be undone.')) {
+      return;
+    }
+
+    try {
+      setClearing(true);
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        alert('Not signed in');
+        return;
+      }
+
+      const res = await fetch('/api/sales/clear-sales-orders', {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`
+        }
+      });
+
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        throw new Error(text || `Failed (${res.status})`);
+      }
+
+      await mutateSalesData();
+      alert('Data cleared successfully');
+    } catch (error: any) {
+      console.error('Failed to clear data:', error);
+      alert(`Failed to clear data: ${error.message}`);
+    } finally {
+      setClearing(false);
     }
   };
 
@@ -214,16 +335,18 @@ export default function SalesOrdersPage() {
                 <>
                   <div className="flex items-center justify-between text-sm">
                     <span className="font-medium">Progress</span>
-                    <span>{progress.current} / {progress.total} customers ({progress.percent}%)</span>
+                    <span className="font-mono tabular-nums">
+                      {progress.current.toLocaleString()} / {progress.total.toLocaleString()} customers ({progress.percent}%)
+                    </span>
                   </div>
-                  <div className="w-full bg-gray-200 rounded-full h-2.5">
+                  <div className="w-full bg-gray-200 rounded-full h-2.5 overflow-hidden">
                     <div
-                      className="bg-blue-600 h-2.5 rounded-full transition-all"
+                      className="bg-blue-600 h-2.5 rounded-full transition-all duration-300 ease-out"
                       style={{ width: `${progress.percent}%` }}
                     />
                   </div>
                   {progress.customer_id && (
-                    <div className="text-xs text-gray-600">
+                    <div className="text-xs text-gray-600 font-mono">
                       Processing customer: {progress.customer_id}
                     </div>
                   )}
@@ -266,18 +389,18 @@ export default function SalesOrdersPage() {
                 </div>
               )}
               {latest.result && typeof latest.result === 'object' && (
-                <div className="text-xs space-y-1 mt-2">
-                  {latest.result.total_customers && (
-                    <div>Total customers: {latest.result.total_customers}</div>
+                <div className="text-xs space-y-1 mt-2 font-mono tabular-nums">
+                  {latest.result.total_customers !== undefined && (
+                    <div>Total customers: {latest.result.total_customers.toLocaleString()}</div>
                   )}
                   {latest.result.success !== undefined && (
-                    <div>Success: {latest.result.success}</div>
+                    <div>Success: {latest.result.success.toLocaleString()}</div>
                   )}
                   {latest.result.failure !== undefined && (
-                    <div>Failed: {latest.result.failure}</div>
+                    <div>Failed: {latest.result.failure.toLocaleString()}</div>
                   )}
                   {latest.result.aggregated_rows !== undefined && (
-                    <div>Aggregated rows: {latest.result.aggregated_rows}</div>
+                    <div>Aggregated rows: {latest.result.aggregated_rows.toLocaleString()}</div>
                   )}
                   {latest.result.total_qty !== undefined && (
                     <div>Total quantity: {latest.result.total_qty.toLocaleString()}</div>
@@ -289,8 +412,19 @@ export default function SalesOrdersPage() {
 
           {dataSummary && (
             <div className="space-y-2 p-4 bg-gray-50 rounded-lg border">
-              <div className="text-sm font-medium">Data Summary</div>
-              <div className="text-xs space-y-1">
+              <div className="flex items-center justify-between">
+                <div className="text-sm font-medium">Data Summary</div>
+                <Button
+                  onClick={handleClearData}
+                  disabled={clearing || isRunning}
+                  variant="outline"
+                  size="sm"
+                  className="text-xs"
+                >
+                  {clearing ? 'Clearing...' : 'Clear Data'}
+                </Button>
+              </div>
+              <div className="text-xs space-y-1 font-mono tabular-nums">
                 <div>Total rows: {dataSummary.totalRows.toLocaleString()}</div>
                 <div>Total quantity: {dataSummary.totalQty.toLocaleString()}</div>
                 {dataSummary.lastUpdated && (
@@ -301,6 +435,64 @@ export default function SalesOrdersPage() {
           )}
         </CardContent>
       </Card>
+
+      {groupedData.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Sales Data by Style</CardTitle>
+            <CardDescription>
+              Aggregated sales order quantities grouped by style, color, and size
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="overflow-x-auto">
+              {groupedData.map((style) => (
+                <div key={style.style_no} className="mb-8 last:mb-0">
+                  <div className="mb-2 pb-2 border-b">
+                    <div className="font-semibold text-sm">{style.style_no}</div>
+                    {style.style_name && (
+                      <div className="text-xs text-gray-600">{style.style_name}</div>
+                    )}
+                  </div>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-24">Color</TableHead>
+                        {style.allSizes.map((size) => (
+                          <TableHead key={size} className="text-center min-w-16">
+                            {size || '(empty)'}
+                          </TableHead>
+                        ))}
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {Array.from(style.colors.entries())
+                        .sort(([a], [b]) => a.localeCompare(b))
+                        .map(([color, sizeMap]) => (
+                          <TableRow key={color}>
+                            <TableCell className="font-medium">{color || '(empty)'}</TableCell>
+                            {style.allSizes.map((size) => {
+                              const qty = sizeMap.get(size) || 0;
+                              return (
+                                <TableCell key={size} className="text-center font-mono tabular-nums">
+                                  {qty > 0 ? (
+                                    <span className="transition-all duration-300">{qty.toLocaleString()}</span>
+                                  ) : (
+                                    <span className="text-gray-300">-</span>
+                                  )}
+                                </TableCell>
+                              );
+                            })}
+                          </TableRow>
+                        ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }
