@@ -138,6 +138,10 @@ export async function scrapeXlsxSalesOrders(ctx: Ctx) {
         }
         
         const worksheet = workbook.Sheets[sheetName];
+        if (!worksheet) {
+          throw new Error('Worksheet is undefined');
+        }
+        
         const data = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '' }) as any[][];
         
         if (data.length < 2) {
@@ -164,16 +168,14 @@ export async function scrapeXlsxSalesOrders(ctx: Ctx) {
         }
         
         // If headers not found, try common column positions (A=style, B=color, C=size, D=qty)
-        if (Object.keys(headerMap).length < 4) {
-          headerMap.style_no = headerMap.style_no ?? 0;
-          headerMap.color = headerMap.color ?? 1;
-          headerMap.size = headerMap.size ?? 2;
-          headerMap.qty = headerMap.qty ?? 3;
-        }
+        const styleNoCol = headerMap.style_no ?? 0;
+        const colorCol = headerMap.color ?? 1;
+        const sizeCol = headerMap.size ?? 2;
+        const qtyCol = headerMap.qty ?? 3;
         
         await log(job.id, 'info', 'STEP:excel_headers', { 
           customer_id: customerId, 
-          headers: headerMap,
+          headers: { style_no: styleNoCol, color: colorCol, size: sizeCol, qty: qtyCol },
           total_rows: data.length - 1
         });
         
@@ -181,10 +183,10 @@ export async function scrapeXlsxSalesOrders(ctx: Ctx) {
         let parsedRows = 0;
         for (let i = 1; i < data.length; i++) {
           const row = data[i] || [];
-          const style_no = String(row[headerMap.style_no] || '').trim();
-          const color = String(row[headerMap.color] || '').trim();
-          const size = String(row[headerMap.size] || '').trim();
-          const qtyStr = String(row[headerMap.qty] || '0').replace(/[^0-9.\-]/g, '');
+          const style_no = String(row[styleNoCol] || '').trim();
+          const color = String(row[colorCol] || '').trim();
+          const size = String(row[sizeCol] || '').trim();
+          const qtyStr = String(row[qtyCol] || '0').replace(/[^0-9.\-]/g, '');
           const qty = parseFloat(qtyStr) || 0;
           
           // Skip rows with missing essential data
