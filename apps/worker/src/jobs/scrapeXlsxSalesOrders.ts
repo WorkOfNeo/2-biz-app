@@ -59,20 +59,28 @@ export async function scrapeXlsxSalesOrders(ctx: Ctx) {
       const ids: string[] = [];
       
       for (const row of Array.from(rows)) {
-        const cells = row.querySelectorAll('td');
-        // Second td (index 1) contains the customer link
-        const secondCell = cells[1];
-        if (!secondCell) continue;
+        // Find any <a> tag in this row that contains customer_id= in its href
+        const links = row.querySelectorAll('a');
         
-        const link = secondCell.querySelector('a');
-        if (!link) continue;
-        
-        const href = link.getAttribute('href') || '';
-        // Extract customer_id from URL parameter
-        // Example: href="/?Spy\Model\Sale\Customer\RunningSeason\ListReportSearch[bForceSearch]=1&Spy\Model\Sale\Customer\RunningSeason\ListReportSearch[iCustomerID]=878&..."
-        const match = href.match(/iCustomerID[=](\d+)/);
-        if (match && match[1]) {
-          ids.push(match[1]);
+        for (const link of Array.from(links)) {
+          const href = link.getAttribute('href') || '';
+          
+          // Look for customer_id= in the href (case insensitive, can be iCustomerID or customer_id)
+          // Try multiple patterns: customer_id=, iCustomerID=, customerId=, etc.
+          const patterns = [
+            /customer_id[=](\d+)/i,
+            /iCustomerID[=](\d+)/i,
+            /customerId[=](\d+)/i,
+            /\[iCustomerID\][=](\d+)/i
+          ];
+          
+          for (const pattern of patterns) {
+            const match = href.match(pattern);
+            if (match && match[1]) {
+              ids.push(match[1]);
+              break; // Found it, move to next row
+            }
+          }
         }
       }
       
