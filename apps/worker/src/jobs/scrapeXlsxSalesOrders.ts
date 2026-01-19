@@ -90,7 +90,20 @@ export async function scrapeXlsxSalesOrders(ctx: Ctx) {
     await log(job.id, 'info', 'STEP:customer_ids_extracted', { count: customerIds.length });
     
     if (customerIds.length === 0) {
-      throw new Error('No customer IDs found in table');
+      await log(job.id, 'error', 'STEP:no_customer_ids_found', { 
+        message: 'No customer IDs found in table. This may indicate the table is empty or the page structure has changed.' 
+      });
+      await saveResult(job.id, 'No customer IDs found - job completed with no data', {
+        total_customers: 0,
+        processed: 0,
+        success: 0,
+        failure: 0,
+        aggregated_rows: 0,
+        total_qty: 0,
+        reason: 'no_customer_ids_found'
+      });
+      await setJobSucceeded(job.id);
+      return; // Exit early - don't retry for this case
     }
     
     // Apply row limit if specified (for testing)
