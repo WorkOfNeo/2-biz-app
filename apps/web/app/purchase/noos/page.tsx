@@ -25,7 +25,7 @@ type MatchedSheet = SheetData & {
   matchedColor: string | null;
   styleScore: number;
   colorScore: number;
-  status: 'matched' | 'unmatched_style' | 'unmatched_color';
+  status: 'matched' | 'unmatched_style' | 'unmatched_color' | 'pending';
 };
 
 type StyleRow = {
@@ -615,7 +615,7 @@ export default function NoosPage() {
                 {(matchedSheets.length > 0 ? matchedSheets : sheets.map(s => ({ ...s, status: 'pending' as const }))).map((sheet, idx) => {
                   const ms = sheet as MatchedSheet;
                   return (
-                    <tr key={idx} className={ms.status === 'unmatched_style' || ms.status === 'unmatched_color' ? 'bg-amber-50' : ''}>
+                    <tr key={idx} className={ms.status === 'unmatched_style' || ms.status === 'unmatched_color' ? 'bg-amber-50' : ms.status === 'pending' ? 'bg-gray-50' : ''}>
                       <td className="p-2">
                         <div className="font-medium">{sheet.styleNameCandidate}</div>
                         {ms.matchedStyleName && ms.matchedStyleName !== sheet.styleNameCandidate && (
