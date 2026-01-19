@@ -32,6 +32,7 @@ import { analyzeConversationMessage } from './jobs/analyzeConversationMessage.js
 import { runAiAnalysis } from './jobs/runAiAnalysis.js';
 import { exportAiAnalysis } from './jobs/exportAiAnalysis.js';
 import { exportPurchaseRoundPdf } from './jobs/exportPurchaseRoundPdf.js';
+import { runStatisticsEmailPipeline } from './jobs/runStatisticsEmailPipeline.js';
 // (imported with .js extension above)
 
 const SUPABASE_URL = process.env.SUPABASE_URL!;
@@ -216,7 +217,8 @@ const BROWSERLESS_JOB_TYPES = new Set([
   'fix_invoices',
   'apply_customer_preview',
   // Internal orchestration jobs
-  'export_stock_list_after_update_stock'
+  'export_stock_list_after_update_stock',
+  'run_statistics_email_pipeline'
 ]);
 
 async function runJob(job: JobRow) {
@@ -392,6 +394,12 @@ async function runJob(job: JobRow) {
         if (insErr) throw new Error(`Failed to enqueue export_stock_list: ${insErr.message}`);
 
         await saveResult(job.id, 'Enqueued export_stock_list after update_style_stock', { triggerJobId, exportJobId: (inserted as any)?.id });
+        return;
+      }
+
+      // Handle run_statistics_email_pipeline job
+      if ((job.type as any) === 'run_statistics_email_pipeline') {
+        await runStatisticsEmailPipeline(job, log, saveResult, setJobSucceeded, setJobFailedOrRequeue);
         return;
       }
 

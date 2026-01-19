@@ -273,115 +273,34 @@ async function handle(req: Request) {
 
     if (!willRun) continue;
 
-    // Build common template params for files that don't require personal PDF
-    const buildCommonParams = (): Record<string, string> => {
-      const params: Record<string, string> = {};
-      if (schedule.includeGeneralCombined && combinedPdfUrl) {
-        params.all_salesmen_pdf_url = combinedPdfUrl;
-      }
-      if (schedule.includeCountries && countriesExport?.public_url) {
-        params.countries_pdf_url = countriesExport.public_url;
-      }
-      if (schedule.includeTop15Salesmen && top15SalesmenExport?.public_url) {
-        params.top15_salesmen_pdf = top15SalesmenExport.public_url;
-      }
-      if (schedule.includeTop15Overall && top15OverallExport?.public_url) {
-        params.top15_overall_pdf = top15OverallExport.public_url;
-      }
-      if (schedule.includeOverview && overviewExport?.public_url) {
-        params.overview_pdf_url = overviewExport.public_url;
-      }
-      // Add stock lists
-      let idx = 1;
-      for (const listName of (schedule.stockLists || [])) {
-        const exp = stockListByName.get(listName);
-        if (exp?.public_url) {
-          params[`stock_list_${idx}_url`] = exp.public_url;
-          params[`stock_list_${idx}_name`] = listName;
-          idx++;
-        }
-      }
-      return params;
-    };
+    // Enqueue a single pipeline job for this schedule
+    // The pipeline handles: scrape statistics, scrape stock lists, export PDFs, send emails
+    const { data: pipelineJob, error: insertError } = await supabase.from('jobs').insert({
+      type: 'run_statistics_email_pipeline',
+      payload: {
+        scheduleId: schedule.id,
+        requestedBy: 'cron',
+      },
+      status: 'queued',
+      max_attempts: 180, // High retry count for waiter pattern
+      queue: 'default',
+      priority: 100,
+    }).select('id').single();
 
     let queuedCount = 0;
-
-    // Queue jobs for each salesperson (they get their personal PDF)
-    for (const spId of schedule.salespersonIds) {
-      const sp = salespersonById.get(spId);
-      if (!sp || !sp.email) {
-        if (debug) console.log(`[cron:statistic-schedules] Skipping ${spId}: no email`);
-        continue;
-      }
-
-      // Find their personal PDF
-      const myFile = salesmenFiles.find(f => f.salesperson_id === spId);
-
-      // Build template params
-      const templateParams: Record<string, string> = {
-        ...buildCommonParams(),
-        salesman_pdf: myFile?.publicUrl || '',
-      };
-
-      // Build personalized greeting
-      const toTitleCase = (str: string) => str.toLowerCase().split(' ').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
-      const firstName = sp.name ? toTitleCase(sp.name).split(' ')[0] : '';
-      const hej = firstName ? `Hej ${firstName},` : 'Hej,';
-      const bodyHtml = `${hej}\n\n${schedule.emailBody || 'Hermed statistik :)'}`;
-
-      const jobPayload = {
-        recipient: sp.email,
-        subject: 'Din statistik',
-        body: bodyHtml,
-        context: 'salesmen_schedule',
-        contextId: schedule.id,
-        contextName: schedule.name,
-        templateParams,
-      };
-
-      const { error: insertError } = await supabase.from('jobs').insert({
-        type: 'send_email',
-        payload: jobPayload,
-        status: 'queued',
-        queue: 'default',
+    if (insertError) {
+      console.error(`[cron:statistic-schedules] Failed to insert pipeline job for ${schedule.name}:`, insertError);
+    } else {
+      queuedCount = 1;
+      if (debug) console.log(`[cron:statistic-schedules] Queued pipeline job ${pipelineJob?.id} for ${schedule.name}`);
+      
+      // Log initial enqueue for visibility
+      await supabase.from('job_logs').insert({
+        job_id: pipelineJob?.id,
+        level: 'info',
+        msg: 'Pipeline enqueued via cron',
+        data: { scheduleId: schedule.id, scheduleName: schedule.name },
       });
-
-      if (insertError) {
-        console.error(`[cron:statistic-schedules] Failed to insert job for ${sp.name}:`, insertError);
-      } else {
-        queuedCount++;
-        if (debug) console.log(`[cron:statistic-schedules] Queued job for ${sp.name} (${sp.email})`);
-      }
-    }
-
-    // Queue jobs for additional recipients (no personal PDF)
-    for (const email of (schedule.additionalRecipients || [])) {
-      const templateParams = buildCommonParams();
-      const bodyHtml = `Hej,\n\n${schedule.emailBody || 'Hermed statistik :)'}`;
-
-      const jobPayload = {
-        recipient: email,
-        subject: 'Statistik',
-        body: bodyHtml,
-        context: 'salesmen_schedule',
-        contextId: schedule.id,
-        contextName: schedule.name,
-        templateParams,
-      };
-
-      const { error: insertError } = await supabase.from('jobs').insert({
-        type: 'send_email',
-        payload: jobPayload,
-        status: 'queued',
-        queue: 'default',
-      });
-
-      if (insertError) {
-        console.error(`[cron:statistic-schedules] Failed to insert job for ${email}:`, insertError);
-      } else {
-        queuedCount++;
-        if (debug) console.log(`[cron:statistic-schedules] Queued job for additional recipient (${email})`);
-      }
     }
 
     // Update lastRun
@@ -391,7 +310,7 @@ async function handle(req: Request) {
       updatedSchedules[idx] = { ...existingSchedule, lastRun: now.toISOString() };
     }
 
-    results.push({ scheduleId: schedule.id, scheduleName: schedule.name, queued: queuedCount });
+    results.push({ scheduleId: schedule.id, scheduleName: schedule.name, queued: queuedCount, pipelineJobId: pipelineJob?.id });
   }
 
   // Save updated schedules - use new key

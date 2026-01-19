@@ -59,6 +59,10 @@ interface StatisticSchedule {
   emailBody: string;
   enabled: boolean;
   lastRun?: string;
+  // New pipeline delivery options
+  sendToSalespersons?: boolean;
+  sendToOverall?: boolean;
+  overallRecipientsCsv?: string;
 }
 
 
@@ -754,6 +758,7 @@ export default function StatisticsDashboardPage() {
   const [viewStatisticSheetOpen, setViewStatisticSheetOpen] = React.useState(false);
   const [savingStatisticSchedules, setSavingStatisticSchedules] = React.useState(false);
   const [sendingStatisticScheduleId, setSendingStatisticScheduleId] = React.useState<string | null>(null);
+  const [runningPipelineScheduleId, setRunningPipelineScheduleId] = React.useState<string | null>(null);
   const [previewUrl, setPreviewUrl] = React.useState<string | null>(null);
 
   // Form state for statistic schedule editor
@@ -771,6 +776,9 @@ export default function StatisticsDashboardPage() {
   const [stFormDays, setStFormDays] = React.useState<Set<number>>(new Set([1]));
   const [stFormEmailBody, setStFormEmailBody] = React.useState('Hermed statistik :)');
   const [stFormEnabled, setStFormEnabled] = React.useState(true);
+  const [stFormSendToSalespersons, setStFormSendToSalespersons] = React.useState(true);
+  const [stFormSendToOverall, setStFormSendToOverall] = React.useState(false);
+  const [stFormOverallRecipientsCsv, setStFormOverallRecipientsCsv] = React.useState('');
 
   // Load statistic schedules from app_settings (check both old and new keys for migration)
   useSWR('dashboard:statistic_schedules', async () => {
@@ -826,6 +834,9 @@ export default function StatisticsDashboardPage() {
     setStFormDays(new Set([1]));
     setStFormEmailBody('Hermed statistik :)');
     setStFormEnabled(true);
+    setStFormSendToSalespersons(true);
+    setStFormSendToOverall(false);
+    setStFormOverallRecipientsCsv('');
     setStatisticSheetOpen(true);
   }
 
@@ -846,6 +857,9 @@ export default function StatisticsDashboardPage() {
     setStFormDays(new Set(schedule.days));
     setStFormEmailBody(schedule.emailBody);
     setStFormEnabled(schedule.enabled);
+    setStFormSendToSalespersons(schedule.sendToSalespersons !== false);
+    setStFormSendToOverall(schedule.sendToOverall === true);
+    setStFormOverallRecipientsCsv(schedule.overallRecipientsCsv || '');
     setStatisticSheetOpen(true);
   }
 
@@ -859,8 +873,12 @@ export default function StatisticsDashboardPage() {
       alert('Please enter a schedule name');
       return;
     }
-    if (stFormSalespersons.size === 0 && stFormAdditionalRecipients.length === 0) {
-      alert('Please select at least one salesperson or add at least one recipient email');
+    // Validate that at least one delivery mode is configured
+    const hasSalespersonRecipients = stFormSendToSalespersons && stFormSalespersons.size > 0;
+    const hasOverallRecipients = stFormSendToOverall && stFormOverallRecipientsCsv.trim().length > 0;
+    const hasLegacyRecipients = stFormAdditionalRecipients.length > 0;
+    if (!hasSalespersonRecipients && !hasOverallRecipients && !hasLegacyRecipients) {
+      alert('Please configure at least one delivery option (salespersons or overall recipients)');
       return;
     }
     if (stFormScheduleType === 'weekly' && stFormDays.size === 0) {
@@ -885,6 +903,9 @@ export default function StatisticsDashboardPage() {
       emailBody: stFormEmailBody,
       enabled: stFormEnabled,
       lastRun: editingStatisticSchedule?.lastRun,
+      sendToSalespersons: stFormSendToSalespersons,
+      sendToOverall: stFormSendToOverall,
+      overallRecipientsCsv: stFormOverallRecipientsCsv.trim(),
     };
 
     let newSchedules: StatisticSchedule[];
@@ -994,6 +1015,28 @@ export default function StatisticsDashboardPage() {
       alert(`${emailCount} email(s) sent`);
     } finally {
       setSendingStatisticScheduleId(null);
+    }
+  }
+
+  async function handleRunPipelineNow(schedule: StatisticSchedule) {
+    if (runningPipelineScheduleId) return;
+    setRunningPipelineScheduleId(schedule.id);
+    try {
+      const res = await fetch('/api/statistics/run-email-pipeline', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scheduleId: schedule.id }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(`Failed to start pipeline: ${data.error || 'Unknown error'}`);
+        return;
+      }
+      alert(`Pipeline started! Job ID: ${data.jobId}\n\nView progress at /admin/jobs/${data.jobId}`);
+    } catch (err: any) {
+      alert(`Error: ${err?.message || 'Failed to start pipeline'}`);
+    } finally {
+      setRunningPipelineScheduleId(null);
     }
   }
 
@@ -1483,10 +1526,20 @@ export default function StatisticsDashboardPage() {
                               <Button
                                 variant="ghost"
                                 size="sm"
+                                className="h-7 w-7 p-0 text-green-600 hover:text-green-700 hover:bg-green-50"
+                                onClick={() => handleRunPipelineNow(schedule)}
+                                disabled={runningPipelineScheduleId === schedule.id}
+                                title="Run pipeline (scrape + export + send)"
+                              >
+                                <Play className="h-3.5 w-3.5" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
                                 className="h-7 w-7 p-0"
                                 onClick={() => handleSendStatisticNow(schedule)}
                                 disabled={sendingStatisticScheduleId === schedule.id}
-                                title="Send now"
+                                title="Send now (using existing exports)"
                               >
                                 <Send className="h-3.5 w-3.5" />
                               </Button>
@@ -1909,15 +1962,61 @@ export default function StatisticsDashboardPage() {
             </div>
           </div>
 
-          {/* Additional Recipients */}
+          {/* Additional Recipients (legacy) */}
           <div>
             <EmailPillsInput
-              label="Additional Recipients"
-              helpText="Emails not in salespersons list (no personal PDF)"
+              label="Additional Recipients (legacy)"
+              helpText="Emails not in salespersons list (no personal PDF). Consider using Overall delivery instead."
               value={stFormAdditionalRecipients}
               onChange={setStFormAdditionalRecipients}
               placeholder="Add email…"
             />
+          </div>
+
+          {/* Delivery Options */}
+          <div className="space-y-3">
+            <label className="text-sm text-gray-600 block font-medium">Delivery Options</label>
+            
+            {/* Send to Salespersons toggle */}
+            <div className="flex items-center justify-between p-3 rounded-md border bg-slate-50">
+              <div>
+                <div className="flex items-center gap-2">
+                  <Toggle
+                    checked={stFormSendToSalespersons}
+                    onChange={() => setStFormSendToSalespersons(v => !v)}
+                    size="sm"
+                  />
+                  <span className="text-sm font-medium">Send to Salespersons</span>
+                </div>
+                <p className="text-xs text-gray-500 mt-1 ml-8">Individual emails with personal PDF to each selected salesperson</p>
+              </div>
+            </div>
+
+            {/* Send Overall toggle */}
+            <div className="flex flex-col gap-2 p-3 rounded-md border bg-slate-50">
+              <div className="flex items-center gap-2">
+                <Toggle
+                  checked={stFormSendToOverall}
+                  onChange={() => setStFormSendToOverall(v => !v)}
+                  size="sm"
+                />
+                <span className="text-sm font-medium">Send Overall Email</span>
+              </div>
+              <p className="text-xs text-gray-500 ml-8">Single email to all recipients below with combined PDFs only (no personal PDFs)</p>
+              
+              {stFormSendToOverall && (
+                <div className="mt-2 ml-8">
+                  <label className="text-xs text-gray-600 block mb-1">Overall Recipients (comma-separated)</label>
+                  <textarea
+                    className="w-full min-h-[60px] rounded-md border border-slate-200 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-offset-2"
+                    placeholder="email1@example.com, email2@example.com, ..."
+                    value={stFormOverallRecipientsCsv}
+                    onChange={(e) => setStFormOverallRecipientsCsv(e.target.value)}
+                  />
+                  <p className="text-xs text-gray-500 mt-1">Paste a comma-separated list of email addresses</p>
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Files to Include */}
