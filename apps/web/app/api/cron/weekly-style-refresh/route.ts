@@ -1,6 +1,6 @@
 // Weekly Style Refresh - Configurable day/time (Copenhagen)
 // Reads schedule from scrape_schedules table (configurable via UI)
-// Pipeline: scrape_styles → deep_scrape_styles → scrape_eans → check_stock_fix (autoFix) → export_stock_list
+// Pipeline: scrape_styles → enrich_styles → deep_scrape_styles → scrape_eans → check_stock_fix (autoFix) → export_stock_list
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
@@ -97,7 +97,7 @@ async function handle(req: Request) {
   const { data: running } = await supabase
     .from('jobs')
     .select('id, type')
-    .in('type', ['scrape_styles', 'deep_scrape_styles', 'scrape_eans', 'check_stock_fix', 'update_style_stock'])
+    .in('type', ['scrape_styles', 'enrich_styles', 'deep_scrape_styles', 'scrape_eans', 'check_stock_fix', 'update_style_stock'])
     .in('status', ['queued', 'running'])
     .limit(1);
 
@@ -115,27 +115,35 @@ async function handle(req: Request) {
       status: 'queued',
       max_attempts: 3,
     },
-    // Step 2: deep_scrape_styles (after 30 min)
+    // Step 2: enrich_styles (after 15 min) - extracts style_type, cost_price, cost_price_currency
+    {
+      type: 'enrich_styles',
+      payload: { requestedBy: 'cron_weekly_style_refresh', runKey, pipelineStep: 2 },
+      status: 'queued',
+      max_attempts: 3,
+      run_after: new Date(now.getTime() + 15 * 60 * 1000).toISOString(),
+    },
+    // Step 3: deep_scrape_styles (after 30 min)
     {
       type: 'deep_scrape_styles',
-      payload: { requestedBy: 'cron_weekly_style_refresh', runKey, pipelineStep: 2 },
+      payload: { requestedBy: 'cron_weekly_style_refresh', runKey, pipelineStep: 3 },
       status: 'queued',
       max_attempts: 3,
       run_after: new Date(now.getTime() + 30 * 60 * 1000).toISOString(),
     },
-    // Step 3: scrape_eans (after 2 hours)
+    // Step 4: scrape_eans (after 2 hours)
     {
       type: 'scrape_eans',
-      payload: { requestedBy: 'cron_weekly_style_refresh', runKey, pipelineStep: 3 },
+      payload: { requestedBy: 'cron_weekly_style_refresh', runKey, pipelineStep: 4 },
       status: 'queued',
       max_attempts: 3,
       queue: 'stock',
       run_after: new Date(now.getTime() + 2 * 60 * 60 * 1000).toISOString(),
     },
-    // Step 4: check_stock_fix with autoFix (after 4 hours)
+    // Step 5: check_stock_fix with autoFix (after 4 hours)
     {
       type: 'check_stock_fix',
-      payload: { requestedBy: 'cron_weekly_style_refresh', runKey, pipelineStep: 4, autoFix: true },
+      payload: { requestedBy: 'cron_weekly_style_refresh', runKey, pipelineStep: 5, autoFix: true },
       status: 'queued',
       max_attempts: 3,
       run_after: new Date(now.getTime() + 4 * 60 * 60 * 1000).toISOString(),

@@ -139,11 +139,11 @@ export async function enrichStyles(ctx: Ctx) {
   await ensureNotCancelled(job.id);
   await log(job.id, 'info', 'STEP:enrich_styles_begin');
   
-  // Fetch styles that need enrichment (style_type IS NULL OR needs_enrichment = true)
+  // Fetch styles that need enrichment (style_type IS NULL OR cost_price IS NULL OR needs_enrichment = true)
   const { data: stylesToEnrich } = await supabase
     .from('styles')
-    .select('id, style_no, link_href, style_type, needs_enrichment')
-    .or('style_type.is.null,needs_enrichment.eq.true')
+    .select('id, style_no, link_href, style_type, cost_price, needs_enrichment')
+    .or('style_type.is.null,cost_price.is.null,needs_enrichment.eq.true')
     .not('link_href', 'is', null)
     .neq('link_href', '');
   
@@ -183,16 +183,56 @@ export async function enrichStyles(ctx: Ctx) {
     try {
       const detailUrl = new URL(style.link_href, SPY_BASE_URL).toString();
       await page.goto(detailUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      
+      // Extract style_type
       const typeText = await page.$eval('select[name="sTypeId"]', (sel: HTMLSelectElement) => {
         const opt = sel && sel.selectedIndex >= 0 ? sel.options[sel.selectedIndex] : null;
         return (opt?.textContent || '').trim();
       }).catch(() => null as string | null);
       
-      // Update style with style_type and clear needs_enrichment flag
+      // Extract cost_price and cost_price_currency from #calculation table
+      const costData = await page.evaluate(() => {
+        const calcTable = document.querySelector('#calculation');
+        if (!calcTable) return { costPrice: null, costCurrency: null };
+        
+        const tbody = calcTable.querySelector('tbody');
+        if (!tbody) return { costPrice: null, costCurrency: null };
+        
+        const firstRow = tbody.querySelector('tr');
+        if (!firstRow) return { costPrice: null, costCurrency: null };
+        
+        // Get cost price from input[name="sOfferprice"]
+        const priceInput = firstRow.querySelector('input[name="sOfferprice"]') as HTMLInputElement | null;
+        const priceValue = priceInput?.value || null;
+        
+        // Get currency from select[name="cp_exchange_id"]
+        const currencySelect = firstRow.querySelector('select[name="cp_exchange_id"]') as HTMLSelectElement | null;
+        let currencyValue: string | null = null;
+        if (currencySelect && currencySelect.selectedIndex >= 0) {
+          const selectedOption = currencySelect.options[currencySelect.selectedIndex];
+          currencyValue = selectedOption?.textContent?.trim() || null;
+        }
+        
+        return { costPrice: priceValue, costCurrency: currencyValue };
+      }).catch(() => ({ costPrice: null, costCurrency: null }));
+      
+      // Parse cost price (remove commas, convert to number)
+      let costPriceNum: number | null = null;
+      if (costData.costPrice) {
+        const cleaned = costData.costPrice.replace(/[^0-9.,-]/g, '').replace(',', '.');
+        const parsed = parseFloat(cleaned);
+        if (!isNaN(parsed)) {
+          costPriceNum = parsed;
+        }
+      }
+      
+      // Update style with style_type, cost_price, cost_price_currency and clear needs_enrichment flag
       const { error } = await supabase
         .from('styles')
         .update({
           style_type: typeText || null,
+          cost_price: costPriceNum,
+          cost_price_currency: costData.costCurrency || null,
           needs_enrichment: false,
           updated_at: new Date().toISOString()
         })
