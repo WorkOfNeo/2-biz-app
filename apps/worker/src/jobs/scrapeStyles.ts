@@ -229,6 +229,19 @@ export async function enrichStyles(ctx: Ctx) {
         return null;
       }).catch(() => null as string | null);
       
+      // Extract country_of_origin from select[name="origin_country_id"]
+      const countryOfOrigin = await page.$eval('select[name="origin_country_id"]', (sel: HTMLSelectElement) => {
+        if (sel && sel.selectedIndex >= 0) {
+          const opt = sel.options[sel.selectedIndex];
+          const text = (opt?.textContent || '').trim();
+          // Skip "-- Select --" option
+          if (text && text !== '-- Select --') {
+            return text;
+          }
+        }
+        return null;
+      }).catch(() => null as string | null);
+      
       // Parse cost price (remove commas, convert to number)
       let costPriceNum: number | null = null;
       if (costData.costPrice) {
@@ -239,7 +252,7 @@ export async function enrichStyles(ctx: Ctx) {
         }
       }
       
-      // Update style with style_type, cost_price, cost_price_currency, customs_tariff_no and clear needs_enrichment flag
+      // Update style with style_type, cost_price, cost_price_currency, customs_tariff_no, country_of_origin and clear needs_enrichment flag
       const { error } = await supabase
         .from('styles')
         .update({
@@ -247,6 +260,7 @@ export async function enrichStyles(ctx: Ctx) {
           cost_price: costPriceNum,
           cost_price_currency: costData.costCurrency || null,
           customs_tariff_no: customsTariff,
+          country_of_origin: countryOfOrigin,
           needs_enrichment: false,
           updated_at: new Date().toISOString()
         })
