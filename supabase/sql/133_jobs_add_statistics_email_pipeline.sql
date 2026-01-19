@@ -5,11 +5,13 @@
 ALTER TABLE public.jobs DROP CONSTRAINT IF EXISTS jobs_type_check;
 
 -- Recreate with all job types including the new one
+-- NOTE: Run SELECT DISTINCT type FROM public.jobs; first to verify all existing types are included
 ALTER TABLE public.jobs ADD CONSTRAINT jobs_type_check CHECK (
   type IN (
     'scrape_customers',
     'scrape_purchase_orders',
     'scrape_styles',
+    'enrich_styles',
     'deep_scrape_styles',
     'update_style_stock',
     'check_stock_fix',
