@@ -188,9 +188,9 @@ function parseExcelFile(file: File): Promise<SheetData[]> {
           }
           
           let totalsBySize: number[];
-          if (totalsRowIndex >= 0) {
+          const totalsRow = totalsRowIndex >= 0 ? rows[totalsRowIndex] : undefined;
+          if (totalsRow) {
             // Use totals row values
-            const totalsRow = rows[totalsRowIndex];
             totalsBySize = sizes.map((_, idx) => {
               const val = totalsRow[idx + 1];
               return typeof val === 'number' ? val : parseInt(String(val || '0').replace(/[^0-9-]/g, ''), 10) || 0;
