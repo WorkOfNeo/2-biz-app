@@ -451,11 +451,13 @@ export default function NoosPage() {
         const rowValues = Array.isArray(row.values) ? row.values.map(v => Number(v) || 0) : [];
         
         if (!existing) {
-          dbAggregated.set(key, { sizes: rowSizes, totals: rowValues });
+          dbAggregated.set(key, { sizes: rowSizes, totals: [...rowValues] });
         } else {
           // Sum values aligned by size
           for (let i = 0; i < rowValues.length && i < existing.totals.length; i++) {
-            existing.totals[i] += rowValues[i];
+            const currentVal = existing.totals[i] ?? 0;
+            const addVal = rowValues[i] ?? 0;
+            existing.totals[i] = currentVal + addVal;
           }
         }
       }
