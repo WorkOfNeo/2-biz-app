@@ -216,6 +216,19 @@ export async function enrichStyles(ctx: Ctx) {
         return { costPrice: priceValue, costCurrency: currencyValue };
       }).catch(() => ({ costPrice: null, costCurrency: null }));
       
+      // Extract customs_tariff_no from select[name="sCustomsTariffNo"]
+      const customsTariff = await page.$eval('select[name="sCustomsTariffNo"]', (sel: HTMLSelectElement) => {
+        if (sel && sel.selectedIndex >= 0) {
+          const opt = sel.options[sel.selectedIndex];
+          const text = (opt?.textContent || '').trim();
+          // Skip "-- Select --" option
+          if (text && text !== '-- Select --') {
+            return text;
+          }
+        }
+        return null;
+      }).catch(() => null as string | null);
+      
       // Parse cost price (remove commas, convert to number)
       let costPriceNum: number | null = null;
       if (costData.costPrice) {
@@ -226,13 +239,14 @@ export async function enrichStyles(ctx: Ctx) {
         }
       }
       
-      // Update style with style_type, cost_price, cost_price_currency and clear needs_enrichment flag
+      // Update style with style_type, cost_price, cost_price_currency, customs_tariff_no and clear needs_enrichment flag
       const { error } = await supabase
         .from('styles')
         .update({
           style_type: typeText || null,
           cost_price: costPriceNum,
           cost_price_currency: costData.costCurrency || null,
+          customs_tariff_no: customsTariff,
           needs_enrichment: false,
           updated_at: new Date().toISOString()
         })
