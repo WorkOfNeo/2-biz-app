@@ -243,7 +243,7 @@ async function handle(req: Request) {
 
   const now = new Date();
   const cph = getCopenhagenTime(now);
-  const results: Array<{ scheduleId: string; scheduleName: string; queued: number; error?: string }> = [];
+  const results: Array<{ scheduleId: string; scheduleName: string; queued: number; error?: string; pipelineJobId?: string }> = [];
   const updatedSchedules: StatisticSchedule[] = [...schedules];
 
   // Check all schedules
