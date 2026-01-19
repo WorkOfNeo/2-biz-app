@@ -2735,14 +2735,17 @@ async function mainLoop() {
 
     const heartbeat = setInterval(() => updateJobHeartbeat(job.id).catch(() => {}), 45_000);
     try {
-      await log(job.id, 'info', 'Job leased');
       await runJob(job);
     // Check if job was cancelled during run; if so, avoid marking as succeeded
     if (await isJobCancelled(job.id)) {
       await log(job.id, 'info', 'Job cancelled (post-run check)');
     } else {
-      await setJobSucceeded(job.id);
-      // Skip verbose "Job succeeded" logs - only log errors and key milestones
+      // Check if job already updated itself (e.g., pipeline jobs manage their own status)
+      const { data: currentJob } = await supabase.from('jobs').select('status').eq('id', job.id).single();
+      if (currentJob?.status === 'running') {
+        // Only set succeeded if job is still running (hasn't self-managed its status)
+        await setJobSucceeded(job.id);
+      }
     }
     } catch (err: any) {
       const message = err?.message ?? String(err);
