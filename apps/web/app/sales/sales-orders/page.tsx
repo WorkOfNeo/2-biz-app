@@ -107,7 +107,7 @@ export default function SalesOrdersPage() {
     
     if (error) throw new Error(error.message);
     return data || [];
-  }, { refreshInterval: isRunning ? 2000 : 10000 });
+  }, { refreshInterval: (running?.status === 'running' || runningJobId !== null) ? 2000 : 10000 });
 
   // Get style names for the style_nos
   const styleNos = React.useMemo(() => {
