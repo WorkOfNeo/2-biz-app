@@ -713,15 +713,18 @@ export default function NoosPage() {
                       {row.styleName && <div className="text-xs text-slate-500">{row.styleName}</div>}
                     </td>
                     <td className="p-2">{row.color}</td>
-                    {row.sizes.map((_, i) => (
-                      <td key={i} className="p-2 text-center">
-                        <div className="text-xs text-slate-500">E: {row.excelTotals[i]}</div>
-                        <div className="text-xs text-slate-500">D: {row.dbTotals[i]}</div>
-                        <div className={`text-xs font-medium ${row.diffs[i] === 0 ? 'text-green-600' : row.diffs[i] > 0 ? 'text-blue-600' : 'text-red-600'}`}>
-                          {row.diffs[i] > 0 ? '+' : ''}{row.diffs[i]}
-                        </div>
-                      </td>
-                    ))}
+                    {row.sizes.map((_, i) => {
+                      const diff = row.diffs[i] ?? 0;
+                      return (
+                        <td key={i} className="p-2 text-center">
+                          <div className="text-xs text-slate-500">E: {row.excelTotals[i] ?? 0}</div>
+                          <div className="text-xs text-slate-500">D: {row.dbTotals[i] ?? 0}</div>
+                          <div className={`text-xs font-medium ${diff === 0 ? 'text-green-600' : diff > 0 ? 'text-blue-600' : 'text-red-600'}`}>
+                            {diff > 0 ? '+' : ''}{diff}
+                          </div>
+                        </td>
+                      );
+                    })}
                     <td className="p-2 text-right">
                       <div className="text-xs text-slate-500">E: {row.excelGrandTotal}</div>
                       <div className="text-xs text-slate-500">D: {row.dbGrandTotal}</div>
