@@ -69,12 +69,18 @@ export default function SalesOrdersPage() {
     let total = 0;
     let currentCustomerId: string | null = null;
     let stage: string = 'initializing';
+    let successCount = 0;
+    let failureCount = 0;
+    let aggregatedKeys = 0;
     
     for (const log of (logs || [])) {
       if (log.msg === 'STEP:processing_customer' && log.data) {
         current = log.data.current || 0;
         total = log.data.total || 0;
         currentCustomerId = log.data.customer_id || null;
+        successCount = log.data.success_so_far || 0;
+        failureCount = log.data.failure_so_far || 0;
+        aggregatedKeys = log.data.aggregated_keys_so_far || 0;
         stage = 'processing';
         break;
       } else if (log.msg === 'STEP:customer_ids_extracted' && log.data) {
@@ -92,7 +98,10 @@ export default function SalesOrdersPage() {
       total,
       customer_id: currentCustomerId,
       stage,
-      percent: total > 0 ? Math.floor((current / total) * 100) : 0
+      percent: total > 0 ? Math.floor((current / total) * 100) : 0,
+      successCount,
+      failureCount,
+      aggregatedKeys
     };
   }, { refreshInterval: 2000 });
 
@@ -345,15 +354,32 @@ export default function SalesOrdersPage() {
                       style={{ width: `${progress.percent}%` }}
                     />
                   </div>
-                  {progress.customer_id && (
-                    <div className="text-xs text-gray-600 font-mono">
-                      Processing customer: {progress.customer_id}
-                    </div>
-                  )}
+                  <div className="flex flex-wrap gap-4 text-xs font-mono tabular-nums">
+                    {progress.customer_id && (
+                      <span className="text-gray-600">
+                        Customer: <span className="font-semibold">{progress.customer_id}</span>
+                      </span>
+                    )}
+                    <span className="text-green-700">
+                      ✓ {progress.successCount.toLocaleString()} success
+                    </span>
+                    {progress.failureCount > 0 && (
+                      <span className="text-red-600">
+                        ✗ {progress.failureCount.toLocaleString()} failed
+                      </span>
+                    )}
+                    {progress.aggregatedKeys > 0 && (
+                      <span className="text-blue-700">
+                        📊 {progress.aggregatedKeys.toLocaleString()} unique items
+                      </span>
+                    )}
+                  </div>
                 </>
               ) : (
                 <div className="text-sm text-gray-600">
-                  {progress?.stage === 'extracted' ? 'Extracted customer IDs, starting to process...' : 'Initializing...'}
+                  {progress?.stage === 'extracted' 
+                    ? `Extracted ${progress?.total?.toLocaleString() || 0} customer IDs, starting to process...` 
+                    : 'Initializing...'}
                 </div>
               )}
             </div>

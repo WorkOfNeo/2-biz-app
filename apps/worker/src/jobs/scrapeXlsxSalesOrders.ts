@@ -53,16 +53,40 @@ export async function scrapeXlsxSalesOrders(ctx: Ctx) {
     
     await log(job.id, 'info', 'STEP:table_loaded');
     
-    // Extract customer IDs from table rows
+    // Click "Show All" button to load all customers (not just first page)
+    try {
+      const showAllBtn = page.locator('button:has-text("Show all"), a:has-text("Show all"), button:has-text("Vis alle"), a:has-text("Vis alle")').first();
+      if (await showAllBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
+        await showAllBtn.click();
+        await page.waitForTimeout(3000); // Wait for table to update
+        await log(job.id, 'info', 'STEP:show_all_clicked');
+      } else {
+        await log(job.id, 'info', 'STEP:show_all_not_found', { message: 'No Show All button found, continuing with visible rows' });
+      }
+    } catch (e: any) {
+      await log(job.id, 'info', 'STEP:show_all_skipped', { reason: e?.message || 'Button not clickable' });
+    }
+    
+    // Wait for table to stabilize after Show All
+    await page.waitForTimeout(2000);
+    
+    // Get row count after Show All
+    const rowCount = await page.evaluate(() => document.querySelectorAll('.app-outlet table tbody tr').length);
+    await log(job.id, 'info', 'STEP:table_row_count', { count: rowCount });
+    
+    // Extract customer IDs from table rows (with deduplication)
     const customerIds = await page.evaluate(() => {
       const rows = document.querySelectorAll('.app-outlet table tbody tr');
-      const ids: string[] = [];
+      const idSet = new Set<string>(); // Use Set for deduplication
       
       for (const row of Array.from(rows)) {
         // Find any <a> tag in this row that contains customer_id= in its href
         const links = row.querySelectorAll('a');
+        let foundForRow = false;
         
         for (const link of Array.from(links)) {
+          if (foundForRow) break; // Only get ONE ID per row
+          
           const href = link.getAttribute('href') || '';
           
           // Look for customer_id= in the href (case insensitive, can be iCustomerID or customer_id)
@@ -77,14 +101,15 @@ export async function scrapeXlsxSalesOrders(ctx: Ctx) {
           for (const pattern of patterns) {
             const match = href.match(pattern);
             if (match && match[1]) {
-              ids.push(match[1]);
-              break; // Found it, move to next row
+              idSet.add(match[1]); // Add to Set (auto-dedupes)
+              foundForRow = true;
+              break; // Found it, move to next link check
             }
           }
         }
       }
       
-      return ids;
+      return Array.from(idSet); // Convert Set back to Array
     });
     
     await log(job.id, 'info', 'STEP:customer_ids_extracted', { count: customerIds.length });
@@ -127,40 +152,64 @@ export async function scrapeXlsxSalesOrders(ctx: Ctx) {
     let failureCount = 0;
     
     // Process each customer sequentially
-    for (const customerId of customersToProcess) {
+    for (let idx = 0; idx < customersToProcess.length; idx++) {
+      const customerId = customersToProcess[idx];
       await ensureNotCancelled(job.id);
       
       processedCount++;
+      const percent = Math.round((processedCount / customersToProcess.length) * 100);
+      
+      // Log progress every customer (frontend polls this)
       await log(job.id, 'progress', 'STEP:processing_customer', { 
         customer_id: customerId, 
         current: processedCount, 
-        total: customersToProcess.length 
+        total: customersToProcess.length,
+        percent,
+        success_so_far: successCount,
+        failure_so_far: failureCount,
+        aggregated_keys_so_far: aggregatedData.size
       });
       
       let tempFilePath: string | null = null;
       
       try {
-        // Download Excel file
+        // Download Excel file using direct HTTP request (more reliable than page.waitForEvent)
         const excelUrl = `${SPY_BASE_URL}/modules/s_orders.add/download_styles_details.php?type=excel&customer_id=${customerId}&customer_ids=${customerId}&season_id=0&delivery_id=0`;
         
         await log(job.id, 'info', 'STEP:downloading_excel', { customer_id: customerId, url: excelUrl });
         
-        // Set up download listener
-        const downloadPromise = page.waitForEvent('download', { timeout: 30_000 });
-        
-        // Navigate to download URL or use direct request
+        // Use direct request from browser context (inherits session cookies)
         const fileContext = page.context();
-        const fileResponse = await fileContext.request.get(excelUrl);
+        let fileResponse;
+        let fileBuffer: Buffer;
         
-        if (!fileResponse.ok()) {
-          throw new Error(`Download failed: ${fileResponse.status()}`);
+        try {
+          fileResponse = await fileContext.request.get(excelUrl, { timeout: 30_000 });
+          
+          if (!fileResponse.ok()) {
+            throw new Error(`Download failed with status: ${fileResponse.status()}`);
+          }
+          
+          fileBuffer = Buffer.from(await fileResponse.body());
+        } catch (downloadErr: any) {
+          await log(job.id, 'error', 'STEP:download_failed', { 
+            customer_id: customerId, 
+            error: downloadErr?.message || String(downloadErr),
+            url: excelUrl
+          });
+          failureCount++;
+          continue; // Skip to next customer
         }
         
-        const fileBuffer = await fileResponse.body();
+        if (!fileBuffer || fileBuffer.length === 0) {
+          await log(job.id, 'error', 'STEP:download_empty', { customer_id: customerId });
+          failureCount++;
+          continue; // Skip to next customer
+        }
         
         // Save to temporary file
         tempFilePath = join(tmpdir(), `sales_order_${customerId}_${Date.now()}.xlsx`);
-        writeFileSync(tempFilePath, Buffer.from(fileBuffer));
+        writeFileSync(tempFilePath, fileBuffer);
         
         await log(job.id, 'info', 'STEP:excel_downloaded', { customer_id: customerId, size: fileBuffer.length });
         
