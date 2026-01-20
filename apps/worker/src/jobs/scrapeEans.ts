@@ -17,6 +17,30 @@ export async function scrapeEans(ctx: Ctx) {
   const { job, page, log, saveResult, setJobFailedOrRequeue, setJobSucceeded, ensureNotCancelled, supabase, SPY_BASE_URL } = ctx;
   try {
     await log(job.id, 'info', 'STEP:ean_begin');
+    
+    // Check if this is part of a pipeline and wait for previous step
+    const payload = job.payload as any;
+    if (payload?.requestedBy === 'cron_weekly_style_refresh' && payload?.pipelineStep === 4 && payload?.runKey) {
+      const runKey = payload.runKey;
+      // Check if deep_scrape_styles (pipelineStep 3) is complete
+      const { data: prevJob } = await supabase
+        .from('jobs')
+        .select('id, status, finished_at')
+        .eq('type', 'deep_scrape_styles')
+        .contains('payload', { requestedBy: 'cron_weekly_style_refresh', runKey, pipelineStep: 3 })
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      
+      if (!prevJob || prevJob.status !== 'succeeded') {
+        await log(job.id, 'info', 'WAITING:deep_scrape_styles_not_complete', { 
+          prevJobStatus: prevJob?.status || 'not_found',
+          runKey 
+        });
+        throw new Error('WAITING_FOR_DEEP_SCRAPE_STYLES');
+      }
+      await log(job.id, 'info', 'STEP:deep_scrape_styles_complete', { prevJobId: prevJob.id });
+    }
     // Flush table once at the start
     try {
       await supabase.from('style_color_eans').delete().neq('ean', '__keep__');

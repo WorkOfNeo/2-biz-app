@@ -15,6 +15,30 @@ export async function deepScrapeStyles(ctx: Ctx) {
   const { job, page, log, saveResult, ensureNotCancelled, supabase, SPY_BASE_URL } = ctx;
   await ensureNotCancelled(job.id);
   await log(job.id, 'info', 'STEP:deep_styles_begin');
+  
+  // Check if this is part of a pipeline and wait for previous step
+  const payload = job.payload as any;
+  if (payload?.requestedBy === 'cron_weekly_style_refresh' && payload?.pipelineStep === 3 && payload?.runKey) {
+    const runKey = payload.runKey;
+    // Check if enrich_styles (pipelineStep 2) is complete
+    const { data: prevJob } = await supabase
+      .from('jobs')
+      .select('id, status, finished_at')
+      .eq('type', 'enrich_styles')
+      .contains('payload', { requestedBy: 'cron_weekly_style_refresh', runKey, pipelineStep: 2 })
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    
+    if (!prevJob || prevJob.status !== 'succeeded') {
+      await log(job.id, 'info', 'WAITING:enrich_styles_not_complete', { 
+        prevJobStatus: prevJob?.status || 'not_found',
+        runKey 
+      });
+      throw new Error('WAITING_FOR_ENRICH_STYLES');
+    }
+    await log(job.id, 'info', 'STEP:enrich_styles_complete', { prevJobId: prevJob.id });
+  }
   // Load styles including internal id to map colors (skip those without links)
   const { data: styles } = await supabase
     .from('styles')
