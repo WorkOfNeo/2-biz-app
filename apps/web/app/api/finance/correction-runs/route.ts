@@ -124,14 +124,27 @@ function buildAntal(type: string, qty: number): number {
 }
 
 function buildNonEu(eksportTil: string): string {
-  // If NOT EU, return 'Ja'. If EU, leave empty.
+  // Column K contains the destination. 
+  // If destination IS EU → Non-EU column should be EMPTY
+  // If destination is NOT EU → Non-EU column should be "Ja"
   const val = String(eksportTil || '').trim().toLowerCase();
-  // Check if it's EU
-  if (val === 'eu' || val === 'yes' || val === 'ja' || val.includes('eu')) {
-    return ''; // It's EU, so Non-EU is empty
+  
+  console.log('[buildNonEu] input:', eksportTil, '→ normalized:', val);
+  
+  // Empty value = unknown, leave empty
+  if (!val) {
+    return '';
   }
-  // It's not EU, so Non-EU = 'Ja'
-  return val ? 'Ja' : '';
+  
+  // Check if destination IS EU (return empty for Non-EU column)
+  // Common values indicating EU: "EU", "Yes", "Ja", "Y"
+  if (val === 'eu' || val === 'yes' || val === 'ja' || val === 'y') {
+    return ''; // It IS EU, so Non-EU is empty
+  }
+  
+  // If it says "No", "Nej", "N", or "Non-EU", "Non EU" → it's NOT EU
+  // Any other value (like country codes) is assumed to be non-EU destination
+  return 'Ja';
 }
 
 // POST: create a new correction run
