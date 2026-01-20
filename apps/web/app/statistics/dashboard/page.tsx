@@ -357,6 +357,27 @@ function ScrapesTab() {
   const runNow = async (schedule: ScrapeSchedule, withStyleDetails = false) => {
     setRunningJob(schedule.id);
     try {
+      // Special handling for weekly_style_refresh - call the CRON route to enqueue full pipeline
+      if (schedule.key === 'weekly_style_refresh') {
+        const res = await fetch('/api/cron/weekly-style-refresh?debug=1&manual=1', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+        });
+        
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(text || 'Failed to enqueue pipeline');
+        }
+        
+        const data = await res.json();
+        if (data.skipped) {
+          alert(`Pipeline skipped: ${data.reason}`);
+        } else {
+          alert(`Pipeline enqueued: ${data.enqueued} jobs (${data.pipeline?.map((p: any) => p.type).join(', ')})`);
+        }
+        return;
+      }
+      
       // Map schedule key to job type
       const jobTypeMap: Record<string, string> = {
         check_stock_fix: 'check_stock_fix',
@@ -364,7 +385,6 @@ function ScrapesTab() {
         scrape_purchase_orders: 'scrape_purchase_orders',
         scrape_top_styles: 'scrape_top_styles',
         export_statistics: 'export_overview',
-        weekly_style_refresh: 'scrape_styles',
         weekly_customer_sync: 'scrape_customers',
       };
       

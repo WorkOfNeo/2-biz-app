@@ -61,20 +61,25 @@ async function handle(req: Request) {
 
   const now = new Date();
   const cph = getCopenhagenParts(now);
+  
+  // Check if this is a manual trigger (from dashboard) - skip time checks
+  const isManualTrigger = urlObj.searchParams.get('manual') === '1' || (req as any).headers?.get?.('x-manual-trigger') === 'true';
+  
+  if (!isManualTrigger) {
+    // Check day of week
+    if (schedule.days_of_week !== null && !schedule.days_of_week.includes(cph.dayOfWeek)) {
+      const res = { skipped: true, reason: 'not a scheduled day', cph, scheduledDays: schedule.days_of_week };
+      return new Response(JSON.stringify(debug ? { ...res, debug: true } : res), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
 
-  // Check day of week
-  if (schedule.days_of_week !== null && !schedule.days_of_week.includes(cph.dayOfWeek)) {
-    const res = { skipped: true, reason: 'not a scheduled day', cph, scheduledDays: schedule.days_of_week };
-    return new Response(JSON.stringify(debug ? { ...res, debug: true } : res), { status: 200, headers: { 'Content-Type': 'application/json' } });
-  }
+    // Check hour and time window
+    const isScheduledHour = schedule.hours.includes(cph.hour);
+    const isInWindow = cph.minute >= 0 && cph.minute <= 9;
 
-  // Check hour and time window
-  const isScheduledHour = schedule.hours.includes(cph.hour);
-  const isInWindow = cph.minute >= 0 && cph.minute <= 9;
-
-  if (!isScheduledHour || !isInWindow) {
-    const res = { skipped: true, reason: 'outside scheduled window', cph, scheduledHours: schedule.hours };
-    return new Response(JSON.stringify(debug ? { ...res, debug: true } : res), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    if (!isScheduledHour || !isInWindow) {
+      const res = { skipped: true, reason: 'outside scheduled window', cph, scheduledHours: schedule.hours };
+      return new Response(JSON.stringify(debug ? { ...res, debug: true } : res), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
   }
 
   const runKey = `weekly_style_refresh:${cph.isoDate}`;
