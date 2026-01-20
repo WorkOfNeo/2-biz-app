@@ -2788,8 +2788,17 @@ async function mainLoop() {
       attempts: job.attempts,
       max_attempts: job.max_attempts,
       scheduled_for: (job as any).scheduled_for || null,
-      payload: job.payload
+      payload: job.payload,
+      pipelineStep: (job.payload as any)?.pipelineStep || null,
+      runKey: (job.payload as any)?.runKey || null
     });
+    
+    // Log if this is part of a pipeline
+    const payload = job.payload as any;
+    if (payload?.requestedBy === 'cron_weekly_style_refresh' && payload?.pipelineStep) {
+      // eslint-disable-next-line no-console
+      console.log(`[worker] Pipeline job: step ${payload.pipelineStep}/${payload.pipelineStep === 1 ? '4' : payload.pipelineStep === 2 ? '4' : payload.pipelineStep === 3 ? '4' : '4'} (${job.type})`);
+    }
 
     const heartbeat = setInterval(() => updateJobHeartbeat(job.id).catch(() => {}), 45_000);
     try {
