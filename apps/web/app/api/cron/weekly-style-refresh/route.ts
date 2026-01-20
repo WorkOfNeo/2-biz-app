@@ -1,6 +1,6 @@
 // Weekly Style Refresh - Configurable day/time (Copenhagen)
 // Reads schedule from scrape_schedules table (configurable via UI)
-// Pipeline: scrape_styles → enrich_styles → deep_scrape_styles → scrape_eans → check_stock_fix (autoFix) → export_stock_list
+// Pipeline: scrape_styles → enrich_styles → deep_scrape_styles → scrape_eans
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
@@ -97,7 +97,7 @@ async function handle(req: Request) {
   const { data: running } = await supabase
     .from('jobs')
     .select('id, type')
-    .in('type', ['scrape_styles', 'enrich_styles', 'deep_scrape_styles', 'scrape_eans', 'check_stock_fix', 'update_style_stock'])
+    .in('type', ['scrape_styles', 'enrich_styles', 'deep_scrape_styles', 'scrape_eans', 'update_style_stock'])
     .in('status', ['queued', 'running'])
     .limit(1);
 
@@ -106,49 +106,36 @@ async function handle(req: Request) {
     return new Response(JSON.stringify(debug ? { ...res, debug: true } : res), { status: 200, headers: { 'Content-Type': 'application/json' } });
   }
 
-  // Enqueue the full pipeline with scheduled_for delays to sequence them
-  const nowTime = now.getTime();
+  // Enqueue the full pipeline - all jobs enqueued immediately, each waits for previous step to complete
   const inserts = [
-    // Step 1: scrape_styles (immediately)
+    // Step 1: scrape_styles (runs immediately)
     {
       type: 'scrape_styles',
       payload: { requestedBy: 'cron_weekly_style_refresh', runKey, pipelineStep: 1 },
       status: 'queued',
       max_attempts: 3,
-      scheduled_for: null, // Run immediately
     },
-    // Step 2: enrich_styles (after 15 min) - extracts style_type, cost_price, cost_price_currency, customs_tariff_no, country_of_origin
+    // Step 2: enrich_styles (waits for scrape_styles to complete) - extracts style_type, cost_price, cost_price_currency, customs_tariff_no, country_of_origin
     {
       type: 'enrich_styles',
       payload: { requestedBy: 'cron_weekly_style_refresh', runKey, pipelineStep: 2 },
       status: 'queued',
       max_attempts: 3,
-      scheduled_for: new Date(nowTime + 15 * 60 * 1000).toISOString(),
     },
-    // Step 3: deep_scrape_styles (after 30 min)
+    // Step 3: deep_scrape_styles (waits for enrich_styles to complete)
     {
       type: 'deep_scrape_styles',
       payload: { requestedBy: 'cron_weekly_style_refresh', runKey, pipelineStep: 3 },
       status: 'queued',
       max_attempts: 3,
-      scheduled_for: new Date(nowTime + 30 * 60 * 1000).toISOString(),
     },
-    // Step 4: scrape_eans (after 2 hours)
+    // Step 4: scrape_eans (waits for deep_scrape_styles to complete)
     {
       type: 'scrape_eans',
       payload: { requestedBy: 'cron_weekly_style_refresh', runKey, pipelineStep: 4 },
       status: 'queued',
       max_attempts: 3,
       queue: 'stock',
-      scheduled_for: new Date(nowTime + 2 * 60 * 60 * 1000).toISOString(),
-    },
-    // Step 5: check_stock_fix with autoFix (after 4 hours)
-    {
-      type: 'check_stock_fix',
-      payload: { requestedBy: 'cron_weekly_style_refresh', runKey, pipelineStep: 5, autoFix: true },
-      status: 'queued',
-      max_attempts: 3,
-      scheduled_for: new Date(nowTime + 4 * 60 * 60 * 1000).toISOString(),
     },
   ];
 
@@ -158,14 +145,11 @@ async function handle(req: Request) {
     jobs: inserts.map(i => ({
       type: i.type,
       step: (i.payload as any).pipelineStep,
-      scheduled_for: (i as any).scheduled_for,
-      delay_minutes: (i as any).scheduled_for 
-        ? Math.round((new Date((i as any).scheduled_for).getTime() - nowTime) / 60000)
-        : 0
+      queue: (i as any).queue || 'default'
     }))
   });
 
-  const { data: insertedJobs, error: insErr } = await supabase.from('jobs').insert(inserts as any).select('id, type, scheduled_for');
+  const { data: insertedJobs, error: insErr } = await supabase.from('jobs').insert(inserts as any).select('id, type');
   if (insErr) {
     console.error('[weekly-style-refresh] Failed to enqueue jobs:', insErr);
     const errRes = { error: 'enqueue weekly refresh pipeline failed', detail: insErr.message };
@@ -174,7 +158,7 @@ async function handle(req: Request) {
 
   console.log('[weekly-style-refresh] Successfully enqueued jobs:', {
     count: insertedJobs?.length || 0,
-    jobIds: insertedJobs?.map(j => ({ id: j.id, type: j.type, scheduled_for: j.scheduled_for }))
+    jobIds: insertedJobs?.map(j => ({ id: j.id, type: j.type }))
   });
 
   const res = { 
@@ -183,10 +167,7 @@ async function handle(req: Request) {
     pipeline: inserts.map(i => ({ 
       type: i.type, 
       step: (i.payload as any).pipelineStep,
-      scheduled_for: (i as any).scheduled_for,
-      delay_minutes: (i as any).scheduled_for 
-        ? Math.round((new Date((i as any).scheduled_for).getTime() - nowTime) / 60000)
-        : 0
+      queue: (i as any).queue || 'default'
     })),
     jobIds: insertedJobs?.map(j => j.id)
   };
