@@ -350,6 +350,36 @@ export default function CorrectionPage() {
     }
   }
 
+  async function deleteRun(run: Run) {
+    if (!confirm(`Delete run "${run.toldref || run.style_name || run.style_no}"?\n\nThis will permanently delete the run and all its rows.`)) {
+      return;
+    }
+    
+    setError(null);
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/finance/correction-runs/${run.id}`, {
+        method: 'DELETE',
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Failed to delete run');
+      }
+
+      // Refresh the list
+      await fetchRecentRuns();
+      
+      // If we were viewing this run, reset state
+      if (runId === run.id) {
+        resetState();
+      }
+    } catch (e: any) {
+      setError(e?.message || 'Failed to delete run');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="space-y-4">
       <div>
@@ -550,13 +580,22 @@ export default function CorrectionPage() {
                         <td className="border px-2 py-1 whitespace-nowrap">{dateRange}</td>
                         <td className="border px-2 py-1 text-right">{run.row_count.toLocaleString('da-DK')}</td>
                         <td className="border px-2 py-1">
-                          <button
-                            className="text-blue-600 hover:underline"
-                            onClick={() => loadRun(run)}
-                            disabled={busy}
-                          >
-                            Load
-                          </button>
+                          <div className="flex items-center gap-2">
+                            <button
+                              className="text-blue-600 hover:underline"
+                              onClick={() => loadRun(run)}
+                              disabled={busy}
+                            >
+                              Load
+                            </button>
+                            <button
+                              className="text-red-600 hover:underline"
+                              onClick={() => deleteRun(run)}
+                              disabled={busy}
+                            >
+                              Delete
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     );
