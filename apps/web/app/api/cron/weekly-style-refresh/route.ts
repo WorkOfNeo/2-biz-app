@@ -1,6 +1,6 @@
 // Weekly Style Refresh - Configurable day/time (Copenhagen)
 // Reads schedule from scrape_schedules table (configurable via UI)
-// Pipeline: scrape_styles → enrich_styles → deep_scrape_styles → scrape_eans
+// Pipeline: scrape_styles → deep_scrape_styles → scrape_eans
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
@@ -102,7 +102,7 @@ async function handle(req: Request) {
   const { data: running } = await supabase
     .from('jobs')
     .select('id, type')
-    .in('type', ['scrape_styles', 'enrich_styles', 'deep_scrape_styles', 'scrape_eans', 'update_style_stock'])
+    .in('type', ['scrape_styles', 'deep_scrape_styles', 'scrape_eans', 'update_style_stock'])
     .in('status', ['queued', 'running'])
     .limit(1);
 
@@ -120,24 +120,17 @@ async function handle(req: Request) {
       status: 'queued',
       max_attempts: 3,
     },
-    // Step 2: enrich_styles (waits for scrape_styles to complete) - extracts style_type, cost_price, cost_price_currency, customs_tariff_no, country_of_origin
+    // Step 2: deep_scrape_styles (waits for scrape_styles to complete)
     {
-      type: 'enrich_styles',
+      type: 'deep_scrape_styles',
       payload: { requestedBy: 'cron_weekly_style_refresh', runKey, pipelineStep: 2 },
       status: 'queued',
       max_attempts: 3,
     },
-    // Step 3: deep_scrape_styles (waits for enrich_styles to complete)
-    {
-      type: 'deep_scrape_styles',
-      payload: { requestedBy: 'cron_weekly_style_refresh', runKey, pipelineStep: 3 },
-      status: 'queued',
-      max_attempts: 3,
-    },
-    // Step 4: scrape_eans (waits for deep_scrape_styles to complete)
+    // Step 3: scrape_eans (waits for deep_scrape_styles to complete)
     {
       type: 'scrape_eans',
-      payload: { requestedBy: 'cron_weekly_style_refresh', runKey, pipelineStep: 4 },
+      payload: { requestedBy: 'cron_weekly_style_refresh', runKey, pipelineStep: 3 },
       status: 'queued',
       max_attempts: 3,
       queue: 'stock',

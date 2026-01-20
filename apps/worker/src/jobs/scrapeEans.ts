@@ -20,14 +20,14 @@ export async function scrapeEans(ctx: Ctx) {
     
     // Check if this is part of a pipeline and wait for previous step
     const payload = job.payload as any;
-    if (payload?.requestedBy === 'cron_weekly_style_refresh' && payload?.pipelineStep === 4 && payload?.runKey) {
+    if (payload?.requestedBy === 'cron_weekly_style_refresh' && payload?.pipelineStep === 3 && payload?.runKey) {
       const runKey = payload.runKey;
-      // Check if deep_scrape_styles (pipelineStep 3) is complete
+      // Check if deep_scrape_styles (pipelineStep 2) is complete
       const { data: prevJob } = await supabase
         .from('jobs')
         .select('id, status, finished_at')
         .eq('type', 'deep_scrape_styles')
-        .contains('payload', { requestedBy: 'cron_weekly_style_refresh', runKey, pipelineStep: 3 })
+        .contains('payload', { requestedBy: 'cron_weekly_style_refresh', runKey, pipelineStep: 2 })
         .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle();

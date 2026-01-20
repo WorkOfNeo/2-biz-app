@@ -2797,7 +2797,7 @@ async function mainLoop() {
     const payload = job.payload as any;
     if (payload?.requestedBy === 'cron_weekly_style_refresh' && payload?.pipelineStep) {
       // eslint-disable-next-line no-console
-      console.log(`[worker] Pipeline job: step ${payload.pipelineStep}/${payload.pipelineStep === 1 ? '4' : payload.pipelineStep === 2 ? '4' : payload.pipelineStep === 3 ? '4' : '4'} (${job.type})`);
+      console.log(`[worker] Pipeline job: step ${payload.pipelineStep}/3 (${job.type})`);
     }
 
     const heartbeat = setInterval(() => updateJobHeartbeat(job.id).catch(() => {}), 45_000);
