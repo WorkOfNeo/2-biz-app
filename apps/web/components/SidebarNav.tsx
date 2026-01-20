@@ -136,6 +136,7 @@ export function SidebarNav() {
   const financeLinks = [
     can('/finance/csv-skat') ? <NavLink key="fin-skat" href="/finance/csv-skat" label="CSV - Skat" /> : null,
     can('/finance/customs') ? <NavLink key="fin-customs" href="/finance/customs" label="CUSTOMS" /> : null,
+    can('/finance/correction') ? <NavLink key="fin-correction" href="/finance/correction" label="CORRECTION" /> : null,
   ].filter(Boolean) as any[];
   const stylesLinks = [
     can('/styles') ? <NavLink key="s" href="/styles" label="Styles" /> : null,
