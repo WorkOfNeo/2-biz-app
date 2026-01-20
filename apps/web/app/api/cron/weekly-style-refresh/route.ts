@@ -82,20 +82,26 @@ async function handle(req: Request) {
     }
   }
 
-  const runKey = `weekly_style_refresh:${cph.isoDate}`;
+  // For manual triggers, use a unique runKey with timestamp so it's always allowed
+  // For automated triggers, use date-based runKey for dedupe
+  const runKey = isManualTrigger 
+    ? `weekly_style_refresh:manual:${now.getTime()}` 
+    : `weekly_style_refresh:${cph.isoDate}`;
 
-  // Dedupe: if we already enqueued this week's refresh, do nothing
-  const { data: existing } = await supabase
-    .from('jobs')
-    .select('id,status')
-    .eq('type', 'scrape_styles')
-    .contains('payload', { requestedBy: 'cron_weekly_style_refresh', runKey })
-    .order('created_at', { ascending: false })
-    .limit(1);
+  // Dedupe: if we already enqueued this week's refresh, do nothing (skip for manual triggers)
+  if (!isManualTrigger) {
+    const { data: existing } = await supabase
+      .from('jobs')
+      .select('id,status')
+      .eq('type', 'scrape_styles')
+      .contains('payload', { requestedBy: 'cron_weekly_style_refresh', runKey })
+      .order('created_at', { ascending: false })
+      .limit(1);
 
-  if ((existing ?? []).length > 0) {
-    const res = { skipped: true, reason: 'already enqueued this week', runKey, existingJobId: (existing as any)[0]?.id };
-    return new Response(JSON.stringify(debug ? { ...res, debug: true } : res), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    if ((existing ?? []).length > 0) {
+      const res = { skipped: true, reason: 'already enqueued this week', runKey, existingJobId: (existing as any)[0]?.id };
+      return new Response(JSON.stringify(debug ? { ...res, debug: true } : res), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
   }
 
   // Check if any pipeline job is already running
