@@ -92,7 +92,7 @@ function buildReference(type: string, delivery: string): string {
   } else if (t === 'correction') {
     return 'Correction';
   } else if (t === 'purchase') {
-    return `Purchase ${del}`;
+    return `Purchase - PO ${del}`;
   }
   return del;
 }
