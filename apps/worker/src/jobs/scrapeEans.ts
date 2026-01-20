@@ -41,18 +41,39 @@ export async function scrapeEans(ctx: Ctx) {
       }
       await log(job.id, 'info', 'STEP:deep_scrape_styles_complete', { prevJobId: prevJob.id });
     }
-    // Flush table once at the start
-    try {
-      await supabase.from('style_color_eans').delete().neq('ean', '__keep__');
-      await log(job.id, 'info', 'STEP:ean_flushed');
-    } catch (e: any) {
-      await log(job.id, 'error', 'STEP:ean_flush_failed', { error: e?.message || String(e) });
+    
+    // Check if we're only scraping specific styles (single-style mode)
+    const styleNosFilter = Array.isArray(payload?.styleNos) ? (payload.styleNos as string[]) : [];
+    const isSingleStyleMode = styleNosFilter.length > 0;
+    
+    if (isSingleStyleMode) {
+      await log(job.id, 'info', 'STEP:ean_single_mode', { styleNos: styleNosFilter });
+      // In single-style mode, only delete EANs for these specific styles (not the whole table)
+      try {
+        await supabase.from('style_color_eans').delete().in('style_no', styleNosFilter);
+        await log(job.id, 'info', 'STEP:ean_flushed_filtered', { styleNos: styleNosFilter });
+      } catch (e: any) {
+        await log(job.id, 'error', 'STEP:ean_flush_filtered_failed', { error: e?.message || String(e) });
+      }
+    } else {
+      // Flush table once at the start (full scrape mode)
+      try {
+        await supabase.from('style_color_eans').delete().neq('ean', '__keep__');
+        await log(job.id, 'info', 'STEP:ean_flushed');
+      } catch (e: any) {
+        await log(job.id, 'error', 'STEP:ean_flush_failed', { error: e?.message || String(e) });
+      }
     }
+    
     // Load styles with links
-    const { data: styles } = await supabase.from('styles').select('id, style_no, link_href');
+    let stylesQuery = supabase.from('styles').select('id, style_no, link_href');
+    if (isSingleStyleMode) {
+      stylesQuery = stylesQuery.in('style_no', styleNosFilter);
+    }
+    const { data: styles } = await stylesQuery;
     const list = (styles ?? []) as Array<{ id: string; style_no: string; link_href: string | null }>;
     if (list.length === 0) {
-      await saveResult(job.id, 'EAN scrape: no styles', { count: 0 });
+      await saveResult(job.id, 'EAN scrape: no styles', { count: 0, filtered: isSingleStyleMode });
       await setJobSucceeded(job.id);
       return;
     }

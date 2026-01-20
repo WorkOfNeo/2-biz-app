@@ -58,6 +58,7 @@ export default function StyleDetailPage({ params }: { params: { styleNo: string 
   const styleNo = decodeURIComponent(params.styleNo);
   const [updatingColorId, setUpdatingColorId] = React.useState<string | null>(null);
   const [scraping, setScraping] = React.useState<boolean>(false);
+  const [fullScraping, setFullScraping] = React.useState<boolean>(false);
   const [scrapeMessage, setScrapeMessage] = React.useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [expandedColors, setExpandedColors] = React.useState<Set<string>>(new Set());
 
@@ -219,6 +220,104 @@ export default function StyleDetailPage({ params }: { params: { styleNo: string 
     } catch (e: any) {
       setScraping(false);
       setScrapeMessage({ type: 'error', text: e?.message || 'Failed to enqueue scrape job' });
+    }
+  }
+
+  // Full scrape: Stock + Deep Scrape (enrichment, colors, seasons) + EANs
+  async function fullScrapeStyle() {
+    try {
+      setFullScraping(true);
+      setScrapeMessage(null);
+      
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        throw new Error('Not signed in');
+      }
+
+      const basePayload = {
+        styleNos: [styleNo],
+        requestedBy: session.user.email || 'style-detail-page-full'
+      };
+
+      // Enqueue all three jobs
+      const jobs = [
+        { type: 'update_style_stock', payload: basePayload },
+        { type: 'deep_scrape_styles', payload: basePayload },
+        { type: 'scrape_eans', payload: basePayload }
+      ];
+
+      const jobIds: string[] = [];
+      for (const job of jobs) {
+        const res = await fetch('/api/enqueue', {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json', 
+            Authorization: `Bearer ${session.access_token}` 
+          },
+          body: JSON.stringify(job)
+        });
+
+        if (!res.ok) {
+          const txt = await res.text().catch(() => '');
+          throw new Error(`Failed to enqueue ${job.type}: ${txt || res.status}`);
+        }
+
+        const { jobId } = await res.json();
+        jobIds.push(jobId);
+      }
+
+      setScrapeMessage({ type: 'success', text: `Full scrape started (3 jobs: Stock, Deep Enrich, EANs)` });
+
+      // Poll for all jobs to complete
+      const pollInterval = setInterval(async () => {
+        try {
+          const { data: jobsData, error: jobsError } = await supabase
+            .from('jobs')
+            .select('id, type, status')
+            .in('id', jobIds);
+
+          if (jobsError) {
+            console.error('Error checking job status:', jobsError);
+            return;
+          }
+
+          const statuses = (jobsData ?? []).map((j: any) => j.status);
+          const allDone = statuses.every((s: string) => ['succeeded', 'failed', 'cancelled'].includes(s));
+
+          if (allDone) {
+            clearInterval(pollInterval);
+            setFullScraping(false);
+            
+            const succeeded = statuses.filter((s: string) => s === 'succeeded').length;
+            const failed = statuses.filter((s: string) => s === 'failed').length;
+            
+            if (failed === 0) {
+              setScrapeMessage({ type: 'success', text: `Full scrape completed! All ${succeeded} jobs succeeded.` });
+              // Refresh all data
+              await mutateStockData();
+              await mutateColors();
+              await mutateMeta();
+              setTimeout(() => setScrapeMessage(null), 5000);
+            } else {
+              setScrapeMessage({ type: 'error', text: `Full scrape finished: ${succeeded} succeeded, ${failed} failed. Check Jobs page.` });
+            }
+          }
+        } catch (err) {
+          console.error('Error polling job status:', err);
+        }
+      }, 3000);
+
+      // Stop polling after 10 minutes
+      setTimeout(() => {
+        clearInterval(pollInterval);
+        if (fullScraping) {
+          setFullScraping(false);
+          setScrapeMessage({ type: 'error', text: 'Full scrape is taking longer than expected. Check the Jobs page for status.' });
+        }
+      }, 600000);
+    } catch (e: any) {
+      setFullScraping(false);
+      setScrapeMessage({ type: 'error', text: e?.message || 'Failed to enqueue full scrape' });
     }
   }
 
@@ -482,12 +581,20 @@ export default function StyleDetailPage({ params }: { params: { styleNo: string 
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <button
+            className="text-sm px-4 py-2 rounded-lg bg-indigo-600 text-white font-medium hover:bg-indigo-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors shadow-sm"
+            onClick={fullScrapeStyle}
+            disabled={fullScraping || scraping}
+            title="Full scrape: Stock + Deep Enrich + EANs"
+          >
+            {fullScraping ? 'Full Scraping...' : 'Full Scrape'}
+          </button>
+          <button
             className="text-sm px-4 py-2 rounded-lg bg-blue-600 text-white font-medium hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors shadow-sm"
             onClick={scrapeThisStyle}
-            disabled={scraping}
-            title="Scrape stock data for this style"
+            disabled={scraping || fullScraping}
+            title="Scrape stock data only"
           >
-            {scraping ? 'Scraping...' : 'Scrape Stock'}
+            {scraping ? 'Scraping...' : 'Stock Only'}
           </button>
           {has('admin') && (
             <button

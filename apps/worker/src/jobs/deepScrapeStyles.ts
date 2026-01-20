@@ -39,15 +39,30 @@ export async function deepScrapeStyles(ctx: Ctx) {
     }
     await log(job.id, 'info', 'STEP:scrape_styles_complete', { prevJobId: prevJob.id });
   }
+  // Check if we're only scraping specific styles (single-style mode)
+  const styleNosFilter = Array.isArray(payload?.styleNos) ? (payload.styleNos as string[]) : [];
+  const isSingleStyleMode = styleNosFilter.length > 0;
+  
+  if (isSingleStyleMode) {
+    await log(job.id, 'info', 'STEP:deep_styles_single_mode', { styleNos: styleNosFilter });
+  }
+  
   // Load styles including internal id to map colors (skip those without links)
-  const { data: styles } = await supabase
+  let stylesQuery = supabase
     .from('styles')
     .select('id, style_no, link_href')
     .not('link_href', 'is', null)
     .neq('link_href', '');
+  
+  // Apply styleNos filter if provided
+  if (isSingleStyleMode) {
+    stylesQuery = stylesQuery.in('style_no', styleNosFilter);
+  }
+  
+  const { data: styles } = await stylesQuery;
   if (!styles || styles.length === 0) {
-    await saveResult(job.id, 'Deep styles: no styles', { count: 0 });
-    await log(job.id, 'info', 'STEP:complete', { upserted: 0 });
+    await saveResult(job.id, 'Deep styles: no styles', { count: 0, filtered: isSingleStyleMode, requested: styleNosFilter });
+    await log(job.id, 'info', 'STEP:complete', { upserted: 0, filtered: isSingleStyleMode });
     return;
   }
   // Pre-fetch all seasons once (optimization: avoid repeated queries)
