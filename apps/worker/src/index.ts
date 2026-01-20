@@ -111,11 +111,13 @@ async function leaseNextJob(): Promise<Nullable<JobRow>> {
       
       if (waitingJobs && waitingJobs.length > 0) {
         const nextJob = waitingJobs[0];
-        const waitTime = new Date(nextJob.scheduled_for).getTime() - now.getTime();
-        // Only log every 30 seconds to avoid spam
-        if (Date.now() % 30000 < 2000) {
-          // eslint-disable-next-line no-console
-          console.log(`[worker] No jobs ready. ${waitingJobs.length} job(s) waiting for scheduled time. Next: ${nextJob.type} at ${nextJob.scheduled_for} (in ${Math.round(waitTime / 1000)}s)`);
+        if (nextJob && nextJob.scheduled_for) {
+          const waitTime = new Date(nextJob.scheduled_for).getTime() - now.getTime();
+          // Only log every 30 seconds to avoid spam
+          if (Date.now() % 30000 < 2000) {
+            // eslint-disable-next-line no-console
+            console.log(`[worker] No jobs ready. ${waitingJobs.length} job(s) waiting for scheduled time. Next: ${nextJob.type} at ${nextJob.scheduled_for} (in ${Math.round(waitTime / 1000)}s)`);
+          }
         }
       }
       return null;
