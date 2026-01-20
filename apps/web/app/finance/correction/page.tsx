@@ -438,7 +438,7 @@ export default function CorrectionPage() {
           <h1 className="text-2xl font-bold tracking-tight">CORRECTION</h1>
         </div>
         {step === 'preview' && (
-          <Badge variant="secondary" className="text-sm">
+          <Badge className="text-sm bg-slate-100 text-slate-700">
             {outputRows.length.toLocaleString('da-DK')} rækker
           </Badge>
         )}
@@ -482,10 +482,10 @@ export default function CorrectionPage() {
           )}
           {styleNo && step === 'upload' && (
             <div className="flex flex-wrap gap-2">
-              <Badge variant="outline">Style: {styleNo}</Badge>
-              {fileTariff && <Badge variant="outline">Tariff: {fileTariff}</Badge>}
+              <Badge className="border-slate-300">Style: {styleNo}</Badge>
+              {fileTariff && <Badge className="border-slate-300">Tariff: {fileTariff}</Badge>}
               {inputRows.length > 0 && (
-                <Badge variant="secondary">{inputRows.length.toLocaleString('da-DK')} rows parsed</Badge>
+                <Badge className="bg-slate-100 text-slate-700">{inputRows.length.toLocaleString('da-DK')} rows parsed</Badge>
               )}
             </div>
           )}
@@ -551,7 +551,7 @@ export default function CorrectionPage() {
               <CardTitle className="text-base font-semibold">
                 Output Data
               </CardTitle>
-              <Badge variant="secondary">{outputRows.length.toLocaleString('da-DK')} rows</Badge>
+              <Badge className="bg-slate-100 text-slate-700">{outputRows.length.toLocaleString('da-DK')} rows</Badge>
             </CardHeader>
             <CardContent className="p-0">
               <div className="overflow-x-auto max-h-[600px] overflow-y-auto border-t">
