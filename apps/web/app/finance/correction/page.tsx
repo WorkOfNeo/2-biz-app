@@ -83,7 +83,7 @@ const OUTPUT_COLUMNS = [
   'Valuta (Original)',
   'Toldtariff',
   'Oprindelsesland',
-  'Ny toldlager',
+  'Nyt toldlager',
   'Dato',
   'Day',
   'Month',
