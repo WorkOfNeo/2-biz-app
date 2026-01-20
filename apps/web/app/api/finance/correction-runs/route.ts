@@ -123,13 +123,17 @@ function buildAntal(type: string, qty: number): number {
   return qty;
 }
 
-function buildNonEu(eksportTil: string): string {
-  // Column K contains the destination. 
+function buildNonEu(eksportTil: string, exportNo: string): string {
+  // If there's an Export No. (like "25DKWKDI2FO0LNSZA6"), it's non-EU → "Ja"
+  const expNo = String(exportNo || '').trim();
+  if (expNo) {
+    return 'Ja';
+  }
+  
+  // Column K contains the EU indicator
   // If destination IS EU → Non-EU column should be EMPTY
   // If destination is NOT EU → Non-EU column should be "Ja"
   const val = String(eksportTil || '').trim().toLowerCase();
-  
-  console.log('[buildNonEu] input:', eksportTil, '→ normalized:', val);
   
   // Empty value = unknown, leave empty
   if (!val) {
@@ -142,8 +146,7 @@ function buildNonEu(eksportTil: string): string {
     return ''; // It IS EU, so Non-EU is empty
   }
   
-  // If it says "No", "Nej", "N", or "Non-EU", "Non EU" → it's NOT EU
-  // Any other value (like country codes) is assumed to be non-EU destination
+  // Any other value (like "No", country codes) = NOT EU
   return 'Ja';
 }
 
@@ -219,7 +222,7 @@ export async function POST(req: Request) {
         kurs: '',
         total_dkk_vaerdi: '',
         frafoerselsref: '',
-        non_eu: buildNonEu(row.eu),
+        non_eu: buildNonEu(row.eu, row.exportNo),
       });
     }
 
