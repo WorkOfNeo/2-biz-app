@@ -82,6 +82,110 @@ export async function deepScrapeStyles(ctx: Ctx) {
     const href = (s.link_href || '').toString();
     if (!href) continue;
     const base = new URL(href, SPY_BASE_URL).toString().replace(/#.*$/, '');
+    
+    // First, visit the basic tab to extract enrichment data (cost_price, currency, tariff, country_of_origin, style_type)
+    const basicUrl = base + '#tab=basic';
+    await page.goto(basicUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+    
+    // Extract enrichment data from basic tab
+    const enrichmentData = await page.evaluate(() => {
+      const data: {
+        styleType: string | null;
+        costPrice: string | null;
+        costCurrency: string | null;
+        customsTariff: string | null;
+        countryOfOrigin: string | null;
+      } = {
+        styleType: null,
+        costPrice: null,
+        costCurrency: null,
+        customsTariff: null,
+        countryOfOrigin: null
+      };
+      
+      // Extract style_type
+      const typeSelect = document.querySelector('select[name="sTypeId"]') as HTMLSelectElement | null;
+      if (typeSelect && typeSelect.selectedIndex >= 0) {
+        const opt = typeSelect.options[typeSelect.selectedIndex];
+        data.styleType = (opt?.textContent || '').trim() || null;
+      }
+      
+      // Extract cost_price and cost_price_currency from #calculation table
+      const calcTable = document.querySelector('#calculation');
+      if (calcTable) {
+        const tbody = calcTable.querySelector('tbody');
+        if (tbody) {
+          const firstRow = tbody.querySelector('tr');
+          if (firstRow) {
+            const priceInput = firstRow.querySelector('input[name="sOfferprice"]') as HTMLInputElement | null;
+            data.costPrice = priceInput?.value || null;
+            
+            const currencySelect = firstRow.querySelector('select[name="cp_exchange_id"]') as HTMLSelectElement | null;
+            if (currencySelect && currencySelect.selectedIndex >= 0) {
+              const selectedOption = currencySelect.options[currencySelect.selectedIndex];
+              data.costCurrency = (selectedOption?.textContent || '').trim() || null;
+            }
+          }
+        }
+      }
+      
+      // Extract customs_tariff_no
+      const customsSelect = document.querySelector('select[name="sCustomsTariffNo"]') as HTMLSelectElement | null;
+      if (customsSelect && customsSelect.selectedIndex >= 0) {
+        const opt = customsSelect.options[customsSelect.selectedIndex];
+        const text = (opt?.textContent || '').trim();
+        if (text && text !== '-- Select --') {
+          data.customsTariff = text;
+        }
+      }
+      
+      // Extract country_of_origin
+      const originSelect = document.querySelector('select[name="origin_country_id"]') as HTMLSelectElement | null;
+      if (originSelect && originSelect.selectedIndex >= 0) {
+        const opt = originSelect.options[originSelect.selectedIndex];
+        const text = (opt?.textContent || '').trim();
+        if (text && text !== '-- Select --') {
+          data.countryOfOrigin = text;
+        }
+      }
+      
+      return data;
+    }).catch(() => ({
+      styleType: null,
+      costPrice: null,
+      costCurrency: null,
+      customsTariff: null,
+      countryOfOrigin: null
+    }));
+    
+    // Parse cost price (remove commas, convert to number)
+    let costPriceNum: number | null = null;
+    if (enrichmentData.costPrice) {
+      const cleaned = enrichmentData.costPrice.replace(/[^0-9.,-]/g, '').replace(',', '.');
+      const parsed = parseFloat(cleaned);
+      if (!isNaN(parsed)) {
+        costPriceNum = parsed;
+      }
+    }
+    
+    // Update style with enrichment data
+    const enrichmentUpdate: any = {
+      updated_at: new Date().toISOString()
+    };
+    if (enrichmentData.styleType !== null) enrichmentUpdate.style_type = enrichmentData.styleType;
+    if (costPriceNum !== null) enrichmentUpdate.cost_price = costPriceNum;
+    if (enrichmentData.costCurrency !== null) enrichmentUpdate.cost_price_currency = enrichmentData.costCurrency;
+    if (enrichmentData.customsTariff !== null) enrichmentUpdate.customs_tariff_no = enrichmentData.customsTariff;
+    if (enrichmentData.countryOfOrigin !== null) enrichmentUpdate.country_of_origin = enrichmentData.countryOfOrigin;
+    
+    if (Object.keys(enrichmentUpdate).length > 1) { // More than just updated_at
+      await supabase
+        .from('styles')
+        .update(enrichmentUpdate)
+        .eq('id', s.id);
+    }
+    
+    // Now visit the materials tab for color/season data
     const url = base + '#tab=materials';
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
     // We do NOT change the season selects – we read what is already on the page across all boxes
