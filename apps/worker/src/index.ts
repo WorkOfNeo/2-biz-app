@@ -161,11 +161,13 @@ async function setJobSucceeded(jobId: string) {
 }
 
 async function setJobFailedOrRequeue(job: JobRow, errorMsg: string) {
-  const nextStatus = job.attempts < job.max_attempts ? 'queued' : 'failed';
+  const newAttempts = job.attempts + 1;
+  const nextStatus = newAttempts < job.max_attempts ? 'queued' : 'failed';
   await supabase
     .from('jobs')
     .update({
       status: nextStatus,
+      attempts: newAttempts,
       error: nextStatus === 'failed' ? errorMsg : null,
       finished_at: nextStatus === 'failed' ? new Date().toISOString() : null,
       lease_until: null
