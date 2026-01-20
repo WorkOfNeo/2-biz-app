@@ -40,6 +40,10 @@ type OutputRow = {
   total_dkk_vaerdi: string;
   frafoerselsref: string;
   non_eu: string;
+  // Source data for re-processing
+  source_type?: string;
+  source_delivery?: string;
+  source_qty?: number;
 };
 
 function parseDate(raw: string | number | null | undefined): { date: string; day: number; month: number; year: number } | null {
@@ -223,6 +227,10 @@ export async function POST(req: Request) {
         total_dkk_vaerdi: '',
         frafoerselsref: '',
         non_eu: buildNonEu(row.eu, row.exportNo),
+        // Store source data for re-processing when loading
+        source_type: row.type,
+        source_delivery: row.delivery,
+        source_qty: row.qty,
       });
     }
 
@@ -312,6 +320,10 @@ export async function POST(req: Request) {
         total_dkk_vaerdi: r.total_dkk_vaerdi,
         frafoerselsref: r.frafoerselsref,
         non_eu: r.non_eu,
+        // Source data for re-processing
+        source_type: r.source_type || null,
+        source_delivery: r.source_delivery || null,
+        source_qty: r.source_qty ?? null,
       }));
 
       const { error: rowsError } = await supabase.from('finance_correction_rows').insert(batch);

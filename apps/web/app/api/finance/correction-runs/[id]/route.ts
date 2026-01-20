@@ -2,6 +2,64 @@ import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 
+// === LOGIC FUNCTIONS (same as in route.ts) ===
+
+function buildReference(type: string, delivery: string): string {
+  const t = String(type || '').trim().toLowerCase();
+  const del = String(delivery || '').trim();
+
+  // Match Sales (English: sales/sale, Danish: salg)
+  if (t === 'sales' || t === 'sale' || t === 'salg' || t.startsWith('sal')) {
+    return `Delivery No. ${del}`;
+  } 
+  // Match Correction (English: correction, Danish: korrektion/rettelse)
+  else if (t === 'correction' || t === 'korrektion' || t === 'rettelse' || t.startsWith('corr') || t.startsWith('korr') || t.startsWith('rett')) {
+    return 'Correction';
+  } 
+  // Match Purchase (English: purchase, Danish: køb/indkøb)
+  else if (t === 'purchase' || t === 'køb' || t === 'indkøb' || t.startsWith('purch') || t === 'po') {
+    return `Purchase - PO ${del}`;
+  }
+  // Fallback
+  return t ? `${type}: ${del}` : del;
+}
+
+function buildIndUd(type: string): string {
+  const t = String(type || '').trim().toLowerCase();
+  if (t === 'purchase' || t === 'køb' || t === 'indkøb' || t.startsWith('purch')) {
+    return 'Ind';
+  }
+  return 'Ud';
+}
+
+function buildAntal(type: string, qty: number): number {
+  const t = String(type || '').trim().toLowerCase();
+  if (t !== 'purchase' && t !== 'køb' && t !== 'indkøb' && !t.startsWith('purch') && qty < 0) {
+    return Math.abs(qty);
+  }
+  return qty;
+}
+
+function buildNonEu(eksportTil: string, exportNo: string): string {
+  // If there's an Export No., it's non-EU → "Ja"
+  const expNo = String(exportNo || '').trim();
+  if (expNo) {
+    return 'Ja';
+  }
+  
+  const val = String(eksportTil || '').trim().toLowerCase();
+  if (!val) {
+    return '';
+  }
+  
+  // Check if destination IS EU
+  if (val === 'eu' || val === 'yes' || val === 'ja' || val === 'y') {
+    return '';
+  }
+  
+  return 'Ja';
+}
+
 // GET: fetch a specific run with all its rows, re-lookup style for fresh pricing
 export async function GET(
   req: Request,
@@ -60,17 +118,37 @@ export async function GET(
       return NextResponse.json({ error: rowsError.message }, { status: 500 });
     }
 
-    // Update rows with fresh style data (pris, varenavn, valuta, toldtariff, oprindelsesland, vaerdi)
-    const updatedRows = (rows ?? []).map((row: any) => ({
-      ...row,
-      varenavn: styleMeta.style_name || row.varenavn,
-      pris: styleMeta.cost_price ?? row.pris,
-      valuta_original: styleMeta.cost_price_currency || row.valuta_original,
-      valuta: styleMeta.cost_price_currency || row.valuta,
-      toldtariff: styleMeta.customs_tariff_no || row.toldtariff,
-      oprindelsesland: styleMeta.country_of_origin || row.oprindelsesland,
-      vaerdi: styleMeta.cost_price != null ? styleMeta.cost_price * Math.abs(row.antal || 0) : row.vaerdi,
-    }));
+    // Re-process rows with current logic (same as when uploading)
+    const updatedRows = (rows ?? []).map((row: any) => {
+      // Get source data (if available from new uploads) or fall back to stored values
+      const sourceType = row.source_type || '';
+      const sourceDelivery = row.source_delivery || '';
+      const sourceQty = row.source_qty ?? row.antal ?? 0;
+      const exportNo = row.eksport_ref || '';
+      const eksportTil = row.eksport_til || '';
+
+      // Re-calculate using current logic
+      const antal = buildAntal(sourceType, sourceQty);
+      const pris = styleMeta.cost_price ?? row.pris;
+      const vaerdi = pris != null ? pris * antal : row.vaerdi;
+
+      return {
+        ...row,
+        // Fresh style data
+        varenavn: styleMeta.style_name || row.varenavn,
+        pris,
+        valuta_original: styleMeta.cost_price_currency || row.valuta_original,
+        valuta: styleMeta.cost_price_currency || row.valuta,
+        toldtariff: styleMeta.customs_tariff_no || row.toldtariff,
+        oprindelsesland: styleMeta.country_of_origin || row.oprindelsesland,
+        // Re-calculated logic fields
+        reference: sourceType ? buildReference(sourceType, sourceDelivery) : row.reference,
+        ind_ud: sourceType ? buildIndUd(sourceType) : row.ind_ud,
+        antal,
+        vaerdi,
+        non_eu: buildNonEu(eksportTil, exportNo),
+      };
+    });
 
     return NextResponse.json({
       run,
