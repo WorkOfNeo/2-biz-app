@@ -87,14 +87,18 @@ function buildReference(type: string, delivery: string): string {
   const t = String(type || '').trim().toLowerCase();
   const del = String(delivery || '').trim();
 
-  if (t === 'sales') {
+  console.log('[buildReference]', { type, t, delivery: del });
+
+  // Match "sales", "sale", or starts with "sal"
+  if (t === 'sales' || t === 'sale' || t.startsWith('sal')) {
     return `Delivery No. ${del}`;
-  } else if (t === 'correction') {
+  } else if (t === 'correction' || t.startsWith('corr')) {
     return 'Correction';
-  } else if (t === 'purchase') {
+  } else if (t === 'purchase' || t.startsWith('purch') || t === 'po') {
     return `Purchase - PO ${del}`;
   }
-  return del;
+  // Fallback: return the type and delivery for debugging
+  return t ? `${type}: ${del}` : del;
 }
 
 function buildIndUd(type: string): string {
