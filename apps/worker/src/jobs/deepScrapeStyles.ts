@@ -180,42 +180,110 @@ export async function deepScrapeStyles(ctx: Ctx) {
       }
     }
     
-    // Update style with enrichment data
-    const enrichmentUpdate: any = {
-      updated_at: new Date().toISOString()
-    };
-    if (enrichmentData.styleType !== null) enrichmentUpdate.style_type = enrichmentData.styleType;
-    if (costPriceNum !== null) enrichmentUpdate.cost_price = costPriceNum;
-    if (enrichmentData.costCurrency !== null) enrichmentUpdate.cost_price_currency = enrichmentData.costCurrency;
-    if (enrichmentData.customsTariff !== null) enrichmentUpdate.customs_tariff_no = enrichmentData.customsTariff;
-    if (enrichmentData.countryOfOrigin !== null) enrichmentUpdate.country_of_origin = enrichmentData.countryOfOrigin;
+    // Update style with enrichment data - update fields separately to avoid schema cache issues
+    const enrichmentFields: string[] = [];
     
-    const enrichmentFields = Object.keys(enrichmentUpdate).filter(k => k !== 'updated_at');
-    if (enrichmentFields.length > 0) {
-      await log(job.id, 'info', 'STEP:deep_styles_enrichment_extracted', {
-        style_no: s.style_no,
-        fields: enrichmentFields,
+    // Update cost_price and cost_price_currency (these definitely exist)
+    if (costPriceNum !== null || enrichmentData.costCurrency !== null) {
+      const costUpdate: any = { updated_at: new Date().toISOString() };
+      if (costPriceNum !== null) {
+        costUpdate.cost_price = costPriceNum;
+        enrichmentFields.push('cost_price');
+      }
+      if (enrichmentData.costCurrency !== null) {
+        costUpdate.cost_price_currency = enrichmentData.costCurrency;
+        enrichmentFields.push('cost_price_currency');
+      }
+      
+      const { error: costErr } = await supabase
+        .from('styles')
+        .update(costUpdate)
+        .eq('id', s.id);
+      
+      if (costErr) {
+        await log(job.id, 'error', 'STEP:deep_styles_cost_update_failed', {
+          style_no: s.style_no,
+          error: costErr.message
+        });
+      }
+    }
+    
+    // Update customs_tariff_no (this definitely exists)
+    if (enrichmentData.customsTariff !== null) {
+      const { error: tariffErr } = await supabase
+        .from('styles')
+        .update({ 
+          customs_tariff_no: enrichmentData.customsTariff,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', s.id);
+      
+      if (tariffErr) {
+        await log(job.id, 'error', 'STEP:deep_styles_tariff_update_failed', {
+          style_no: s.style_no,
+          error: tariffErr.message
+        });
+      } else {
+        enrichmentFields.push('customs_tariff_no');
+      }
+    }
+    
+    // Update country_of_origin (this definitely exists)
+    if (enrichmentData.countryOfOrigin !== null) {
+      const { error: originErr } = await supabase
+        .from('styles')
+        .update({ 
+          country_of_origin: enrichmentData.countryOfOrigin,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', s.id);
+      
+      if (originErr) {
+        await log(job.id, 'error', 'STEP:deep_styles_origin_update_failed', {
+          style_no: s.style_no,
+          error: originErr.message
+        });
+      } else {
+        enrichmentFields.push('country_of_origin');
+      }
+    }
+    
+    // Try to update style_type (may not exist in schema cache, so handle gracefully)
+    if (enrichmentData.styleType !== null) {
+      const { error: typeErr } = await supabase
+        .from('styles')
+        .update({ 
+          style_type: enrichmentData.styleType,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', s.id);
+      
+      if (typeErr) {
+        // Log but don't fail - style_type column might not exist or schema cache is stale
+        await log(job.id, 'warn', 'STEP:deep_styles_type_update_failed', {
+          style_no: s.style_no,
+          error: typeErr.message,
+          note: 'style_type column may not exist or schema cache is stale'
+        });
+      } else {
+        enrichmentFields.push('style_type');
+      }
+    }
+    
+    // Log summary of what was extracted and updated
+    await log(job.id, 'info', 'STEP:deep_styles_enrichment_extracted', {
+      style_no: s.style_no,
+      extracted: {
         style_type: enrichmentData.styleType,
         cost_price: costPriceNum,
         cost_currency: enrichmentData.costCurrency,
         customs_tariff: enrichmentData.customsTariff,
         country_of_origin: enrichmentData.countryOfOrigin
-      });
-      
-      const { error: enrichErr } = await supabase
-        .from('styles')
-        .update(enrichmentUpdate)
-        .eq('id', s.id);
-      
-      if (enrichErr) {
-        await log(job.id, 'error', 'STEP:deep_styles_enrichment_update_failed', {
-          style_no: s.style_no,
-          error: enrichErr.message
-        });
-      } else {
-        await log(job.id, 'info', 'STEP:deep_styles_enrichment_updated', { style_no: s.style_no });
-      }
-    } else {
+      },
+      updated_fields: enrichmentFields
+    });
+    
+    if (enrichmentFields.length === 0) {
       await log(job.id, 'info', 'STEP:deep_styles_no_enrichment_data', { style_no: s.style_no });
     }
     
