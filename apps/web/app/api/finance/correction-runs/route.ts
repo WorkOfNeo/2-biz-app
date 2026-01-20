@@ -230,6 +230,15 @@ export async function POST(req: Request) {
     const lastDate = dates[dates.length - 1] || null;
 
     // Insert run record
+    console.log('[Correction API] Inserting run:', {
+      file_name: fileName,
+      style_no: styleNo,
+      row_count: outputRows.length,
+      toldref: firstToldref,
+      first_date: firstDate,
+      last_date: lastDate,
+    });
+
     const { data: runData, error: runError } = await supabase
       .from('finance_correction_runs')
       .insert({
@@ -251,10 +260,16 @@ export async function POST(req: Request) {
 
     if (runError) {
       console.error('[Correction API] Run insert error:', runError);
-      return NextResponse.json({ error: runError.message }, { status: 500 });
+      return NextResponse.json({ error: `Database error: ${runError.message}. Have you run the SQL migrations 140 and 141?` }, { status: 500 });
+    }
+
+    if (!runData) {
+      console.error('[Correction API] Run insert returned no data');
+      return NextResponse.json({ error: 'Failed to create run - no data returned' }, { status: 500 });
     }
 
     const runId = runData.id;
+    console.log('[Correction API] Run created with ID:', runId);
 
     // Insert rows in batches
     const batchSize = 500;
@@ -290,9 +305,12 @@ export async function POST(req: Request) {
       const { error: rowsError } = await supabase.from('finance_correction_rows').insert(batch);
       if (rowsError) {
         console.error('[Correction API] Rows insert error:', rowsError);
-        return NextResponse.json({ error: rowsError.message }, { status: 500 });
+        return NextResponse.json({ error: `Row insert error: ${rowsError.message}` }, { status: 500 });
       }
+      console.log(`[Correction API] Inserted batch ${Math.floor(i / batchSize) + 1}, rows ${i + 1} to ${Math.min(i + batchSize, outputRows.length)}`);
     }
+
+    console.log('[Correction API] All rows inserted successfully');
 
     return NextResponse.json({
       runId,
