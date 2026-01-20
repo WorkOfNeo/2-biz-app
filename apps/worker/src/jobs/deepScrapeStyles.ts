@@ -260,7 +260,7 @@ export async function deepScrapeStyles(ctx: Ctx) {
       
       if (typeErr) {
         // Log but don't fail - style_type column might not exist or schema cache is stale
-        await log(job.id, 'warn', 'STEP:deep_styles_type_update_failed', {
+        await log(job.id, 'info', 'STEP:deep_styles_type_update_failed', {
           style_no: s.style_no,
           error: typeErr.message,
           note: 'style_type column may not exist or schema cache is stale'
