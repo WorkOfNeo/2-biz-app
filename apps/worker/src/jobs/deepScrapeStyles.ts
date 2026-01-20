@@ -85,7 +85,19 @@ export async function deepScrapeStyles(ctx: Ctx) {
     
     // First, visit the basic tab to extract enrichment data (cost_price, currency, tariff, country_of_origin, style_type)
     const basicUrl = base + '#tab=basic';
+    await log(job.id, 'info', 'STEP:deep_styles_visiting_basic_tab', { style_no: s.style_no, url: basicUrl });
     await page.goto(basicUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+    
+    // Verify we're on the basic tab by checking for the calculation table
+    const isOnBasicTab = await page.evaluate(() => {
+      return !!document.querySelector('#calculation');
+    }).catch(() => false);
+    
+    if (!isOnBasicTab) {
+      await log(job.id, 'error', 'STEP:deep_styles_basic_tab_not_found', { style_no: s.style_no });
+    } else {
+      await log(job.id, 'info', 'STEP:deep_styles_basic_tab_loaded', { style_no: s.style_no });
+    }
     
     // Extract enrichment data from basic tab
     const enrichmentData = await page.evaluate(() => {
@@ -178,15 +190,38 @@ export async function deepScrapeStyles(ctx: Ctx) {
     if (enrichmentData.customsTariff !== null) enrichmentUpdate.customs_tariff_no = enrichmentData.customsTariff;
     if (enrichmentData.countryOfOrigin !== null) enrichmentUpdate.country_of_origin = enrichmentData.countryOfOrigin;
     
-    if (Object.keys(enrichmentUpdate).length > 1) { // More than just updated_at
-      await supabase
+    const enrichmentFields = Object.keys(enrichmentUpdate).filter(k => k !== 'updated_at');
+    if (enrichmentFields.length > 0) {
+      await log(job.id, 'info', 'STEP:deep_styles_enrichment_extracted', {
+        style_no: s.style_no,
+        fields: enrichmentFields,
+        style_type: enrichmentData.styleType,
+        cost_price: costPriceNum,
+        cost_currency: enrichmentData.costCurrency,
+        customs_tariff: enrichmentData.customsTariff,
+        country_of_origin: enrichmentData.countryOfOrigin
+      });
+      
+      const { error: enrichErr } = await supabase
         .from('styles')
         .update(enrichmentUpdate)
         .eq('id', s.id);
+      
+      if (enrichErr) {
+        await log(job.id, 'error', 'STEP:deep_styles_enrichment_update_failed', {
+          style_no: s.style_no,
+          error: enrichErr.message
+        });
+      } else {
+        await log(job.id, 'info', 'STEP:deep_styles_enrichment_updated', { style_no: s.style_no });
+      }
+    } else {
+      await log(job.id, 'info', 'STEP:deep_styles_no_enrichment_data', { style_no: s.style_no });
     }
     
     // Now visit the materials tab for color/season data
     const url = base + '#tab=materials';
+    await log(job.id, 'info', 'STEP:deep_styles_visiting_materials_tab', { style_no: s.style_no, url });
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
     // We do NOT change the season selects – we read what is already on the page across all boxes
     try {
