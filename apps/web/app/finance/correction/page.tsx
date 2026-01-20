@@ -4,6 +4,15 @@ import * as React from 'react';
 import { Button } from '../../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
 import { Dropzone } from '../../../components/ui/dropzone';
+import { Badge } from '../../../components/ui/badge';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '../../../components/ui/table';
 
 type InputRow = {
   rowNo: number;
@@ -92,6 +101,15 @@ const OUTPUT_COLUMNS = [
   'Non-EU',
 ];
 
+// Format number in Danish format (comma as decimal separator, dot as thousands)
+function formatDanishNumber(value: number | null | undefined, decimals = 2): string {
+  if (value == null) return '';
+  return value.toLocaleString('da-DK', {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  });
+}
+
 function rowToArray(r: OutputRow): (string | number | null)[] {
   return [
     r.toldref,
@@ -118,6 +136,24 @@ function rowToArray(r: OutputRow): (string | number | null)[] {
     r.frafoerselsref,
     r.non_eu,
   ];
+}
+
+function formatCell(cell: string | number | null, colIndex: number): string {
+  if (cell == null) return '';
+  // Columns with numbers that should be formatted in Danish: Pris(3), Antal(16), Værdi(17)
+  if (typeof cell === 'number') {
+    // Pris and Værdi get 2 decimals, Antal is integer
+    if (colIndex === 3 || colIndex === 17) {
+      return formatDanishNumber(cell, 2);
+    } else if (colIndex === 16) {
+      return formatDanishNumber(cell, 0);
+    } else if (colIndex === 9 || colIndex === 10 || colIndex === 11) {
+      // Day, Month, Year - integers
+      return String(cell);
+    }
+    return formatDanishNumber(cell, 2);
+  }
+  return String(cell);
 }
 
 export default function CorrectionPage() {
@@ -285,10 +321,17 @@ export default function CorrectionPage() {
 
       const wb = XLSX.utils.book_new();
 
-      // Build data array
+      // Build data array with Danish number formatting
       const sheetData = [
         [...OUTPUT_COLUMNS],
-        ...outputRows.map((r) => rowToArray(r)),
+        ...outputRows.map((r) => {
+          const arr = rowToArray(r);
+          return arr.map((cell, colIndex) => {
+            // Keep numbers as numbers for Excel, but format strings for display columns
+            if (cell == null) return '';
+            return cell;
+          });
+        }),
       ];
 
       const ws = XLSX.utils.aoa_to_sheet(sheetData);
@@ -380,53 +423,80 @@ export default function CorrectionPage() {
     }
   }
 
+  const formatDateDK = (d: string | null) => {
+    if (!d) return '';
+    const date = new Date(d);
+    return date.toLocaleDateString('da-DK', { day: '2-digit', month: '2-digit', year: '2-digit' });
+  };
+
   return (
-    <div className="space-y-4">
-      <div>
-        <div className="text-xs text-gray-500">Finance</div>
-        <h1 className="text-xl font-semibold">CORRECTION</h1>
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-sm text-slate-500 font-medium">Finance</p>
+          <h1 className="text-2xl font-bold tracking-tight">CORRECTION</h1>
+        </div>
+        {step === 'preview' && (
+          <Badge variant="secondary" className="text-sm">
+            {outputRows.length.toLocaleString('da-DK')} rækker
+          </Badge>
+        )}
       </div>
 
+      {/* Error Alert */}
       {error && (
-        <div className="rounded-md bg-red-50 border border-red-200 p-3 text-sm text-red-700">
-          {error}
+        <div className="rounded-lg bg-red-50 border border-red-200 p-4 text-sm text-red-800">
+          <div className="flex items-start gap-3">
+            <svg className="h-5 w-5 text-red-400 flex-shrink-0 mt-0.5" viewBox="0 0 20 20" fill="currentColor">
+              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.28 7.22a.75.75 0 00-1.06 1.06L8.94 10l-1.72 1.72a.75.75 0 101.06 1.06L10 11.06l1.72 1.72a.75.75 0 101.06-1.06L11.06 10l1.72-1.72a.75.75 0 00-1.06-1.06L10 8.94 8.28 7.22z" clipRule="evenodd" />
+            </svg>
+            <span>{error}</span>
+          </div>
         </div>
       )}
 
       {/* Upload Section */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm">Upload Excel File</CardTitle>
+      <Card className="border-slate-200 shadow-sm">
+        <CardHeader className="pb-4">
+          <CardTitle className="text-base font-semibold">Upload Excel File</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-3">
-          <p className="text-xs text-gray-600">
-            Upload an Excel file with Style No in cell C1, optional Customs Tariff in C2, 
-            header row at row 4 (A–N), and data from row 5 onwards.
+        <CardContent className="space-y-4">
+          <p className="text-sm text-slate-600">
+            Upload an Excel file with <span className="font-medium">Style No in C1</span>, optional Customs Tariff in C2, 
+            header at row 4 (A–N), and data from row 5.
           </p>
           <Dropzone accept=".xlsx,.xls" multiple={false} onFiles={onFilesSelected} />
           {uploadedFile && (
-            <div className="flex items-center justify-between text-sm">
-              <span className="text-gray-700">
-                Uploaded: <strong>{uploadedFile.name}</strong>
-              </span>
+            <div className="flex items-center justify-between bg-slate-50 rounded-lg px-4 py-3">
+              <div className="flex items-center gap-3">
+                <svg className="h-5 w-5 text-green-600" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.857-9.809a.75.75 0 00-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 10-1.06 1.061l2.5 2.5a.75.75 0 001.137-.089l4-5.5z" clipRule="evenodd" />
+                </svg>
+                <span className="text-sm font-medium text-slate-700">{uploadedFile.name}</span>
+              </div>
               <Button size="sm" variant="outline" onClick={resetState} disabled={busy}>
                 Reset
               </Button>
             </div>
           )}
           {styleNo && step === 'upload' && (
-            <div className="text-xs text-gray-600">
-              Style No: <span className="font-mono font-semibold">{styleNo}</span>
-              {fileTariff && (
-                <> | Customs Tariff (file): <span className="font-mono">{fileTariff}</span></>
-              )}
+            <div className="flex flex-wrap gap-2">
+              <Badge variant="outline">Style: {styleNo}</Badge>
+              {fileTariff && <Badge variant="outline">Tariff: {fileTariff}</Badge>}
               {inputRows.length > 0 && (
-                <> | {inputRows.length.toLocaleString('da-DK')} row(s) parsed</>
+                <Badge variant="secondary">{inputRows.length.toLocaleString('da-DK')} rows parsed</Badge>
               )}
             </div>
           )}
           {busy && step === 'upload' && (
-            <div className="text-xs text-blue-600">Processing...</div>
+            <div className="flex items-center gap-2 text-sm text-blue-600">
+              <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+              </svg>
+              Processing...
+            </div>
           )}
         </CardContent>
       </Card>
@@ -436,172 +506,178 @@ export default function CorrectionPage() {
         <>
           {/* Style Metadata Card */}
           {styleMeta && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-sm">Style Information</CardTitle>
+            <Card className="border-slate-200 shadow-sm bg-gradient-to-r from-slate-50 to-white">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base font-semibold">Style Information</CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 text-sm">
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-6">
                   <div>
-                    <div className="text-xs text-gray-500">Style No</div>
-                    <div className="font-mono font-semibold">{styleMeta.style_no}</div>
+                    <p className="text-xs text-slate-500 font-medium uppercase tracking-wide">Style No</p>
+                    <p className="text-lg font-bold font-mono text-slate-900">{styleMeta.style_no}</p>
                   </div>
                   <div>
-                    <div className="text-xs text-gray-500">Style Name</div>
-                    <div className="font-medium">{styleMeta.style_name || '—'}</div>
+                    <p className="text-xs text-slate-500 font-medium uppercase tracking-wide">Style Name</p>
+                    <p className="text-lg font-semibold text-slate-900">{styleMeta.style_name || '—'}</p>
                   </div>
                   <div>
-                    <div className="text-xs text-gray-500">Cost Price</div>
-                    <div className="font-medium">
+                    <p className="text-xs text-slate-500 font-medium uppercase tracking-wide">Cost Price</p>
+                    <p className="text-lg font-semibold text-slate-900">
                       {styleMeta.cost_price != null
-                        ? `${styleMeta.cost_price.toFixed(2)} ${styleMeta.cost_price_currency || ''}`
+                        ? `${formatDanishNumber(styleMeta.cost_price)} ${styleMeta.cost_price_currency || ''}`
                         : '—'}
-                    </div>
+                    </p>
                   </div>
                   <div>
-                    <div className="text-xs text-gray-500">Customs Tariff</div>
-                    <div className="font-mono">{styleMeta.customs_tariff_no || '—'}</div>
+                    <p className="text-xs text-slate-500 font-medium uppercase tracking-wide">Customs Tariff</p>
+                    <p className="text-lg font-mono text-slate-900">{styleMeta.customs_tariff_no || '—'}</p>
                   </div>
                   <div>
-                    <div className="text-xs text-gray-500">Country of Origin</div>
-                    <div className="font-medium">{styleMeta.country_of_origin || '—'}</div>
+                    <p className="text-xs text-slate-500 font-medium uppercase tracking-wide">Origin</p>
+                    <p className="text-lg font-semibold text-slate-900">{styleMeta.country_of_origin || '—'}</p>
                   </div>
                   <div>
-                    <div className="text-xs text-gray-500">Rows</div>
-                    <div className="font-medium">{outputRows.length.toLocaleString('da-DK')}</div>
+                    <p className="text-xs text-slate-500 font-medium uppercase tracking-wide">Rows</p>
+                    <p className="text-lg font-bold text-slate-900">{outputRows.length.toLocaleString('da-DK')}</p>
                   </div>
                 </div>
               </CardContent>
             </Card>
           )}
 
-          {/* Data Preview */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-sm">
-                Output Data ({outputRows.length.toLocaleString('da-DK')} rows)
+          {/* Data Table */}
+          <Card className="border-slate-200 shadow-sm">
+            <CardHeader className="pb-3 flex flex-row items-center justify-between">
+              <CardTitle className="text-base font-semibold">
+                Output Data
               </CardTitle>
+              <Badge variant="secondary">{outputRows.length.toLocaleString('da-DK')} rows</Badge>
             </CardHeader>
-            <CardContent className="overflow-x-auto max-h-[600px] overflow-y-auto">
-              <table className="min-w-max text-xs border-collapse">
-                <thead className="sticky top-0 z-10">
-                  <tr className="bg-gray-50">
-                    {OUTPUT_COLUMNS.map((col, i) => (
-                      <th key={i} className="border px-2 py-1 text-left font-medium whitespace-nowrap bg-gray-50">
-                        {col}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {outputRows.map((row, i) => {
-                    const arr = rowToArray(row);
-                    return (
-                      <tr key={i} className={i % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
-                        {arr.map((cell, j) => (
-                          <td key={j} className="border px-2 py-1 whitespace-nowrap">
-                            {typeof cell === 'number'
-                              ? cell.toLocaleString('da-DK', { maximumFractionDigits: 2 })
-                              : String(cell ?? '')}
-                          </td>
-                        ))}
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+            <CardContent className="p-0">
+              <div className="overflow-x-auto max-h-[600px] overflow-y-auto border-t">
+                <Table>
+                  <TableHeader className="sticky top-0 bg-slate-50 z-10">
+                    <TableRow>
+                      {OUTPUT_COLUMNS.map((col, i) => (
+                        <TableHead key={i} className="whitespace-nowrap bg-slate-50 border-b">
+                          {col}
+                        </TableHead>
+                      ))}
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {outputRows.map((row, i) => {
+                      const arr = rowToArray(row);
+                      return (
+                        <TableRow key={i} className={i % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'}>
+                          {arr.map((cell, j) => (
+                            <TableCell key={j} className="whitespace-nowrap font-mono text-xs">
+                              {formatCell(cell, j)}
+                            </TableCell>
+                          ))}
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
             </CardContent>
           </Card>
 
           {/* Download Section */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-sm">Download</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="flex flex-wrap gap-2">
-                <Button onClick={downloadXlsx} disabled={busy}>
+          <Card className="border-slate-200 shadow-sm">
+            <CardContent className="pt-6">
+              <div className="flex flex-wrap items-center gap-3">
+                <Button onClick={downloadXlsx} disabled={busy} className="gap-2">
+                  <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                    <path d="M10.75 2.75a.75.75 0 00-1.5 0v8.614L6.295 8.235a.75.75 0 10-1.09 1.03l4.25 4.5a.75.75 0 001.09 0l4.25-4.5a.75.75 0 00-1.09-1.03l-2.955 3.129V2.75z" />
+                    <path d="M3.5 12.75a.75.75 0 00-1.5 0v2.5A2.75 2.75 0 004.75 18h10.5A2.75 2.75 0 0018 15.25v-2.5a.75.75 0 00-1.5 0v2.5c0 .69-.56 1.25-1.25 1.25H4.75c-.69 0-1.25-.56-1.25-1.25v-2.5z" />
+                  </svg>
                   Download XLSX
                 </Button>
                 <Button variant="outline" onClick={resetState} disabled={busy}>
                   Upload New File
                 </Button>
+                {runId && (
+                  <span className="text-xs text-slate-500 ml-auto">
+                    Run: <code className="bg-slate-100 px-1.5 py-0.5 rounded">{runId.slice(0, 8)}...</code>
+                  </span>
+                )}
               </div>
-              {runId && (
-                <p className="text-xs text-gray-500 mt-2">
-                  Run ID: <span className="font-mono">{runId}</span>
-                </p>
-              )}
             </CardContent>
           </Card>
         </>
       )}
 
       {/* Recent Runs */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm">Recent Runs</CardTitle>
+      <Card className="border-slate-200 shadow-sm">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base font-semibold">Recent Runs</CardTitle>
         </CardHeader>
-        <CardContent>
+        <CardContent className="p-0">
           {loadingRuns ? (
-            <div className="text-xs text-gray-500">Loading...</div>
+            <div className="p-6 text-sm text-slate-500 flex items-center gap-2">
+              <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+              </svg>
+              Loading...
+            </div>
           ) : recentRuns.length === 0 ? (
-            <div className="text-xs text-gray-500">No recent runs found.</div>
+            <div className="p-6 text-sm text-slate-500">No recent runs found.</div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="min-w-full text-xs border-collapse">
-                <thead>
-                  <tr className="bg-gray-50">
-                    <th className="border px-2 py-1 text-left font-medium">Toldref</th>
-                    <th className="border px-2 py-1 text-left font-medium">Varenavn</th>
-                    <th className="border px-2 py-1 text-left font-medium">Date Range</th>
-                    <th className="border px-2 py-1 text-right font-medium">Rows</th>
-                    <th className="border px-2 py-1 text-left font-medium">Action</th>
-                  </tr>
-                </thead>
-                <tbody>
+            <div className="border-t">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Toldref</TableHead>
+                    <TableHead>Varenavn</TableHead>
+                    <TableHead>Date Range</TableHead>
+                    <TableHead className="text-right">Rows</TableHead>
+                    <TableHead className="w-[120px]">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
                   {recentRuns.map((run, i) => {
-                    // Format date range
-                    const formatDate = (d: string | null) => {
-                      if (!d) return '';
-                      const date = new Date(d);
-                      return date.toLocaleDateString('da-DK', { day: '2-digit', month: '2-digit', year: '2-digit' });
-                    };
                     const dateRange = run.first_date && run.last_date
                       ? run.first_date === run.last_date
-                        ? formatDate(run.first_date)
-                        : `${formatDate(run.first_date)} – ${formatDate(run.last_date)}`
+                        ? formatDateDK(run.first_date)
+                        : `${formatDateDK(run.first_date)} – ${formatDateDK(run.last_date)}`
                       : '—';
                     
                     return (
-                      <tr key={run.id} className={i % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
-                        <td className="border px-2 py-1 font-mono">{run.toldref || '—'}</td>
-                        <td className="border px-2 py-1">{run.style_name || run.style_no || '—'}</td>
-                        <td className="border px-2 py-1 whitespace-nowrap">{dateRange}</td>
-                        <td className="border px-2 py-1 text-right">{run.row_count.toLocaleString('da-DK')}</td>
-                        <td className="border px-2 py-1">
+                      <TableRow key={run.id} className={i % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'}>
+                        <TableCell className="font-mono font-medium">{run.toldref || '—'}</TableCell>
+                        <TableCell>{run.style_name || run.style_no || '—'}</TableCell>
+                        <TableCell className="whitespace-nowrap text-slate-600">{dateRange}</TableCell>
+                        <TableCell className="text-right font-mono">{run.row_count.toLocaleString('da-DK')}</TableCell>
+                        <TableCell>
                           <div className="flex items-center gap-2">
-                            <button
-                              className="text-blue-600 hover:underline"
+                            <Button
+                              variant="ghost"
+                              size="sm"
                               onClick={() => loadRun(run)}
                               disabled={busy}
+                              className="h-7 px-2 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
                             >
                               Load
-                            </button>
-                            <button
-                              className="text-red-600 hover:underline"
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
                               onClick={() => deleteRun(run)}
                               disabled={busy}
+                              className="h-7 px-2 text-red-600 hover:text-red-700 hover:bg-red-50"
                             >
                               Delete
-                            </button>
+                            </Button>
                           </div>
-                        </td>
-                      </tr>
+                        </TableCell>
+                      </TableRow>
                     );
                   })}
-                </tbody>
-              </table>
+                </TableBody>
+              </Table>
             </div>
           )}
         </CardContent>

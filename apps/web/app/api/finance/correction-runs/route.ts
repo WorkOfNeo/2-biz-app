@@ -89,12 +89,16 @@ function buildReference(type: string, delivery: string): string {
 
   console.log('[buildReference]', { type, t, delivery: del });
 
-  // Match "sales", "sale", or starts with "sal"
-  if (t === 'sales' || t === 'sale' || t.startsWith('sal')) {
+  // Match Sales (English: sales/sale, Danish: salg)
+  if (t === 'sales' || t === 'sale' || t === 'salg' || t.startsWith('sal')) {
     return `Delivery No. ${del}`;
-  } else if (t === 'correction' || t.startsWith('corr')) {
+  } 
+  // Match Correction (English: correction, Danish: korrektion/rettelse)
+  else if (t === 'correction' || t === 'korrektion' || t === 'rettelse' || t.startsWith('corr') || t.startsWith('korr') || t.startsWith('rett')) {
     return 'Correction';
-  } else if (t === 'purchase' || t.startsWith('purch') || t === 'po') {
+  } 
+  // Match Purchase (English: purchase, Danish: køb/indkøb)
+  else if (t === 'purchase' || t === 'køb' || t === 'indkøb' || t.startsWith('purch') || t === 'po') {
     return `Purchase - PO ${del}`;
   }
   // Fallback: return the type and delivery for debugging
@@ -103,7 +107,11 @@ function buildReference(type: string, delivery: string): string {
 
 function buildIndUd(type: string): string {
   const t = String(type || '').trim().toLowerCase();
-  return t === 'purchase' ? 'Ind' : 'Ud';
+  // Purchase (English or Danish) = Ind, everything else = Ud
+  if (t === 'purchase' || t === 'køb' || t === 'indkøb' || t.startsWith('purch')) {
+    return 'Ind';
+  }
+  return 'Ud';
 }
 
 function buildAntal(type: string, qty: number): number {
@@ -116,13 +124,14 @@ function buildAntal(type: string, qty: number): number {
 }
 
 function buildNonEu(eksportTil: string): string {
-  // If eksportTil indicates EU, return 'Ja', else ''
+  // If NOT EU, return 'Ja'. If EU, leave empty.
   const val = String(eksportTil || '').trim().toLowerCase();
-  // Check if it equals 'eu' or contains 'eu'
-  if (val === 'eu' || val === 'yes' || val === 'ja') {
-    return 'Ja';
+  // Check if it's EU
+  if (val === 'eu' || val === 'yes' || val === 'ja' || val.includes('eu')) {
+    return ''; // It's EU, so Non-EU is empty
   }
-  return '';
+  // It's not EU, so Non-EU = 'Ja'
+  return val ? 'Ja' : '';
 }
 
 // POST: create a new correction run
