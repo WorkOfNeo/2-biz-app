@@ -225,9 +225,18 @@ export async function POST(req: Request) {
 
     // Extract toldref and date range from output rows
     const firstToldref = outputRows.find(r => r.toldref)?.toldref || null;
+    const allToldrefs = outputRows.map(r => r.toldref).filter(Boolean);
     const dates = outputRows.map(r => r.dato).filter(d => d && d.length === 10).sort();
     const firstDate = dates[0] || null;
     const lastDate = dates[dates.length - 1] || null;
+
+    console.log('[Correction API] Extracted values:', {
+      firstToldref,
+      uniqueToldrefs: [...new Set(allToldrefs)].slice(0, 5),
+      firstDate,
+      lastDate,
+      sampleRow: outputRows[0] ? { toldref: outputRows[0].toldref, dato: outputRows[0].dato } : null,
+    });
 
     // Insert run record
     console.log('[Correction API] Inserting run:', {
@@ -348,6 +357,8 @@ export async function GET(req: Request) {
       console.error('[Correction API] List error:', error);
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
+
+    console.log('[Correction API] GET runs:', JSON.stringify(data, null, 2));
 
     return NextResponse.json({ runs: data ?? [] });
   } catch (error: any) {
