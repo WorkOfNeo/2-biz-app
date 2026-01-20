@@ -197,6 +197,12 @@ export async function POST(req: Request) {
       });
     }
 
+    // Extract toldref and date range from output rows
+    const firstToldref = outputRows.find(r => r.toldref)?.toldref || null;
+    const dates = outputRows.map(r => r.dato).filter(d => d && d.length === 10).sort();
+    const firstDate = dates[0] || null;
+    const lastDate = dates[dates.length - 1] || null;
+
     // Insert run record
     const { data: runData, error: runError } = await supabase
       .from('finance_correction_runs')
@@ -210,6 +216,9 @@ export async function POST(req: Request) {
         customs_tariff_no: customsTariffNo || null,
         country_of_origin: countryOfOrigin || null,
         row_count: outputRows.length,
+        toldref: firstToldref,
+        first_date: firstDate,
+        last_date: lastDate,
       })
       .select('id')
       .single();
@@ -287,7 +296,7 @@ export async function GET(req: Request) {
 
     const { data, error } = await supabase
       .from('finance_correction_runs')
-      .select('id, created_at, file_name, style_no, style_name, row_count')
+      .select('id, created_at, file_name, style_no, style_name, row_count, toldref, first_date, last_date')
       .order('created_at', { ascending: false })
       .limit(limit);
 

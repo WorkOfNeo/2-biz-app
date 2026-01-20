@@ -59,6 +59,9 @@ type Run = {
   style_no: string;
   style_name: string | null;
   row_count: number;
+  toldref: string | null;
+  first_date: string | null;
+  last_date: string | null;
 };
 
 type Step = 'upload' | 'preview';
@@ -321,11 +324,14 @@ export default function CorrectionPage() {
       const data = await res.json();
       const runData = data.run;
       const rows = data.rows ?? [];
+      // Use fresh styleMeta from API (re-looked up from styles table)
+      const freshStyleMeta = data.styleMeta;
 
       setRunId(runData.id);
       setStyleNo(runData.style_no);
       setFileTariff(runData.file_customs_tariff || '');
-      setStyleMeta({
+      // Use fresh style data from the database lookup
+      setStyleMeta(freshStyleMeta || {
         style_no: runData.style_no,
         style_name: runData.style_name,
         cost_price: runData.cost_price,
@@ -516,35 +522,45 @@ export default function CorrectionPage() {
               <table className="min-w-full text-xs border-collapse">
                 <thead>
                   <tr className="bg-gray-50">
-                    <th className="border px-2 py-1 text-left font-medium">Date</th>
-                    <th className="border px-2 py-1 text-left font-medium">File</th>
-                    <th className="border px-2 py-1 text-left font-medium">Style No</th>
-                    <th className="border px-2 py-1 text-left font-medium">Style Name</th>
+                    <th className="border px-2 py-1 text-left font-medium">Toldref</th>
+                    <th className="border px-2 py-1 text-left font-medium">Varenavn</th>
+                    <th className="border px-2 py-1 text-left font-medium">Date Range</th>
                     <th className="border px-2 py-1 text-right font-medium">Rows</th>
                     <th className="border px-2 py-1 text-left font-medium">Action</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {recentRuns.map((run, i) => (
-                    <tr key={run.id} className={i % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
-                      <td className="border px-2 py-1 whitespace-nowrap">
-                        {new Date(run.created_at).toLocaleString('da-DK')}
-                      </td>
-                      <td className="border px-2 py-1">{run.file_name || '—'}</td>
-                      <td className="border px-2 py-1 font-mono">{run.style_no}</td>
-                      <td className="border px-2 py-1">{run.style_name || '—'}</td>
-                      <td className="border px-2 py-1 text-right">{run.row_count.toLocaleString('da-DK')}</td>
-                      <td className="border px-2 py-1">
-                        <button
-                          className="text-blue-600 hover:underline"
-                          onClick={() => loadRun(run)}
-                          disabled={busy}
-                        >
-                          Load
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                  {recentRuns.map((run, i) => {
+                    // Format date range
+                    const formatDate = (d: string | null) => {
+                      if (!d) return '';
+                      const date = new Date(d);
+                      return date.toLocaleDateString('da-DK', { day: '2-digit', month: '2-digit', year: '2-digit' });
+                    };
+                    const dateRange = run.first_date && run.last_date
+                      ? run.first_date === run.last_date
+                        ? formatDate(run.first_date)
+                        : `${formatDate(run.first_date)} – ${formatDate(run.last_date)}`
+                      : '—';
+                    
+                    return (
+                      <tr key={run.id} className={i % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
+                        <td className="border px-2 py-1 font-mono">{run.toldref || '—'}</td>
+                        <td className="border px-2 py-1">{run.style_name || run.style_no || '—'}</td>
+                        <td className="border px-2 py-1 whitespace-nowrap">{dateRange}</td>
+                        <td className="border px-2 py-1 text-right">{run.row_count.toLocaleString('da-DK')}</td>
+                        <td className="border px-2 py-1">
+                          <button
+                            className="text-blue-600 hover:underline"
+                            onClick={() => loadRun(run)}
+                            disabled={busy}
+                          >
+                            Load
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
