@@ -106,7 +106,8 @@ async function handle(req: Request) {
     return new Response(JSON.stringify(debug ? { ...res, debug: true } : res), { status: 200, headers: { 'Content-Type': 'application/json' } });
   }
 
-  // Enqueue the full pipeline with run_after delays to sequence them
+  // Enqueue the full pipeline with scheduled_for delays to sequence them
+  const nowTime = now.getTime();
   const inserts = [
     // Step 1: scrape_styles (immediately)
     {
@@ -114,14 +115,15 @@ async function handle(req: Request) {
       payload: { requestedBy: 'cron_weekly_style_refresh', runKey, pipelineStep: 1 },
       status: 'queued',
       max_attempts: 3,
+      scheduled_for: null, // Run immediately
     },
-    // Step 2: enrich_styles (after 15 min) - extracts style_type, cost_price, cost_price_currency
+    // Step 2: enrich_styles (after 15 min) - extracts style_type, cost_price, cost_price_currency, customs_tariff_no, country_of_origin
     {
       type: 'enrich_styles',
       payload: { requestedBy: 'cron_weekly_style_refresh', runKey, pipelineStep: 2 },
       status: 'queued',
       max_attempts: 3,
-      run_after: new Date(now.getTime() + 15 * 60 * 1000).toISOString(),
+      scheduled_for: new Date(nowTime + 15 * 60 * 1000).toISOString(),
     },
     // Step 3: deep_scrape_styles (after 30 min)
     {
@@ -129,7 +131,7 @@ async function handle(req: Request) {
       payload: { requestedBy: 'cron_weekly_style_refresh', runKey, pipelineStep: 3 },
       status: 'queued',
       max_attempts: 3,
-      run_after: new Date(now.getTime() + 30 * 60 * 1000).toISOString(),
+      scheduled_for: new Date(nowTime + 30 * 60 * 1000).toISOString(),
     },
     // Step 4: scrape_eans (after 2 hours)
     {
@@ -138,7 +140,7 @@ async function handle(req: Request) {
       status: 'queued',
       max_attempts: 3,
       queue: 'stock',
-      run_after: new Date(now.getTime() + 2 * 60 * 60 * 1000).toISOString(),
+      scheduled_for: new Date(nowTime + 2 * 60 * 60 * 1000).toISOString(),
     },
     // Step 5: check_stock_fix with autoFix (after 4 hours)
     {
@@ -146,18 +148,49 @@ async function handle(req: Request) {
       payload: { requestedBy: 'cron_weekly_style_refresh', runKey, pipelineStep: 5, autoFix: true },
       status: 'queued',
       max_attempts: 3,
-      run_after: new Date(now.getTime() + 4 * 60 * 60 * 1000).toISOString(),
+      scheduled_for: new Date(nowTime + 4 * 60 * 60 * 1000).toISOString(),
     },
   ];
 
-  const { error: insErr } = await supabase.from('jobs').insert(inserts as any);
+  console.log('[weekly-style-refresh] Enqueuing pipeline jobs:', {
+    runKey,
+    now: now.toISOString(),
+    jobs: inserts.map(i => ({
+      type: i.type,
+      step: (i.payload as any).pipelineStep,
+      scheduled_for: (i as any).scheduled_for,
+      delay_minutes: (i as any).scheduled_for 
+        ? Math.round((new Date((i as any).scheduled_for).getTime() - nowTime) / 60000)
+        : 0
+    }))
+  });
+
+  const { data: insertedJobs, error: insErr } = await supabase.from('jobs').insert(inserts as any).select('id, type, scheduled_for');
   if (insErr) {
+    console.error('[weekly-style-refresh] Failed to enqueue jobs:', insErr);
     const errRes = { error: 'enqueue weekly refresh pipeline failed', detail: insErr.message };
-    return new Response(JSON.stringify(debug ? { ...errRes, debug: true } : errRes), { status: 500 });
+    return new Response(JSON.stringify(debug ? { ...errRes, debug: true, errorDetails: insErr } : errRes), { status: 500 });
   }
 
-  const res = { enqueued: inserts.length, runKey, pipeline: inserts.map(i => ({ type: i.type, step: (i.payload as any).pipelineStep })) };
-  return new Response(JSON.stringify(debug ? { ...res, debug: true } : res), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  console.log('[weekly-style-refresh] Successfully enqueued jobs:', {
+    count: insertedJobs?.length || 0,
+    jobIds: insertedJobs?.map(j => ({ id: j.id, type: j.type, scheduled_for: j.scheduled_for }))
+  });
+
+  const res = { 
+    enqueued: inserts.length, 
+    runKey, 
+    pipeline: inserts.map(i => ({ 
+      type: i.type, 
+      step: (i.payload as any).pipelineStep,
+      scheduled_for: (i as any).scheduled_for,
+      delay_minutes: (i as any).scheduled_for 
+        ? Math.round((new Date((i as any).scheduled_for).getTime() - nowTime) / 60000)
+        : 0
+    })),
+    jobIds: insertedJobs?.map(j => j.id)
+  };
+  return new Response(JSON.stringify(debug ? { ...res, debug: true, insertedJobs } : res), { status: 200, headers: { 'Content-Type': 'application/json' } });
 }
 
 export async function POST(req: Request) { try { return await handle(req); } catch (err: any) { return new Response(JSON.stringify({ error: err?.message || 'Cron weekly-style-refresh error' }), { status: 500 }); } }

@@ -87,18 +87,48 @@ async function leaseNextJob(): Promise<Nullable<JobRow>> {
       if (nowMs - lastErrorLogTime > ERROR_LOG_THROTTLE_MS) {
         lastErrorLogTime = nowMs;
         // eslint-disable-next-line no-console
-        console.error('lease_next_job error', {
+        console.error('[worker] lease_next_job error', {
           message: error.message,
           details: error.details,
           hint: error.hint,
-          code: error.code
+          code: error.code,
+          queue: JOB_QUEUE
         });
       }
       return null;
     }
     const row = (data as any) ?? null;
     // Treat null-id (nullable record) as no job available
-    if (!row || !row.id) return null;
+    if (!row || !row.id) {
+      // Check if there are jobs waiting for scheduled_for time
+      const { data: waitingJobs } = await supabase
+        .from('jobs')
+        .select('id, type, scheduled_for, status')
+        .eq('status', 'queued')
+        .not('scheduled_for', 'is', null)
+        .gt('scheduled_for', now.toISOString())
+        .limit(5);
+      
+      if (waitingJobs && waitingJobs.length > 0) {
+        const nextJob = waitingJobs[0];
+        const waitTime = new Date(nextJob.scheduled_for).getTime() - now.getTime();
+        // Only log every 30 seconds to avoid spam
+        if (Date.now() % 30000 < 2000) {
+          // eslint-disable-next-line no-console
+          console.log(`[worker] No jobs ready. ${waitingJobs.length} job(s) waiting for scheduled time. Next: ${nextJob.type} at ${nextJob.scheduled_for} (in ${Math.round(waitTime / 1000)}s)`);
+        }
+      }
+      return null;
+    }
+    
+    // Log when we lease a job with scheduled_for
+    if (row.scheduled_for) {
+      const scheduledTime = new Date(row.scheduled_for);
+      const delayMs = scheduledTime.getTime() - now.getTime();
+      // eslint-disable-next-line no-console
+      console.log(`[worker] Leased job ${row.id} (${row.type}) that was scheduled for ${row.scheduled_for} (${Math.round(delayMs / 1000)}s ${delayMs > 0 ? 'in future' : 'ago'})`);
+    }
+    
     return row as JobRow;
   } catch (err: any) {
     // Handle network errors (fetch failed, etc.)
@@ -106,9 +136,10 @@ async function leaseNextJob(): Promise<Nullable<JobRow>> {
     if (nowMs - lastErrorLogTime > ERROR_LOG_THROTTLE_MS) {
       lastErrorLogTime = nowMs;
       // eslint-disable-next-line no-console
-      console.error('lease_next_job network error', {
+      console.error('[worker] lease_next_job network error', {
         message: err?.message || String(err),
-        name: err?.name
+        name: err?.name,
+        queue: JOB_QUEUE
       });
     }
     return null;
@@ -2747,6 +2778,16 @@ async function mainLoop() {
       continue;
     }
     idleMs = IDLE_SLEEP_MS; // reset backoff when we get a job
+
+    // eslint-disable-next-line no-console
+    console.log(`[worker] Leased job ${job.id}`, {
+      type: job.type,
+      status: job.status,
+      attempts: job.attempts,
+      max_attempts: job.max_attempts,
+      scheduled_for: (job as any).scheduled_for || null,
+      payload: job.payload
+    });
 
     const heartbeat = setInterval(() => updateJobHeartbeat(job.id).catch(() => {}), 45_000);
     try {
