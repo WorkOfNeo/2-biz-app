@@ -223,8 +223,8 @@ export default function StyleDetailPage({ params }: { params: { styleNo: string 
     }
   }
 
-  // Full scrape: Stock + Deep Scrape (enrichment, colors, seasons) + EANs
-  async function fullScrapeStyle() {
+  // Enrich style: Deep Scrape (enrichment, colors, seasons) + EANs (NO stock updates)
+  async function enrichStyle() {
     try {
       setFullScraping(true);
       setScrapeMessage(null);
@@ -239,9 +239,8 @@ export default function StyleDetailPage({ params }: { params: { styleNo: string 
         requestedBy: session.user.email || 'style-detail-page-full'
       };
 
-      // Enqueue all three jobs
+      // Enqueue enrichment jobs only (no stock updates which chain to check_stock_fix)
       const jobs = [
-        { type: 'update_style_stock', payload: basePayload },
         { type: 'deep_scrape_styles', payload: basePayload },
         { type: 'scrape_eans', payload: basePayload }
       ];
@@ -266,7 +265,7 @@ export default function StyleDetailPage({ params }: { params: { styleNo: string 
         jobIds.push(jobId);
       }
 
-      setScrapeMessage({ type: 'success', text: `Full scrape started (3 jobs: Stock, Deep Enrich, EANs)` });
+      setScrapeMessage({ type: 'success', text: `Full scrape started (2 jobs: Deep Enrich, EANs)` });
 
       // Poll for all jobs to complete
       const pollInterval = setInterval(async () => {
@@ -582,11 +581,11 @@ export default function StyleDetailPage({ params }: { params: { styleNo: string 
         <div className="flex items-center gap-2 flex-wrap">
           <button
             className="text-sm px-4 py-2 rounded-lg bg-indigo-600 text-white font-medium hover:bg-indigo-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors shadow-sm"
-            onClick={fullScrapeStyle}
+            onClick={enrichStyle}
             disabled={fullScraping || scraping}
-            title="Full scrape: Stock + Deep Enrich + EANs"
+            title="Full enrichment: Deep Scrape (type, cost, tariff, origin, images, seasons) + EANs"
           >
-            {fullScraping ? 'Full Scraping...' : 'Full Scrape'}
+            {fullScraping ? 'Enriching...' : 'Enrich Style'}
           </button>
           <button
             className="text-sm px-4 py-2 rounded-lg bg-blue-600 text-white font-medium hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors shadow-sm"
