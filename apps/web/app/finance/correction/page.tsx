@@ -479,22 +479,22 @@ export default function CorrectionPage() {
           <Card>
             <CardHeader>
               <CardTitle className="text-sm">
-                Output Preview (first 50 of {outputRows.length.toLocaleString('da-DK')} rows)
+                Output Data ({outputRows.length.toLocaleString('da-DK')} rows)
               </CardTitle>
             </CardHeader>
-            <CardContent className="overflow-x-auto">
+            <CardContent className="overflow-x-auto max-h-[600px] overflow-y-auto">
               <table className="min-w-max text-xs border-collapse">
-                <thead>
+                <thead className="sticky top-0 z-10">
                   <tr className="bg-gray-50">
                     {OUTPUT_COLUMNS.map((col, i) => (
-                      <th key={i} className="border px-2 py-1 text-left font-medium whitespace-nowrap">
+                      <th key={i} className="border px-2 py-1 text-left font-medium whitespace-nowrap bg-gray-50">
                         {col}
                       </th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {outputRows.slice(0, 50).map((row, i) => {
+                  {outputRows.map((row, i) => {
                     const arr = rowToArray(row);
                     return (
                       <tr key={i} className={i % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
