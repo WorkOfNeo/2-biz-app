@@ -32,18 +32,26 @@ type FullAnalysisItem = {
   stock: number[];
   sold: number[];
   netStock: number[];
+  purchaseRunning: number[];
+  bellRainAvailable: number[];
   historical: number[];
   nextMonthHistorical: number[];
   totalStock: number;
   totalSold: number;
   totalNetStock: number;
+  totalPurchaseRunning: number;
+  totalBellRainAvailable: number;
   totalHistorical: number;
   totalNextMonthHistorical: number;
   weeklyRate: number;
   nextMonthWeeklyRate: number;
   targetStock: number;
   suggestedOrder: number;
+  bellRainCallHome: number;
+  newOrderNeeded: number;
   suggestedOrderBySize: number[];
+  bellRainCallHomeBySize: number[];
+  newOrderNeededBySize: number[];
   trendDirection: 'up' | 'down' | 'stable';
   trendPercent: number;
   status: 'critical' | 'low' | 'ok' | 'surplus';
@@ -71,9 +79,12 @@ type FullAnalysisResult = {
     okItems: number;
     surplusItems: number;
     totalSuggestedOrder: number;
+    totalBellRainCallHome: number;
+    totalNewOrderNeeded: number;
     aiSummary: string;
     trendSummary: string;
   };
+  promptVersion: string;
   dateRange: {
     start: string;
     end: string;
@@ -838,30 +849,28 @@ function Step1SelectSet({
                               s => s.style_no === style.style_no && s.color === color
                             );
                             return (
-                              <label
+                              <button
                                 key={color}
-                                className={`flex items-center gap-1.5 px-2 py-1 rounded-full text-xs cursor-pointer transition-colors ${
+                                type="button"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  if (isSelected) {
+                                    setSelections(selections.filter(
+                                      s => !(s.style_no === style.style_no && s.color === color)
+                                    ));
+                                  } else {
+                                    setSelections([...selections, { style_no: style.style_no, color }]);
+                                  }
+                                }}
+                                className={`px-2 py-1 rounded-full text-xs cursor-pointer transition-colors ${
                                   isSelected
                                     ? 'bg-[#8FA894] text-white'
                                     : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                                 }`}
                               >
-                                <input
-                                  type="checkbox"
-                                  checked={isSelected}
-                                  onChange={(e) => {
-                                    if (e.target.checked) {
-                                      setSelections([...selections, { style_no: style.style_no, color }]);
-                                    } else {
-                                      setSelections(selections.filter(
-                                        s => !(s.style_no === style.style_no && s.color === color)
-                                      ));
-                                    }
-                                  }}
-                                  className="sr-only"
-                                />
                                 {color}
-                              </label>
+                              </button>
                             );
                           })}
                         </div>
@@ -1365,26 +1374,39 @@ function Step2AIResults({
     );
   }
 
-  const { summary, dateRange } = result;
+  const { summary, dateRange, promptVersion } = result;
+
+  // Calculate totals for Call Home vs New Order
+  const totalCallHome = React.useMemo(() => {
+    return result.items.reduce((sum, item) => sum + (item.bellRainCallHome || 0), 0);
+  }, [result.items]);
+
+  const totalNewOrder = React.useMemo(() => {
+    return result.items.reduce((sum, item) => sum + (item.newOrderNeeded || 0), 0);
+  }, [result.items]);
 
   return (
     <div className="space-y-4">
       {/* Summary Card */}
       <Card className="border-[#C5D5CA] bg-gradient-to-r from-[#F5F3F0] to-white">
         <CardHeader className="pb-3">
-          <CardTitle className="flex items-center gap-2">
-            🤖 AI Analysis Complete
-          </CardTitle>
-          <CardDescription>
-            Based on {dateRange.display} historical data · {selectedMonths.length} month{selectedMonths.length !== 1 ? 's' : ''} analyzed
-          </CardDescription>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                🤖 AI Analysis Complete
+              </CardTitle>
+              <CardDescription>
+                Based on {dateRange.display} historical data · {selectedMonths.length} month{selectedMonths.length !== 1 ? 's' : ''} analyzed
+              </CardDescription>
+            </div>
+            <Badge className="bg-slate-200 text-slate-600 text-[10px]">
+              Prompt {promptVersion || 'v1'}
+            </Badge>
+          </div>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-4">
-            <div className="text-center p-3 bg-white rounded-lg border">
-              <div className="text-2xl font-bold text-slate-800">{styleGroups.length}</div>
-              <div className="text-xs text-slate-500">Styles</div>
-            </div>
+          {/* Status overview */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
             <div className="text-center p-3 bg-red-50 rounded-lg border border-red-200">
               <div className="text-2xl font-bold text-red-600">{summary.criticalItems}</div>
               <div className="text-xs text-red-600">Critical</div>
@@ -1397,14 +1419,33 @@ function Step2AIResults({
               <div className="text-2xl font-bold text-green-600">{summary.okItems}</div>
               <div className="text-xs text-green-600">OK</div>
             </div>
-            <div className="text-center p-3 bg-blue-50 rounded-lg border border-blue-200">
-              <div className="text-2xl font-bold text-blue-600">{totalUnits}</div>
-              <div className="text-xs text-blue-600">Total Order</div>
+            <div className="text-center p-3 bg-slate-50 rounded-lg border border-slate-200">
+              <div className="text-2xl font-bold text-slate-600">{styleGroups.length}</div>
+              <div className="text-xs text-slate-500">Styles</div>
+            </div>
+          </div>
+          
+          {/* Call Home vs New Order breakdown */}
+          <div className="grid grid-cols-3 gap-3 mb-4 p-4 bg-white rounded-lg border-2 border-[#8FA894]">
+            <div className="text-center">
+              <div className="text-xs text-slate-500 mb-1">🔔 Call Home</div>
+              <div className="text-2xl font-bold text-purple-600">{totalCallHome}</div>
+              <div className="text-[10px] text-purple-500">from Bell Rain</div>
+            </div>
+            <div className="text-center border-x border-slate-200">
+              <div className="text-xs text-slate-500 mb-1">📦 Order New</div>
+              <div className="text-2xl font-bold text-[#8FA894]">{totalNewOrder}</div>
+              <div className="text-[10px] text-slate-400">fresh order</div>
+            </div>
+            <div className="text-center">
+              <div className="text-xs text-slate-500 mb-1">📊 Total</div>
+              <div className="text-2xl font-bold text-slate-800">{totalUnits}</div>
+              <div className="text-[10px] text-slate-400">units needed</div>
             </div>
           </div>
           
           {summary.aiSummary && (
-            <div className="bg-white p-4 rounded-lg border text-sm text-slate-700">
+            <div className="bg-white p-4 rounded-lg border text-sm text-slate-700 whitespace-pre-wrap">
               <div className="font-medium text-slate-800 mb-1">AI Recommendation:</div>
               {summary.aiSummary}
             </div>
@@ -1523,7 +1564,10 @@ function Step2AIResults({
                         const key = `${item.style_no}|${item.color}`;
                         const editedValues = orderEdits[key] || item.suggestedOrderBySize || [];
                         const editedTotal = editedValues.reduce((a, b) => a + b, 0);
-                        const hasBellRain = (item as any).bellRainCallHome > 0;
+                        const bellRainAvail = item.totalBellRainAvailable || 0;
+                        const bellRainCallHome = item.bellRainCallHome || 0;
+                        const newOrderNeeded = item.newOrderNeeded || 0;
+                        const onOrder = item.totalPurchaseRunning || 0;
                         
                         return (
                           <div 
@@ -1535,49 +1579,78 @@ function Step2AIResults({
                               'border-slate-200 bg-slate-50/50'
                             }`}
                           >
-                            <div className="flex items-center justify-between mb-2">
-                              <div className="flex items-center gap-2">
-                                <Badge className={
-                                  item.status === 'critical' ? 'bg-red-600 text-white' :
-                                  item.status === 'low' ? 'bg-amber-500 text-white' :
-                                  item.status === 'ok' ? 'bg-green-600 text-white' :
-                                  'bg-blue-500 text-white'
-                                }>
-                                  {item.color}
-                                </Badge>
-                                {hasBellRain && (
-                                  <Badge className="bg-purple-100 text-purple-700 text-[10px]">
-                                    🔔 Call home {(item as any).bellRainCallHome}
+                            {/* Header with key metrics */}
+                            <div className="flex items-start justify-between mb-3">
+                              <div>
+                                <div className="flex items-center gap-2 mb-1">
+                                  <Badge className={
+                                    item.status === 'critical' ? 'bg-red-600 text-white' :
+                                    item.status === 'low' ? 'bg-amber-500 text-white' :
+                                    item.status === 'ok' ? 'bg-green-600 text-white' :
+                                    'bg-blue-500 text-white'
+                                  }>
+                                    {item.color}
                                   </Badge>
-                                )}
-                              </div>
-                              <div className="text-xs text-slate-500">
-                                Stock: {item.totalNetStock} · Sold: {item.totalHistorical}
-                              </div>
-                            </div>
-                            
-                            {/* Size grid */}
-                            <div className="grid grid-cols-7 gap-1.5">
-                              {item.sizes.map((size, sizeIdx) => (
-                                <div key={size} className="text-center">
-                                  <div className="text-[9px] text-slate-400">{size}</div>
-                                  <Input
-                                    type="number"
-                                    min={0}
-                                    value={editedValues[sizeIdx] ?? 0}
-                                    onChange={(e) => updateOrderValue(item.style_no, item.color, sizeIdx, parseInt(e.target.value) || 0)}
-                                    className="h-7 text-center text-xs p-0.5"
-                                  />
-                                  <div className="text-[8px] text-slate-400">
-                                    {item.historical[sizeIdx] ?? 0}
-                                  </div>
                                 </div>
-                              ))}
+                                <div className="text-[10px] text-slate-500 space-y-0.5">
+                                  <div>📊 Target (Historical): <strong>{item.totalHistorical}</strong></div>
+                                  <div>📦 Current Stock: {item.totalNetStock} | On Order: {onOrder}</div>
+                                </div>
+                              </div>
+                              
+                              {/* Action breakdown */}
+                              <div className="text-right space-y-1">
+                                {bellRainAvail > 0 && (
+                                  <div className="flex items-center gap-2 text-[10px]">
+                                    <span className="text-purple-600">🔔 Call Home:</span>
+                                    <span className="font-bold text-purple-700">{bellRainCallHome}</span>
+                                    <span className="text-slate-400">/ {bellRainAvail} avail</span>
+                                  </div>
+                                )}
+                                <div className="flex items-center gap-2 text-[10px]">
+                                  <span className="text-[#8FA894]">📦 Order New:</span>
+                                  <span className="font-bold text-[#8FA894]">{newOrderNeeded}</span>
+                                </div>
+                              </div>
                             </div>
                             
+                            {/* Size grid - Order quantities */}
+                            <div className="bg-white rounded-lg p-2 border">
+                              <div className="text-[9px] text-slate-500 mb-1 font-medium">Order by Size:</div>
+                              <div className="grid grid-cols-7 gap-1">
+                                {item.sizes.map((size, sizeIdx) => {
+                                  const bellRainForSize = item.bellRainCallHomeBySize?.[sizeIdx] ?? 0;
+                                  const newForSize = item.newOrderNeededBySize?.[sizeIdx] ?? 0;
+                                  
+                                  return (
+                                    <div key={size} className="text-center">
+                                      <div className="text-[8px] text-slate-400 font-medium">{size}</div>
+                                      <Input
+                                        type="number"
+                                        min={0}
+                                        value={editedValues[sizeIdx] ?? 0}
+                                        onChange={(e) => updateOrderValue(item.style_no, item.color, sizeIdx, parseInt(e.target.value) || 0)}
+                                        className="h-6 text-center text-[10px] p-0.5"
+                                      />
+                                      <div className="text-[7px] text-slate-400 leading-tight">
+                                        <div>hist: {item.historical[sizeIdx] ?? 0}</div>
+                                        {bellRainForSize > 0 && (
+                                          <div className="text-purple-500">🔔{bellRainForSize}</div>
+                                        )}
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                            
+                            {/* Summary footer */}
                             <div className="flex justify-between items-center mt-2 pt-2 border-t border-slate-200">
                               <div className="text-[10px] text-slate-500">
-                                AI: {item.suggestedOrder} → Edited: <strong>{editedTotal}</strong>
+                                Gap: {item.suggestedOrder} | 🔔 {bellRainCallHome} + 📦 {newOrderNeeded}
+                              </div>
+                              <div className="text-sm font-semibold text-[#8FA894]">
+                                Total: {editedTotal}
                               </div>
                             </div>
                           </div>

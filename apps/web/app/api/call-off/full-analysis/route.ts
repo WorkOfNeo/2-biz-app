@@ -82,9 +82,12 @@ type FullAnalysisResponse = {
     okItems: number;
     surplusItems: number;
     totalSuggestedOrder: number;
+    totalBellRainCallHome: number;
+    totalNewOrderNeeded: number;
     aiSummary: string;
     trendSummary: string;
   };
+  promptVersion: string; // e.g., 'v2'
   dateRange: {
     start: string;
     end: string;
@@ -575,17 +578,40 @@ export async function POST(req: Request) {
         else if (trendPercent < -10) trendDirection = 'down';
       }
 
-      // Calculate weekly rate and target stock
+      // PROMPT V2: Historical sales IS the target
+      // The goal is to match historical sales (what we sold = what we need available)
       const weeklyRate = totalHistorical / weeksInPeriod;
-      const targetStock = Math.ceil(weeklyRate * weeks_cover);
+      
+      // V2 LOGIC: Target = Historical Sales for the period
+      // We want to have enough stock to cover what we sold in the reference period
+      const targetStock = totalHistorical;
+      
+      // Available = Current Net Stock + Purchase Orders (what's already coming)
+      // We DON'T count Bell Rain as "available" because it's in secondary storage
+      const regularPurchase = totalPurchaseRunning - totalBellRainAvailable;
+      const availableTotal = totalNetStock + regularPurchase;
+      
+      // Gap = what we're short to meet the target
+      const gap = Math.max(0, targetStock - availableTotal);
+      
+      // Suggested order = the gap we need to fill
+      const suggestedOrder = gap;
 
-      // Calculate suggested order total
-      const suggestedOrder = Math.max(0, targetStock - totalNetStock);
-
-      // BELL RAIN LOGIC: First use available Bell Rain stock before ordering new
-      // Bell Rain = secondary storage we can "call home"
+      // BELL RAIN LOGIC: First "call home" from Bell Rain stock before ordering new
+      // Bell Rain = secondary storage we can call home quickly
       const bellRainCallHome = Math.min(totalBellRainAvailable, suggestedOrder);
       const newOrderNeeded = Math.max(0, suggestedOrder - bellRainCallHome);
+      
+      console.log(`📊 [V2 LOGIC] ${style_no} - ${color}:`, {
+        target: targetStock,
+        currentStock: totalNetStock,
+        regularPurchase,
+        bellRainAvailable: totalBellRainAvailable,
+        availableTotal,
+        gap,
+        bellRainCallHome,
+        newOrderNeeded
+      });
 
       // Calculate suggested order per size (distributed by historical pressure)
       const historicalTotal = historical.reduce((a: number, b: number) => a + b, 0);
@@ -777,34 +803,47 @@ export async function POST(req: Request) {
     const topSurplus = items.filter(i => i.status === 'surplus').slice(0, 3);
     const topTrending = items.filter(i => i.trendDirection === 'up').slice(0, 3);
 
-    const aiPrompt = `Analyze this NOOS inventory data and provide a focused summary. Be concise and stick to the data - no generic business advice.${bellRainInfo}
+    // PROMPT VERSION: v2 - Historical = Target
+    const promptVersion = 'v2';
+    
+    const aiPrompt = `[NOOS Call-Off Analysis v2]
+You are analyzing NOOS inventory. The GOAL is to match historical sales - if we sold X units in ${periodDisplay}, we need X units available for the next period.
 
-PERIOD: ${periodDisplay} | TARGET: ${weeks_cover} weeks cover
+FORMULA: Gap = Historical Sales - (Current Stock + On Order)
+         Call Home = min(Gap, Bell Rain Available)
+         New Order = Gap - Call Home
 
+${bellRainInfo}
+
+PERIOD: ${periodDisplay}
 STATUS: ${criticalItems} critical, ${lowItems} low, ${okItems} OK, ${surplusItems} surplus
-TOTAL NEEDED: ${totalSuggestedOrder} units (Bell Rain call-home: ${totalBellRainCallHome}, New order: ${totalNewOrderNeeded})
 
-${bellRainItems.length > 0 ? `BELL RAIN - CALL HOME FIRST:
-${bellRainItems.slice(0, 5).map(i => `• ${i.style_name} (${i.color}): call home ${i.bellRainCallHome} units, then order ${i.newOrderNeeded} new`).join('\n')}` : ''}
+TOTAL GAP TO FILL: ${totalSuggestedOrder} units
+- CALL HOME from Bell Rain: ${totalBellRainCallHome} units
+- ORDER NEW: ${totalNewOrderNeeded} units
 
-${topCritical.length > 0 ? `CRITICAL (order immediately):
-${topCritical.map(i => `• ${i.style_name} (${i.color}): ${i.totalNetStock} in stock → need +${i.suggestedOrder}${i.bellRainCallHome > 0 ? ` (${i.bellRainCallHome} from Bell Rain)` : ''}${i.trendDirection === 'up' ? ' [demand rising]' : ''}`).join('\n')}` : ''}
+${bellRainItems.length > 0 ? `🔔 BELL RAIN - CALL HOME FIRST (secondary storage):
+${bellRainItems.slice(0, 8).map(i => {
+  const avail = i.totalBellRainAvailable;
+  return `• ${i.style_name} (${i.color}): ${avail} available → call home ${i.bellRainCallHome}, then order ${i.newOrderNeeded} new`;
+}).join('\n')}` : ''}
 
-${topTrending.length > 0 ? `RISING DEMAND (prepare extra):
-${topTrending.map(i => `• ${i.style_name} (${i.color}): +${i.trendPercent.toFixed(0)}% vs next month`).join('\n')}` : ''}
+${topCritical.length > 0 ? `🚨 CRITICAL (stock vs target):
+${topCritical.map(i => {
+  const gap = i.targetStock - i.totalNetStock - (i.totalPurchaseRunning - i.totalBellRainAvailable);
+  return `• ${i.style_name} (${i.color}): Sold ${i.totalHistorical} | Stock ${i.totalNetStock} | On Order ${i.totalPurchaseRunning} | Gap ${gap > 0 ? '+' + gap : gap}`;
+}).join('\n')}` : ''}
 
-${topSurplus.length > 0 ? `SURPLUS (slow movers):
-${topSurplus.map(i => `• ${i.style_name} (${i.color}): ${i.totalNetStock - i.targetStock} units above target`).join('\n')}` : ''}
+${topTrending.length > 0 ? `📈 RISING DEMAND (next month comparison):
+${topTrending.map(i => `• ${i.style_name} (${i.color}): +${i.trendPercent.toFixed(0)}% expected`).join('\n')}` : ''}
 
-${ordersByStyle.length > 0 ? `ORDER BY STYLE:
-${ordersByStyle.slice(0, 5).map(s => `• ${s.style_name}: +${s.totalOrder} (${s.colors.length} colors)`).join('\n')}` : ''}
+Based on the V2 logic (Historical = Target), provide:
+1. Priority CALL HOME actions (Bell Rain stock to retrieve immediately)
+2. Priority NEW ORDER actions (what to order after calling home)
+3. Any items that are well-stocked (no action needed)
 
-Provide a brief summary in 3-4 sentences:
-1. What to CALL HOME from Bell Rain first (if any)
-2. What to order NEW (style names and quantities)
-3. What's trending up for next month
-${feedbackSummary}
-Keep it SHORT. Only mention specific styles. No general business advice.`;
+Be specific with quantities. Focus on the biggest gaps first.
+${feedbackSummary}`;
 
     let aiSummary = '';
     try {
@@ -835,9 +874,12 @@ Keep it SHORT. Only mention specific styles. No general business advice.`;
         okItems,
         surplusItems,
         totalSuggestedOrder,
+        totalBellRainCallHome,
+        totalNewOrderNeeded,
         aiSummary,
         trendSummary
       },
+      promptVersion, // 'v2' - Historical = Target
       dateRange: {
         start: queryStartDate,
         end: queryEndDate,
