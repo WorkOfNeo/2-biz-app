@@ -216,6 +216,48 @@ export default function HistoricalSalesPage() {
     [styleInput]
   );
 
+  // Create a map of style_no -> available colors for the color dropdown
+  const colorsByStyleNo = useMemo(() => {
+    const map = new Map<string, string[]>();
+    if (!styles || !styleColors) return map;
+    
+    styleColors.forEach(sc => {
+      const style = styles.find(s => s.id === sc.style_id);
+      if (style) {
+        const existing = map.get(style.style_no) || [];
+        if (!existing.includes(sc.color)) {
+          existing.push(sc.color);
+        }
+        map.set(style.style_no, existing);
+      }
+    });
+    
+    // Sort colors alphabetically for each style
+    map.forEach((colors, styleNo) => {
+      map.set(styleNo, colors.sort());
+    });
+    
+    return map;
+  }, [styles, styleColors]);
+
+  // Function to update a row's matched color
+  function updateRowColor(rowIndex: number, newColor: string) {
+    setParsedRows(prev => prev.map((row, idx) => {
+      if (idx !== rowIndex) return row;
+      
+      const wasUnmatchedColor = row.status === 'unmatched_color';
+      const nowMatched = newColor !== '';
+      
+      return {
+        ...row,
+        matchedColor: newColor || null,
+        colorScore: newColor ? 1.0 : 0, // Manual selection = perfect match
+        status: !row.matchedStyleNo ? 'unmatched_style' : 
+                nowMatched ? 'matched' : 'unmatched_color'
+      };
+    }));
+  }
+
   // Parse Excel file (wide format)
   const handleFileDrop = useCallback((files: File[]) => {
     const file = files[0];
@@ -647,7 +689,7 @@ export default function HistoricalSalesPage() {
                 {matchStats.unmatchedColor > 0 && (
                   <div className="flex items-center gap-2">
                     <AlertCircle className="h-4 w-4 text-yellow-500" />
-                    <span className="text-sm">{matchStats.unmatchedColor} color not found</span>
+                    <span className="text-sm">{matchStats.unmatchedColor} color not found — <em className="text-slate-500">select from dropdown</em></span>
                   </div>
                 )}
               </div>
@@ -661,7 +703,7 @@ export default function HistoricalSalesPage() {
                       <th className="p-2 text-left border-b">Style Input</th>
                       <th className="p-2 text-left border-b">Matched Style</th>
                       <th className="p-2 text-left border-b">Color Input</th>
-                      <th className="p-2 text-left border-b">Matched Color</th>
+                      <th className="p-2 text-left border-b">Matched Color <span className="font-normal text-slate-400">(editable)</span></th>
                       <th className="p-2 text-left border-b">Date Range</th>
                       <th className="p-2 text-right border-b">Total Qty</th>
                     </tr>
@@ -687,9 +729,26 @@ export default function HistoricalSalesPage() {
                         </td>
                         <td className="p-2 border-b">{row.color}</td>
                         <td className="p-2 border-b">
-                          {row.matchedColor || '—'}
-                          {row.colorScore < 1 && row.colorScore >= 0.6 && (
-                            <span className="text-slate-400 ml-1">({Math.round(row.colorScore * 100)}%)</span>
+                          {row.matchedStyleNo ? (
+                            <select
+                              value={row.matchedColor || ''}
+                              onChange={(e) => updateRowColor(idx, e.target.value)}
+                              className={`w-full text-xs px-1.5 py-1 rounded border ${
+                                row.matchedColor 
+                                  ? 'border-green-300 bg-green-50' 
+                                  : 'border-red-300 bg-red-50'
+                              } focus:outline-none focus:ring-1 focus:ring-[#8FA894]`}
+                            >
+                              <option value="">— Select color —</option>
+                              {(colorsByStyleNo.get(row.matchedStyleNo) || []).map(c => (
+                                <option key={c} value={c}>{c}</option>
+                              ))}
+                            </select>
+                          ) : (
+                            <span className="text-slate-400">—</span>
+                          )}
+                          {row.colorScore < 1 && row.colorScore >= 0.5 && row.matchedColor && (
+                            <span className="text-[10px] text-slate-400 ml-1">auto</span>
                           )}
                         </td>
                         <td className="p-2 border-b text-slate-600">{row.dateRange || '(no date)'}</td>
@@ -723,7 +782,9 @@ export default function HistoricalSalesPage() {
                 </Button>
                 {matchStats.matched < matchStats.total && (
                   <span className="text-xs text-slate-500">
-                    Unmatched rows will be skipped
+                    {matchStats.unmatchedColor > 0 
+                      ? 'Fix unmatched colors in the dropdown above, or they will be skipped'
+                      : 'Unmatched style rows will be skipped'}
                   </span>
                 )}
               </div>
