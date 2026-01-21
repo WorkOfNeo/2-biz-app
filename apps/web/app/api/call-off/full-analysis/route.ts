@@ -103,6 +103,7 @@ type FullAnalysisResponse = {
     stockRowsLoaded: number;
     nextMonthRowsLoaded: number;
     queryDateRange: { startDate: string; endDate: string };
+    selectedMonths?: string[];
     queryStyleNos: string[];
     queryColors: string[];
   };
