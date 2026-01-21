@@ -52,6 +52,49 @@ type StyleColorRow = {
 // Size columns we expect (can be flexible)
 const SIZE_COLUMNS = ['34', '36', '38', '40', '42', '44', '46'];
 
+// =====================================================
+// HARD-CODED STYLE/COLOR RULES
+// Format: { styleName (lowercase): { colorPattern: style_no } }
+// colorPattern can match multiple colors separated by |
+// =====================================================
+const HARDCODED_RULES: Record<string, Record<string, string>> = {
+  'rany': {
+    'denim|dark denim': '1010191-D',
+    'light denim': '1010191-LD',
+  },
+  'karcemona': {
+    'denim|dark denim': '1011396-D',
+  },
+  'kaxy': {
+    'black|navy': '1007952-MS',
+    'denim|dark denim': '1007952-D',
+  },
+};
+
+// Helper to check if a color matches a pattern (e.g., "denim|dark denim")
+function matchesColorPattern(inputColor: string, pattern: string): boolean {
+  const inputLower = inputColor.toLowerCase().trim();
+  const patterns = pattern.split('|').map(p => p.trim().toLowerCase());
+  return patterns.some(p => inputLower === p || inputLower.includes(p) || p.includes(inputLower));
+}
+
+// Check hardcoded rules and return style_no if matched
+function checkHardcodedRules(styleName: string, color: string): string | null {
+  const styleNameLower = styleName.toLowerCase().trim();
+  
+  // Check if any rule key is contained in the style name or vice versa
+  for (const [ruleStyleName, colorRules] of Object.entries(HARDCODED_RULES)) {
+    if (styleNameLower.includes(ruleStyleName) || ruleStyleName.includes(styleNameLower)) {
+      for (const [colorPattern, styleNo] of Object.entries(colorRules)) {
+        if (matchesColorPattern(color, colorPattern)) {
+          return styleNo;
+        }
+      }
+    }
+  }
+  return null;
+}
+
 // Fuzzy matching helpers
 function normalizeText(s: string): string {
   return s
@@ -428,23 +471,55 @@ export default function HistoricalSalesPage() {
       let colorScore = 0;
       let matchNote: string | null = null;
       
-      // Combine styleNo and styleName for matching - try both as identifiers
-      const identifiersToTry = [row.styleNo, row.styleName].filter(Boolean);
+      // STEP 0: Check HARD-CODED RULES first (highest priority)
+      const styleIdentifier = row.styleName || row.styleNo;
+      const hardcodedStyleNo = checkHardcodedRules(styleIdentifier, row.color);
       
-      // STEP 1: Try direct matching with any identifier
-      for (const identifier of identifiersToTry) {
-        const directMatch = tryFindStyle(identifier);
-        if (directMatch) {
-          matchedStyleNo = directMatch.style_no;
+      if (hardcodedStyleNo) {
+        // Found a hard-coded rule! Try to find this style and its color
+        const hardcodedStyle = styleNoMap.get(hardcodedStyleNo.toLowerCase());
+        if (hardcodedStyle) {
+          matchedStyleNo = hardcodedStyle.style_no;
           styleScore = 1.0;
+          matchNote = `Rule: ${styleIdentifier} + ${row.color} → ${hardcodedStyleNo}`;
           
           // Try to match color for this style
-          const colors = getColorsForStyle(directMatch);
+          const colors = getColorsForStyle(hardcodedStyle);
           const colorResult = tryMatchColor(row.color, colors);
           if (colorResult.match && colorResult.score >= 0.5) {
             matchedColor = colorResult.match;
             colorScore = colorResult.score;
-            break; // Found a complete match!
+          }
+        } else {
+          // Hard-coded style_no not found in database - still set it but note the issue
+          matchedStyleNo = hardcodedStyleNo;
+          styleScore = 1.0;
+          matchNote = `Rule → ${hardcodedStyleNo} (not in DB!)`;
+        }
+      }
+      
+      // If hard-coded rule didn't fully match, continue with normal matching
+      if (!matchedStyleNo || !matchedColor) {
+        // Combine styleNo and styleName for matching - try both as identifiers
+        const identifiersToTry = [row.styleNo, row.styleName].filter(Boolean);
+        
+        // STEP 1: Try direct matching with any identifier
+        if (!matchedStyleNo) {
+          for (const identifier of identifiersToTry) {
+            const directMatch = tryFindStyle(identifier);
+            if (directMatch) {
+              matchedStyleNo = directMatch.style_no;
+              styleScore = 1.0;
+              
+              // Try to match color for this style
+              const colors = getColorsForStyle(directMatch);
+              const colorResult = tryMatchColor(row.color, colors);
+              if (colorResult.match && colorResult.score >= 0.5) {
+                matchedColor = colorResult.match;
+                colorScore = colorResult.score;
+                break; // Found a complete match!
+              }
+            }
           }
         }
       }
@@ -840,8 +915,8 @@ export default function HistoricalSalesPage() {
                 )}
               </div>
 
-              {/* Preview table */}
-              <div className="max-h-80 overflow-auto border rounded bg-white">
+              {/* Preview table - scrollable, shows all rows */}
+              <div className="max-h-[500px] overflow-auto border rounded bg-white">
                 <table className="min-w-full text-xs">
                   <thead className="bg-slate-50 sticky top-0">
                     <tr>
@@ -857,7 +932,7 @@ export default function HistoricalSalesPage() {
                       </tr>
                     </thead>
                     <tbody>
-                    {parsedRows.slice(0, 30).map((row, idx) => (
+                    {parsedRows.map((row, idx) => (
                       <tr key={idx} className={row.status !== 'matched' ? 'bg-red-50' : ''}>
                         <td className="p-2 border-b">
                           {row.status === 'matched' ? (
@@ -912,9 +987,7 @@ export default function HistoricalSalesPage() {
                     </tbody>
                   </table>
                 </div>
-              {parsedRows.length > 30 && (
-                <p className="text-xs text-slate-500">Showing first 30 of {parsedRows.length} rows</p>
-              )}
+              <p className="text-xs text-slate-500">Showing all {parsedRows.length} rows</p>
 
               {/* Upload button */}
               <div className="flex items-center gap-4">
