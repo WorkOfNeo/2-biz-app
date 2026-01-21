@@ -20,7 +20,7 @@ type ProcessedRow = {
 };
 
 // Parse a single date string into YYYY-MM-DD format
-// Supports: YYYY-MM-DD, DD-MM-YYYY, DD/MM/YYYY, Excel serial numbers
+// Supports: YYYY-MM-DD, DD-MM-YYYY, DD/MM/YYYY, DD.MM.YYYY, Excel serial numbers
 function parseDate(dateStr: string): string | null {
   const trimmed = dateStr.trim();
   
@@ -36,8 +36,8 @@ function parseDate(dateStr: string): string | null {
     }
   }
   
-  // Try DD-MM-YYYY or DD/MM/YYYY format first (common in Europe)
-  const ddmmyyyyMatch = trimmed.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);
+  // Try DD-MM-YYYY, DD/MM/YYYY, or DD.MM.YYYY format first (common in Europe)
+  const ddmmyyyyMatch = trimmed.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$/);
   if (ddmmyyyyMatch) {
     const day = parseInt(ddmmyyyyMatch[1]!, 10);
     const month = parseInt(ddmmyyyyMatch[2]!, 10);
@@ -260,25 +260,21 @@ export async function POST(req: Request) {
           continue;
         }
         
-        const styleId = styleMap.get(row.style_no);
-        if (!styleId) {
-          errors.push(`Row ${i + 1}: Style ${row.style_no} not found in database`);
-          continue;
-        }
+        // style_id is optional - we can store data even if style doesn't exist in DB
+        // The lookup happens later by style_no when querying
+        const styleId = styleMap.get(row.style_no) || null;
         
-        // Validate and fuzzy-match color
+        // Try to fuzzy-match color if we have the style in DB
         let finalColor = row.color;
-        const colorKey = `${styleId}|${String(row.color || '').trim().toLowerCase()}`;
-        if (!validStyleColorMap.has(colorKey)) {
-          // Try fuzzy match
-          const fuzzyMatch = findBestColorMatch(styleId, row.color);
-          if (fuzzyMatch) {
-            finalColor = fuzzyMatch;
-            fuzzyMatchCount++;
-            warnings.push(`Row ${i + 1}: Color "${row.color}" auto-matched to "${fuzzyMatch}" for style ${row.style_no}`);
-          } else {
-            const availableColors = styleColorsByStyleId.get(styleId) || [];
-            warnings.push(`Row ${i + 1}: Color "${row.color}" not found for style ${row.style_no}. Available: ${availableColors.slice(0, 5).join(', ')}${availableColors.length > 5 ? '...' : ''}. Using original color.`);
+        if (styleId) {
+          const colorKey = `${styleId}|${String(row.color || '').trim().toLowerCase()}`;
+          if (!validStyleColorMap.has(colorKey)) {
+            // Try fuzzy match
+            const fuzzyMatch = findBestColorMatch(styleId, row.color);
+            if (fuzzyMatch) {
+              finalColor = fuzzyMatch;
+              fuzzyMatchCount++;
+            }
           }
         }
         
