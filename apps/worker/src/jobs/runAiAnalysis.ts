@@ -279,7 +279,7 @@ export async function runAiAnalysis(
     const customers = await fetchAllRows<any>(
       supabase,
       'customers',
-      'customer_id, company, stats_display_name, country, salesperson_id',
+      'customer_id, company, stats_display_name, country, salesperson_id, excluded',
       {},
       { cap: 10000, logFn: logProgress }
     );
@@ -370,14 +370,27 @@ export async function runAiAnalysis(
     // ========== STEP 8: Calculate Metrics ==========
     await log('info', 'calculating_metrics');
 
+    // Exclude customers that are excluded from statistics (customers.excluded = true)
+    // Daily analysis should use the same denominator/coverage as the statistics pages.
+    const includedCustomers = (customers ?? []).filter((c: any) => !c?.excluded);
+    const includedCustomerIds = new Set(
+      includedCustomers.map((c: any) => c?.customer_id).filter(Boolean)
+    );
+
+    // Filter season data to the included customer set to keep metrics consistent
+    const salesStatsIncluded = salesStats.filter((r: any) => !r?.account_no || includedCustomerIds.has(r.account_no));
+    const styleDetailsIncluded = styleDetails.filter((r: any) => !r?.account_no || includedCustomerIds.has(r.account_no));
+    const comparisonStatsIncluded = comparisonStats.filter((r: any) => !r?.account_no || includedCustomerIds.has(r.account_no));
+    const comparisonStyleDetailsIncluded = comparisonStyleDetails.filter((r: any) => !r?.account_no || includedCustomerIds.has(r.account_no));
+
     // Current season totals
-    const totalQty = salesStats.reduce((sum: number, r: any) => sum + (Number(r.qty) || 0), 0);
-    const totalRevenue = salesStats.reduce((sum: number, r: any) => sum + (Number(r.price) || 0), 0);
-    const uniqueCustomers = new Set(salesStats.map((r: any) => r.account_no)).size;
-    const uniqueStyles = new Set(styleDetails.map((r: any) => r.style_no)).size;
+    const totalQty = salesStatsIncluded.reduce((sum: number, r: any) => sum + (Number(r.qty) || 0), 0);
+    const totalRevenue = salesStatsIncluded.reduce((sum: number, r: any) => sum + (Number(r.price) || 0), 0);
+    const uniqueCustomers = new Set(salesStatsIncluded.map((r: any) => r.account_no).filter(Boolean)).size;
+    const uniqueStyles = new Set(styleDetailsIncluded.map((r: any) => r.style_no).filter(Boolean)).size;
 
     // Customer coverage
-    const totalCustomers = customers.length;
+    const totalCustomers = includedCustomers.length;
     const visitedCustomers = uniqueCustomers;
     const visitRatePercent = totalCustomers > 0 ? Math.round((visitedCustomers / totalCustomers) * 1000) / 10 : 0;
 
@@ -393,7 +406,7 @@ export async function runAiAnalysis(
     // Build customer country map and salesperson map
     const customerCountryMap = new Map<string, string>();
     const customerSalespersonMap = new Map<string, string>();
-    for (const c of customers) {
+    for (const c of includedCustomers) {
       if (c.customer_id) {
         customerCountryMap.set(c.customer_id, c.country || 'Unknown');
         customerSalespersonMap.set(c.customer_id, c.salesperson_id || 'unknown');
@@ -402,7 +415,7 @@ export async function runAiAnalysis(
 
     // Build comparison data: what each customer bought last season
     const lastSeasonByCustomer = new Map<string, { qty: number; revenue: number }>();
-    for (const row of comparisonStats) {
+    for (const row of comparisonStatsIncluded) {
       const acc = row.account_no;
       if (!acc) continue;
       const existing = lastSeasonByCustomer.get(acc) || { qty: 0, revenue: 0 };
@@ -421,7 +434,7 @@ export async function runAiAnalysis(
       customerData: Map<string, { qty: number; revenue: number }>;
     }> = {};
     
-    for (const row of salesStats) {
+    for (const row of salesStatsIncluded) {
       const spId = row.salesperson_id || 'unknown';
       if (!bySalesperson[spId]) {
         const sp = (salespersons ?? []).find((s: any) => s.id === spId);
@@ -446,7 +459,7 @@ export async function runAiAnalysis(
     }
 
     const customersBySalesperson: Record<string, number> = {};
-    for (const c of customers) {
+    for (const c of includedCustomers) {
       const spId = c.salesperson_id || 'unknown';
       customersBySalesperson[spId] = (customersBySalesperson[spId] || 0) + 1;
     }
@@ -522,7 +535,7 @@ export async function runAiAnalysis(
 
     // Group by country
     const byCountry: Record<string, { qty: number; revenue: number; customers: Set<string> }> = {};
-    for (const row of salesStats) {
+    for (const row of salesStatsIncluded) {
       const country = customerCountryMap.get(row.account_no) || 'Unknown';
       if (!byCountry[country]) byCountry[country] = { qty: 0, revenue: 0, customers: new Set() };
       byCountry[country].qty += Number(row.qty) || 0;
@@ -535,7 +548,7 @@ export async function runAiAnalysis(
 
     // Group style details
     const styleQty: Record<string, { qty: number; colors: Set<string>; customers: Set<string>; style_name: string }> = {};
-    for (const row of styleDetails) {
+    for (const row of styleDetailsIncluded) {
       const sn = row.style_no;
       if (!sn) continue;
       if (!styleQty[sn]) styleQty[sn] = { qty: 0, colors: new Set(), customers: new Set(), style_name: row.style_name || '' };
@@ -570,10 +583,10 @@ export async function runAiAnalysis(
     };
     
     // Get all unique customers visited this season
-    const visitedCustomerIds = new Set(salesStats.map((r: any) => r.account_no).filter(Boolean));
+    const visitedCustomerIds = new Set(salesStatsIncluded.map((r: any) => r.account_no).filter(Boolean));
     
     // Sum up this season totals for visited customers
-    for (const row of salesStats) {
+    for (const row of salesStatsIncluded) {
       if (row.account_no && visitedCustomerIds.has(row.account_no)) {
         visitedCustomersIndex.this_season_qty += Number(row.qty) || 0;
         visitedCustomersIndex.this_season_revenue += Number(row.price) || 0;
@@ -603,13 +616,13 @@ export async function runAiAnalysis(
 
     // Comparison totals (full season - for reference only)
     let comparisonTotals = null;
-    if (comparisonSeasonId && comparisonStats.length > 0) {
-      const cQty = comparisonStats.reduce((sum: number, r: any) => sum + (Number(r.qty) || 0), 0);
-      const cRevenue = comparisonStats.reduce((sum: number, r: any) => sum + (Number(r.price) || 0), 0);
+    if (comparisonSeasonId && comparisonStatsIncluded.length > 0) {
+      const cQty = comparisonStatsIncluded.reduce((sum: number, r: any) => sum + (Number(r.qty) || 0), 0);
+      const cRevenue = comparisonStatsIncluded.reduce((sum: number, r: any) => sum + (Number(r.price) || 0), 0);
       comparisonTotals = {
         final_qty: cQty,
         final_revenue: cRevenue,
-        customer_count: new Set(comparisonStats.map((r: any) => r.account_no)).size
+        customer_count: new Set(comparisonStatsIncluded.map((r: any) => r.account_no).filter(Boolean)).size
       };
     }
 
