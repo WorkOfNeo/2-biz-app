@@ -16,11 +16,10 @@ export async function POST(req: Request) {
     }
 
     // Delete all historical sales data
-    const { error, count } = await supabase
+    const { error } = await supabase
       .from('historical_sales')
       .delete()
-      .neq('id', '00000000-0000-0000-0000-000000000000') // Delete all rows (trick to delete everything)
-      .select('id', { count: 'exact', head: true });
+      .neq('id', '00000000-0000-0000-0000-000000000000'); // Delete all rows (trick to delete everything)
 
     if (error) {
       console.error('[Historical Sales Reset] Error:', error);
@@ -31,8 +30,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ 
       success: true, 
-      message: 'All historical sales data has been deleted',
-      deletedCount: count || 0
+      message: 'All historical sales data has been deleted'
     });
   } catch (error: any) {
     console.error('[Historical Sales Reset] Exception:', error);
