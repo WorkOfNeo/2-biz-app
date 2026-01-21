@@ -471,12 +471,8 @@ export default function HistoricalSalesPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           <Dropzone
-            onDrop={handleFileDrop}
-            accept={{ 
-              'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
-              'application/vnd.ms-excel': ['.xls'],
-              'text/csv': ['.csv']
-            }}
+            onFiles={handleFileDrop}
+            accept=".xlsx,.xls,.csv"
           >
             <div className="text-center py-8">
               <p className="text-sm text-slate-600">
