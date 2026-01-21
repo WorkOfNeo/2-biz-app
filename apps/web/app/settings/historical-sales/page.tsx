@@ -481,7 +481,7 @@ export default function HistoricalSalesPage() {
         if (hardcodedStyle) {
           matchedStyleNo = hardcodedStyle.style_no;
           styleScore = 1.0;
-          matchNote = `Rule: ${styleIdentifier} + ${row.color} → ${hardcodedStyleNo}`;
+          matchNote = `Rule: → ${hardcodedStyleNo}`;
           
           // Try to match color for this style
           const colors = getColorsForStyle(hardcodedStyle);
@@ -491,10 +491,10 @@ export default function HistoricalSalesPage() {
             colorScore = colorResult.score;
           }
         } else {
-          // Hard-coded style_no not found in database - still set it but note the issue
-          matchedStyleNo = hardcodedStyleNo;
-          styleScore = 1.0;
-          matchNote = `Rule → ${hardcodedStyleNo} (not in DB!)`;
+          // Hard-coded style_no not found in database - DON'T use it, let normal matching try
+          matchNote = `Rule ${hardcodedStyleNo} NOT IN DB!`;
+          console.warn(`[Historical Sales] Hard-coded rule style_no "${hardcodedStyleNo}" not found in database!`);
+          // Don't set matchedStyleNo - let it fall through to normal matching
         }
       }
       
@@ -703,15 +703,19 @@ export default function HistoricalSalesPage() {
 
         const result = await response.json();
         
+        console.log('[Historical Sales Upload] Batch response:', response.status, result);
+        
         if (response.ok) {
           successCount += result.successCount || batch.length;
           errorCount += result.errorCount || 0;
           if (result.errors) {
-            errors.push(...result.errors.slice(0, 5));
+            errors.push(...result.errors.slice(0, 10));
           }
         } else {
           errorCount += batch.length;
-          errors.push(result.error || 'Batch upload failed');
+          // Include more details in the error
+          const errorDetails = result.errors?.slice(0, 5).join('; ') || result.error || 'Batch upload failed';
+          errors.push(`Batch failed (${response.status}): ${errorDetails}`);
         }
         
         setUploadProgress({ current: Math.min(i + batchSize, tallRows.length), total: tallRows.length });
@@ -724,8 +728,8 @@ export default function HistoricalSalesPage() {
         });
       } else {
         setUploadResult({ 
-          success: false, 
-          message: `Uploaded ${successCount} records, ${errorCount} errors.\n${errors.slice(0, 3).join('\n')}` 
+          success: successCount > 0, 
+          message: `Uploaded ${successCount} records, ${errorCount} errors.\n\nErrors:\n${errors.slice(0, 10).join('\n')}` 
         });
       }
     } catch (err: any) {
@@ -885,7 +889,7 @@ export default function HistoricalSalesPage() {
               {detectedSizes.map(size => (
                 <Badge key={size} className="bg-slate-100">{size}</Badge>
               ))}
-            </div>
+                    </div>
           )}
 
           {/* Matching stats */}
@@ -894,7 +898,7 @@ export default function HistoricalSalesPage() {
               <div className="flex items-center justify-between">
                 <h3 className="font-medium text-sm">Matching Results</h3>
                 <span className="text-sm text-slate-500">{matchStats.total} rows parsed</span>
-                    </div>
+                </div>
               
               <div className="flex gap-4">
                 <div className="flex items-center gap-2">
@@ -942,7 +946,7 @@ export default function HistoricalSalesPage() {
                           ) : (
                             <Badge className="bg-yellow-100 text-yellow-800 text-[10px]">No Color</Badge>
                           )}
-                        </td>
+                            </td>
                         <td className="p-2 border-b font-mono text-[10px]">{row.styleNo || '—'}</td>
                         <td className="p-2 border-b text-[10px] max-w-[120px] truncate" title={row.styleName}>{row.styleName || '—'}</td>
                         <td className="p-2 border-b font-mono text-[10px]">
