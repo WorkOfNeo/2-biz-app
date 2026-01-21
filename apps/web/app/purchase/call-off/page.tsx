@@ -215,31 +215,31 @@ export default function CallOffPage() {
     async () => {
       // Get styles in this set
       const { data: listStyles, error: listError } = await supabase
-        .from('stock_list_styles')
-        .select('style_id')
+      .from('stock_list_styles')
+      .select('style_id')
         .eq('list_id', effectiveSetId);
-      
-      if (listError) throw listError;
-      if (!listStyles || listStyles.length === 0) return [];
 
-      const styleIds = listStyles.map((s: any) => s.style_id);
+      if (listError) throw listError;
+    if (!listStyles || listStyles.length === 0) return [];
+
+    const styleIds = listStyles.map((s: any) => s.style_id);
 
       // Get style details
       const { data: styles, error: stylesError } = await supabase
-        .from('styles')
-        .select('id, style_no, style_name, supplier, image_url')
-        .in('id', styleIds)
-        .order('style_no', { ascending: true });
+      .from('styles')
+      .select('id, style_no, style_name, supplier, image_url')
+      .in('id', styleIds)
+      .order('style_no', { ascending: true });
       
       if (stylesError) throw stylesError;
 
-      return (styles ?? []) as Array<{
-        id: string;
-        style_no: string;
-        style_name: string | null;
-        supplier: string | null;
-        image_url: string | null;
-      }>;
+    return (styles ?? []) as Array<{
+      id: string;
+      style_no: string;
+      style_name: string | null;
+      supplier: string | null;
+      image_url: string | null;
+    }>;
     }
   );
 
@@ -526,7 +526,7 @@ export default function CallOffPage() {
       />
       {started && step === 2 && (
         <Step2AIResults 
-          selections={selections}
+          selections={selections} 
           selectedMonths={selectedMonths}
           weeksCover={weeksCover}
           loading={fullAnalysisLoading}
@@ -562,7 +562,7 @@ export default function CallOffPage() {
       )}
       {started && step === 3 && (
         <Step3FinalReview 
-          selections={selections}
+          selections={selections} 
           orderEdits={orderEdits}
           analysisResult={fullAnalysisResult}
           onBack={() => setStep(2)} 
@@ -747,35 +747,35 @@ function Step1SelectSet({
             </h3>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 max-h-96 overflow-y-auto">
               {setStylesData.map((style) => (
-                <div
-                  key={style.id}
-                  className="border rounded-lg p-3 border-[#C5D5CA] bg-[#F5F3F0]/30"
-                >
-                  <div className="flex items-start gap-3">
-                    {style.image_url ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={style.image_url}
-                        alt={style.style_name || style.style_no}
+              <div
+                key={style.id}
+                className="border rounded-lg p-3 border-[#C5D5CA] bg-[#F5F3F0]/30"
+              >
+                <div className="flex items-start gap-3">
+                  {style.image_url ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={style.image_url}
+                      alt={style.style_name || style.style_no}
                         className="h-12 w-12 object-cover rounded border"
-                      />
-                    ) : (
+                    />
+                  ) : (
                       <div className="h-12 w-12 rounded border bg-gray-100 flex items-center justify-center text-xs text-gray-400">
                         —
-                      </div>
-                    )}
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-semibold">{style.style_no}</div>
-                      <div className="text-xs text-slate-600 truncate">
-                        {style.style_name || '—'}
-                      </div>
-                      {style.supplier && (
-                        <Badge className="mt-1 text-[10px]">{style.supplier}</Badge>
-                      )}
                     </div>
+                  )}
+                  <div className="flex-1 min-w-0">
+                      <div className="text-sm font-semibold">{style.style_no}</div>
+                    <div className="text-xs text-slate-600 truncate">
+                      {style.style_name || '—'}
+                    </div>
+                    {style.supplier && (
+                      <Badge className="mt-1 text-[10px]">{style.supplier}</Badge>
+                    )}
                   </div>
                 </div>
-              ))}
+              </div>
+            ))}
             </div>
           </div>
 
@@ -801,20 +801,20 @@ function Step1SelectSet({
           </div>
 
           {/* Run Analysis Button */}
-          <div className="flex items-center justify-between pt-4 border-t">
-            <div className="text-sm text-slate-600">
+            <div className="flex items-center justify-between pt-4 border-t">
+              <div className="text-sm text-slate-600">
               <strong>{setStylesData.length}</strong> style{setStylesData.length !== 1 ? 's' : ''} · 
               <strong className="ml-1">{selections.length}</strong> color{selections.length !== 1 ? 's' : ''} selected ·
               <strong className="ml-1">{selectedMonths.length}</strong> month{selectedMonths.length !== 1 ? 's' : ''} of history
-            </div>
+              </div>
             <Button 
               onClick={onRunAIAnalysis} 
               className="bg-[#8FA894] hover:bg-[#C5D5CA]"
               disabled={!isAnalysisReady}
             >
               🤖 Run AI Analysis
-            </Button>
-          </div>
+              </Button>
+            </div>
           {!isAnalysisReady && (
             <p className="text-xs text-amber-600">
               Select at least one style/color and one historical month to run AI analysis
@@ -1566,9 +1566,13 @@ function Step3FinalReview({
                     </div>
                     <div className="text-right">
                       <div className="text-sm text-slate-500">
-                        {item.sizes.map((s, i) => 
-                          item.quantities[i] > 0 ? `${s}:${item.quantities[i]}` : null
-                        ).filter(Boolean).join(' · ')}
+                        {item.sizes
+                          .map((s, i) => {
+                            const qty = item.quantities[i] ?? 0;
+                            return qty > 0 ? `${s}:${qty}` : null;
+                          })
+                          .filter(Boolean)
+                          .join(' · ')}
                       </div>
                       <div className="text-lg font-bold text-[#8FA894]">{item.total}</div>
                     </div>
