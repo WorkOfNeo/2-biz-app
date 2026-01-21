@@ -246,12 +246,16 @@ export default function CallOffPage() {
         .eq('include', true);
       
       if (error) throw error;
-      return (data ?? []) as Array<{
-        style_id: string;
-        style_color_id: string;
-        include: boolean;
-        style_colors: { id: string; color: string; style_id: string };
-      }>;
+      
+      // Supabase returns joined relations - normalize the response
+      return (data ?? []).map((row: any) => ({
+        style_id: row.style_id as string,
+        style_color_id: row.style_color_id as string,
+        include: row.include as boolean,
+        style_colors: Array.isArray(row.style_colors) 
+          ? row.style_colors[0] as { id: string; color: string; style_id: string }
+          : row.style_colors as { id: string; color: string; style_id: string }
+      }));
     }
   );
 
