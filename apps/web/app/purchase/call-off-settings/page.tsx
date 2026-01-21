@@ -185,7 +185,7 @@ export default function CallOffSetsPage() {
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
-                      <Badge variant="outline" className="text-xs">
+                      <Badge className="text-xs border-slate-300">
                         Custom
                       </Badge>
                       <ChevronRight className="h-5 w-5 text-slate-400 group-hover:text-[#8FA894] transition-colors" />
@@ -228,7 +228,7 @@ export default function CallOffSetsPage() {
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
-                    <Badge variant="secondary" className="text-xs bg-slate-100">
+                    <Badge className="text-xs bg-slate-100">
                       System
                     </Badge>
                     <ChevronRight className="h-5 w-5 text-slate-400 group-hover:text-[#8FA894] transition-colors" />

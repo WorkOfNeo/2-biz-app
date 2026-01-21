@@ -493,7 +493,7 @@ export default function HistoricalSalesPage() {
             <div className="flex items-center gap-2 text-sm">
               <span className="text-slate-600">Detected sizes:</span>
               {detectedSizes.map(size => (
-                <Badge key={size} variant="secondary">{size}</Badge>
+                <Badge key={size} className="bg-slate-100">{size}</Badge>
               ))}
             </div>
           )}
