@@ -480,8 +480,6 @@ export default function CallOffPage() {
           setSelectedMonths={setSelectedMonths}
           selections={selections}
           setSelections={setSelections}
-          weeksCover={weeksCover}
-          setWeeksCover={setWeeksCover}
           onRunAIAnalysis={async () => {
             // Move to step 2 and trigger AI analysis
             setStep(2);
@@ -494,7 +492,6 @@ export default function CallOffPage() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                   selections,
-                  weeks_cover: weeksCover,
                   months: selectedMonths.length > 0 ? selectedMonths : undefined,
                 })
               });
@@ -526,9 +523,8 @@ export default function CallOffPage() {
       />
       {started && step === 2 && (
         <Step2AIResults 
-          selections={selections} 
+          selections={selections}
           selectedMonths={selectedMonths}
-          weeksCover={weeksCover}
           loading={fullAnalysisLoading}
           result={fullAnalysisResult}
           orderEdits={orderEdits}
@@ -544,7 +540,6 @@ export default function CallOffPage() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                   selections,
-                  weeks_cover: weeksCover,
                   months: selectedMonths.length > 0 ? selectedMonths : undefined,
                 })
               });
@@ -584,8 +579,6 @@ function Step1SelectSet({
   setSelectedMonths,
   selections,
   setSelections,
-  weeksCover,
-  setWeeksCover,
   onRunAIAnalysis,
   onOpenSetsModal,
   isAnalysisReady
@@ -610,8 +603,6 @@ function Step1SelectSet({
   setSelectedMonths: React.Dispatch<React.SetStateAction<string[]>>;
   selections: Selection[];
   setSelections: React.Dispatch<React.SetStateAction<Selection[]>>;
-  weeksCover: number;
-  setWeeksCover: React.Dispatch<React.SetStateAction<number>>;
   onRunAIAnalysis: () => void;
   onOpenSetsModal: () => void;
   isAnalysisReady: boolean;
@@ -740,64 +731,146 @@ function Step1SelectSet({
             )}
           </div>
 
-          {/* Styles Preview */}
+          {/* Style/Color Selection */}
           <div className="border-t pt-4">
-            <h3 className="text-sm font-medium text-slate-700 mb-3">
-              Styles in "{selectedSetName}" ({setStylesData.length})
-            </h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 max-h-96 overflow-y-auto">
-              {setStylesData.map((style) => (
-              <div
-                key={style.id}
-                className="border rounded-lg p-3 border-[#C5D5CA] bg-[#F5F3F0]/30"
-              >
-                <div className="flex items-start gap-3">
-                  {style.image_url ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={style.image_url}
-                      alt={style.style_name || style.style_no}
-                        className="h-12 w-12 object-cover rounded border"
-                    />
-                  ) : (
-                      <div className="h-12 w-12 rounded border bg-gray-100 flex items-center justify-center text-xs text-gray-400">
-                        —
-                    </div>
-                  )}
-                  <div className="flex-1 min-w-0">
-                      <div className="text-sm font-semibold">{style.style_no}</div>
-                    <div className="text-xs text-slate-600 truncate">
-                      {style.style_name || '—'}
-                    </div>
-                    {style.supplier && (
-                      <Badge className="mt-1 text-[10px]">{style.supplier}</Badge>
-                    )}
-                  </div>
-                </div>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-medium text-slate-700">
+                Select Styles & Colors ({selections.length} selected)
+              </h3>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    // Select all colors from set
+                    const allSelections: Selection[] = [];
+                    setColorsData.forEach(c => {
+                      const style_no = styleIdToNo.get(c.style_id);
+                      if (style_no && c.include) {
+                        allSelections.push({ style_no, color: c.style_colors.color });
+                      }
+                    });
+                    setSelections(allSelections);
+                  }}
+                  className="text-xs text-[#8FA894] hover:underline"
+                >
+                  Select All
+                </button>
+                <span className="text-slate-300">|</span>
+                <button
+                  type="button"
+                  onClick={() => setSelections([])}
+                  className="text-xs text-slate-500 hover:underline"
+                >
+                  Clear All
+                </button>
               </div>
-            ))}
             </div>
-          </div>
-
-          {/* Weeks Cover Setting */}
-          <div className="space-y-2 border-t pt-4">
-            <label className="text-sm font-medium text-slate-700">
-              Target Stock Cover (weeks)
-            </label>
-            <div className="flex items-center gap-3">
-              <input
-                type="range"
-                min={2}
-                max={12}
-                value={weeksCover}
-                onChange={(e) => setWeeksCover(Number(e.target.value))}
-                className="flex-1"
-              />
-              <span className="text-lg font-semibold text-[#8FA894] w-12 text-center">{weeksCover}</span>
+            
+            <div className="space-y-4 max-h-[500px] overflow-y-auto pr-2">
+              {setStylesData.map((style) => {
+                const styleColors = setColorsData
+                  .filter(c => styleIdToNo.get(c.style_id) === style.style_no && c.include)
+                  .map(c => c.style_colors.color);
+                
+                const selectedColorsForStyle = selections.filter(s => s.style_no === style.style_no);
+                const allColorsSelected = styleColors.length > 0 && selectedColorsForStyle.length === styleColors.length;
+                const someColorsSelected = selectedColorsForStyle.length > 0 && selectedColorsForStyle.length < styleColors.length;
+                
+                return (
+                  <div
+                    key={style.id}
+                    className={`border rounded-lg p-3 transition-colors ${
+                      selectedColorsForStyle.length > 0 
+                        ? 'border-[#8FA894] bg-[#F5F3F0]/50' 
+                        : 'border-slate-200 bg-white'
+                    }`}
+                  >
+                    <div className="flex items-start gap-3">
+                      {/* Style checkbox */}
+                      <input
+                        type="checkbox"
+                        checked={allColorsSelected}
+                        ref={(el) => {
+                          if (el) el.indeterminate = someColorsSelected;
+                        }}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            // Select all colors for this style
+                            const newSelections = selections.filter(s => s.style_no !== style.style_no);
+                            styleColors.forEach(color => {
+                              newSelections.push({ style_no: style.style_no, color });
+                            });
+                            setSelections(newSelections);
+                          } else {
+                            // Deselect all colors for this style
+                            setSelections(selections.filter(s => s.style_no !== style.style_no));
+                          }
+                        }}
+                        className="mt-1 h-4 w-4 rounded border-slate-300 text-[#8FA894] focus:ring-[#8FA894]"
+                      />
+                      
+                      {style.image_url ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={style.image_url}
+                          alt={style.style_name || style.style_no}
+                          className="h-12 w-12 object-cover rounded border"
+                        />
+                      ) : (
+                        <div className="h-12 w-12 rounded border bg-gray-100 flex items-center justify-center text-xs text-gray-400">
+                          —
+                        </div>
+                      )}
+                      
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-semibold">{style.style_no}</div>
+                        <div className="text-xs text-slate-600 truncate">
+                          {style.style_name || '—'}
+                        </div>
+                        {style.supplier && (
+                          <Badge className="mt-1 text-[10px]">{style.supplier}</Badge>
+                        )}
+                        
+                        {/* Color checkboxes */}
+                        <div className="flex flex-wrap gap-2 mt-2">
+                          {styleColors.map(color => {
+                            const isSelected = selections.some(
+                              s => s.style_no === style.style_no && s.color === color
+                            );
+                            return (
+                              <label
+                                key={color}
+                                className={`flex items-center gap-1.5 px-2 py-1 rounded-full text-xs cursor-pointer transition-colors ${
+                                  isSelected
+                                    ? 'bg-[#8FA894] text-white'
+                                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                                }`}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={isSelected}
+                                  onChange={(e) => {
+                                    if (e.target.checked) {
+                                      setSelections([...selections, { style_no: style.style_no, color }]);
+                                    } else {
+                                      setSelections(selections.filter(
+                                        s => !(s.style_no === style.style_no && s.color === color)
+                                      ));
+                                    }
+                                  }}
+                                  className="sr-only"
+                                />
+                                {color}
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
-            <p className="text-xs text-slate-500">
-              AI will suggest order quantities to cover {weeksCover} weeks of projected sales
-            </p>
           </div>
 
           {/* Run Analysis Button */}
@@ -1134,7 +1207,6 @@ function Step2ChooseColors({
 function Step2AIResults({
   selections,
   selectedMonths,
-  weeksCover,
   loading,
   result,
   orderEdits,
@@ -1145,7 +1217,6 @@ function Step2AIResults({
 }: {
   selections: Selection[];
   selectedMonths: string[];
-  weeksCover: number;
   loading: boolean;
   result: FullAnalysisResult | null;
   orderEdits: Record<string, number[]>;
@@ -1154,6 +1225,9 @@ function Step2AIResults({
   onContinue: () => void;
   onRerunAnalysis: () => void;
 }) {
+  // Expanded styles for accordion
+  const [expandedStyles, setExpandedStyles] = React.useState<Set<string>>(new Set());
+  
   // Initialize order edits from AI suggestions when result loads
   React.useEffect(() => {
     if (result?.items) {
@@ -1164,6 +1238,15 @@ function Step2AIResults({
         initialEdits[key] = (item as any).newOrderNeededBySize || item.suggestedOrderBySize || [];
       });
       setOrderEdits(initialEdits);
+      
+      // Auto-expand styles with critical/low status
+      const criticalStyles = new Set<string>();
+      result.items.forEach(item => {
+        if (item.status === 'critical' || item.status === 'low') {
+          criticalStyles.add(item.style_no);
+        }
+      });
+      setExpandedStyles(criticalStyles);
     }
   }, [result, setOrderEdits]);
 
@@ -1183,6 +1266,72 @@ function Step2AIResults({
     return Object.values(orderEdits).reduce((sum, arr) => 
       sum + arr.reduce((a, b) => a + b, 0), 0);
   }, [orderEdits]);
+
+  // Group items by style
+  const styleGroups = React.useMemo(() => {
+    if (!result?.items) return [];
+    
+    const groups = new Map<string, {
+      style_no: string;
+      style_name: string;
+      colors: FullAnalysisItem[];
+      totalHistorical: number;
+      totalStock: number;
+      totalOrder: number;
+      worstStatus: 'critical' | 'low' | 'ok' | 'surplus';
+    }>();
+    
+    result.items.forEach(item => {
+      if (!groups.has(item.style_no)) {
+        groups.set(item.style_no, {
+          style_no: item.style_no,
+          style_name: item.style_name,
+          colors: [],
+          totalHistorical: 0,
+          totalStock: 0,
+          totalOrder: 0,
+          worstStatus: 'surplus'
+        });
+      }
+      
+      const group = groups.get(item.style_no)!;
+      group.colors.push(item);
+      group.totalHistorical += item.totalHistorical;
+      group.totalStock += item.totalNetStock;
+      
+      // Calculate order total from edits
+      const key = `${item.style_no}|${item.color}`;
+      const editedValues = orderEdits[key] || item.suggestedOrderBySize || [];
+      group.totalOrder += editedValues.reduce((a, b) => a + b, 0);
+      
+      // Track worst status
+      const statusOrder = { critical: 0, low: 1, ok: 2, surplus: 3 };
+      if (statusOrder[item.status] < statusOrder[group.worstStatus]) {
+        group.worstStatus = item.status;
+      }
+    });
+    
+    // Sort by worst status, then by order amount
+    return Array.from(groups.values()).sort((a, b) => {
+      const statusOrder = { critical: 0, low: 1, ok: 2, surplus: 3 };
+      if (statusOrder[a.worstStatus] !== statusOrder[b.worstStatus]) {
+        return statusOrder[a.worstStatus] - statusOrder[b.worstStatus];
+      }
+      return b.totalOrder - a.totalOrder;
+    });
+  }, [result, orderEdits]);
+
+  const toggleStyle = (styleNo: string) => {
+    setExpandedStyles(prev => {
+      const next = new Set(prev);
+      if (next.has(styleNo)) {
+        next.delete(styleNo);
+      } else {
+        next.add(styleNo);
+      }
+      return next;
+    });
+  };
 
   if (loading) {
     return (
@@ -1216,7 +1365,7 @@ function Step2AIResults({
     );
   }
 
-  const { items, summary, dateRange } = result;
+  const { summary, dateRange } = result;
 
   return (
     <div className="space-y-4">
@@ -1227,14 +1376,14 @@ function Step2AIResults({
             🤖 AI Analysis Complete
           </CardTitle>
           <CardDescription>
-            Based on {dateRange.display} historical data · {weeksCover} weeks target cover
+            Based on {dateRange.display} historical data · {selectedMonths.length} month{selectedMonths.length !== 1 ? 's' : ''} analyzed
           </CardDescription>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-4">
             <div className="text-center p-3 bg-white rounded-lg border">
-              <div className="text-2xl font-bold text-slate-800">{summary.totalItems}</div>
-              <div className="text-xs text-slate-500">Items</div>
+              <div className="text-2xl font-bold text-slate-800">{styleGroups.length}</div>
+              <div className="text-xs text-slate-500">Styles</div>
             </div>
             <div className="text-center p-3 bg-red-50 rounded-lg border border-red-200">
               <div className="text-2xl font-bold text-red-600">{summary.criticalItems}</div>
@@ -1263,84 +1412,175 @@ function Step2AIResults({
         </CardContent>
       </Card>
 
-      {/* Order Details */}
+      {/* Order Details - Grouped by Style */}
       <Card className="border-[#C5D5CA]">
         <CardHeader>
-          <CardTitle>Order Proposal</CardTitle>
+          <CardTitle>Order Proposal by Style</CardTitle>
           <CardDescription>
-            Review and adjust quantities. Click on any number to edit.
+            Click on a style to expand and adjust quantities per color.
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="space-y-3 max-h-[500px] overflow-y-auto">
-            {items.map((item, idx) => {
-              const key = `${item.style_no}|${item.color}`;
-              const editedValues = orderEdits[key] || item.suggestedOrderBySize || [];
-              const editedTotal = editedValues.reduce((a, b) => a + b, 0);
-              const hasBellRain = (item as any).bellRainCallHome > 0;
+          <div className="space-y-2">
+            {styleGroups.map((group) => {
+              const isExpanded = expandedStyles.has(group.style_no);
+              const statusColors = {
+                critical: 'border-red-400 bg-red-50',
+                low: 'border-amber-400 bg-amber-50',
+                ok: 'border-green-400 bg-green-50',
+                surplus: 'border-blue-400 bg-blue-50'
+              };
               
               return (
-                <div 
-                  key={key}
-                  className={`p-4 rounded-lg border ${
-                    item.status === 'critical' ? 'border-red-300 bg-red-50' :
-                    item.status === 'low' ? 'border-amber-300 bg-amber-50' :
-                    item.status === 'ok' ? 'border-green-300 bg-green-50' :
-                    'border-slate-200 bg-slate-50'
-                  }`}
-                >
-                  <div className="flex items-start justify-between mb-3">
-                    <div>
-                      <div className="font-semibold">{item.style_name || item.style_no}</div>
-                      <div className="text-sm text-slate-600">{item.style_no} · {item.color}</div>
-                      {hasBellRain && (
-                        <Badge className="mt-1 bg-purple-100 text-purple-700 text-[10px]">
-                          🔔 Bell Rain: Call home {(item as any).bellRainCallHome} first
-                        </Badge>
-                      )}
-                    </div>
-                    <div className="text-right">
-                      <Badge className={
-                        item.status === 'critical' ? 'bg-red-600' :
-                        item.status === 'low' ? 'bg-amber-500' :
-                        item.status === 'ok' ? 'bg-green-600' :
-                        'bg-blue-500'
-                      }>
-                        {item.status.toUpperCase()}
-                      </Badge>
-                      <div className="text-xs text-slate-500 mt-1">
-                        Stock: {item.totalNetStock} · Weekly: {item.weeklyRate.toFixed(1)}
+                <div key={group.style_no} className={`rounded-lg border-2 ${statusColors[group.worstStatus]} overflow-hidden`}>
+                  {/* Style Header - Clickable */}
+                  <button
+                    type="button"
+                    onClick={() => toggleStyle(group.style_no)}
+                    className="w-full p-4 flex items-center justify-between text-left hover:bg-white/50 transition-colors"
+                  >
+                    <div className="flex items-center gap-4">
+                      <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white font-bold ${
+                        group.worstStatus === 'critical' ? 'bg-red-600' :
+                        group.worstStatus === 'low' ? 'bg-amber-500' :
+                        group.worstStatus === 'ok' ? 'bg-green-600' : 'bg-blue-500'
+                      }`}>
+                        {group.colors.length}
+                      </div>
+                      <div>
+                        <div className="font-semibold text-slate-900">{group.style_name || group.style_no}</div>
+                        <div className="text-xs text-slate-500">{group.style_no} · {group.colors.length} color{group.colors.length !== 1 ? 's' : ''}</div>
                       </div>
                     </div>
-                  </div>
+                    
+                    <div className="flex items-center gap-6">
+                      {/* Historical Timeline Mini-Chart */}
+                      <div className="hidden md:flex items-end gap-0.5 h-8">
+                        {group.colors[0]?.historical.map((val, i) => {
+                          // Aggregate historical across all colors for this style
+                          const totalForSize = group.colors.reduce((sum, c) => sum + (c.historical[i] ?? 0), 0);
+                          const maxHist = Math.max(...group.colors[0].historical.map((_, idx) => 
+                            group.colors.reduce((sum, c) => sum + (c.historical[idx] ?? 0), 0)
+                          ), 1);
+                          const height = Math.max(4, (totalForSize / maxHist) * 28);
+                          return (
+                            <div
+                              key={i}
+                              className="w-3 bg-[#8FA894] rounded-t opacity-70"
+                              style={{ height: `${height}px` }}
+                              title={`Size ${group.colors[0]?.sizes[i] || i}: ${totalForSize} sold`}
+                            />
+                          );
+                        })}
+                      </div>
+                      
+                      <div className="text-right min-w-[80px]">
+                        <div className="text-lg font-bold text-[#8FA894]">{group.totalOrder}</div>
+                        <div className="text-[10px] text-slate-500">to order</div>
+                      </div>
+                      
+                      <div className={`transform transition-transform ${isExpanded ? 'rotate-180' : ''}`}>
+                        <svg className="w-5 h-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                        </svg>
+                      </div>
+                    </div>
+                  </button>
                   
-                  {/* Size grid */}
-                  <div className="grid grid-cols-7 gap-2">
-                    {item.sizes.map((size, sizeIdx) => (
-                      <div key={size} className="text-center">
-                        <div className="text-[10px] text-slate-500 mb-1">{size}</div>
-                        <Input
-                          type="number"
-                          min={0}
-                          value={editedValues[sizeIdx] ?? 0}
-                          onChange={(e) => updateOrderValue(item.style_no, item.color, sizeIdx, parseInt(e.target.value) || 0)}
-                          className="h-8 text-center text-sm p-1"
-                        />
-                        <div className="text-[9px] text-slate-400 mt-0.5">
-                          hist: {item.historical[sizeIdx] ?? 0}
+                  {/* Expanded Colors */}
+                  {isExpanded && (
+                    <div className="border-t bg-white/80 p-4 space-y-4">
+                      {/* Historical Timeline Chart */}
+                      <div className="bg-slate-50 rounded-lg p-4">
+                        <div className="text-xs font-medium text-slate-600 mb-2">Historical Sales by Size</div>
+                        <div className="flex items-end justify-between gap-1 h-16">
+                          {group.colors[0]?.sizes.map((size, i) => {
+                            const totalForSize = group.colors.reduce((sum, c) => sum + (c.historical[i] ?? 0), 0);
+                            const maxHist = Math.max(...group.colors[0].sizes.map((_, idx) => 
+                              group.colors.reduce((sum, c) => sum + (c.historical[idx] ?? 0), 0)
+                            ), 1);
+                            const height = Math.max(8, (totalForSize / maxHist) * 56);
+                            return (
+                              <div key={size} className="flex-1 flex flex-col items-center">
+                                <div 
+                                  className="w-full max-w-[40px] bg-gradient-to-t from-[#8FA894] to-[#C5D5CA] rounded-t"
+                                  style={{ height: `${height}px` }}
+                                />
+                                <div className="text-[10px] text-slate-500 mt-1">{size}</div>
+                                <div className="text-[9px] font-medium text-slate-700">{totalForSize}</div>
+                              </div>
+                            );
+                          })}
                         </div>
                       </div>
-                    ))}
-                  </div>
-                  
-                  <div className="flex justify-between items-center mt-2 pt-2 border-t">
-                    <div className="text-xs text-slate-500">
-                      AI suggested: {item.suggestedOrder}
+                      
+                      {/* Colors */}
+                      {group.colors.map((item) => {
+                        const key = `${item.style_no}|${item.color}`;
+                        const editedValues = orderEdits[key] || item.suggestedOrderBySize || [];
+                        const editedTotal = editedValues.reduce((a, b) => a + b, 0);
+                        const hasBellRain = (item as any).bellRainCallHome > 0;
+                        
+                        return (
+                          <div 
+                            key={key}
+                            className={`p-3 rounded-lg border ${
+                              item.status === 'critical' ? 'border-red-200 bg-red-50/50' :
+                              item.status === 'low' ? 'border-amber-200 bg-amber-50/50' :
+                              item.status === 'ok' ? 'border-green-200 bg-green-50/50' :
+                              'border-slate-200 bg-slate-50/50'
+                            }`}
+                          >
+                            <div className="flex items-center justify-between mb-2">
+                              <div className="flex items-center gap-2">
+                                <Badge className={
+                                  item.status === 'critical' ? 'bg-red-600 text-white' :
+                                  item.status === 'low' ? 'bg-amber-500 text-white' :
+                                  item.status === 'ok' ? 'bg-green-600 text-white' :
+                                  'bg-blue-500 text-white'
+                                }>
+                                  {item.color}
+                                </Badge>
+                                {hasBellRain && (
+                                  <Badge className="bg-purple-100 text-purple-700 text-[10px]">
+                                    🔔 Call home {(item as any).bellRainCallHome}
+                                  </Badge>
+                                )}
+                              </div>
+                              <div className="text-xs text-slate-500">
+                                Stock: {item.totalNetStock} · Sold: {item.totalHistorical}
+                              </div>
+                            </div>
+                            
+                            {/* Size grid */}
+                            <div className="grid grid-cols-7 gap-1.5">
+                              {item.sizes.map((size, sizeIdx) => (
+                                <div key={size} className="text-center">
+                                  <div className="text-[9px] text-slate-400">{size}</div>
+                                  <Input
+                                    type="number"
+                                    min={0}
+                                    value={editedValues[sizeIdx] ?? 0}
+                                    onChange={(e) => updateOrderValue(item.style_no, item.color, sizeIdx, parseInt(e.target.value) || 0)}
+                                    className="h-7 text-center text-xs p-0.5"
+                                  />
+                                  <div className="text-[8px] text-slate-400">
+                                    {item.historical[sizeIdx] ?? 0}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                            
+                            <div className="flex justify-between items-center mt-2 pt-2 border-t border-slate-200">
+                              <div className="text-[10px] text-slate-500">
+                                AI: {item.suggestedOrder} → Edited: <strong>{editedTotal}</strong>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
-                    <div className="text-sm font-semibold">
-                      Order: {editedTotal}
-                    </div>
-                  </div>
+                  )}
                 </div>
               );
             })}
