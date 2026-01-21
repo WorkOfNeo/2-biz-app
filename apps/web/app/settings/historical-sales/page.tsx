@@ -21,7 +21,8 @@ type SalesRow = {
 };
 
 type WideRow = {
-  styleName: string;
+  styleNo: string;      // Direct style number from "Style No" column
+  styleName: string;    // Style name from "Style Name" column (for fallback matching)
   color: string;
   dateRange: string;
   sizes: Record<string, number>;
@@ -32,6 +33,7 @@ type ParsedWideRow = WideRow & {
   matchedColor: string | null;
   styleScore: number;
   colorScore: number;
+  matchNote: string | null;  // Explains how the match was made (e.g., "via alternative style")
   status: 'matched' | 'unmatched_style' | 'unmatched_color';
 };
 
@@ -245,13 +247,13 @@ export default function HistoricalSalesPage() {
     setParsedRows(prev => prev.map((row, idx) => {
       if (idx !== rowIndex) return row;
       
-      const wasUnmatchedColor = row.status === 'unmatched_color';
       const nowMatched = newColor !== '';
       
       return {
         ...row,
         matchedColor: newColor || null,
         colorScore: newColor ? 1.0 : 0, // Manual selection = perfect match
+        matchNote: newColor ? 'Manually selected' : null,
         status: !row.matchedStyleNo ? 'unmatched_style' : 
                 nowMatched ? 'matched' : 'unmatched_color'
       };
@@ -283,8 +285,14 @@ export default function HistoricalSalesPage() {
         const json: Record<string, any>[] = XLSX.utils.sheet_to_json(ws, { defval: '' });
         const headers = Object.keys(json[0] || {});
         
-        // Detect column mappings
-        let styleCol = headers.find(h => /style[\s_-]?name|style[\s_-]?no|style/i.test(h));
+        // Detect column mappings - prioritize "Style No" over "Style Name"
+        let styleNoCol = headers.find(h => /^style[\s_-]?no\.?$/i.test(h));
+        let styleNameCol = headers.find(h => /^style[\s_-]?name$/i.test(h));
+        // Fallback: if only one "style" column exists, use it
+        if (!styleNoCol && !styleNameCol) {
+          const fallback = headers.find(h => /style/i.test(h));
+          if (fallback) styleNoCol = fallback;
+        }
         let colorCol = headers.find(h => /^color$|^colour$/i.test(h));
         let dateCol = headers.find(h => /date[\s_-]?(to[\s_-]?from)?|period|range/i.test(h));
         
@@ -298,15 +306,17 @@ export default function HistoricalSalesPage() {
           return false;
         });
         
-        if (!styleCol || !colorCol) {
+        if ((!styleNoCol && !styleNameCol) || !colorCol) {
           setUploadResult({ 
             success: false, 
-            message: `Could not detect required columns. Found: ${headers.join(', ')}. Need: Style Name/No, Color, and size columns (34, 36, etc.)` 
+            message: `Could not detect required columns. Found: ${headers.join(', ')}. Need: Style No (or Style Name), Color, and size columns (34, 36, etc.)` 
           });
           return;
         }
         
         setDetectedSizes(sizeCols);
+        
+        console.log('[Historical Sales] Column detection:', { styleNoCol, styleNameCol, colorCol, dateCol, sizeCols });
         
         // Parse rows into wide format
         const rows: WideRow[] = json.map(row => {
@@ -320,12 +330,13 @@ export default function HistoricalSalesPage() {
           }
           
           return {
-            styleName: String(row[styleCol!] ?? '').trim(),
+            styleNo: styleNoCol ? String(row[styleNoCol] ?? '').trim() : '',
+            styleName: styleNameCol ? String(row[styleNameCol] ?? '').trim() : '',
             color: String(row[colorCol!] ?? '').trim(),
             dateRange: dateCol ? String(row[dateCol] ?? '').trim() : '',
             sizes
           };
-        }).filter(r => r.styleName && r.color && Object.keys(r.sizes).length > 0);
+        }).filter(r => (r.styleNo || r.styleName) && r.color && Object.keys(r.sizes).length > 0);
         
         setWideRows(rows);
         setUploadResult(null);
@@ -343,65 +354,132 @@ export default function HistoricalSalesPage() {
 
   // Match rows to styles and colors
   function matchRows(rows: WideRow[], allStyles: StyleRow[], allColors: StyleColorRow[]) {
-    const styleNoMap = new Map<string, string>();
-    const styleNameMap = new Map<string, string>();
+    // Build lookup maps
+    const styleNoMap = new Map<string, StyleRow>();  // style_no -> StyleRow
+    const stylesByName = new Map<string, StyleRow[]>(); // style_name (lowercase) -> StyleRow[]
+    
     allStyles.forEach(s => {
-      styleNoMap.set(s.style_no.toLowerCase(), s.style_no);
+      styleNoMap.set(s.style_no.toLowerCase(), s);
       if (s.style_name) {
-        styleNameMap.set(s.style_name.toLowerCase(), s.style_no);
+        const nameLower = s.style_name.toLowerCase();
+        const existing = stylesByName.get(nameLower) || [];
+        existing.push(s);
+        stylesByName.set(nameLower, existing);
       }
     });
     
-    const colorsByStyle = new Map<string, string[]>();
+    // Build color lookup: style_id -> colors[]
+    const colorsByStyleId = new Map<string, string[]>();
     allColors.forEach(c => {
-      const style = allStyles.find(s => s.id === c.style_id);
-      if (style) {
-        const existing = colorsByStyle.get(style.style_no) || [];
-        existing.push(c.color);
-        colorsByStyle.set(style.style_no, existing);
-      }
+      const existing = colorsByStyleId.get(c.style_id) || [];
+      existing.push(c.color);
+      colorsByStyleId.set(c.style_id, existing);
     });
+    
+    // Helper to get colors for a style
+    const getColorsForStyle = (style: StyleRow): string[] => {
+      return colorsByStyleId.get(style.id) || [];
+    };
+    
+    // Helper to try matching a color against a style's available colors
+    const tryMatchColor = (inputColor: string, availableColors: string[]): { match: string | null; score: number } => {
+      if (availableColors.length === 0) return { match: null, score: 0 };
+      
+      // Try exact match first
+      const exactColor = availableColors.find(c => c.toLowerCase() === inputColor.toLowerCase());
+      if (exactColor) return { match: exactColor, score: 1.0 };
+      
+      // Try fuzzy match
+      return bestColorMatch(inputColor, availableColors);
+    };
     
     const parsed: ParsedWideRow[] = rows.map(row => {
-      // Try exact match on style_no first
-      let matchedStyleNo = styleNoMap.get(row.styleName.toLowerCase()) || null;
-      let styleScore = matchedStyleNo ? 1.0 : 0;
+      let matchedStyleNo: string | null = null;
+      let matchedColor: string | null = null;
+      let styleScore = 0;
+      let colorScore = 0;
+      let matchNote: string | null = null;
       
-      // Try style_name match
-      if (!matchedStyleNo) {
-        matchedStyleNo = styleNameMap.get(row.styleName.toLowerCase()) || null;
-        styleScore = matchedStyleNo ? 1.0 : 0;
-      }
-      
-      // Try fuzzy match on style_name
-      if (!matchedStyleNo && allStyles.length > 0) {
-        const styleNames = allStyles.map(s => s.style_name || s.style_no);
-        const { match, score } = bestMatch(row.styleName, styleNames);
-        if (match && score >= 0.7) {
-          const matched = allStyles.find(s => (s.style_name || s.style_no) === match);
-          matchedStyleNo = matched?.style_no || null;
-          styleScore = score;
+      // STEP 1: Try direct style_no match (from "Style No" column)
+      if (row.styleNo) {
+        const directMatch = styleNoMap.get(row.styleNo.toLowerCase());
+        if (directMatch) {
+          matchedStyleNo = directMatch.style_no;
+          styleScore = 1.0;
+          
+          // Try to match color for this style
+          const colors = getColorsForStyle(directMatch);
+          const colorResult = tryMatchColor(row.color, colors);
+          if (colorResult.match && colorResult.score >= 0.5) {
+            matchedColor = colorResult.match;
+            colorScore = colorResult.score;
+          }
         }
       }
       
-      // Match color (with enhanced fuzzy matching for cases like "Black" -> "807 Black")
-      let matchedColor: string | null = null;
-      let colorScore = 0;
-      
-      if (matchedStyleNo) {
-        const styleColorList = colorsByStyle.get(matchedStyleNo) || [];
+      // STEP 2: If color didn't match but we have a styleName, look for alternative styles
+      if (matchedStyleNo && !matchedColor && row.styleName) {
+        const nameLower = row.styleName.toLowerCase();
+        const alternativeStyles = stylesByName.get(nameLower) || [];
         
-        // Try exact match first
-        const exactColor = styleColorList.find(c => c.toLowerCase() === row.color.toLowerCase());
-        if (exactColor) {
-          matchedColor = exactColor;
-          colorScore = 1.0;
-        } else if (styleColorList.length > 0) {
-          // Try enhanced color fuzzy match (handles "Black" -> "807 Black")
-          const { match, score } = bestColorMatch(row.color, styleColorList);
-          if (match && score >= 0.5) { // Lower threshold since we have better matching
-            matchedColor = match;
-            colorScore = score;
+        // Check each alternative style for the color
+        for (const altStyle of alternativeStyles) {
+          if (altStyle.style_no === matchedStyleNo) continue; // Skip the one we already tried
+          
+          const colors = getColorsForStyle(altStyle);
+          const colorResult = tryMatchColor(row.color, colors);
+          
+          if (colorResult.match && colorResult.score >= 0.5) {
+            // Found the color on an alternative style!
+            matchedStyleNo = altStyle.style_no;
+            matchedColor = colorResult.match;
+            colorScore = colorResult.score;
+            matchNote = `Color found on ${altStyle.style_no} (same name)`;
+            break;
+          }
+        }
+      }
+      
+      // STEP 3: If no direct style_no match, try matching by styleName
+      if (!matchedStyleNo && row.styleName) {
+        const nameLower = row.styleName.toLowerCase();
+        const stylesWithName = stylesByName.get(nameLower) || [];
+        
+        // Check each style with this name for the color
+        for (const style of stylesWithName) {
+          const colors = getColorsForStyle(style);
+          const colorResult = tryMatchColor(row.color, colors);
+          
+          if (colorResult.match && colorResult.score >= 0.5) {
+            matchedStyleNo = style.style_no;
+            matchedColor = colorResult.match;
+            styleScore = 1.0;
+            colorScore = colorResult.score;
+            matchNote = `Matched by style name`;
+            break;
+          }
+        }
+        
+        // If still no match, try fuzzy matching on style name
+        if (!matchedStyleNo && allStyles.length > 0) {
+          const styleNames = allStyles.filter(s => s.style_name).map(s => s.style_name!);
+          const { match: fuzzyName, score } = bestMatch(row.styleName, styleNames);
+          
+          if (fuzzyName && score >= 0.7) {
+            const matchedStyle = allStyles.find(s => s.style_name === fuzzyName);
+            if (matchedStyle) {
+              matchedStyleNo = matchedStyle.style_no;
+              styleScore = score;
+              
+              // Try color match
+              const colors = getColorsForStyle(matchedStyle);
+              const colorResult = tryMatchColor(row.color, colors);
+              if (colorResult.match && colorResult.score >= 0.5) {
+                matchedColor = colorResult.match;
+                colorScore = colorResult.score;
+              }
+              matchNote = `Fuzzy matched style name (${Math.round(score * 100)}%)`;
+            }
           }
         }
       }
@@ -417,6 +495,7 @@ export default function HistoricalSalesPage() {
         matchedColor,
         styleScore,
         colorScore,
+        matchNote,
         status
       };
     });
@@ -695,21 +774,23 @@ export default function HistoricalSalesPage() {
               </div>
 
               {/* Preview table */}
-              <div className="max-h-64 overflow-auto border rounded bg-white">
+              <div className="max-h-80 overflow-auto border rounded bg-white">
                 <table className="min-w-full text-xs">
                   <thead className="bg-slate-50 sticky top-0">
                     <tr>
                       <th className="p-2 text-left border-b">Status</th>
-                      <th className="p-2 text-left border-b">Style Input</th>
+                      <th className="p-2 text-left border-b">Style No</th>
+                      <th className="p-2 text-left border-b">Style Name</th>
                       <th className="p-2 text-left border-b">Matched Style</th>
                       <th className="p-2 text-left border-b">Color Input</th>
                       <th className="p-2 text-left border-b">Matched Color <span className="font-normal text-slate-400">(editable)</span></th>
                       <th className="p-2 text-left border-b">Date Range</th>
-                      <th className="p-2 text-right border-b">Total Qty</th>
+                      <th className="p-2 text-right border-b">Qty</th>
+                      <th className="p-2 text-left border-b">Note</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {parsedRows.slice(0, 20).map((row, idx) => (
+                    {parsedRows.slice(0, 30).map((row, idx) => (
                       <tr key={idx} className={row.status !== 'matched' ? 'bg-red-50' : ''}>
                         <td className="p-2 border-b">
                           {row.status === 'matched' ? (
@@ -720,7 +801,8 @@ export default function HistoricalSalesPage() {
                             <Badge className="bg-yellow-100 text-yellow-800 text-[10px]">No Color</Badge>
                           )}
                         </td>
-                        <td className="p-2 border-b">{row.styleName}</td>
+                        <td className="p-2 border-b font-mono text-[10px]">{row.styleNo || '—'}</td>
+                        <td className="p-2 border-b text-[10px] max-w-[120px] truncate" title={row.styleName}>{row.styleName || '—'}</td>
                         <td className="p-2 border-b font-mono text-[10px]">
                           {row.matchedStyleNo || '—'}
                           {row.styleScore < 1 && row.styleScore >= 0.7 && (
@@ -751,17 +833,20 @@ export default function HistoricalSalesPage() {
                             <span className="text-[10px] text-slate-400 ml-1">auto</span>
                           )}
                         </td>
-                        <td className="p-2 border-b text-slate-600">{row.dateRange || '(no date)'}</td>
+                        <td className="p-2 border-b text-slate-600 text-[10px]">{row.dateRange || '—'}</td>
                         <td className="p-2 border-b text-right font-mono">
                           {Object.values(row.sizes).reduce((a, b) => a + b, 0)}
+                        </td>
+                        <td className="p-2 border-b text-[10px] text-slate-500 max-w-[150px]">
+                          {row.matchNote || (row.colorScore < 1 && row.colorScore >= 0.5 ? 'Fuzzy color match' : '')}
                         </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
-              {parsedRows.length > 20 && (
-                <p className="text-xs text-slate-500">Showing first 20 of {parsedRows.length} rows</p>
+              {parsedRows.length > 30 && (
+                <p className="text-xs text-slate-500">Showing first 30 of {parsedRows.length} rows</p>
               )}
 
               {/* Upload button */}
