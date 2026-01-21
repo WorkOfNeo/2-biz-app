@@ -19,8 +19,67 @@ type ProcessedRow = {
   quantity: number;
 };
 
+// Parse a single date string into YYYY-MM-DD format
+// Supports: YYYY-MM-DD, DD-MM-YYYY, DD/MM/YYYY, Excel serial numbers
+function parseDate(dateStr: string): string | null {
+  const trimmed = dateStr.trim();
+  
+  // Check for Excel serial number (number between 1 and 60000)
+  const numVal = Number(trimmed);
+  if (!isNaN(numVal) && numVal > 1 && numVal < 60000) {
+    // Excel date serial: days since 1899-12-30 (with Excel's leap year bug)
+    const excelEpoch = new Date(1899, 11, 30);
+    const date = new Date(excelEpoch.getTime() + numVal * 24 * 60 * 60 * 1000);
+    if (!isNaN(date.getTime())) {
+      const isoDate = date.toISOString().split('T')[0];
+      return isoDate || null;
+    }
+  }
+  
+  // Try DD-MM-YYYY or DD/MM/YYYY format first (common in Europe)
+  const ddmmyyyyMatch = trimmed.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);
+  if (ddmmyyyyMatch) {
+    const day = parseInt(ddmmyyyyMatch[1]!, 10);
+    const month = parseInt(ddmmyyyyMatch[2]!, 10);
+    const year = parseInt(ddmmyyyyMatch[3]!, 10);
+    
+    if (day >= 1 && day <= 31 && month >= 1 && month <= 12 && year >= 1900 && year <= 2100) {
+      const date = new Date(year, month - 1, day);
+      if (!isNaN(date.getTime())) {
+        const isoDate = date.toISOString().split('T')[0];
+        return isoDate || null;
+      }
+    }
+  }
+  
+  // Try YYYY-MM-DD (ISO format)
+  const isoMatch = trimmed.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (isoMatch) {
+    const date = new Date(trimmed);
+    if (!isNaN(date.getTime())) {
+      const isoDate = date.toISOString().split('T')[0];
+      return isoDate || null;
+    }
+  }
+  
+  // Try native Date parsing as fallback
+  const date = new Date(trimmed);
+  if (!isNaN(date.getTime())) {
+    const isoDate = date.toISOString().split('T')[0];
+    return isoDate || null;
+  }
+  
+  return null;
+}
+
 function parseDateRange(dateStr: string): string[] {
   const trimmed = dateStr.trim();
+  
+  // If empty, return today's date
+  if (!trimmed) {
+    const today = new Date().toISOString().split('T')[0];
+    return today ? [today] : [];
+  }
   
   // Check if it's a date range (contains "to", " - ", or similar)
   const rangePatterns = [
@@ -48,12 +107,23 @@ function parseDateRange(dateStr: string): string[] {
   
   if (!isRange) {
     // Single date
-    return [trimmed];
+    const parsed = parseDate(trimmed);
+    if (parsed) {
+      return [parsed];
+    }
+    throw new Error(`Invalid date: ${dateStr}`);
   }
   
   // Parse start and end dates
-  const startDate = new Date(startStr);
-  const endDate = new Date(endStr);
+  const startParsed = parseDate(startStr);
+  const endParsed = parseDate(endStr);
+  
+  if (!startParsed || !endParsed) {
+    throw new Error(`Invalid date range: ${dateStr}`);
+  }
+  
+  const startDate = new Date(startParsed);
+  const endDate = new Date(endParsed);
   
   if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
     throw new Error(`Invalid date range: ${dateStr}`);
@@ -68,7 +138,10 @@ function parseDateRange(dateStr: string): string[] {
   const current = new Date(startDate);
   
   while (current <= endDate) {
-    dates.push(current.toISOString().split('T')[0] || '');
+    const isoDate = current.toISOString().split('T')[0];
+    if (isoDate) {
+      dates.push(isoDate);
+    }
     current.setDate(current.getDate() + 1);
   }
   

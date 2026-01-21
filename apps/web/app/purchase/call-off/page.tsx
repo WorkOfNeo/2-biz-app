@@ -94,6 +94,8 @@ export default function CallOffPage() {
     weeksCover: 'callOff.process.weeksCover',
     startDate: 'callOff.process.startDate',
     endDate: 'callOff.process.endDate',
+    selectedSetId: 'callOff.process.selectedSetId',
+    selectedMonths: 'callOff.process.selectedMonths',
   }), []);
 
   const [started, setStarted] = React.useState<boolean>(false);
@@ -102,7 +104,13 @@ export default function CallOffPage() {
   const pathname = usePathname();
   const router = useRouter();
 
-  // NOOS styles (auto-loaded)
+  // Selected Set (Stock List) ID
+  const [selectedSetId, setSelectedSetId] = React.useState<string>('');
+  
+  // Selected months for multi-month historical analysis (e.g. ['2024-01', '2024-02'])
+  const [selectedMonths, setSelectedMonths] = React.useState<string[]>([]);
+  
+  // NOOS styles (auto-loaded) - fallback when no set selected
   const [noosStyles, setNoosStyles] = React.useState<string[]>([]);
   
   // Selected style_no + color pairs
@@ -173,42 +181,82 @@ export default function CallOffPage() {
   });
   const [fullAnalysisWeeksCover, setFullAnalysisWeeksCover] = React.useState<number>(4);
 
-  // Fetch NOOS stock list styles
-  const { data: noosData } = useSWR('callOff:noosStyles', async () => {
-    // First get the NOOS stock list ID
-    const { data: stockLists } = await supabase
+  // Fetch all stock lists (sets)
+  const { data: stockLists } = useSWR('callOff:stockLists', async () => {
+    const { data, error } = await supabase
       .from('stock_lists')
-      .select('id, name')
-      .eq('name', 'NOOS')
-      .single();
+      .select('id, name, fixed')
+      .order('name');
+    if (error) throw error;
     
-    if (!stockLists) return [];
-
-    // Then get the styles in that list
-    const { data: listStyles } = await supabase
-      .from('stock_list_styles')
-      .select('style_id')
-      .eq('list_id', stockLists.id);
-
-    if (!listStyles || listStyles.length === 0) return [];
-
-    const styleIds = listStyles.map((s: any) => s.style_id);
-
-    // Get the style details
-    const { data: styles } = await supabase
-      .from('styles')
-      .select('id, style_no, style_name, supplier, image_url')
-      .in('id', styleIds)
-      .order('style_no', { ascending: true });
-
-    return (styles ?? []) as Array<{
-      id: string;
-      style_no: string;
-      style_name: string | null;
-      supplier: string | null;
-      image_url: string | null;
-    }>;
+    // Sort: NOOS first, then other fixed, then custom
+    const sortOrder: Record<string, number> = { 'NOOS': 1, 'Aktiv': 2, 'Passiv': 3 };
+    return ((data ?? []) as Array<{ id: string; name: string; fixed: boolean }>).sort((a, b) => {
+      const aOrder = sortOrder[a.name] ?? (a.fixed ? 10 : 100);
+      const bOrder = sortOrder[b.name] ?? (b.fixed ? 10 : 100);
+      if (aOrder !== bOrder) return aOrder - bOrder;
+      return a.name.localeCompare(b.name);
+    });
   });
+
+  // Fetch styles from selected set (or fallback to NOOS)
+  const effectiveSetId = selectedSetId || stockLists?.find(l => l.name === 'NOOS')?.id || '';
+  
+  const { data: setStylesData } = useSWR(
+    effectiveSetId ? ['callOff:setStyles', effectiveSetId] : null,
+    async () => {
+      // Get styles in this set
+      const { data: listStyles, error: listError } = await supabase
+        .from('stock_list_styles')
+        .select('style_id')
+        .eq('list_id', effectiveSetId);
+      
+      if (listError) throw listError;
+      if (!listStyles || listStyles.length === 0) return [];
+
+      const styleIds = listStyles.map((s: any) => s.style_id);
+
+      // Get style details
+      const { data: styles, error: stylesError } = await supabase
+        .from('styles')
+        .select('id, style_no, style_name, supplier, image_url')
+        .in('id', styleIds)
+        .order('style_no', { ascending: true });
+      
+      if (stylesError) throw stylesError;
+
+      return (styles ?? []) as Array<{
+        id: string;
+        style_no: string;
+        style_name: string | null;
+        supplier: string | null;
+        image_url: string | null;
+      }>;
+    }
+  );
+
+  // Fetch included colors from selected set
+  const { data: setColorsData } = useSWR(
+    effectiveSetId ? ['callOff:setColors', effectiveSetId] : null,
+    async () => {
+      const { data, error } = await supabase
+        .from('stock_list_colors')
+        .select('style_id, style_color_id, include, style_colors!inner(id, color, style_id)')
+        .eq('list_id', effectiveSetId)
+        .eq('include', true);
+      
+      if (error) throw error;
+      return (data ?? []) as Array<{
+        style_id: string;
+        style_color_id: string;
+        include: boolean;
+        style_colors: { id: string; color: string; style_id: string };
+      }>;
+    }
+  );
+
+  // Legacy alias for NOOS data (for backward compat with existing components)
+  const noosData = setStylesData;
 
   // Set NOOS styles when data loads
   React.useEffect(() => {
@@ -228,6 +276,8 @@ export default function CallOffPage() {
       const wc = localStorage.getItem(STORAGE_KEYS.weeksCover);
       const startDate = localStorage.getItem(STORAGE_KEYS.startDate);
       const endDate = localStorage.getItem(STORAGE_KEYS.endDate);
+      const setId = localStorage.getItem(STORAGE_KEYS.selectedSetId);
+      const months = localStorage.getItem(STORAGE_KEYS.selectedMonths);
       
       if (s === '1') setStarted(true);
       if (typeof r === 'string') setReturnPath(r);
@@ -247,6 +297,12 @@ export default function CallOffPage() {
       }
       if (startDate && endDate) {
         setDateRange({ start: startDate, end: endDate });
+      }
+      if (setId) {
+        setSelectedSetId(setId);
+      }
+      if (months) {
+        try { setSelectedMonths(JSON.parse(months) as string[]); } catch {}
       }
     } catch {}
   }, [STORAGE_KEYS]);
@@ -274,6 +330,14 @@ export default function CallOffPage() {
       localStorage.setItem(STORAGE_KEYS.endDate, dateRange.end);
     } catch {}
   }, [dateRange, STORAGE_KEYS.startDate, STORAGE_KEYS.endDate]);
+
+  React.useEffect(() => {
+    try { localStorage.setItem(STORAGE_KEYS.selectedSetId, selectedSetId); } catch {}
+  }, [selectedSetId, STORAGE_KEYS.selectedSetId]);
+
+  React.useEffect(() => {
+    try { localStorage.setItem(STORAGE_KEYS.selectedMonths, JSON.stringify(selectedMonths)); } catch {}
+  }, [selectedMonths, STORAGE_KEYS.selectedMonths]);
 
   function startProcess() {
     try {
@@ -305,6 +369,8 @@ export default function CallOffPage() {
       setAiSuggestions({});
       setAiPanelOpen(false);
       setReturnPath(null);
+      setSelectedSetId('');
+      setSelectedMonths([]);
     } catch {}
   }
 
@@ -354,7 +420,7 @@ export default function CallOffPage() {
             </div>
           ))}
           <div className="ml-4 text-sm text-slate-600">
-            {step === 1 && 'NOOS Styles Loaded'}
+            {step === 1 && 'Select Set or Styles'}
             {step === 2 && 'Choose Colors'}
             {step === 3 && 'Enter Order Quantities'}
             {step === 4 && 'Review & Confirm'}
@@ -371,19 +437,19 @@ export default function CallOffPage() {
             <CardTitle>NOOS Call Off Process</CardTitle>
             <CardDescription>
               Replenish NOOS (Never Out Of Stock) items based on current stock levels 
-              and AI-powered analysis using same-month-last-year sales data.
+              and AI-powered analysis using historical sales data from selected months.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex items-center gap-4">
               <div className="text-sm text-slate-600">
-                <strong>{noosData?.length ?? 0}</strong> NOOS styles available
+                <strong>{stockLists?.length ?? 0}</strong> sets available · 
+                <strong className="ml-1">{noosData?.length ?? 0}</strong> styles in default NOOS set
               </div>
             </div>
             <Button 
               onClick={startProcess}
               className="bg-[#8FA894] hover:bg-[#C5D5CA] text-white"
-              disabled={!noosData || noosData.length === 0}
             >
               Start Call Off
             </Button>
@@ -392,8 +458,16 @@ export default function CallOffPage() {
       )}
 
       {started && step === 1 && (
-        <Step1NoosStyles 
-          noosStyles={noosData ?? []} 
+        <Step1SelectSet
+          stockLists={stockLists ?? []}
+          selectedSetId={selectedSetId}
+          setSelectedSetId={setSelectedSetId}
+          setStylesData={setStylesData ?? []}
+          setColorsData={setColorsData ?? []}
+          selectedMonths={selectedMonths}
+          setSelectedMonths={setSelectedMonths}
+          selections={selections}
+          setSelections={setSelections}
           onContinue={() => setStep(2)} 
         />
       )}
@@ -402,6 +476,7 @@ export default function CallOffPage() {
           noosStyles={noosData ?? []} 
           selections={selections} 
           setSelections={setSelections} 
+          selectedMonths={selectedMonths}
           onBack={() => setStep(1)} 
           onContinue={() => setStep(3)}
           fullAnalysisOpen={fullAnalysisOpen}
@@ -426,6 +501,7 @@ export default function CallOffPage() {
           dateRange={dateRange}
           setDateRange={setDateRange}
           dateRangeDisplay={dateRangeDisplay}
+          selectedMonths={selectedMonths}
           aiSuggestions={aiSuggestions}
           setAiSuggestions={setAiSuggestions}
           aiLoading={aiLoading}
@@ -448,77 +524,213 @@ export default function CallOffPage() {
   );
 }
 
-// ==================== STEP 1: NOOS Styles (Auto-loaded) ====================
-function Step1NoosStyles({
-  noosStyles,
+// ==================== STEP 1: Select Set or Styles ====================
+function Step1SelectSet({
+  stockLists,
+  selectedSetId,
+  setSelectedSetId,
+  setStylesData,
+  setColorsData,
+  selectedMonths,
+  setSelectedMonths,
+  selections,
+  setSelections,
   onContinue
 }: {
-  noosStyles: Array<{
+  stockLists: Array<{ id: string; name: string; fixed: boolean }>;
+  selectedSetId: string;
+  setSelectedSetId: React.Dispatch<React.SetStateAction<string>>;
+  setStylesData: Array<{
     id: string;
     style_no: string;
     style_name: string | null;
     supplier: string | null;
     image_url: string | null;
   }>;
+  setColorsData: Array<{
+    style_id: string;
+    style_color_id: string;
+    include: boolean;
+    style_colors: { id: string; color: string; style_id: string };
+  }>;
+  selectedMonths: string[];
+  setSelectedMonths: React.Dispatch<React.SetStateAction<string[]>>;
+  selections: Selection[];
+  setSelections: React.Dispatch<React.SetStateAction<Selection[]>>;
   onContinue: () => void;
 }) {
+  // Build style_id -> style_no map
+  const styleIdToNo = React.useMemo(() => {
+    const map = new Map<string, string>();
+    setStylesData.forEach(s => map.set(s.id, s.style_no));
+    return map;
+  }, [setStylesData]);
+
+  // Auto-select colors from set when set changes
+  React.useEffect(() => {
+    if (setColorsData && setColorsData.length > 0) {
+      const newSelections: Selection[] = [];
+      setColorsData.forEach(c => {
+        const style_no = styleIdToNo.get(c.style_id);
+        if (style_no && c.include) {
+          newSelections.push({ style_no, color: c.style_colors.color });
+        }
+      });
+      setSelections(newSelections);
+    }
+  }, [setColorsData, styleIdToNo, setSelections]);
+
+  // Generate month options (last 24 months)
+  const monthOptions = React.useMemo(() => {
+    const options: { value: string; label: string }[] = [];
+    const now = new Date();
+    for (let i = 1; i <= 24; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      const label = d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+      options.push({ value, label });
+    }
+    return options;
+  }, []);
+
+  // Default to same month last year if no months selected
+  React.useEffect(() => {
+    if (selectedMonths.length === 0) {
+      const now = new Date();
+      const lastYear = new Date(now.getFullYear() - 1, now.getMonth(), 1);
+      const defaultMonth = `${lastYear.getFullYear()}-${String(lastYear.getMonth() + 1).padStart(2, '0')}`;
+      setSelectedMonths([defaultMonth]);
+    }
+  }, [selectedMonths.length, setSelectedMonths]);
+
+  function toggleMonth(month: string) {
+    setSelectedMonths(prev => {
+      if (prev.includes(month)) {
+        return prev.filter(m => m !== month);
+      }
+      return [...prev, month].sort();
+    });
+  }
+
+  const selectedSetName = stockLists.find(l => l.id === selectedSetId)?.name || 'NOOS';
+
   return (
     <div className="space-y-4">
       <Card className="border-[#C5D5CA]">
         <CardHeader>
-          <CardTitle>Step 1: NOOS Styles</CardTitle>
+          <CardTitle>Step 1: Select Set & Historical Months</CardTitle>
           <CardDescription>
-            The following NOOS styles will be included in this call off. 
-            All styles from the NOOS stock list are automatically loaded.
+            Choose a Style/Color Set to load, and select which months of historical data to use for analysis.
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-            {noosStyles.map((style) => (
-              <div
-                key={style.id}
-                className="border rounded-lg p-3 border-[#C5D5CA] bg-[#F5F3F0]/30"
-              >
-                <div className="flex items-start gap-3">
-                  {style.image_url ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={style.image_url}
-                      alt={style.style_name || style.style_no}
-                      className="h-16 w-16 object-cover rounded border"
-                    />
-                  ) : (
-                    <div className="h-16 w-16 rounded border bg-gray-100 flex items-center justify-center text-xs text-gray-400">
-                      No image
-                    </div>
-                  )}
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <div className="text-sm font-semibold">{style.style_no}</div>
-                      <Badge className="bg-[#C5D5CA] text-slate-800 text-[10px]">NOOS</Badge>
-                    </div>
-                    <div className="text-xs text-slate-600 truncate">
-                      {style.style_name || '—'}
-                    </div>
-                    {style.supplier && (
-                      <Badge className="mt-1 text-[10px]">{style.supplier}</Badge>
-                    )}
-                  </div>
-                </div>
-              </div>
-            ))}
+        <CardContent className="space-y-6">
+          {/* Set Selection */}
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-slate-700">Select Set</label>
+            <select
+              value={selectedSetId}
+              onChange={(e) => setSelectedSetId(e.target.value)}
+              className="w-full h-10 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#8FA894]"
+            >
+              <option value="">NOOS (default)</option>
+              {stockLists.map(list => (
+                <option key={list.id} value={list.id}>
+                  {list.name} {list.fixed ? '(System)' : ''}
+                </option>
+              ))}
+            </select>
+            <p className="text-xs text-slate-500">
+              Sets are managed in <a href="/purchase/call-off-settings" className="text-[#8FA894] underline">Call-Off Sets</a>
+            </p>
           </div>
 
-          {noosStyles.length > 0 && (
-            <div className="flex items-center justify-between pt-4 border-t">
-              <div className="text-sm text-slate-600">
-                <strong>{noosStyles.length}</strong> NOOS style{noosStyles.length !== 1 ? 's' : ''} loaded
-              </div>
-              <Button onClick={onContinue} className="bg-[#8FA894] hover:bg-[#C5D5CA]">
-                Continue to Choose Colors
-              </Button>
+          {/* Multi-Month Selection */}
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-slate-700">
+              Historical Months <span className="font-normal text-slate-500">(select one or more)</span>
+            </label>
+            <div className="flex flex-wrap gap-2">
+              {monthOptions.slice(0, 12).map(opt => {
+                const isSelected = selectedMonths.includes(opt.value);
+                return (
+                  <button
+                    key={opt.value}
+                    onClick={() => toggleMonth(opt.value)}
+                    className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
+                      isSelected
+                        ? 'bg-[#8FA894] text-white ring-2 ring-[#8FA894] ring-offset-1'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                );
+              })}
             </div>
-          )}
+            {selectedMonths.length > 0 && (
+              <p className="text-xs text-slate-600">
+                Selected: <strong>{selectedMonths.length}</strong> month{selectedMonths.length !== 1 ? 's' : ''}
+                {' — '}{selectedMonths.map(m => {
+                  const d = new Date(m + '-01');
+                  return d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+                }).join(', ')}
+              </p>
+            )}
+          </div>
+
+          {/* Styles Preview */}
+          <div className="border-t pt-4">
+            <h3 className="text-sm font-medium text-slate-700 mb-3">
+              Styles in "{selectedSetName}" ({setStylesData.length})
+            </h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 max-h-96 overflow-y-auto">
+              {setStylesData.map((style) => (
+                <div
+                  key={style.id}
+                  className="border rounded-lg p-3 border-[#C5D5CA] bg-[#F5F3F0]/30"
+                >
+                  <div className="flex items-start gap-3">
+                    {style.image_url ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={style.image_url}
+                        alt={style.style_name || style.style_no}
+                        className="h-12 w-12 object-cover rounded border"
+                      />
+                    ) : (
+                      <div className="h-12 w-12 rounded border bg-gray-100 flex items-center justify-center text-xs text-gray-400">
+                        —
+                      </div>
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-semibold">{style.style_no}</div>
+                      <div className="text-xs text-slate-600 truncate">
+                        {style.style_name || '—'}
+                      </div>
+                      {style.supplier && (
+                        <Badge className="mt-1 text-[10px]">{style.supplier}</Badge>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Continue Button */}
+          <div className="flex items-center justify-between pt-4 border-t">
+            <div className="text-sm text-slate-600">
+              <strong>{setStylesData.length}</strong> style{setStylesData.length !== 1 ? 's' : ''} · 
+              <strong className="ml-1">{selections.length}</strong> color{selections.length !== 1 ? 's' : ''} pre-selected
+            </div>
+            <Button 
+              onClick={onContinue} 
+              className="bg-[#8FA894] hover:bg-[#C5D5CA]"
+              disabled={setStylesData.length === 0}
+            >
+              Continue to Choose Colors
+            </Button>
+          </div>
         </CardContent>
       </Card>
     </div>
@@ -530,6 +742,7 @@ function Step2ChooseColors({
   noosStyles,
   selections,
   setSelections,
+  selectedMonths,
   onBack,
   onContinue,
   fullAnalysisOpen,
@@ -552,6 +765,7 @@ function Step2ChooseColors({
   }>;
   selections: Selection[];
   setSelections: React.Dispatch<React.SetStateAction<Selection[]>>;
+  selectedMonths: string[];
   onBack: () => void;
   onContinue: () => void;
   fullAnalysisOpen: boolean;
@@ -643,13 +857,14 @@ function Step2ChooseColors({
     const requestPayload = {
       selections,
       weeks_cover: fullAnalysisWeeksCover,
-      startDate: fullAnalysisDateRange.start,
-      endDate: fullAnalysisDateRange.end
+      months: selectedMonths.length > 0 ? selectedMonths : undefined,
+      startDate: selectedMonths.length === 0 ? fullAnalysisDateRange.start : undefined,
+      endDate: selectedMonths.length === 0 ? fullAnalysisDateRange.end : undefined
     };
     
     console.group('🔍 NOOS Call-Off Analysis Debug');
     console.log('📤 Request payload:', requestPayload);
-    console.log('📅 Date range:', fullAnalysisDateRange.start, 'to', fullAnalysisDateRange.end);
+    console.log('📅 Months:', selectedMonths.length > 0 ? selectedMonths : `${fullAnalysisDateRange.start} to ${fullAnalysisDateRange.end}`);
     console.log('📊 Selections:', selections.length, 'items');
     selections.forEach((s, i) => console.log(`   ${i + 1}. ${s.style_no} - ${s.color}`));
     
@@ -867,6 +1082,7 @@ function Step3EnterQuantities({
   dateRange,
   setDateRange,
   dateRangeDisplay,
+  selectedMonths,
   aiSuggestions,
   setAiSuggestions,
   aiLoading,
@@ -884,6 +1100,7 @@ function Step3EnterQuantities({
   dateRange: { start: string; end: string };
   setDateRange: React.Dispatch<React.SetStateAction<{ start: string; end: string }>>;
   dateRangeDisplay: string;
+  selectedMonths: string[];
   aiSuggestions: Record<string, AISuggestion>;
   setAiSuggestions: React.Dispatch<React.SetStateAction<Record<string, AISuggestion>>>;
   aiLoading: boolean;
@@ -947,13 +1164,18 @@ function Step3EnterQuantities({
   // Fetch historical sales for selected date range
   const { data: historicalData } = useSWR(
     selections.length && dateRange.start && dateRange.end 
-      ? ['callOff:historical', selections.map(s => `${s.style_no}|${s.color}`).join(','), dateRange.start, dateRange.end] 
+      ? ['callOff:historical', selections.map(s => `${s.style_no}|${s.color}`).join(','), selectedMonths.join(',') || `${dateRange.start}-${dateRange.end}`] 
       : null,
     async () => {
       const response = await fetch('/api/call-off/historical', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ selections, startDate: dateRange.start, endDate: dateRange.end })
+        body: JSON.stringify({ 
+          selections, 
+          months: selectedMonths.length > 0 ? selectedMonths : undefined,
+          startDate: selectedMonths.length === 0 ? dateRange.start : undefined, 
+          endDate: selectedMonths.length === 0 ? dateRange.end : undefined 
+        })
       });
       if (!response.ok) return {};
       const json = await response.json();
@@ -1079,8 +1301,9 @@ function Step3EnterQuantities({
         body: JSON.stringify({
           selections,
           weeks_cover: weeksCover,
-          startDate: dateRange.start,
-          endDate: dateRange.end
+          months: selectedMonths.length > 0 ? selectedMonths : undefined,
+          startDate: selectedMonths.length === 0 ? dateRange.start : undefined,
+          endDate: selectedMonths.length === 0 ? dateRange.end : undefined
         })
       });
       

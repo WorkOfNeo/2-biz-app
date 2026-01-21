@@ -34,25 +34,52 @@ export async function POST(req: Request) {
     const supabase = createRouteHandlerClient({ cookies });
     const body = await req.json();
     
-    const { selections, weeks_cover = 4, startDate, endDate, reference_month } = body;
+    const { selections, weeks_cover = 4, startDate, endDate, reference_month, months } = body;
     
     if (!Array.isArray(selections) || selections.length === 0) {
       return NextResponse.json({ error: 'selections array is required' }, { status: 400 });
     }
 
-    let startDateStr: string;
-    let endDateStr: string;
-    let periodDisplay: string;
+    // Collect date ranges to query (for multi-month support)
+    let dateRanges: Array<{ start: string; end: string }> = [];
+    let periodDisplay: string = '';
+    let selectedMonths: string[] = [];
 
-    // Support both new format (startDate/endDate) and legacy format (reference_month)
-    if (startDate && endDate && typeof startDate === 'string' && typeof endDate === 'string') {
-      startDateStr = startDate;
-      endDateStr = endDate;
+    // Support new format: months[] array (e.g. ['2024-01', '2024-03'])
+    if (Array.isArray(months) && months.length > 0) {
+      selectedMonths = months;
+      for (const month of months) {
+        const parts = month.split('-');
+        if (parts.length !== 2) continue;
+        const year = Number(parts[0]);
+        const m = Number(parts[1]);
+        if (isNaN(year) || isNaN(m) || m < 1 || m > 12) continue;
+        
+        const start = new Date(year, m - 1, 1);
+        const end = new Date(year, m, 0);
+        const startStr = start.toISOString().split('T')[0] as string;
+        const endStr = end.toISOString().split('T')[0] as string;
+        dateRanges.push({ start: startStr, end: endStr });
+      }
+      
+      if (dateRanges.length === 0) {
+        return NextResponse.json({ error: 'Invalid months format. Use YYYY-MM' }, { status: 400 });
+      }
+      
+      periodDisplay = months.map(m => {
+        const [y, mo] = m.split('-').map(Number);
+        return new Date(y!, mo! - 1, 1).toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+      }).join(', ');
+    }
+    // Support startDate/endDate format
+    else if (startDate && endDate && typeof startDate === 'string' && typeof endDate === 'string') {
       const start = new Date(startDate);
       const end = new Date(endDate);
+      dateRanges.push({ start: startDate, end: endDate });
       periodDisplay = `${start.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })} - ${end.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}`;
-    } else if (reference_month && typeof reference_month === 'string') {
-      // Legacy support: parse reference_month
+    }
+    // Legacy: reference_month
+    else if (reference_month && typeof reference_month === 'string') {
       const parts = reference_month.split('-');
       if (parts.length !== 2) {
         return NextResponse.json({ error: 'Invalid reference_month format. Use YYYY-MM' }, { status: 400 });
@@ -67,17 +94,20 @@ export async function POST(req: Request) {
       
       const start = new Date(year, month - 1, 1);
       const end = new Date(year, month, 0);
-      const startStr = start.toISOString().split('T')[0];
-      const endStr = end.toISOString().split('T')[0];
-      if (!startStr || !endStr) {
-        return NextResponse.json({ error: 'Failed to parse reference_month dates' }, { status: 400 });
-      }
-      startDateStr = startStr;
-      endDateStr = endStr;
+      const startStr = start.toISOString().split('T')[0] as string;
+      const endStr = end.toISOString().split('T')[0] as string;
+      dateRanges.push({ start: startStr, end: endStr });
       periodDisplay = start.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-    } else {
-      return NextResponse.json({ error: 'Either startDate/endDate or reference_month is required' }, { status: 400 });
     }
+    else {
+      return NextResponse.json({ error: 'Either months[], startDate/endDate or reference_month is required' }, { status: 400 });
+    }
+
+    // Calculate overall date range for querying
+    const allStarts = dateRanges.map(r => r.start).sort();
+    const allEnds = dateRanges.map(r => r.end).sort();
+    const startDateStr = allStarts[0] || '';
+    const endDateStr = allEnds[allEnds.length - 1] || '';
 
     // Validate dates
     const start = new Date(startDateStr);
@@ -85,11 +115,14 @@ export async function POST(req: Request) {
     if (isNaN(start.getTime()) || isNaN(end.getTime())) {
       return NextResponse.json({ error: 'Invalid date format. Use YYYY-MM-DD' }, { status: 400 });
     }
-    if (start > end) {
-      return NextResponse.json({ error: 'Start date must be before end date' }, { status: 400 });
-    }
 
-    const daysInPeriod = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+    // Calculate total days across selected months
+    let daysInPeriod = 0;
+    for (const range of dateRanges) {
+      const s = new Date(range.start);
+      const e = new Date(range.end);
+      daysInPeriod += Math.ceil((e.getTime() - s.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+    }
 
     const openaiApiKey = process.env.OPENAI_API_KEY;
     if (!openaiApiKey) {
@@ -113,11 +146,11 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: stockError.message }, { status: 500 });
     }
 
-    // Fetch historical sales for reference month
+    // Fetch historical sales for selected period
     // Use a high limit to ensure we get all data (Supabase default is 1000)
-    const { data: historicalData, error: historicalError } = await supabase
+    const { data: rawHistoricalData, error: historicalError } = await supabase
       .from('historical_sales')
-      .select('style_no, color, size, quantity')
+      .select('style_no, color, size, quantity, date')
       .in('style_no', styleNos)
       .in('color', colors)
       .gte('date', startDateStr)
@@ -126,6 +159,17 @@ export async function POST(req: Request) {
 
     if (historicalError) {
       return NextResponse.json({ error: historicalError.message }, { status: 500 });
+    }
+
+    // For multi-month: filter to only include rows within specified month ranges
+    let historicalData = rawHistoricalData || [];
+    if (selectedMonths.length > 0) {
+      const monthSet = new Set(selectedMonths);
+      historicalData = historicalData.filter((row: any) => {
+        if (!row.date) return false;
+        const rowMonth = row.date.substring(0, 7); // 'YYYY-MM'
+        return monthSet.has(rowMonth);
+      });
     }
 
     // Process each selection

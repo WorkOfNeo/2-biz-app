@@ -26,23 +26,40 @@ type ItemAnalysis = {
   stock: number[];
   sold: number[];
   netStock: number[];
+  purchaseRunning: number[];  // Running POs
+  bellRainAvailable: number[]; // Bell Rain "call home" stock
   historical: number[];
   nextMonthHistorical: number[];
   totalStock: number;
   totalSold: number;
   totalNetStock: number;
+  totalPurchaseRunning: number;
+  totalBellRainAvailable: number;
   totalHistorical: number;
   totalNextMonthHistorical: number;
   weeklyRate: number;
   nextMonthWeeklyRate: number;
   targetStock: number;
   suggestedOrder: number;
+  bellRainCallHome: number; // Amount to call home from Bell Rain first
+  newOrderNeeded: number;   // Amount to order after calling home Bell Rain
   suggestedOrderBySize: number[];
+  bellRainCallHomeBySize: number[];
+  newOrderNeededBySize: number[];
   trendDirection: 'up' | 'down' | 'stable';
   trendPercent: number;
   status: 'critical' | 'low' | 'ok' | 'surplus';
   priority: number;
+  supplierWarning?: string; // e.g. "Below MOQ"
 };
+
+// Bell Rain detection helper
+function isBellRainRow(row: StockRow): boolean {
+  const label = (row.row_label || '').toLowerCase();
+  const pattern = /bell[-_ ]?rain|bellrain/i;
+  const brPattern = /^br\d+/i;
+  return pattern.test(label) || brPattern.test(row.row_label || '');
+}
 
 type OrderByStyle = {
   style_no: string;
@@ -96,42 +113,117 @@ export async function POST(req: Request) {
     const supabase = createRouteHandlerClient({ cookies });
     const body = await req.json();
     
-    const { selections, weeks_cover = 4, startDate, endDate } = body;
+    const { selections, weeks_cover = 4, startDate, endDate, months } = body;
     
     if (!Array.isArray(selections) || selections.length === 0) {
       return NextResponse.json({ error: 'selections array is required' }, { status: 400 });
     }
 
-    if (!startDate || !endDate || typeof startDate !== 'string' || typeof endDate !== 'string') {
-      return NextResponse.json({ error: 'startDate and endDate are required' }, { status: 400 });
+    // Collect date ranges to query (for multi-month support)
+    let dateRanges: Array<{ start: string; end: string }> = [];
+    let periodDisplay: string = '';
+    let selectedMonths: string[] = [];
+
+    // Support new format: months[] array (e.g. ['2024-01', '2024-03'])
+    if (Array.isArray(months) && months.length > 0) {
+      selectedMonths = months;
+      for (const month of months) {
+        const parts = month.split('-');
+        if (parts.length !== 2) continue;
+        const year = Number(parts[0]);
+        const m = Number(parts[1]);
+        if (isNaN(year) || isNaN(m) || m < 1 || m > 12) continue;
+        
+        const s = new Date(year, m - 1, 1);
+        const e = new Date(year, m, 0);
+        const startStr = s.toISOString().split('T')[0] as string;
+        const endStr = e.toISOString().split('T')[0] as string;
+        dateRanges.push({ start: startStr, end: endStr });
+      }
+      
+      if (dateRanges.length === 0) {
+        return NextResponse.json({ error: 'Invalid months format. Use YYYY-MM' }, { status: 400 });
+      }
+      
+      periodDisplay = months.map(m => {
+        const [y, mo] = m.split('-').map(Number);
+        return new Date(y!, mo! - 1, 1).toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+      }).join(', ');
+    }
+    // Support startDate/endDate format
+    else if (startDate && endDate && typeof startDate === 'string' && typeof endDate === 'string') {
+      dateRanges.push({ start: startDate, end: endDate });
+      const s = new Date(startDate);
+      const e = new Date(endDate);
+      periodDisplay = `${s.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} - ${e.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+    }
+    else {
+      return NextResponse.json({ error: 'Either months[] or startDate/endDate is required' }, { status: 400 });
     }
 
-    const start = new Date(startDate);
-    const end = new Date(endDate);
+    // Calculate overall date range for querying
+    const allStarts = dateRanges.map(r => r.start).sort();
+    const allEnds = dateRanges.map(r => r.end).sort();
+    const queryStartDate = allStarts[0] || '';
+    const queryEndDate = allEnds[allEnds.length - 1] || '';
+
+    const start = new Date(queryStartDate);
+    const end = new Date(queryEndDate);
     if (isNaN(start.getTime()) || isNaN(end.getTime())) {
       return NextResponse.json({ error: 'Invalid date format. Use YYYY-MM-DD' }, { status: 400 });
     }
-    if (start > end) {
-      return NextResponse.json({ error: 'Start date must be before end date' }, { status: 400 });
+
+    // Calculate total days across selected months
+    let daysInPeriod = 0;
+    for (const range of dateRanges) {
+      const s = new Date(range.start);
+      const e = new Date(range.end);
+      daysInPeriod += Math.ceil((e.getTime() - s.getTime()) / (1000 * 60 * 60 * 24)) + 1;
     }
-
-    const daysInPeriod = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
     const weeksInPeriod = daysInPeriod / 7;
-    
-    const periodDisplay = `${start.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} - ${end.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
 
-    // Calculate "next month" date range (one month after the selected period for trend comparison)
+    // Calculate "next month" date ranges (one month after each selected period for trend comparison)
     // This helps understand if demand is expected to increase or decrease
-    const nextMonthStart = new Date(start);
-    nextMonthStart.setMonth(nextMonthStart.getMonth() + 1);
-    const nextMonthEnd = new Date(end);
-    nextMonthEnd.setMonth(nextMonthEnd.getMonth() + 1);
+    let nextMonthRanges: Array<{ start: string; end: string }> = [];
+    for (const range of dateRanges) {
+      const s = new Date(range.start);
+      const e = new Date(range.end);
+      s.setMonth(s.getMonth() + 1);
+      e.setMonth(e.getMonth() + 1);
+      nextMonthRanges.push({
+        start: s.toISOString().split('T')[0] as string,
+        end: e.toISOString().split('T')[0] as string
+      });
+    }
     
-    const nextMonthStartStr = nextMonthStart.toISOString().split('T')[0] as string;
-    const nextMonthEndStr = nextMonthEnd.toISOString().split('T')[0] as string;
-    const nextMonthDisplay = `${nextMonthStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} - ${nextMonthEnd.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
-    const nextMonthDays = Math.ceil((nextMonthEnd.getTime() - nextMonthStart.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+    const nextMonthAllStarts = nextMonthRanges.map(r => r.start).sort();
+    const nextMonthAllEnds = nextMonthRanges.map(r => r.end).sort();
+    const nextMonthStartStr = nextMonthAllStarts[0] || '';
+    const nextMonthEndStr = nextMonthAllEnds[nextMonthAllEnds.length - 1] || '';
+    const nextMonthStart = new Date(nextMonthStartStr);
+    const nextMonthEnd = new Date(nextMonthEndStr);
+    const nextMonthDisplay = selectedMonths.length > 0
+      ? selectedMonths.map(m => {
+          const [y, mo] = m.split('-').map(Number);
+          const nextMonth = new Date(y!, mo!, 1); // One month after
+          return nextMonth.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+        }).join(', ')
+      : `${nextMonthStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} - ${nextMonthEnd.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+    
+    let nextMonthDays = 0;
+    for (const range of nextMonthRanges) {
+      const s = new Date(range.start);
+      const e = new Date(range.end);
+      nextMonthDays += Math.ceil((e.getTime() - s.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+    }
     const nextMonthWeeks = nextMonthDays / 7;
+    
+    // Calculate selected next months for filtering
+    const selectedNextMonths = selectedMonths.map(m => {
+      const [y, mo] = m.split('-').map(Number);
+      const nextDate = new Date(y!, mo!, 1);
+      return `${nextDate.getFullYear()}-${String(nextDate.getMonth() + 1).padStart(2, '0')}`;
+    });
 
     const openaiApiKey = process.env.OPENAI_API_KEY;
     if (!openaiApiKey) {
@@ -188,11 +280,11 @@ export async function POST(req: Request) {
       
       const { data: pageData, error: pageError, count } = await supabase
         .from('historical_sales')
-        .select('style_no, color, size, quantity', { count: 'exact' })
+        .select('style_no, color, size, quantity, date', { count: 'exact' })
         .in('style_no', styleNos)
         .in('color', colors)
-        .gte('date', startDate)
-        .lte('date', endDate)
+        .gte('date', queryStartDate)
+        .lte('date', queryEndDate)
         .order('date', { ascending: false })
         .order('style_no', { ascending: true })  // Add secondary sort for consistency
         .order('color', { ascending: true })     // Add tertiary sort
@@ -228,10 +320,20 @@ export async function POST(req: Request) {
       }
     }
 
-    const historicalData = allHistoricalData;
+    // For multi-month: filter to only include rows within specified month ranges
+    let historicalData = allHistoricalData;
+    if (selectedMonths.length > 0) {
+      const monthSet = new Set(selectedMonths);
+      historicalData = allHistoricalData.filter((row: any) => {
+        if (!row.date) return false;
+        const rowMonth = row.date.substring(0, 7); // 'YYYY-MM'
+        return monthSet.has(rowMonth);
+      });
+      console.log(`🔍 [DEBUG] Filtered to ${historicalData.length} rows for selected months: ${selectedMonths.join(', ')}`);
+    }
 
     console.log('🔍 [DEBUG] Historical data query COMPLETE:', {
-      dateRange: `${startDate} to ${endDate}`,
+      dateRange: `${queryStartDate} to ${queryEndDate}`,
       rowsReturned: historicalData?.length || 0,
       totalCount: historicalCount,
       sampleRows: historicalData?.slice(0, 5)
@@ -251,7 +353,7 @@ export async function POST(req: Request) {
       
       const { data: pageData, error: pageError } = await supabase
         .from('historical_sales')
-        .select('style_no, color, size, quantity')
+        .select('style_no, color, size, quantity, date')
         .in('style_no', styleNos)
         .in('color', colors)
         .gte('date', nextMonthStartStr)
@@ -280,7 +382,17 @@ export async function POST(req: Request) {
       if (nextMonthOffset > 100000) break;
     }
 
-    const nextMonthData = allNextMonthData;
+    // For multi-month: filter to only include rows within specified next month ranges
+    let nextMonthData = allNextMonthData;
+    if (selectedNextMonths.length > 0) {
+      const monthSet = new Set(selectedNextMonths);
+      nextMonthData = allNextMonthData.filter((row: any) => {
+        if (!row.date) return false;
+        const rowMonth = row.date.substring(0, 7); // 'YYYY-MM'
+        return monthSet.has(rowMonth);
+      });
+      console.log(`🔍 [DEBUG] Filtered next month to ${nextMonthData.length} rows for: ${selectedNextMonths.join(', ')}`);
+    }
     console.log('🔍 [DEBUG] Next month data loaded:', nextMonthData?.length || 0, 'rows');
 
     // Process each selection
@@ -349,6 +461,30 @@ export async function POST(req: Request) {
         );
         return acc.map((v, i) => v + (vals[i] ?? 0));
       }, Array(num).fill(0) as number[]);
+
+      // Calculate purchase running (all running POs)
+      const purchaseRows = latestRows.filter((r) => r.section === 'Purchase (Running + Shipped)');
+      const purchaseRunning = purchaseRows.reduce((acc, r) => {
+        const vals = ensureNums(
+          Array.isArray(r.values) ? r.values : JSON.parse(String(r.values || '[]')),
+          num
+        );
+        return acc.map((v, i) => v + (vals[i] ?? 0));
+      }, Array(num).fill(0) as number[]);
+      const totalPurchaseRunning = purchaseRunning.reduce((a, b) => a + b, 0);
+
+      // Calculate Bell Rain available (call-home stock from secondary storage)
+      const bellRainRows = latestRows.filter((r) => 
+        r.section === 'Purchase (Running + Shipped)' && isBellRainRow(r)
+      );
+      const bellRainAvailable = bellRainRows.reduce((acc, r) => {
+        const vals = ensureNums(
+          Array.isArray(r.values) ? r.values : JSON.parse(String(r.values || '[]')),
+          num
+        );
+        return acc.map((v, i) => v + (vals[i] ?? 0));
+      }, Array(num).fill(0) as number[]);
+      const totalBellRainAvailable = bellRainAvailable.reduce((a, b) => a + b, 0);
 
       // Calculate net stock (Stock - Sold, no purchase for NOOS)
       const netStock = stock.map((v, i) => v - (sold[i] ?? 0));
@@ -445,13 +581,21 @@ export async function POST(req: Request) {
       // Calculate suggested order total
       const suggestedOrder = Math.max(0, targetStock - totalNetStock);
 
+      // BELL RAIN LOGIC: First use available Bell Rain stock before ordering new
+      // Bell Rain = secondary storage we can "call home"
+      const bellRainCallHome = Math.min(totalBellRainAvailable, suggestedOrder);
+      const newOrderNeeded = Math.max(0, suggestedOrder - bellRainCallHome);
+
       // Calculate suggested order per size (distributed by historical pressure)
       const historicalTotal = historical.reduce((a: number, b: number) => a + b, 0);
-      let suggestedOrderBySize: number[];
-      if (historicalTotal > 0 && suggestedOrder > 0) {
-        const exact = historical.map((h: number) => (h / historicalTotal) * suggestedOrder);
+      
+      // Helper to distribute quantity across sizes by historical pressure
+      const distributeByPressure = (total: number): number[] => {
+        if (historicalTotal <= 0 || total <= 0) return sizes.map(() => 0);
+        
+        const exact = historical.map((h: number) => (h / historicalTotal) * total);
         const floored = exact.map((v: number) => Math.floor(v));
-        let remaining = suggestedOrder - floored.reduce((a: number, b: number) => a + b, 0);
+        let remaining = total - floored.reduce((a: number, b: number) => a + b, 0);
         const fractional = exact.map((v: number, i: number) => ({ i, frac: v - Math.floor(v) }));
         fractional.sort((a, b) => b.frac - a.frac);
         for (let k = 0; k < remaining && k < fractional.length; k++) {
@@ -460,10 +604,23 @@ export async function POST(req: Request) {
             floored[item.i] = (floored[item.i] || 0) + 1;
           }
         }
-        suggestedOrderBySize = floored;
-      } else {
-        suggestedOrderBySize = sizes.map(() => 0);
-      }
+        return floored;
+      };
+
+      const suggestedOrderBySize = distributeByPressure(suggestedOrder);
+      
+      // Calculate per-size Bell Rain call home (capped by available)
+      let bellRainCallHomeBySize = distributeByPressure(bellRainCallHome);
+      // Cap by actual Bell Rain available per size
+      bellRainCallHomeBySize = bellRainCallHomeBySize.map((qty, i) => 
+        Math.min(qty, bellRainAvailable[i] ?? 0)
+      );
+      const actualBellRainCallHome = bellRainCallHomeBySize.reduce((a, b) => a + b, 0);
+      
+      // Calculate new order needed per size
+      const newOrderNeededBySize = suggestedOrderBySize.map((qty, i) => 
+        Math.max(0, qty - (bellRainCallHomeBySize[i] ?? 0))
+      );
 
       // Determine status based on stock level relative to target
       let status: 'critical' | 'low' | 'ok' | 'surplus';
@@ -494,18 +651,26 @@ export async function POST(req: Request) {
         stock,
         sold,
         netStock,
+        purchaseRunning,
+        bellRainAvailable,
         historical,
         nextMonthHistorical,
         totalStock: stock.reduce((a, b) => a + b, 0),
         totalSold: sold.reduce((a, b) => a + b, 0),
         totalNetStock,
+        totalPurchaseRunning,
+        totalBellRainAvailable,
         totalHistorical,
         totalNextMonthHistorical,
         weeklyRate,
         nextMonthWeeklyRate,
         targetStock,
         suggestedOrder,
+        bellRainCallHome: actualBellRainCallHome,
+        newOrderNeeded: suggestedOrder - actualBellRainCallHome,
         suggestedOrderBySize,
+        bellRainCallHomeBySize,
+        newOrderNeededBySize,
         trendDirection,
         trendPercent,
         status,
@@ -522,6 +687,8 @@ export async function POST(req: Request) {
     const okItems = items.filter(i => i.status === 'ok').length;
     const surplusItems = items.filter(i => i.status === 'surplus').length;
     const totalSuggestedOrder = items.reduce((sum, i) => sum + i.suggestedOrder, 0);
+    const totalBellRainCallHome = items.reduce((sum, i) => sum + i.bellRainCallHome, 0);
+    const totalNewOrderNeeded = items.reduce((sum, i) => sum + i.newOrderNeeded, 0);
 
     // Group orders by style for easy overview
     const ordersByStyleMap = new Map<string, OrderByStyle>();
@@ -594,12 +761,15 @@ export async function POST(req: Request) {
         // Check for BELL_RAIN tagged supplier
         const bellRain = suppliers.find(s => s.tags?.includes('BELL_RAIN'));
         if (bellRain) {
-          bellRainInfo = `\nNote: BELL_RAIN stock available - pull from secondary storage before ordering new.`;
+          bellRainInfo = `\nIMPORTANT - BELL RAIN STOCK: ${totalBellRainCallHome} units can be CALLED HOME from secondary storage before ordering ${totalNewOrderNeeded} new units.`;
         }
       }
     } catch (e) {
       console.warn('Could not fetch suppliers:', e);
     }
+
+    // Get items with Bell Rain stock available
+    const bellRainItems = items.filter(i => i.bellRainCallHome > 0);
 
     // Generate AI summary
     const topCritical = items.filter(i => i.status === 'critical').slice(0, 5);
@@ -611,10 +781,13 @@ export async function POST(req: Request) {
 PERIOD: ${periodDisplay} | TARGET: ${weeks_cover} weeks cover
 
 STATUS: ${criticalItems} critical, ${lowItems} low, ${okItems} OK, ${surplusItems} surplus
-TOTAL ORDER NEEDED: ${totalSuggestedOrder} units
+TOTAL NEEDED: ${totalSuggestedOrder} units (Bell Rain call-home: ${totalBellRainCallHome}, New order: ${totalNewOrderNeeded})
+
+${bellRainItems.length > 0 ? `BELL RAIN - CALL HOME FIRST:
+${bellRainItems.slice(0, 5).map(i => `• ${i.style_name} (${i.color}): call home ${i.bellRainCallHome} units, then order ${i.newOrderNeeded} new`).join('\n')}` : ''}
 
 ${topCritical.length > 0 ? `CRITICAL (order immediately):
-${topCritical.map(i => `• ${i.style_name} (${i.color}): ${i.totalNetStock} in stock → need +${i.suggestedOrder}${i.trendDirection === 'up' ? ' [demand rising]' : ''}`).join('\n')}` : ''}
+${topCritical.map(i => `• ${i.style_name} (${i.color}): ${i.totalNetStock} in stock → need +${i.suggestedOrder}${i.bellRainCallHome > 0 ? ` (${i.bellRainCallHome} from Bell Rain)` : ''}${i.trendDirection === 'up' ? ' [demand rising]' : ''}`).join('\n')}` : ''}
 
 ${topTrending.length > 0 ? `RISING DEMAND (prepare extra):
 ${topTrending.map(i => `• ${i.style_name} (${i.color}): +${i.trendPercent.toFixed(0)}% vs next month`).join('\n')}` : ''}
@@ -626,9 +799,9 @@ ${ordersByStyle.length > 0 ? `ORDER BY STYLE:
 ${ordersByStyle.slice(0, 5).map(s => `• ${s.style_name}: +${s.totalOrder} (${s.colors.length} colors)`).join('\n')}` : ''}
 
 Provide a brief summary in 3-4 sentences:
-1. What to order now (style names and quantities)
-2. What's trending up for next month
-3. Any items with too much stock
+1. What to CALL HOME from Bell Rain first (if any)
+2. What to order NEW (style names and quantities)
+3. What's trending up for next month
 ${feedbackSummary}
 Keep it SHORT. Only mention specific styles. No general business advice.`;
 
@@ -665,8 +838,8 @@ Keep it SHORT. Only mention specific styles. No general business advice.`;
         trendSummary
       },
       dateRange: {
-        start: startDate,
-        end: endDate,
+        start: queryStartDate,
+        end: queryEndDate,
         display: periodDisplay
       },
       nextMonthRange: {
@@ -682,7 +855,8 @@ Keep it SHORT. Only mention specific styles. No general business advice.`;
         totalHistoricalQty,
         stockRowsLoaded: stockData?.length || 0,
         nextMonthRowsLoaded: nextMonthData?.length || 0,
-        queryDateRange: { startDate, endDate },
+        queryDateRange: { startDate: queryStartDate, endDate: queryEndDate },
+        selectedMonths: selectedMonths.length > 0 ? selectedMonths : undefined,
         queryStyleNos: styleNos,
         queryColors: colors
       }
