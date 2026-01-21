@@ -7,7 +7,9 @@ import { Button } from '../../../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../../components/ui/card';
 import { Input } from '../../../components/ui/input';
 import { Badge } from '../../../components/ui/badge';
+import { Settings } from 'lucide-react';
 import FullAnalysisModal from './FullAnalysisModal';
+import CallOffSetsModal from './CallOffSetsModal';
 
 type Selection = { style_no: string; color: string };
 type InputRecord = Record<string, number[]>;
@@ -106,6 +108,9 @@ export default function CallOffPage() {
 
   // Selected Set (Stock List) ID
   const [selectedSetId, setSelectedSetId] = React.useState<string>('');
+  
+  // Modal for managing sets
+  const [setsModalOpen, setSetsModalOpen] = React.useState(false);
   
   // Selected months for multi-month historical analysis (e.g. ['2024-01', '2024-02'])
   const [selectedMonths, setSelectedMonths] = React.useState<string[]>([]);
@@ -472,9 +477,20 @@ export default function CallOffPage() {
           setSelectedMonths={setSelectedMonths}
           selections={selections}
           setSelections={setSelections}
-          onContinue={() => setStep(2)} 
+          onContinue={() => setStep(2)}
+          onOpenSetsModal={() => setSetsModalOpen(true)}
         />
       )}
+      
+      {/* Call-Off Sets Modal */}
+      <CallOffSetsModal 
+        isOpen={setsModalOpen} 
+        onClose={() => setSetsModalOpen(false)} 
+        onSelectSet={(setId, setName) => {
+          setSelectedSetId(setId);
+          setSetsModalOpen(false);
+        }}
+      />
       {started && step === 2 && (
         <Step2ChooseColors 
           noosStyles={noosData ?? []} 
@@ -539,7 +555,8 @@ function Step1SelectSet({
   setSelectedMonths,
   selections,
   setSelections,
-  onContinue
+  onContinue,
+  onOpenSetsModal
 }: {
   stockLists: Array<{ id: string; name: string; fixed: boolean }>;
   selectedSetId: string;
@@ -562,6 +579,7 @@ function Step1SelectSet({
   selections: Selection[];
   setSelections: React.Dispatch<React.SetStateAction<Selection[]>>;
   onContinue: () => void;
+  onOpenSetsModal: () => void;
 }) {
   // Build style_id -> style_no map
   const styleIdToNo = React.useMemo(() => {
@@ -643,9 +661,14 @@ function Step1SelectSet({
                 </option>
               ))}
             </select>
-            <p className="text-xs text-slate-500">
-              Sets are managed in <a href="/purchase/call-off-settings" className="text-[#8FA894] underline">Call-Off Sets</a>
-            </p>
+            <button
+              type="button"
+              onClick={onOpenSetsModal}
+              className="flex items-center gap-1.5 text-xs text-[#8FA894] hover:text-[#7a9381] transition-colors"
+            >
+              <Settings className="h-3.5 w-3.5" />
+              Manage Sets
+            </button>
           </div>
 
           {/* Multi-Month Selection */}

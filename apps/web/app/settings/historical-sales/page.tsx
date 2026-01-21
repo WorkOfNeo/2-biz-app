@@ -63,6 +63,13 @@ function tokenize(s: string): string[] {
   return normalizeText(s).split(' ').filter(Boolean);
 }
 
+// Extract just the color name without numeric prefixes (e.g., "807 Black" -> "black")
+function extractColorName(s: string): string {
+  const norm = normalizeText(s);
+  // Remove leading numbers and common prefixes
+  return norm.replace(/^\d+\s*/, '').trim();
+}
+
 function fuzzyScore(query: string, target: string): number {
   const qNorm = normalizeText(query);
   const tNorm = normalizeText(target);
@@ -82,11 +89,68 @@ function fuzzyScore(query: string, target: string): number {
   return overlap / Math.max(qTok.length, tTok.length);
 }
 
+// Enhanced color matching: handles cases like "Black" -> "807 Black"
+function colorFuzzyScore(query: string, target: string): number {
+  const qNorm = normalizeText(query);
+  const tNorm = normalizeText(target);
+  
+  // Exact match
+  if (qNorm === tNorm) return 1.0;
+  
+  // Target contains query (e.g., "807 black" contains "black")
+  if (tNorm.includes(qNorm)) return 0.95;
+  
+  // Query contains target
+  if (qNorm.includes(tNorm)) return 0.9;
+  
+  // Extract color names without numeric prefixes and compare
+  const qColor = extractColorName(query);
+  const tColor = extractColorName(target);
+  
+  if (qColor && tColor) {
+    if (qColor === tColor) return 0.92;
+    if (tColor.includes(qColor) || qColor.includes(tColor)) return 0.85;
+  }
+  
+  // Token-based matching
+  const qTok = tokenize(query);
+  const tTok = tokenize(target);
+  if (qTok.length === 0 || tTok.length === 0) return 0;
+
+  let overlap = 0;
+  for (const qt of qTok) {
+    // Skip numeric tokens for color matching
+    if (/^\d+$/.test(qt)) continue;
+    if (tTok.some((tt) => tt === qt || tt.includes(qt) || qt.includes(tt))) {
+      overlap++;
+    }
+  }
+  
+  // Only count non-numeric query tokens
+  const nonNumericQTok = qTok.filter(t => !/^\d+$/.test(t));
+  if (nonNumericQTok.length === 0) return 0;
+  
+  return (overlap / nonNumericQTok.length) * 0.8;
+}
+
 function bestMatch(query: string, candidates: string[]): { match: string | null; score: number } {
   let best: string | null = null;
   let bestScore = 0;
   for (const c of candidates) {
     const score = fuzzyScore(query, c);
+    if (score > bestScore) {
+      bestScore = score;
+      best = c;
+    }
+  }
+  return { match: best, score: bestScore };
+}
+
+function bestColorMatch(query: string, candidates: string[]): { match: string | null; score: number } {
+  let best: string | null = null;
+  let bestScore = 0;
+  for (const c of candidates) {
+    const score = colorFuzzyScore(query, c);
     if (score > bestScore) {
       bestScore = score;
       best = c;
@@ -105,6 +169,10 @@ export default function HistoricalSalesPage() {
   const [uploading, setUploading] = useState(false);
   const [uploadResult, setUploadResult] = useState<{ success: boolean; message: string } | null>(null);
   const [uploadProgress, setUploadProgress] = useState({ current: 0, total: 0 });
+  
+  // Reset state
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [resetting, setResetting] = useState(false);
   
   // Browse state
   const [styleInput, setStyleInput] = useState('');
@@ -274,22 +342,22 @@ export default function HistoricalSalesPage() {
         }
       }
       
-      // Match color
+      // Match color (with enhanced fuzzy matching for cases like "Black" -> "807 Black")
       let matchedColor: string | null = null;
       let colorScore = 0;
       
       if (matchedStyleNo) {
         const styleColorList = colorsByStyle.get(matchedStyleNo) || [];
         
-        // Try exact match
+        // Try exact match first
         const exactColor = styleColorList.find(c => c.toLowerCase() === row.color.toLowerCase());
         if (exactColor) {
           matchedColor = exactColor;
           colorScore = 1.0;
         } else if (styleColorList.length > 0) {
-          // Try fuzzy match
-          const { match, score } = bestMatch(row.color, styleColorList);
-          if (match && score >= 0.6) {
+          // Try enhanced color fuzzy match (handles "Black" -> "807 Black")
+          const { match, score } = bestColorMatch(row.color, styleColorList);
+          if (match && score >= 0.5) { // Lower threshold since we have better matching
             matchedColor = match;
             colorScore = score;
           }
@@ -450,14 +518,77 @@ export default function HistoricalSalesPage() {
     return { matched, unmatchedStyle, unmatchedColor, total: parsedRows.length };
   }, [parsedRows]);
 
+  // Reset all historical sales data
+  async function resetHistoricalSales() {
+    if (!showResetConfirm) {
+      setShowResetConfirm(true);
+      return;
+    }
+    
+    setResetting(true);
+    try {
+      const response = await fetch('/api/historical-sales/reset', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirm: 'RESET_ALL_HISTORICAL_SALES' })
+      });
+      
+      const result = await response.json();
+      
+      if (response.ok) {
+        setUploadResult({ success: true, message: result.message || 'All historical sales data deleted' });
+        setSalesData([]);
+        setSalesCount(null);
+      } else {
+        setUploadResult({ success: false, message: result.error || 'Failed to reset data' });
+      }
+    } catch (err: any) {
+      setUploadResult({ success: false, message: `Reset failed: ${err.message}` });
+    } finally {
+      setResetting(false);
+      setShowResetConfirm(false);
+    }
+  }
+
   return (
     <div className="p-4 space-y-4 max-w-7xl mx-auto">
-      <div>
-        <div className="text-xs text-slate-500">Settings</div>
-        <h1 className="text-2xl font-semibold">Historical Sales Data</h1>
-        <p className="text-sm text-slate-600 mt-1">
-          Upload historical sales data in wide format (Style, Color, Size columns, Date range)
-        </p>
+      <div className="flex items-start justify-between">
+        <div>
+          <div className="text-xs text-slate-500">Settings</div>
+          <h1 className="text-2xl font-semibold">Historical Sales Data</h1>
+          <p className="text-sm text-slate-600 mt-1">
+            Upload historical sales data in wide format (Style, Color, Size columns, Date range)
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          {showResetConfirm ? (
+            <>
+              <span className="text-sm text-red-600">Are you sure? This deletes ALL data!</span>
+              <Button
+                onClick={resetHistoricalSales}
+                disabled={resetting}
+                className="bg-red-600 hover:bg-red-700 text-white"
+              >
+                {resetting ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Yes, Delete All'}
+              </Button>
+              <Button
+                onClick={() => setShowResetConfirm(false)}
+                variant="outline"
+                disabled={resetting}
+              >
+                Cancel
+              </Button>
+            </>
+          ) : (
+            <Button
+              onClick={() => setShowResetConfirm(true)}
+              variant="outline"
+              className="border-red-300 text-red-600 hover:bg-red-50"
+            >
+              Reset All Data
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* Upload Section */}
