@@ -429,10 +429,10 @@ export default function CallOffPage() {
             </div>
           ))}
           <div className="ml-4 text-sm text-slate-600">
-            {step === 1 && 'Select Set or Styles'}
-            {step === 2 && 'Choose Colors'}
-            {step === 3 && 'Enter Order Quantities'}
-            {step === 4 && 'Review & Confirm'}
+            {step === 1 && 'Select Set & Months'}
+            {step === 2 && 'AI Analysis & Proposal'}
+            {step === 3 && 'Review & Confirm'}
+            {step === 4 && 'Push to PO'}
           </div>
           <Button variant="ghost" size="sm" onClick={resetProcess} className="ml-auto">
             Reset Process
@@ -477,8 +477,38 @@ export default function CallOffPage() {
           setSelectedMonths={setSelectedMonths}
           selections={selections}
           setSelections={setSelections}
-          onContinue={() => setStep(2)}
+          weeksCover={weeksCover}
+          setWeeksCover={setWeeksCover}
+          onRunAIAnalysis={async () => {
+            // Move to step 2 and trigger AI analysis
+            setStep(2);
+            setFullAnalysisLoading(true);
+            setFullAnalysisResult(null);
+            
+            try {
+              const res = await fetch('/api/call-off/full-analysis', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  selections,
+                  weeks_cover: weeksCover,
+                  months: selectedMonths.length > 0 ? selectedMonths : undefined,
+                })
+              });
+              
+              const data = await res.json();
+              if (!res.ok) throw new Error(data.error || 'Analysis failed');
+              
+              setFullAnalysisResult(data);
+            } catch (err: any) {
+              console.error('AI Analysis failed:', err);
+              alert('AI Analysis failed: ' + err.message);
+            } finally {
+              setFullAnalysisLoading(false);
+            }
+          }}
           onOpenSetsModal={() => setSetsModalOpen(true)}
+          isAnalysisReady={selections.length > 0 && selectedMonths.length > 0}
         />
       )}
       
@@ -492,23 +522,37 @@ export default function CallOffPage() {
         }}
       />
       {started && step === 2 && (
-        <Step2ChooseColors 
-          noosStyles={noosData ?? []} 
-          selections={selections} 
-          setSelections={setSelections} 
+        <Step2AIResults 
+          selections={selections}
           selectedMonths={selectedMonths}
+          weeksCover={weeksCover}
+          loading={fullAnalysisLoading}
+          result={fullAnalysisResult}
           onBack={() => setStep(1)} 
           onContinue={() => setStep(3)}
-          fullAnalysisOpen={fullAnalysisOpen}
-          setFullAnalysisOpen={setFullAnalysisOpen}
-          fullAnalysisLoading={fullAnalysisLoading}
-          setFullAnalysisLoading={setFullAnalysisLoading}
-          fullAnalysisResult={fullAnalysisResult}
-          setFullAnalysisResult={setFullAnalysisResult}
-          fullAnalysisDateRange={fullAnalysisDateRange}
-          setFullAnalysisDateRange={setFullAnalysisDateRange}
-          fullAnalysisWeeksCover={fullAnalysisWeeksCover}
-          setFullAnalysisWeeksCover={setFullAnalysisWeeksCover}
+          onRerunAnalysis={async () => {
+            setFullAnalysisLoading(true);
+            setFullAnalysisResult(null);
+            try {
+              const res = await fetch('/api/call-off/full-analysis', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  selections,
+                  weeks_cover: weeksCover,
+                  months: selectedMonths.length > 0 ? selectedMonths : undefined,
+                })
+              });
+              const data = await res.json();
+              if (!res.ok) throw new Error(data.error || 'Analysis failed');
+              setFullAnalysisResult(data);
+            } catch (err: any) {
+              console.error('AI Analysis failed:', err);
+              alert('AI Analysis failed: ' + err.message);
+            } finally {
+              setFullAnalysisLoading(false);
+            }
+          }}
         />
       )}
       {started && step === 3 && (
@@ -555,8 +599,11 @@ function Step1SelectSet({
   setSelectedMonths,
   selections,
   setSelections,
-  onContinue,
-  onOpenSetsModal
+  weeksCover,
+  setWeeksCover,
+  onRunAIAnalysis,
+  onOpenSetsModal,
+  isAnalysisReady
 }: {
   stockLists: Array<{ id: string; name: string; fixed: boolean }>;
   selectedSetId: string;
@@ -578,8 +625,11 @@ function Step1SelectSet({
   setSelectedMonths: React.Dispatch<React.SetStateAction<string[]>>;
   selections: Selection[];
   setSelections: React.Dispatch<React.SetStateAction<Selection[]>>;
-  onContinue: () => void;
+  weeksCover: number;
+  setWeeksCover: React.Dispatch<React.SetStateAction<number>>;
+  onRunAIAnalysis: () => void;
   onOpenSetsModal: () => void;
+  isAnalysisReady: boolean;
 }) {
   // Build style_id -> style_no map
   const styleIdToNo = React.useMemo(() => {
@@ -744,20 +794,47 @@ function Step1SelectSet({
             </div>
           </div>
 
-          {/* Continue Button */}
+          {/* Weeks Cover Setting */}
+          <div className="space-y-2 border-t pt-4">
+            <label className="text-sm font-medium text-slate-700">
+              Target Stock Cover (weeks)
+            </label>
+            <div className="flex items-center gap-3">
+              <input
+                type="range"
+                min={2}
+                max={12}
+                value={weeksCover}
+                onChange={(e) => setWeeksCover(Number(e.target.value))}
+                className="flex-1"
+              />
+              <span className="text-lg font-semibold text-[#8FA894] w-12 text-center">{weeksCover}</span>
+            </div>
+            <p className="text-xs text-slate-500">
+              AI will suggest order quantities to cover {weeksCover} weeks of projected sales
+            </p>
+          </div>
+
+          {/* Run Analysis Button */}
           <div className="flex items-center justify-between pt-4 border-t">
             <div className="text-sm text-slate-600">
               <strong>{setStylesData.length}</strong> style{setStylesData.length !== 1 ? 's' : ''} · 
-              <strong className="ml-1">{selections.length}</strong> color{selections.length !== 1 ? 's' : ''} pre-selected
+              <strong className="ml-1">{selections.length}</strong> color{selections.length !== 1 ? 's' : ''} selected ·
+              <strong className="ml-1">{selectedMonths.length}</strong> month{selectedMonths.length !== 1 ? 's' : ''} of history
             </div>
             <Button 
-              onClick={onContinue} 
+              onClick={onRunAIAnalysis} 
               className="bg-[#8FA894] hover:bg-[#C5D5CA]"
-              disabled={setStylesData.length === 0}
+              disabled={!isAnalysisReady}
             >
-              Continue to Choose Colors
+              🤖 Run AI Analysis
             </Button>
           </div>
+          {!isAnalysisReady && (
+            <p className="text-xs text-amber-600">
+              Select at least one style/color and one historical month to run AI analysis
+            </p>
+          )}
         </CardContent>
       </Card>
     </div>
@@ -1064,6 +1141,243 @@ function Step2ChooseColors({
           onRunAnalysis={runFullAnalysis}
         />
       )}
+    </div>
+  );
+}
+
+// ==================== STEP 2: AI Results ====================
+function Step2AIResults({
+  selections,
+  selectedMonths,
+  weeksCover,
+  loading,
+  result,
+  onBack,
+  onContinue,
+  onRerunAnalysis
+}: {
+  selections: Selection[];
+  selectedMonths: string[];
+  weeksCover: number;
+  loading: boolean;
+  result: FullAnalysisResult | null;
+  onBack: () => void;
+  onContinue: () => void;
+  onRerunAnalysis: () => void;
+}) {
+  // Editable order quantities: key = style_no|color, value = per-size order values
+  const [orderEdits, setOrderEdits] = React.useState<Record<string, number[]>>({});
+  
+  // Initialize order edits from AI suggestions when result loads
+  React.useEffect(() => {
+    if (result?.items) {
+      const initialEdits: Record<string, number[]> = {};
+      result.items.forEach(item => {
+        const key = `${item.style_no}|${item.color}`;
+        // Use newOrderNeededBySize if available (Bell Rain adjusted), otherwise suggestedOrderBySize
+        initialEdits[key] = (item as any).newOrderNeededBySize || item.suggestedOrderBySize || [];
+      });
+      setOrderEdits(initialEdits);
+    }
+  }, [result]);
+
+  // Update a single size value
+  const updateOrderValue = (styleNo: string, color: string, sizeIndex: number, value: number) => {
+    const key = `${styleNo}|${color}`;
+    setOrderEdits(prev => {
+      const current = prev[key] || [];
+      const updated = [...current];
+      updated[sizeIndex] = Math.max(0, value);
+      return { ...prev, [key]: updated };
+    });
+  };
+
+  // Calculate totals
+  const totalUnits = React.useMemo(() => {
+    return Object.values(orderEdits).reduce((sum, arr) => 
+      sum + arr.reduce((a, b) => a + b, 0), 0);
+  }, [orderEdits]);
+
+  if (loading) {
+    return (
+      <Card className="border-[#C5D5CA]">
+        <CardContent className="py-16">
+          <div className="flex flex-col items-center justify-center gap-4">
+            <div className="animate-spin rounded-full h-12 w-12 border-4 border-[#8FA894] border-t-transparent"></div>
+            <div className="text-lg font-medium text-slate-700">Running AI Analysis...</div>
+            <div className="text-sm text-slate-500">
+              Analyzing {selections.length} style/color combinations using {selectedMonths.length} month(s) of historical data
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (!result) {
+    return (
+      <Card className="border-red-200">
+        <CardContent className="py-8">
+          <div className="text-center">
+            <div className="text-red-600 font-medium mb-4">Analysis failed or no results</div>
+            <div className="flex gap-3 justify-center">
+              <Button variant="outline" onClick={onBack}>Back to Step 1</Button>
+              <Button onClick={onRerunAnalysis} className="bg-[#8FA894]">Retry Analysis</Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const { items, summary, dateRange } = result;
+
+  return (
+    <div className="space-y-4">
+      {/* Summary Card */}
+      <Card className="border-[#C5D5CA] bg-gradient-to-r from-[#F5F3F0] to-white">
+        <CardHeader className="pb-3">
+          <CardTitle className="flex items-center gap-2">
+            🤖 AI Analysis Complete
+          </CardTitle>
+          <CardDescription>
+            Based on {dateRange.display} historical data · {weeksCover} weeks target cover
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-4">
+            <div className="text-center p-3 bg-white rounded-lg border">
+              <div className="text-2xl font-bold text-slate-800">{summary.totalItems}</div>
+              <div className="text-xs text-slate-500">Items</div>
+            </div>
+            <div className="text-center p-3 bg-red-50 rounded-lg border border-red-200">
+              <div className="text-2xl font-bold text-red-600">{summary.criticalItems}</div>
+              <div className="text-xs text-red-600">Critical</div>
+            </div>
+            <div className="text-center p-3 bg-amber-50 rounded-lg border border-amber-200">
+              <div className="text-2xl font-bold text-amber-600">{summary.lowItems}</div>
+              <div className="text-xs text-amber-600">Low</div>
+            </div>
+            <div className="text-center p-3 bg-green-50 rounded-lg border border-green-200">
+              <div className="text-2xl font-bold text-green-600">{summary.okItems}</div>
+              <div className="text-xs text-green-600">OK</div>
+            </div>
+            <div className="text-center p-3 bg-blue-50 rounded-lg border border-blue-200">
+              <div className="text-2xl font-bold text-blue-600">{totalUnits}</div>
+              <div className="text-xs text-blue-600">Total Order</div>
+            </div>
+          </div>
+          
+          {summary.aiSummary && (
+            <div className="bg-white p-4 rounded-lg border text-sm text-slate-700">
+              <div className="font-medium text-slate-800 mb-1">AI Recommendation:</div>
+              {summary.aiSummary}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Order Details */}
+      <Card className="border-[#C5D5CA]">
+        <CardHeader>
+          <CardTitle>Order Proposal</CardTitle>
+          <CardDescription>
+            Review and adjust quantities. Click on any number to edit.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-3 max-h-[500px] overflow-y-auto">
+            {items.map((item, idx) => {
+              const key = `${item.style_no}|${item.color}`;
+              const editedValues = orderEdits[key] || item.suggestedOrderBySize || [];
+              const editedTotal = editedValues.reduce((a, b) => a + b, 0);
+              const hasBellRain = (item as any).bellRainCallHome > 0;
+              
+              return (
+                <div 
+                  key={key}
+                  className={`p-4 rounded-lg border ${
+                    item.status === 'critical' ? 'border-red-300 bg-red-50' :
+                    item.status === 'low' ? 'border-amber-300 bg-amber-50' :
+                    item.status === 'ok' ? 'border-green-300 bg-green-50' :
+                    'border-slate-200 bg-slate-50'
+                  }`}
+                >
+                  <div className="flex items-start justify-between mb-3">
+                    <div>
+                      <div className="font-semibold">{item.style_name || item.style_no}</div>
+                      <div className="text-sm text-slate-600">{item.style_no} · {item.color}</div>
+                      {hasBellRain && (
+                        <Badge className="mt-1 bg-purple-100 text-purple-700 text-[10px]">
+                          🔔 Bell Rain: Call home {(item as any).bellRainCallHome} first
+                        </Badge>
+                      )}
+                    </div>
+                    <div className="text-right">
+                      <Badge className={
+                        item.status === 'critical' ? 'bg-red-600' :
+                        item.status === 'low' ? 'bg-amber-500' :
+                        item.status === 'ok' ? 'bg-green-600' :
+                        'bg-blue-500'
+                      }>
+                        {item.status.toUpperCase()}
+                      </Badge>
+                      <div className="text-xs text-slate-500 mt-1">
+                        Stock: {item.totalNetStock} · Weekly: {item.weeklyRate.toFixed(1)}
+                      </div>
+                    </div>
+                  </div>
+                  
+                  {/* Size grid */}
+                  <div className="grid grid-cols-7 gap-2">
+                    {item.sizes.map((size, sizeIdx) => (
+                      <div key={size} className="text-center">
+                        <div className="text-[10px] text-slate-500 mb-1">{size}</div>
+                        <Input
+                          type="number"
+                          min={0}
+                          value={editedValues[sizeIdx] ?? 0}
+                          onChange={(e) => updateOrderValue(item.style_no, item.color, sizeIdx, parseInt(e.target.value) || 0)}
+                          className="h-8 text-center text-sm p-1"
+                        />
+                        <div className="text-[9px] text-slate-400 mt-0.5">
+                          hist: {item.historical[sizeIdx] ?? 0}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  
+                  <div className="flex justify-between items-center mt-2 pt-2 border-t">
+                    <div className="text-xs text-slate-500">
+                      AI suggested: {item.suggestedOrder}
+                    </div>
+                    <div className="text-sm font-semibold">
+                      Order: {editedTotal}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Navigation */}
+      <div className="flex items-center justify-between">
+        <Button variant="outline" onClick={onBack}>Back to Step 1</Button>
+        <div className="flex items-center gap-3">
+          <Button variant="outline" onClick={onRerunAnalysis}>
+            🔄 Re-run Analysis
+          </Button>
+          <Button 
+            onClick={onContinue} 
+            className="bg-[#8FA894] hover:bg-[#C5D5CA]"
+            disabled={totalUnits === 0}
+          >
+            Continue to Review ({totalUnits} units)
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }
