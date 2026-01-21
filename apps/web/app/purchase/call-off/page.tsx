@@ -173,6 +173,9 @@ export default function CallOffPage() {
   const [fullAnalysisOpen, setFullAnalysisOpen] = React.useState<boolean>(false);
   const [fullAnalysisLoading, setFullAnalysisLoading] = React.useState<boolean>(false);
   const [fullAnalysisResult, setFullAnalysisResult] = React.useState<FullAnalysisResult | null>(null);
+  
+  // Order edits from AI results (key = style_no|color, value = per-size quantities)
+  const [orderEdits, setOrderEdits] = React.useState<Record<string, number[]>>({});
   const [fullAnalysisDateRange, setFullAnalysisDateRange] = React.useState<{ start: string; end: string }>(() => {
     const now = new Date();
     const lastYear = now.getFullYear() - 1;
@@ -528,6 +531,8 @@ export default function CallOffPage() {
           weeksCover={weeksCover}
           loading={fullAnalysisLoading}
           result={fullAnalysisResult}
+          orderEdits={orderEdits}
+          setOrderEdits={setOrderEdits}
           onBack={() => setStep(1)} 
           onContinue={() => setStep(3)}
           onRerunAnalysis={async () => {
@@ -556,31 +561,11 @@ export default function CallOffPage() {
         />
       )}
       {started && step === 3 && (
-        <Step3EnterQuantities 
-          selections={selections} 
-          inputsByKey={inputsByKey} 
-          setInputsByKey={setInputsByKey}
-          weeksCover={weeksCover}
-          setWeeksCover={setWeeksCover}
-          dateRange={dateRange}
-          setDateRange={setDateRange}
-          dateRangeDisplay={dateRangeDisplay}
-          selectedMonths={selectedMonths}
-          aiSuggestions={aiSuggestions}
-          setAiSuggestions={setAiSuggestions}
-          aiLoading={aiLoading}
-          setAiLoading={setAiLoading}
-          aiPanelOpen={aiPanelOpen}
-          setAiPanelOpen={setAiPanelOpen}
+        <Step3FinalReview 
+          selections={selections}
+          orderEdits={orderEdits}
+          analysisResult={fullAnalysisResult}
           onBack={() => setStep(2)} 
-          onContinue={() => setStep(4)} 
-        />
-      )}
-      {started && step === 4 && (
-        <Step4Review 
-          selections={selections} 
-          inputsByKey={inputsByKey} 
-          onBack={() => setStep(3)} 
           onReset={resetProcess} 
         />
       )}
@@ -1152,6 +1137,8 @@ function Step2AIResults({
   weeksCover,
   loading,
   result,
+  orderEdits,
+  setOrderEdits,
   onBack,
   onContinue,
   onRerunAnalysis
@@ -1161,13 +1148,12 @@ function Step2AIResults({
   weeksCover: number;
   loading: boolean;
   result: FullAnalysisResult | null;
+  orderEdits: Record<string, number[]>;
+  setOrderEdits: React.Dispatch<React.SetStateAction<Record<string, number[]>>>;
   onBack: () => void;
   onContinue: () => void;
   onRerunAnalysis: () => void;
 }) {
-  // Editable order quantities: key = style_no|color, value = per-size order values
-  const [orderEdits, setOrderEdits] = React.useState<Record<string, number[]>>({});
-  
   // Initialize order edits from AI suggestions when result loads
   React.useEffect(() => {
     if (result?.items) {
@@ -1179,7 +1165,7 @@ function Step2AIResults({
       });
       setOrderEdits(initialEdits);
     }
-  }, [result]);
+  }, [result, setOrderEdits]);
 
   // Update a single size value
   const updateOrderValue = (styleNo: string, color: string, sizeIndex: number, value: number) => {
@@ -1413,7 +1399,205 @@ function distributeByPressure(total: number, pressureArray: number[]): number[] 
   return floored;
 }
 
-// ==================== STEP 3: Enter Quantities ====================
+// ==================== STEP 3: Final Review & Push to PO ====================
+function Step3FinalReview({
+  selections,
+  orderEdits,
+  analysisResult,
+  onBack,
+  onReset
+}: {
+  selections: Selection[];
+  orderEdits: Record<string, number[]>;
+  analysisResult: FullAnalysisResult | null;
+  onBack: () => void;
+  onReset: () => void;
+}) {
+  const router = useRouter();
+  const [finalizing, setFinalizing] = React.useState(false);
+
+  // Build order items from orderEdits
+  const orderItems = React.useMemo(() => {
+    const items: Array<{
+      style_no: string;
+      style_name: string;
+      color: string;
+      sizes: string[];
+      quantities: number[];
+      total: number;
+      bellRainCallHome?: number[];
+    }> = [];
+
+    // Get style info from analysis result
+    const itemMap = new Map<string, any>();
+    analysisResult?.items?.forEach(item => {
+      itemMap.set(`${item.style_no}|${item.color}`, item);
+    });
+
+    Object.entries(orderEdits).forEach(([key, quantities]) => {
+      const total = quantities.reduce((a, b) => a + b, 0);
+      if (total > 0) {
+        const [style_no, color] = key.split('|');
+        const analysisItem = itemMap.get(key);
+        items.push({
+          style_no: style_no || '',
+          style_name: analysisItem?.style_name || style_no || '',
+          color: color || '',
+          sizes: analysisItem?.sizes || [],
+          quantities,
+          total,
+          bellRainCallHome: analysisItem?.bellRainCallHomeBySize
+        });
+      }
+    });
+
+    return items.sort((a, b) => b.total - a.total);
+  }, [orderEdits, analysisResult]);
+
+  const grandTotal = orderItems.reduce((sum, item) => sum + item.total, 0);
+  const bellRainTotal = orderItems.reduce((sum, item) => {
+    return sum + (item.bellRainCallHome?.reduce((a, b) => a + b, 0) || 0);
+  }, 0);
+
+  async function handleFinalizeOrder() {
+    if (orderItems.length === 0) return;
+    
+    setFinalizing(true);
+    try {
+      const now = new Date();
+      const poNo = `NOOS-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}-${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`;
+      
+      const orderData = {
+        po_no: poNo,
+        status: 'Running',
+        styles: orderItems.length,
+        ordered: grandTotal,
+        shipped: 0,
+        meta: {
+          items: orderItems.map(item => ({
+            style_no: item.style_no,
+            style_name: item.style_name,
+            color: item.color,
+            sizes: item.sizes,
+            quantities: item.quantities,
+            total: item.total,
+            bellRainCallHome: item.bellRainCallHome
+          })),
+          created_from: 'call-off',
+          type: 'noos',
+          created_at: now.toISOString(),
+          bellRainTotal
+        }
+      };
+
+      const { data, error } = await supabase
+        .from('app_pos')
+        .insert(orderData)
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      // Clear state and redirect
+      onReset();
+      router.push(`/purchase/app-pos/${data.id}`);
+    } catch (error: any) {
+      console.error('Failed to finalize order:', error);
+      alert('Failed to create purchase order: ' + (error.message || 'Unknown error'));
+    } finally {
+      setFinalizing(false);
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <Card className="border-[#C5D5CA]">
+        <CardHeader>
+          <CardTitle>Step 3: Review & Push to APP PO's</CardTitle>
+          <CardDescription>
+            Review your NOOS Call Off order before finalizing.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {/* Summary */}
+          <div className="flex items-center gap-6 p-4 bg-[#F5F3F0] rounded-lg">
+            <div>
+              <div className="text-3xl font-bold text-[#8FA894]">{grandTotal}</div>
+              <div className="text-xs text-slate-500">Total Units</div>
+            </div>
+            <div>
+              <div className="text-2xl font-semibold text-slate-700">{orderItems.length}</div>
+              <div className="text-xs text-slate-500">Style/Colors</div>
+            </div>
+            {bellRainTotal > 0 && (
+              <div>
+                <div className="text-2xl font-semibold text-purple-600">{bellRainTotal}</div>
+                <div className="text-xs text-purple-500">🔔 Call Home</div>
+              </div>
+            )}
+          </div>
+
+          {orderItems.length === 0 ? (
+            <div className="text-center py-8 text-slate-500">
+              <p className="mb-2">No items with quantities entered.</p>
+              <Button variant="outline" onClick={onBack}>
+                Go back to adjust quantities
+              </Button>
+            </div>
+          ) : (
+            <div className="space-y-2 max-h-[400px] overflow-y-auto">
+              {orderItems.map((item, idx) => {
+                const hasBellRain = (item.bellRainCallHome?.reduce((a, b) => a + b, 0) || 0) > 0;
+                
+                return (
+                  <div key={idx} className="flex items-center justify-between p-3 border rounded-lg border-[#C5D5CA]">
+                    <div className="flex-1">
+                      <div className="font-semibold text-sm">
+                        {item.style_name}
+                      </div>
+                      <div className="text-xs text-slate-500">
+                        {item.style_no} · {item.color}
+                      </div>
+                      {hasBellRain && (
+                        <Badge className="mt-1 bg-purple-100 text-purple-700 text-[10px]">
+                          🔔 Bell Rain
+                        </Badge>
+                      )}
+                    </div>
+                    <div className="text-right">
+                      <div className="text-sm text-slate-500">
+                        {item.sizes.map((s, i) => 
+                          item.quantities[i] > 0 ? `${s}:${item.quantities[i]}` : null
+                        ).filter(Boolean).join(' · ')}
+                      </div>
+                      <div className="text-lg font-bold text-[#8FA894]">{item.total}</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Actions */}
+          <div className="flex items-center justify-between pt-4 border-t">
+            <Button variant="outline" onClick={onBack}>
+              Back to Edit
+            </Button>
+            <Button
+              onClick={handleFinalizeOrder}
+              disabled={orderItems.length === 0 || finalizing}
+              className="bg-[#8FA894] hover:bg-[#C5D5CA]"
+            >
+              {finalizing ? 'Creating PO...' : `🚀 Push to APP PO's (${grandTotal} units)`}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+// ==================== OLD STEP 3: Enter Quantities (deprecated) ====================
 function Step3EnterQuantities({
   selections,
   inputsByKey,
