@@ -1457,9 +1457,11 @@ function Step2AIResults({
                       {/* Historical Timeline Mini-Chart */}
                       <div className="hidden md:flex items-end gap-0.5 h-8">
                         {group.colors[0]?.historical.map((val, i) => {
+                          const firstColor = group.colors[0];
+                          if (!firstColor) return null;
                           // Aggregate historical across all colors for this style
                           const totalForSize = group.colors.reduce((sum, c) => sum + (c.historical[i] ?? 0), 0);
-                          const maxHist = Math.max(...group.colors[0].historical.map((_, idx) => 
+                          const maxHist = Math.max(...firstColor.historical.map((_, idx) => 
                             group.colors.reduce((sum, c) => sum + (c.historical[idx] ?? 0), 0)
                           ), 1);
                           const height = Math.max(4, (totalForSize / maxHist) * 28);
@@ -1468,7 +1470,7 @@ function Step2AIResults({
                               key={i}
                               className="w-3 bg-[#8FA894] rounded-t opacity-70"
                               style={{ height: `${height}px` }}
-                              title={`Size ${group.colors[0]?.sizes[i] || i}: ${totalForSize} sold`}
+                              title={`Size ${firstColor.sizes[i] || i}: ${totalForSize} sold`}
                             />
                           );
                         })}
@@ -1495,8 +1497,10 @@ function Step2AIResults({
                         <div className="text-xs font-medium text-slate-600 mb-2">Historical Sales by Size</div>
                         <div className="flex items-end justify-between gap-1 h-16">
                           {group.colors[0]?.sizes.map((size, i) => {
+                            const firstColor = group.colors[0];
+                            if (!firstColor) return null;
                             const totalForSize = group.colors.reduce((sum, c) => sum + (c.historical[i] ?? 0), 0);
-                            const maxHist = Math.max(...group.colors[0].sizes.map((_, idx) => 
+                            const maxHist = Math.max(...firstColor.sizes.map((_, idx) => 
                               group.colors.reduce((sum, c) => sum + (c.historical[idx] ?? 0), 0)
                             ), 1);
                             const height = Math.max(8, (totalForSize / maxHist) * 56);
