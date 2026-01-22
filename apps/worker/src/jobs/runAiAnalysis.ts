@@ -12,6 +12,48 @@ function formatDK(n: number, decimals = 0): string {
   }).format(n);
 }
 
+type Rates = Record<string, number>;
+
+async function loadCurrencyRates(
+  supabase: SupabaseClient,
+  seasonId: string | undefined
+): Promise<Rates> {
+  // Match statistics pages:
+  // - base rates from app_settings.key = 'currency_rates'
+  // - season overrides from app_settings.key = `currency_rates:${seasonId}`
+  const { data: baseRow } = await supabase
+    .from('app_settings')
+    .select('value')
+    .eq('key', 'currency_rates')
+    .maybeSingle();
+
+  const baseRates: Rates = { DKK: 1, ...(((baseRow?.value as Rates | undefined) ?? {}) as Rates) };
+
+  if (!seasonId) return baseRates;
+
+  const { data: seasonRow } = await supabase
+    .from('app_settings')
+    .select('value')
+    .eq('key', `currency_rates:${seasonId}`)
+    .maybeSingle();
+
+  const seasonRates: Rates = (((seasonRow?.value as any) || {}) as Rates);
+  return { ...baseRates, ...seasonRates };
+}
+
+function currencyForRow(row: any, spCurrencyById: Map<string, string>): string {
+  const spId = row?.salesperson_id || null;
+  if (spId) return spCurrencyById.get(String(spId)) ?? String(row?.currency || 'DKK');
+  return String(row?.currency || 'DKK');
+}
+
+function toDkk(amount: any, row: any, rates: Rates, spCurrencyById: Map<string, string>): number {
+  const n = Number(amount) || 0;
+  const cur = currencyForRow(row, spCurrencyById);
+  const rate = rates[cur] ?? 1;
+  return n * rate;
+}
+
 interface AiAnalysisPayload {
   analysisType: 'daily' | 'purchase_round';
   seasonId: string;
@@ -253,7 +295,7 @@ export async function runAiAnalysis(
     const salesStats = await fetchAllRows<any>(
       supabase,
       'sales_stats',
-      'account_no, customer_name, qty, price, salesperson_id',
+      'account_no, customer_name, qty, price, currency, salesperson_id',
       { season_id: seasonId },
       { cap: 50000, logFn: logProgress }
     );
@@ -291,10 +333,25 @@ export async function runAiAnalysis(
     
     const { data: salespersons } = await supabase
       .from('salespersons')
-      .select('id, name, email')
+      .select('id, name, email, currency')
       .limit(100);
 
     await log('info', 'salespersons_loaded', { count: salespersons?.length || 0 });
+
+    const spCurrencyById = new Map<string, string>(
+      (salespersons ?? []).map((sp: any) => [String(sp.id), String(sp.currency ?? 'DKK')])
+    );
+
+    // Match statistics/general conversion (DKK via base + per-season overrides)
+    await log('info', 'fetching_currency_rates');
+    const ratesThisSeason = await loadCurrencyRates(supabase, seasonId);
+    const ratesComparisonSeason = await loadCurrencyRates(supabase, comparisonSeasonId);
+    await log('info', 'currency_rates_loaded', {
+      seasonId,
+      comparisonSeasonId: comparisonSeasonId || null,
+      keysThis: Object.keys(ratesThisSeason).length,
+      keysComparison: Object.keys(ratesComparisonSeason).length
+    });
 
     // ========== STEP 6: Fetch Stock Data ==========
     await log('info', 'fetching_stock_data');
@@ -331,7 +388,7 @@ export async function runAiAnalysis(
       comparisonStats = await fetchAllRows<any>(
         supabase,
         'sales_stats',
-        'account_no, qty, price, salesperson_id',
+        'account_no, qty, price, currency, salesperson_id',
         { season_id: comparisonSeasonId },
         { cap: 50000, logFn: logProgress }
       );
@@ -385,7 +442,7 @@ export async function runAiAnalysis(
 
     // Current season totals
     const totalQty = salesStatsIncluded.reduce((sum: number, r: any) => sum + (Number(r.qty) || 0), 0);
-    const totalRevenue = salesStatsIncluded.reduce((sum: number, r: any) => sum + (Number(r.price) || 0), 0);
+    const totalRevenue = salesStatsIncluded.reduce((sum: number, r: any) => sum + toDkk(r.price, r, ratesThisSeason, spCurrencyById), 0);
     const uniqueCustomers = new Set(salesStatsIncluded.map((r: any) => r.account_no).filter(Boolean)).size;
     const uniqueStyles = new Set(styleDetailsIncluded.map((r: any) => r.style_no).filter(Boolean)).size;
 
@@ -420,7 +477,7 @@ export async function runAiAnalysis(
       if (!acc) continue;
       const existing = lastSeasonByCustomer.get(acc) || { qty: 0, revenue: 0 };
       existing.qty += Number(row.qty) || 0;
-      existing.revenue += Number(row.price) || 0;
+      existing.revenue += toDkk(row.price, row, ratesComparisonSeason, spCurrencyById);
       lastSeasonByCustomer.set(acc, existing);
     }
 
@@ -448,12 +505,12 @@ export async function runAiAnalysis(
         };
       }
       bySalesperson[spId].qty += Number(row.qty) || 0;
-      bySalesperson[spId].revenue += Number(row.price) || 0;
+      bySalesperson[spId].revenue += toDkk(row.price, row, ratesThisSeason, spCurrencyById);
       if (row.account_no) {
         bySalesperson[spId].customers.add(row.account_no);
         const custData = bySalesperson[spId].customerData.get(row.account_no) || { qty: 0, revenue: 0 };
         custData.qty += Number(row.qty) || 0;
-        custData.revenue += Number(row.price) || 0;
+        custData.revenue += toDkk(row.price, row, ratesThisSeason, spCurrencyById);
         bySalesperson[spId].customerData.set(row.account_no, custData);
       }
     }
@@ -539,7 +596,7 @@ export async function runAiAnalysis(
       const country = customerCountryMap.get(row.account_no) || 'Unknown';
       if (!byCountry[country]) byCountry[country] = { qty: 0, revenue: 0, customers: new Set() };
       byCountry[country].qty += Number(row.qty) || 0;
-      byCountry[country].revenue += Number(row.price) || 0;
+      byCountry[country].revenue += toDkk(row.price, row, ratesThisSeason, spCurrencyById);
       if (row.account_no) byCountry[country].customers.add(row.account_no);
     }
     const countryData = Object.entries(byCountry)
@@ -589,7 +646,7 @@ export async function runAiAnalysis(
     for (const row of salesStatsIncluded) {
       if (row.account_no && visitedCustomerIds.has(row.account_no)) {
         visitedCustomersIndex.this_season_qty += Number(row.qty) || 0;
-        visitedCustomersIndex.this_season_revenue += Number(row.price) || 0;
+        visitedCustomersIndex.this_season_revenue += toDkk(row.price, row, ratesThisSeason, spCurrencyById);
       }
     }
     
@@ -618,7 +675,7 @@ export async function runAiAnalysis(
     let comparisonTotals = null;
     if (comparisonSeasonId && comparisonStatsIncluded.length > 0) {
       const cQty = comparisonStatsIncluded.reduce((sum: number, r: any) => sum + (Number(r.qty) || 0), 0);
-      const cRevenue = comparisonStatsIncluded.reduce((sum: number, r: any) => sum + (Number(r.price) || 0), 0);
+      const cRevenue = comparisonStatsIncluded.reduce((sum: number, r: any) => sum + toDkk(r.price, r, ratesComparisonSeason, spCurrencyById), 0);
       comparisonTotals = {
         final_qty: cQty,
         final_revenue: cRevenue,
