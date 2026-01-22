@@ -1,8 +1,6 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { extractPdf } from '../../../lib/packinglists/pdf';
-import { PACKINGLIST_TEMPLATES } from '../../../lib/packinglists/templates';
 import type { PackinglistParseResult, PackinglistSectionLine } from '../../../lib/packinglists/types';
 import { Dropzone } from '../../../components/ui/dropzone';
 
@@ -91,12 +89,21 @@ export default function PackinglistsPdfPage() {
     setError(null);
     setResult(null);
     try {
-      const pdf = await extractPdf(f);
-      const template = PACKINGLIST_TEMPLATES.find((t) => t.canParse(pdf));
-      if (!template) {
-        throw new Error('No matching template found for this PDF (only Bell Rain supported right now).');
+      // Use AI-based parsing via API route
+      const formData = new FormData();
+      formData.append('file', f);
+
+      const response = await fetch('/api/packinglists/parse-pdf', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: 'Failed to parse PDF' }));
+        throw new Error(errorData.error || `HTTP ${response.status}`);
       }
-      const parsed = template.parse(pdf);
+
+      const parsed: PackinglistParseResult = await response.json();
       setResult(parsed);
     } catch (e: any) {
       // eslint-disable-next-line no-console
@@ -113,7 +120,7 @@ export default function PackinglistsPdfPage() {
         <div className="text-xs text-slate-500">Purchase</div>
         <h1 className="text-2xl font-semibold">Packinglists (PDF)</h1>
         <div className="text-sm text-slate-600">
-          Upload a packing slip PDF and parse it using a template (starting with Bell Rain).
+          Upload a packing slip PDF and parse it using AI (GPT-4o). Supports Bell Rain format and other packing slip formats.
         </div>
       </div>
 
