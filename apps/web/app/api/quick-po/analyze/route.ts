@@ -695,15 +695,22 @@ export async function POST(req: Request) {
           // Sort by net need descending (most needed first)
           colorStockData.sort((a, b) => b.netNeedTotal - a.netNeedTotal);
           
-          // Calculate distribution based on net need proportions
-          // BUT include ALL colors in the output (even those without need)
+          // The TARGET COLOR from the command gets ALL the quantity
+          // Other colors are shown for reference with qty=0
           type ColorDistItem = {
             qty: number;
             pct: number;
             stockData: ColorStockData;
             newNetNeed: number; // Net need after this order
+            isTarget: boolean; // Is this the target color from the command?
           };
           const colorDistribution: Record<string, ColorDistItem> = {};
+          
+          console.log('[Quick PO] Color breakdown command:', {
+            styleNo,
+            targetColor: color, // The color specified in the command (e.g., "ROSE SMOKE")
+            quantity: cmd.quantity
+          });
           
           console.log('[Quick PO] Color stock data for', styleNo, ':', colorStockData.map(c => ({
             color: c.color,
@@ -714,69 +721,47 @@ export async function POST(req: Request) {
             historical: c.historicalSales
           })));
           
-          // Only distribute to colors with positive net need
-          const colorsWithNeed = colorStockData.filter(c => c.netNeedTotal > 0);
+          // Find the target color (fuzzy match the color from the command)
+          const targetColorLower = (color || '').toLowerCase().trim();
+          let matchedTargetColor: ColorStockData | null = null;
           
-          if (totalNetNeed > 0 && colorsWithNeed.length > 0) {
-            // Distribute the coloring quantity proportionally to net need
-            let allocated = 0;
-            for (let i = 0; i < colorsWithNeed.length; i++) {
-              const cn = colorsWithNeed[i]!;
-              const pct = Math.round((cn.netNeedTotal / totalNetNeed) * 100);
-              let qty: number;
-              
-              if (i === colorsWithNeed.length - 1) {
-                // Last one gets the remainder to ensure total matches
-                qty = cmd.quantity - allocated;
-              } else {
-                qty = Math.round((cn.netNeedTotal / totalNetNeed) * cmd.quantity);
-              }
-              
-              allocated += qty;
-              colorDistribution[cn.color] = {
-                qty,
-                pct,
-                stockData: cn,
-                newNetNeed: cn.netNeedTotal - qty // Net need after adding this order
-              };
+          for (const cn of colorStockData) {
+            const cnLower = cn.color.toLowerCase();
+            // Check for exact match or partial match
+            if (cnLower === targetColorLower || 
+                cnLower.includes(targetColorLower) || 
+                targetColorLower.includes(cnLower.replace(/^\d+\s*/, ''))) { // Remove leading numbers like "3289 "
+              matchedTargetColor = cn;
+              break;
             }
-            
-            // Also add colors WITHOUT need (qty = 0) so they still appear
-            for (const cn of colorStockData) {
-              if (!colorDistribution[cn.color]) {
-                colorDistribution[cn.color] = {
-                  qty: 0,
-                  pct: 0,
-                  stockData: cn,
-                  newNetNeed: cn.netNeedTotal
-                };
-              }
-            }
-          } else if (colorStockData.length > 0) {
-            // No positive net need - distribute equally to all colors
-            const perColor = Math.round(cmd.quantity / colorStockData.length);
-            let allocated = 0;
-            for (let i = 0; i < colorStockData.length; i++) {
-              const cn = colorStockData[i]!;
-              const qty = i === colorStockData.length - 1 ? cmd.quantity - allocated : perColor;
-              allocated += qty;
-              colorDistribution[cn.color] = {
-                qty,
-                pct: Math.round(100 / colorStockData.length),
-                stockData: cn,
-                newNetNeed: cn.netNeedTotal - qty
-              };
-            }
-            warnings.push(`${styleNo}: No positive net need, distributing equally`);
-          } else {
-            // No stock data at all
-            warnings.push(`${styleNo}: No stock data found for any colors`);
           }
           
-          console.log('[Quick PO] Color distribution for', styleNo, ':', Object.entries(colorDistribution).map(([color, d]) => ({
-            color,
+          console.log('[Quick PO] Matched target color:', matchedTargetColor?.color || 'NOT FOUND');
+          
+          // Build distribution: target color gets ALL the qty, others get 0
+          for (const cn of colorStockData) {
+            const isTarget = matchedTargetColor?.color === cn.color;
+            const qty = isTarget ? (cmd.quantity || 0) : 0;
+            
+            colorDistribution[cn.color] = {
+              qty,
+              pct: isTarget ? 100 : 0,
+              stockData: cn,
+              newNetNeed: cn.netNeedTotal - qty,
+              isTarget
+            };
+          }
+          
+          // If target color wasn't found, add a warning
+          if (!matchedTargetColor && targetColorLower) {
+            warnings.push(`${styleNo}: Target color "${color}" not found in stock data`);
+          }
+          
+          console.log('[Quick PO] Color distribution for', styleNo, ':', Object.entries(colorDistribution).map(([clr, d]) => ({
+            color: clr,
             qty: d.qty,
             pct: d.pct,
+            isTarget: d.isTarget,
             netNeed: d.stockData.netNeedTotal,
             newNetNeed: d.newNetNeed
           })));
