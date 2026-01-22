@@ -65,7 +65,7 @@ interface ColorBreakdownPlan {
   style_name: string;
   source_color: string;
   target_quantity: number;
-  color_distribution: Record<string, { qty: number; pct: number }>;
+  color_distribution: Record<string, { qty: number; pct: number; netNeed?: number }>;
   source_stock_needed: number;
   source_stock_available: number;
   source_stock_remaining: number;
@@ -600,19 +600,28 @@ KAXY NAVY - Make sure stock is fixed`}
                         </div>
                       )}
                       
-                      {/* Color distribution */}
-                      <div className="space-y-1">
+                      {/* Color distribution based on net need */}
+                      <div className="space-y-1.5">
+                        <div className="flex items-center gap-2 text-[10px] text-slate-500 mb-2">
+                          <div className="w-28">Color</div>
+                          <div className="flex-1">Distribution</div>
+                          <div className="w-16 text-right">Qty</div>
+                          <div className="w-20 text-right">Net Need</div>
+                        </div>
                         {Object.entries(plan.color_distribution).map(([color, dist]) => (
                           <div key={color} className="flex items-center gap-2">
-                            <div className="w-24 text-xs font-medium truncate">{color}</div>
+                            <div className="w-28 text-xs font-medium truncate">{color}</div>
                             <div className="flex-1 h-4 bg-slate-100 rounded overflow-hidden">
                               <div
                                 className="h-full bg-purple-400"
                                 style={{ width: `${dist.pct}%` }}
                               />
                             </div>
-                            <div className="w-16 text-xs text-right">
-                              {dist.qty} ({dist.pct}%)
+                            <div className="w-16 text-xs text-right font-medium">
+                              {dist.qty} <span className="text-slate-400">({dist.pct}%)</span>
+                            </div>
+                            <div className="w-20 text-xs text-right text-red-600">
+                              {dist.netNeed !== undefined ? `Need: ${dist.netNeed}` : '-'}
                             </div>
                           </div>
                         ))}

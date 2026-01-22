@@ -456,35 +456,94 @@ export async function POST(req: Request) {
         case 'color_breakdown': {
           if (!styleNo || !cmd.quantity) break;
           
-          // Look for WHITE WEFT stock
-          const whiteWeftKey = `${styleNo}|white weft`.toLowerCase();
-          const whiteWeftStock = stockMap.get(whiteWeftKey) || { stock: 0, on_order: 0, net_need: 0, sizes: [], stockBySize: {} };
+          // Fetch ALL stock data for this style (all colors) to get net need per color
+          const { data: allStyleStock } = await supabase
+            .from('style_stock')
+            .select('style_no, color, section, row_label, sizes, values')
+            .eq('style_no', styleNo);
           
-          // Fetch historical color distribution
-          const { data: colorHistorical } = await supabase
-            .from('historical_sales')
-            .select('color, quantity')
-            .eq('style_no', styleNo)
-            .not('color', 'ilike', '%white weft%');
-          
-          // Aggregate by color
-          const colorTotals: Record<string, number> = {};
-          let totalColorSales = 0;
-          for (const row of (colorHistorical || [])) {
-            colorTotals[row.color] = (colorTotals[row.color] || 0) + row.quantity;
-            totalColorSales += row.quantity;
+          // Group by color
+          const stockByColor = new Map<string, any[]>();
+          for (const row of (allStyleStock || [])) {
+            const clr = row.color?.toLowerCase() || '';
+            if (!stockByColor.has(clr)) stockByColor.set(clr, []);
+            stockByColor.get(clr)!.push(row);
           }
           
-          // Calculate distribution
-          const colorDistribution: Record<string, { qty: number; pct: number }> = {};
-          if (totalColorSales > 0) {
-            for (const [clr, qty] of Object.entries(colorTotals)) {
-              const pct = Math.round((qty / totalColorSales) * 100);
-              const allocatedQty = Math.round((qty / totalColorSales) * cmd.quantity);
-              colorDistribution[clr] = { qty: allocatedQty, pct };
+          // Get WHITE WEFT data
+          const whiteWeftRows = stockByColor.get('white weft') || [];
+          const whiteWeftStockRow = whiteWeftRows.find(r => r.section === 'Stock');
+          const whiteWeftStock = whiteWeftStockRow?.values?.reduce((a: number, b: number) => a + (b || 0), 0) || 0;
+          const whiteWeftSizes = whiteWeftStockRow?.sizes || [];
+          
+          // Calculate net need for each color (excluding WHITE WEFT)
+          const colorNetNeeds: Array<{ color: string; netNeed: number; netNeedBySize: number[] }> = [];
+          let totalNetNeed = 0;
+          
+          for (const [clr, rows] of stockByColor) {
+            if (clr === 'white weft') continue;
+            
+            const stockRow = rows.find((r: any) => r.section === 'Stock');
+            const soldRows = rows.filter((r: any) => r.section === 'Sold');
+            const purchaseRows = rows.filter((r: any) => r.section?.includes('Purchase'));
+            const netNeedRow = rows.find((r: any) => r.section === 'Net Need');
+            
+            let netNeedBySize: number[] = [];
+            let netNeedTotal = 0;
+            
+            if (netNeedRow?.values) {
+              netNeedBySize = netNeedRow.values;
+              netNeedTotal = netNeedRow.values.reduce((a: number, b: number) => a + (b || 0), 0);
+            } else if (stockRow?.values) {
+              const sizes = stockRow.sizes || [];
+              const stock = stockRow.values || [];
+              const soldSum = soldRows.reduce((acc: number[], r: any) => {
+                const vals = r.values || [];
+                return acc.map((v, i) => v + (vals[i] || 0));
+              }, Array(sizes.length).fill(0));
+              const purchaseSum = purchaseRows.reduce((acc: number[], r: any) => {
+                const vals = r.values || [];
+                return acc.map((v, i) => v + (vals[i] || 0));
+              }, Array(sizes.length).fill(0));
+              
+              netNeedBySize = stock.map((s: number, i: number) => -s + (soldSum[i] || 0) - (purchaseSum[i] || 0));
+              netNeedTotal = netNeedBySize.reduce((a, b) => a + (b || 0), 0);
+            }
+            
+            // Only include colors with positive net need (need more stock)
+            if (netNeedTotal > 0) {
+              colorNetNeeds.push({
+                color: rows[0]?.color || clr,
+                netNeed: netNeedTotal,
+                netNeedBySize
+              });
+              totalNetNeed += netNeedTotal;
+            }
+          }
+          
+          // Calculate distribution based on net need proportions
+          const colorDistribution: Record<string, { qty: number; pct: number; netNeed: number }> = {};
+          
+          if (totalNetNeed > 0 && colorNetNeeds.length > 0) {
+            // Distribute the coloring quantity proportionally to net need
+            let allocated = 0;
+            for (let i = 0; i < colorNetNeeds.length; i++) {
+              const cn = colorNetNeeds[i]!;
+              const pct = Math.round((cn.netNeed / totalNetNeed) * 100);
+              let qty: number;
+              
+              if (i === colorNetNeeds.length - 1) {
+                // Last one gets the remainder to ensure total matches
+                qty = cmd.quantity - allocated;
+              } else {
+                qty = Math.round((cn.netNeed / totalNetNeed) * cmd.quantity);
+              }
+              
+              allocated += qty;
+              colorDistribution[cn.color] = { qty, pct, netNeed: cn.netNeed };
             }
           } else {
-            // No historical data - equal distribution across known colors
+            // No net need data - fall back to equal distribution
             const { data: styleColors } = await supabase
               .from('style_colors')
               .select('color')
@@ -494,72 +553,64 @@ export async function POST(req: Request) {
             if (colors.length > 0) {
               const perColor = Math.round(cmd.quantity / colors.length);
               for (const clr of colors) {
-                colorDistribution[clr] = { qty: perColor, pct: Math.round(100 / colors.length) };
+                colorDistribution[clr] = { qty: perColor, pct: Math.round(100 / colors.length), netNeed: 0 };
               }
             }
+            
+            warnings.push(`${styleNo}: No net need data found, using equal distribution`);
           }
           
-          // If look_sales modifier is present, fetch full stock table data
+          // Build stock table for WHITE WEFT if look_sales is true
           let stockTableData: StockTableData | undefined;
-          if (cmd.look_sales) {
-            // Fetch all style_stock rows for this style/color
-            const { data: fullStockData } = await supabase
-              .from('style_stock')
-              .select('style_no, color, section, row_label, sizes, values')
-              .eq('style_no', styleNo)
-              .eq('color', color || 'WHITE WEFT');
+          if (cmd.look_sales && whiteWeftRows.length > 0) {
+            const stockRows = whiteWeftRows.filter((r: any) => r.section === 'Stock');
+            const soldRows = whiteWeftRows.filter((r: any) => r.section === 'Sold');
+            const purchaseRows = whiteWeftRows.filter((r: any) => r.section?.includes('Purchase'));
+            const netNeedRows = whiteWeftRows.filter((r: any) => r.section === 'Net Need');
             
-            if (fullStockData && fullStockData.length > 0) {
-              // Process into stock table format
-              const stockRows = fullStockData.filter(r => r.section === 'Stock');
-              const soldRows = fullStockData.filter(r => r.section === 'Sold');
-              const purchaseRows = fullStockData.filter(r => r.section === 'Purchase (Running + Shipped)' || r.section?.includes('Purchase'));
-              const netNeedRows = fullStockData.filter(r => r.section === 'Net Need');
-              
-              const sizes = stockRows[0]?.sizes || soldRows[0]?.sizes || purchaseRows[0]?.sizes || [];
-              const numSizes = sizes.length;
-              const zero = Array(numSizes).fill(0);
-              
-              const sumArrays = (rows: any[]): number[] => {
-                return rows.reduce((acc, row) => {
-                  const vals = row.values || [];
-                  return acc.map((v: number, i: number) => v + (vals[i] || 0));
-                }, zero.slice());
-              };
-              
-              const sum = (arr: number[]) => arr.reduce((a, b) => a + (b || 0), 0);
-              
-              const stock = stockRows[0]?.values || zero;
-              const soldSum = sumArrays(soldRows);
-              const purchaseSum = sumArrays(purchaseRows);
-              const netNeed = netNeedRows[0]?.values || stock.map((s: number, i: number) => s - (soldSum[i] ?? 0) + (purchaseSum[i] ?? 0));
-              
-              stockTableData = {
-                sizes,
-                stock,
-                soldSum,
-                soldRows: soldRows.map(r => ({
-                  section: r.section,
-                  row_label: r.row_label,
-                  sizes: r.sizes || [],
-                  values: r.values || [],
-                  total: sum(r.values || [])
-                })),
-                purchaseSum,
-                purchaseRows: purchaseRows.map(r => ({
-                  section: r.section,
-                  row_label: r.row_label,
-                  sizes: r.sizes || [],
-                  values: r.values || [],
-                  total: sum(r.values || [])
-                })),
-                netNeed,
-                stockTotal: sum(stock),
-                soldTotal: sum(soldSum),
-                purchaseTotal: sum(purchaseSum),
-                netNeedTotal: sum(netNeed)
-              };
-            }
+            const sizes = stockRows[0]?.sizes || [];
+            const numSizes = sizes.length;
+            const zero = Array(numSizes).fill(0);
+            
+            const sumArrays = (rows: any[]): number[] => {
+              return rows.reduce((acc, row) => {
+                const vals = row.values || [];
+                return acc.map((v: number, i: number) => v + (vals[i] || 0));
+              }, zero.slice());
+            };
+            
+            const sum = (arr: number[]) => arr.reduce((a, b) => a + (b || 0), 0);
+            
+            const stock = stockRows[0]?.values || zero;
+            const soldSum = sumArrays(soldRows);
+            const purchaseSum = sumArrays(purchaseRows);
+            const netNeed = netNeedRows[0]?.values || stock.map((s: number, i: number) => s - (soldSum[i] ?? 0) + (purchaseSum[i] ?? 0));
+            
+            stockTableData = {
+              sizes,
+              stock,
+              soldSum,
+              soldRows: soldRows.map((r: any) => ({
+                section: r.section,
+                row_label: r.row_label,
+                sizes: r.sizes || [],
+                values: r.values || [],
+                total: sum(r.values || [])
+              })),
+              purchaseSum,
+              purchaseRows: purchaseRows.map((r: any) => ({
+                section: r.section,
+                row_label: r.row_label,
+                sizes: r.sizes || [],
+                values: r.values || [],
+                total: sum(r.values || [])
+              })),
+              netNeed,
+              stockTotal: sum(stock),
+              soldTotal: sum(soldSum),
+              purchaseTotal: sum(purchaseSum),
+              netNeedTotal: sum(netNeed)
+            };
           }
           
           colorBreakdownPlans.push({
@@ -569,8 +620,8 @@ export async function POST(req: Request) {
             target_quantity: cmd.quantity,
             color_distribution: colorDistribution,
             source_stock_needed: cmd.quantity,
-            source_stock_available: whiteWeftStock.stock,
-            source_stock_remaining: whiteWeftStock.stock - cmd.quantity,
+            source_stock_available: whiteWeftStock,
+            source_stock_remaining: whiteWeftStock - cmd.quantity,
             action: 'create_coloring_po',
             look_sales: cmd.look_sales,
             stock_table: stockTableData
