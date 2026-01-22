@@ -964,8 +964,8 @@ export async function POST(req: Request) {
         console.log(`  - Target: ${plan.target_quantity} pcs`);
         console.log(`  - Source available: ${plan.source_stock_available}`);
         console.log(`  - Colors in distribution:`, Object.keys(plan.color_distribution).length);
-        Object.entries(plan.color_distribution).forEach(([color, dist]) => {
-          console.log(`    • ${color}: qty=${dist.qty}, netNeed=${dist.stockData.netNeedTotal}, newNetNeed=${dist.newNetNeed}`);
+        Object.entries(plan.color_distribution).forEach(([color, dist]: [string, any]) => {
+          console.log(`    • ${color}: qty=${dist.qty}, netNeed=${dist.stockData?.netNeedTotal ?? 'N/A'}, newNetNeed=${dist.newNetNeed ?? 'N/A'}`);
         });
       });
     }
