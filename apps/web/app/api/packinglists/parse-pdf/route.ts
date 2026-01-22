@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import OpenAI from 'openai';
+import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -8,6 +9,33 @@ export const maxDuration = 60;
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
+
+// Extract text from all PDF pages
+async function extractPdfText(arrayBuffer: ArrayBuffer): Promise<string> {
+  // Disable worker for server-side usage
+  if (pdfjs.GlobalWorkerOptions) {
+    pdfjs.GlobalWorkerOptions.workerSrc = '';
+  }
+  
+  const pdfDoc = await pdfjs.getDocument({ 
+    data: arrayBuffer, 
+    disableWorker: true,
+    useWorkerFetch: false,
+    verbosity: 0 
+  }).promise;
+  
+  const numPages = pdfDoc.numPages;
+  const allText: string[] = [];
+  
+  for (let pageNum = 1; pageNum <= numPages; pageNum++) {
+    const page = await pdfDoc.getPage(pageNum);
+    const textContent = await page.getTextContent();
+    const pageText = textContent.items.map((item: any) => item.str).join(' ');
+    allText.push(`--- Page ${pageNum} ---\n${pageText}`);
+  }
+  
+  return allText.join('\n\n');
+}
 
 type PackinglistSectionLine = {
   model: string;
@@ -44,17 +72,17 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'File must be a PDF' }, { status: 400 });
     }
 
-    // Convert PDF to base64 for GPT-4o vision
+    // Extract text from PDF
     const arrayBuffer = await file.arrayBuffer();
-    const base64 = Buffer.from(arrayBuffer).toString('base64');
+    const pdfText = await extractPdfText(arrayBuffer);
 
-    // Call GPT-4o with vision to parse the PDF
+    // Call GPT-4o to parse the extracted text
     const completion = await openai.chat.completions.create({
       model: 'gpt-4o',
       messages: [
         {
           role: 'system',
-          content: `You are an expert at parsing packing slip PDFs from Bell Rain. Extract all order information including:
+          content: `You are an expert at parsing packing slip PDFs from Bell Rain. Extract all order information from the provided text content. Extract:
 - Delivery date
 - Each section with "Our order nr." and "Your order nr."
 - For each table row, extract:
@@ -97,15 +125,8 @@ Important:
         },
         {
           role: 'user',
-          content: [
-            {
-              type: 'image_url',
-              image_url: {
-                url: `data:application/pdf;base64,${base64}`,
-              },
-            },
-          ],
-        },
+          content: `Extract packing slip data from this PDF text content:\n\n${pdfText}`
+        }
       ],
       response_format: { type: 'json_object' },
       max_tokens: 4000,
