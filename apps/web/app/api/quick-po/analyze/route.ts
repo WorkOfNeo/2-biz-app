@@ -532,7 +532,7 @@ export async function POST(req: Request) {
               const stock = stockRows[0]?.values || zero;
               const soldSum = sumArrays(soldRows);
               const purchaseSum = sumArrays(purchaseRows);
-              const netNeed = netNeedRows[0]?.values || stock.map((s: number, i: number) => s - soldSum[i] + purchaseSum[i]);
+              const netNeed = netNeedRows[0]?.values || stock.map((s: number, i: number) => s - (soldSum[i] ?? 0) + (purchaseSum[i] ?? 0));
               
               stockTableData = {
                 sizes,
