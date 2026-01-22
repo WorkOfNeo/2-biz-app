@@ -156,6 +156,7 @@ export function SidebarNav() {
     can('/purchase/conversations') ? <NavLink key="pconv" href="/purchase/conversations" label="Conversations" /> : null,
     can('/purchase/suppliers') ? <NavLink key="psup" href="/purchase/suppliers" label="Suppliers" /> : null,
     can('/purchase/feedback') ? <NavLink key="pfb" href="/purchase/feedback" label="AI Feedback" /> : null,
+    can('/purchase/packinglists-pdf') ? <NavLink key="ppdf" href="/purchase/packinglists-pdf" label="Packinglists (PDF)" /> : null,
   ].filter(Boolean) as any[];
   const salesLinks = [
     can('/sales/nielsens') ? <NavLink key="sn" href="/sales/nielsens" label="Nielsens" /> : null,

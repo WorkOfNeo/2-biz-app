@@ -34,6 +34,8 @@ function parseTableRows(sectionLines: PdfLine[], headerIdx: number): Packinglist
   const firstSizeX = sizeXs.length ? Math.min(...sizeXs.map((x) => x.x)) : 10_000;
 
   const out: PackinglistSectionLine[] = [];
+  let currentRow: PackinglistSectionLine | null = null;
+
   for (let i = headerIdx + 1; i < sectionLines.length; i++) {
     const l = sectionLines[i]!;
     const txt = l.text;
@@ -42,11 +44,48 @@ function parseTableRows(sectionLines: PdfLine[], headerIdx: number): Packinglist
     if (/^Page\s+\d+/i.test(txt)) continue;
     if (/^Total\s+/i.test(txt)) continue;
 
-    // Ignore the “total” table row (typically ends with "Total")
+    // Ignore the "total" table row (typically ends with "Total")
     if (/\bTotal\b$/i.test(txt) || /\bTotal\b/i.test(txt) && /^\s*$/.test(txt.split('Total')[0] || '')) continue;
 
     // Items before the size columns are descriptive
     const preItems = l.items.filter((x) => x.x < firstSizeX - 2).map((x) => x.str).join(' ').trim();
+    const numericItems = l.items
+      .filter((x) => x.x >= firstSizeX - 2)
+      .map((x) => ({ ...x, n: Number(String(x.str).replace(/[^0-9]/g, '')) }))
+      .filter((x) => Number.isFinite(x.n) && x.n > 0);
+
+    // Check if this line has size quantities (numbers in the size columns)
+    const hasSizes = numericItems.length > 0;
+
+    // If we have a current row being built and this line looks like a continuation
+    // (has preItems but no sizes, and is close in y-position to the previous line)
+    if (currentRow && preItems && !hasSizes) {
+      const prevLine = sectionLines[i - 1]!;
+      const yDiff = Math.abs(l.y - prevLine.y);
+      // If within ~10 units vertically (continuation lines are usually close)
+      if (yDiff < 10) {
+        // Merge this continuation into the current row's articleNumber
+        const tokens = preItems.split(/\s+/).filter(Boolean);
+        if (tokens.length > 0) {
+          const continuation = tokens.join(' ');
+          currentRow.articleNumber = currentRow.articleNumber
+            ? `${currentRow.articleNumber} ${continuation}`
+            : continuation;
+        }
+        continue; // Skip processing this line as a new row
+      }
+    }
+
+    // If we had a current row with sizes, finalize it
+    if (currentRow) {
+      const totalQty = Object.values(currentRow.sizes).reduce((a, b) => a + (Number(b) || 0), 0);
+      if (totalQty > 0) {
+        out.push(currentRow);
+      }
+      currentRow = null;
+    }
+
+    // Start a new row if we have preItems
     if (!preItems) continue;
     const tokens = preItems.split(/\s+/).filter(Boolean);
     if (tokens.length === 0) continue;
@@ -59,12 +98,8 @@ function parseTableRows(sectionLines: PdfLine[], headerIdx: number): Packinglist
     const articleNumber = tokens.length > 3 ? tokens.slice(2, -1).join(' ') : null;
 
     const sizes: Record<string, number> = Object.fromEntries(SIZES.map((s) => [s, 0]));
-    const numericItems = l.items
-      .filter((x) => x.x >= firstSizeX - 2)
-      .map((x) => ({ ...x, n: Number(String(x.str).replace(/[^0-9]/g, '')) }))
-      .filter((x) => Number.isFinite(x.n) && x.n > 0);
 
-    // Map numbers to nearest size header x positions (ignoring the PDF's “Total” column)
+    // Map numbers to nearest size header x positions (ignoring the PDF's "Total" column)
     // We do this by x proximity; any number that maps to one of the size columns is used.
     for (const it of numericItems) {
       const key = nearestKey(it.x, sizeXs);
@@ -73,9 +108,29 @@ function parseTableRows(sectionLines: PdfLine[], headerIdx: number): Packinglist
     }
 
     const totalQty = Object.values(sizes).reduce((a, b) => a + (Number(b) || 0), 0);
-    if (totalQty === 0) continue;
+    if (totalQty === 0 && !hasSizes) {
+      // This might be a continuation line that we'll merge on the next iteration
+      // Store it as currentRow but don't push yet
+      currentRow = { model, modelType, articleNumber, color, sizes, totalQty: 0 };
+      continue;
+    }
 
-    out.push({ model, modelType, articleNumber, color, sizes, totalQty });
+    // If we have sizes, this is a complete row
+    if (totalQty > 0) {
+      out.push({ model, modelType, articleNumber, color, sizes, totalQty });
+      currentRow = null;
+    } else {
+      // Start building a row that might have continuations
+      currentRow = { model, modelType, articleNumber, color, sizes, totalQty: 0 };
+    }
+  }
+
+  // Finalize any remaining current row
+  if (currentRow) {
+    const totalQty = Object.values(currentRow.sizes).reduce((a, b) => a + (Number(b) || 0), 0);
+    if (totalQty > 0) {
+      out.push(currentRow);
+    }
   }
 
   return out;

@@ -45,7 +45,7 @@ export async function middleware(req: NextRequest) {
     const buildAllow = (): Set<string> => {
       const defaults: Record<string, string[]> = {
         admin: ['/'],
-        purchase: ['/statistics', '/styles', '/settings/seasons', '/settings/salespersons', '/settings/customers', '/settings/misc'],
+        purchase: ['/statistics', '/styles', '/settings/seasons', '/settings/salespersons', '/settings/customers', '/settings/misc', '/purchase/packinglists-pdf'],
         finance: ['/finance'],
         sales: ['/sales']
       };
@@ -61,7 +61,7 @@ export async function middleware(req: NextRequest) {
         // Fallback allow lists
         const tmp = new Set<string>(['/']);
         if (roles.has('purchase')) {
-          ['/statistics', '/styles', '/settings/seasons', '/settings/salespersons', '/settings/customers', '/settings/misc'].forEach((p) => tmp.add(p));
+          ['/statistics', '/styles', '/settings/seasons', '/settings/salespersons', '/settings/customers', '/settings/misc', '/purchase/packinglists-pdf'].forEach((p) => tmp.add(p));
         }
         if (roles.has('finance')) tmp.add('/finance');
         if (roles.has('sales')) tmp.add('/sales');
