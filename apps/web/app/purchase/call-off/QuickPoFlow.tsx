@@ -60,12 +60,33 @@ interface StockTableData {
   netNeedTotal: number;
 }
 
+interface ColorStockData {
+  color: string;
+  sizes: string[];
+  stock: number[];
+  stockTotal: number;
+  sold: number[];
+  soldTotal: number;
+  purchase: number[];
+  purchaseTotal: number;
+  netNeed: number[];
+  netNeedTotal: number;
+  historicalSales?: number;
+}
+
+interface ColorDistItem {
+  qty: number;
+  pct: number;
+  stockData: ColorStockData;
+  newNetNeed: number;
+}
+
 interface ColorBreakdownPlan {
   style_no: string;
   style_name: string;
   source_color: string;
   target_quantity: number;
-  color_distribution: Record<string, { qty: number; pct: number; netNeed?: number }>;
+  color_distribution: Record<string, ColorDistItem>;
   source_stock_needed: number;
   source_stock_available: number;
   source_stock_remaining: number;
@@ -600,31 +621,98 @@ KAXY NAVY - Make sure stock is fixed`}
                         </div>
                       )}
                       
-                      {/* Color distribution based on net need */}
-                      <div className="space-y-1.5">
-                        <div className="flex items-center gap-2 text-[10px] text-slate-500 mb-2">
-                          <div className="w-28">Color</div>
-                          <div className="flex-1">Distribution</div>
-                          <div className="w-16 text-right">Qty</div>
-                          <div className="w-20 text-right">Net Need</div>
-                        </div>
-                        {Object.entries(plan.color_distribution).map(([color, dist]) => (
-                          <div key={color} className="flex items-center gap-2">
-                            <div className="w-28 text-xs font-medium truncate">{color}</div>
-                            <div className="flex-1 h-4 bg-slate-100 rounded overflow-hidden">
-                              <div
-                                className="h-full bg-purple-400"
-                                style={{ width: `${dist.pct}%` }}
-                              />
+                      {/* Color distribution with full stock data */}
+                      <div className="space-y-3">
+                        {Object.entries(plan.color_distribution).map(([color, dist]) => {
+                          const sd = dist.stockData;
+                          return (
+                            <div key={color} className="border border-slate-200 rounded-lg p-3 bg-white">
+                              {/* Color header */}
+                              <div className="flex items-center justify-between mb-2">
+                                <div className="font-medium text-sm">{color}</div>
+                                <div className="flex items-center gap-3">
+                                  {sd.historicalSales !== undefined && sd.historicalSales > 0 && (
+                                    <span className="text-[10px] text-slate-400">
+                                      Historical: {sd.historicalSales} sold
+                                    </span>
+                                  )}
+                                  <Badge className="bg-purple-100 text-purple-700">
+                                    +{dist.qty} pcs ({dist.pct}%)
+                                  </Badge>
+                                </div>
+                              </div>
+                              
+                              {/* Mini stock table */}
+                              <div className="overflow-x-auto">
+                                <table className="w-full text-[11px] border-collapse">
+                                  <thead>
+                                    <tr className="bg-slate-50">
+                                      <th className="p-1.5 text-left border-b font-medium w-24">Section</th>
+                                      {sd.sizes.map((size, i) => (
+                                        <th key={i} className="p-1.5 text-right border-b font-medium w-10">{size}</th>
+                                      ))}
+                                      <th className="p-1.5 text-right border-b font-medium w-14">Total</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {/* Stock */}
+                                    <tr>
+                                      <td className="p-1.5 border-b text-slate-600">Stock</td>
+                                      {sd.stock.map((v, i) => (
+                                        <td key={i} className="p-1.5 text-right border-b">{v}</td>
+                                      ))}
+                                      <td className="p-1.5 text-right border-b font-medium">{sd.stockTotal}</td>
+                                    </tr>
+                                    {/* Sold */}
+                                    <tr>
+                                      <td className="p-1.5 border-b text-red-600">Sold</td>
+                                      {sd.sold.map((v, i) => (
+                                        <td key={i} className="p-1.5 text-right border-b text-red-600">{v > 0 ? `-${v}` : v}</td>
+                                      ))}
+                                      <td className="p-1.5 text-right border-b font-medium text-red-700">
+                                        {sd.soldTotal > 0 ? `-${sd.soldTotal}` : sd.soldTotal}
+                                      </td>
+                                    </tr>
+                                    {/* Purchase */}
+                                    <tr>
+                                      <td className="p-1.5 border-b text-green-600">PO's</td>
+                                      {sd.purchase.map((v, i) => (
+                                        <td key={i} className="p-1.5 text-right border-b text-green-600">{v}</td>
+                                      ))}
+                                      <td className="p-1.5 text-right border-b font-medium text-green-700">{sd.purchaseTotal}</td>
+                                    </tr>
+                                    {/* Net Need (current) */}
+                                    <tr className="bg-amber-50/50">
+                                      <td className="p-1.5 border-b font-medium">Net Need</td>
+                                      {sd.netNeed.map((v, i) => (
+                                        <td key={i} className={`p-1.5 text-right border-b font-medium ${v > 0 ? 'text-red-600' : v < 0 ? 'text-green-600' : ''}`}>{v}</td>
+                                      ))}
+                                      <td className={`p-1.5 text-right border-b font-bold ${sd.netNeedTotal > 0 ? 'text-red-700' : sd.netNeedTotal < 0 ? 'text-green-700' : ''}`}>
+                                        {sd.netNeedTotal}
+                                      </td>
+                                    </tr>
+                                    {/* New Order */}
+                                    <tr className="bg-purple-50">
+                                      <td className="p-1.5 border-b text-purple-700 font-medium">+ New Order</td>
+                                      <td colSpan={sd.sizes.length} className="p-1.5 text-center border-b text-purple-600 text-[10px]">
+                                        (distributed proportionally)
+                                      </td>
+                                      <td className="p-1.5 text-right border-b font-bold text-purple-700">+{dist.qty}</td>
+                                    </tr>
+                                    {/* New Net Need */}
+                                    <tr className="bg-green-50">
+                                      <td className="p-1.5 font-semibold">New Net Need</td>
+                                      <td colSpan={sd.sizes.length} className="p-1.5"></td>
+                                      <td className={`p-1.5 text-right font-bold ${dist.newNetNeed > 0 ? 'text-amber-600' : dist.newNetNeed < 0 ? 'text-green-700' : 'text-slate-600'}`}>
+                                        {dist.newNetNeed > 0 ? dist.newNetNeed : dist.newNetNeed === 0 ? '✓ Covered' : `+${Math.abs(dist.newNetNeed)} surplus`}
+                                      </td>
+                                    </tr>
+                                  </tbody>
+                                </table>
+                              </div>
                             </div>
-                            <div className="w-16 text-xs text-right font-medium">
-                              {dist.qty} <span className="text-slate-400">({dist.pct}%)</span>
-                            </div>
-                            <div className="w-20 text-xs text-right text-red-600">
-                              {dist.netNeed !== undefined ? `Need: ${dist.netNeed}` : '-'}
-                            </div>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     </div>
                   ))}
