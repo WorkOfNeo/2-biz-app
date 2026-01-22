@@ -2,7 +2,7 @@ import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 import OpenAI from 'openai';
-import { getPromptConfig, interpolatePrompt } from '../../../../../lib/ai/prompts';
+import { getPromptConfig } from '../../../../lib/ai/prompts';
 
 export const runtime = 'nodejs';
 export const maxDuration = 120;
