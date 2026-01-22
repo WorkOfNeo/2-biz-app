@@ -145,6 +145,11 @@ If you can't parse a line, set parsed_successfully to false and explain in parse
 
   const userPrompt = `Parse these commands:\n\n${text}`;
 
+  console.log('========== [Quick PO] AI PARSING ==========');
+  console.log('[Quick PO] System Prompt:', systemPrompt.substring(0, 500) + '...');
+  console.log('[Quick PO] User Prompt:', userPrompt);
+  console.log('============================================');
+
   try {
     const completion = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
@@ -158,6 +163,11 @@ If you can't parse a line, set parsed_successfully to false and explain in parse
     });
 
     const responseText = completion.choices[0]?.message?.content || '{}';
+    
+    console.log('========== [Quick PO] AI RESPONSE ==========');
+    console.log('[Quick PO] Raw AI Response:', responseText);
+    console.log('=============================================');
+    
     let parsed: any;
     
     try {
@@ -170,6 +180,8 @@ If you can't parse a line, set parsed_successfully to false and explain in parse
 
     // Handle both { commands: [...] } and direct array
     const commandsArray = Array.isArray(parsed) ? parsed : (parsed.commands || parsed.parsed_commands || []);
+    
+    console.log('[Quick PO] Parsed commands array:', JSON.stringify(commandsArray, null, 2));
     
     // Normalize the response
     const commands: ParsedCommand[] = commandsArray.map((cmd: any, idx: number) => ({
@@ -186,7 +198,7 @@ If you can't parse a line, set parsed_successfully to false and explain in parse
       parse_error: cmd.parse_error || null
     }));
 
-    console.log('[Quick PO] AI parsed', commands.length, 'commands');
+    console.log('[Quick PO] Normalized commands:', JSON.stringify(commands, null, 2));
     return commands;
 
   } catch (error: any) {
@@ -684,6 +696,7 @@ export async function POST(req: Request) {
           colorStockData.sort((a, b) => b.netNeedTotal - a.netNeedTotal);
           
           // Calculate distribution based on net need proportions
+          // BUT include ALL colors in the output (even those without need)
           type ColorDistItem = {
             qty: number;
             pct: number;
@@ -691,6 +704,15 @@ export async function POST(req: Request) {
             newNetNeed: number; // Net need after this order
           };
           const colorDistribution: Record<string, ColorDistItem> = {};
+          
+          console.log('[Quick PO] Color stock data for', styleNo, ':', colorStockData.map(c => ({
+            color: c.color,
+            stock: c.stockTotal,
+            sold: c.soldTotal,
+            purchase: c.purchaseTotal,
+            netNeed: c.netNeedTotal,
+            historical: c.historicalSales
+          })));
           
           // Only distribute to colors with positive net need
           const colorsWithNeed = colorStockData.filter(c => c.netNeedTotal > 0);
@@ -718,6 +740,18 @@ export async function POST(req: Request) {
                 newNetNeed: cn.netNeedTotal - qty // Net need after adding this order
               };
             }
+            
+            // Also add colors WITHOUT need (qty = 0) so they still appear
+            for (const cn of colorStockData) {
+              if (!colorDistribution[cn.color]) {
+                colorDistribution[cn.color] = {
+                  qty: 0,
+                  pct: 0,
+                  stockData: cn,
+                  newNetNeed: cn.netNeedTotal
+                };
+              }
+            }
           } else if (colorStockData.length > 0) {
             // No positive net need - distribute equally to all colors
             const perColor = Math.round(cmd.quantity / colorStockData.length);
@@ -738,6 +772,14 @@ export async function POST(req: Request) {
             // No stock data at all
             warnings.push(`${styleNo}: No stock data found for any colors`);
           }
+          
+          console.log('[Quick PO] Color distribution for', styleNo, ':', Object.entries(colorDistribution).map(([color, d]) => ({
+            color,
+            qty: d.qty,
+            pct: d.pct,
+            netNeed: d.stockData.netNeedTotal,
+            newNetNeed: d.newNetNeed
+          })));
           
           // Build stock table for WHITE WEFT if look_sales is true
           let stockTableData: StockTableData | undefined;
@@ -902,7 +944,7 @@ export async function POST(req: Request) {
       promptVersion = `${config.key}_v${config.version}`;
     } catch {}
     
-    return NextResponse.json({
+    const response = {
       parsed_commands: parsedCommands,
       order_plans: orderPlans,
       color_breakdown_plans: colorBreakdownPlans,
@@ -910,7 +952,27 @@ export async function POST(req: Request) {
       stock_fix_suggestions: stockFixSuggestions,
       summary,
       promptVersion
-    });
+    };
+    
+    console.log('========== [Quick PO] FINAL RESPONSE ==========');
+    console.log('[Quick PO] Parsed commands:', parsedCommands.length);
+    console.log('[Quick PO] Order plans:', orderPlans.length);
+    console.log('[Quick PO] Color breakdown plans:', colorBreakdownPlans.length);
+    if (colorBreakdownPlans.length > 0) {
+      colorBreakdownPlans.forEach((plan, idx) => {
+        console.log(`[Quick PO] Breakdown ${idx + 1}: ${plan.style_name} - WHITE WEFT`);
+        console.log(`  - Target: ${plan.target_quantity} pcs`);
+        console.log(`  - Source available: ${plan.source_stock_available}`);
+        console.log(`  - Colors in distribution:`, Object.keys(plan.color_distribution).length);
+        Object.entries(plan.color_distribution).forEach(([color, dist]) => {
+          console.log(`    • ${color}: qty=${dist.qty}, netNeed=${dist.stockData.netNeedTotal}, newNetNeed=${dist.newNetNeed}`);
+        });
+      });
+    }
+    console.log('[Quick PO] Summary:', summary);
+    console.log('================================================');
+    
+    return NextResponse.json(response);
     
   } catch (error: any) {
     console.error('[Quick PO] Error:', error);

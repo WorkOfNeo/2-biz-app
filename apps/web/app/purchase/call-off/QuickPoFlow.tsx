@@ -626,19 +626,27 @@ KAXY NAVY - Make sure stock is fixed`}
                         {Object.entries(plan.color_distribution).map(([color, dist]) => {
                           const sd = dist.stockData;
                           return (
-                            <div key={color} className="border border-slate-200 rounded-lg p-3 bg-white">
+                            <div key={color} className={`border rounded-lg p-3 ${dist.qty > 0 ? 'border-purple-200 bg-purple-50/20' : 'border-slate-200 bg-white'}`}>
+                              {/* Historical Sales - Top Banner */}
+                              {sd.historicalSales !== undefined && sd.historicalSales > 0 && (
+                                <div className="bg-slate-100 rounded px-2 py-1 mb-2 text-[10px] text-slate-600">
+                                  📊 Historical Sales: <strong>{sd.historicalSales}</strong> pcs sold
+                                </div>
+                              )}
+                              
                               {/* Color header */}
                               <div className="flex items-center justify-between mb-2">
                                 <div className="font-medium text-sm">{color}</div>
-                                <div className="flex items-center gap-3">
-                                  {sd.historicalSales !== undefined && sd.historicalSales > 0 && (
-                                    <span className="text-[10px] text-slate-400">
-                                      Historical: {sd.historicalSales} sold
-                                    </span>
+                                <div className="flex items-center gap-2">
+                                  {dist.qty > 0 ? (
+                                    <Badge className="bg-purple-100 text-purple-700">
+                                      +{dist.qty} pcs ({dist.pct}%)
+                                    </Badge>
+                                  ) : (
+                                    <Badge className="bg-slate-100 text-slate-500">
+                                      No allocation needed
+                                    </Badge>
                                   )}
-                                  <Badge className="bg-purple-100 text-purple-700">
-                                    +{dist.qty} pcs ({dist.pct}%)
-                                  </Badge>
                                 </div>
                               </div>
                               
