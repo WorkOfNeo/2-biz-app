@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
 import OpenAI from 'openai';
-import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -12,8 +11,16 @@ const openai = new OpenAI({
 
 // Extract text from all PDF pages
 async function extractPdfText(arrayBuffer: ArrayBuffer): Promise<string> {
+  // Dynamic import to avoid bundling issues
+  let pdfjs: any;
+  try {
+    pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  } catch {
+    pdfjs = await import('pdfjs-dist/build/pdf.mjs');
+  }
+  
   // Disable worker for server-side usage
-  if (pdfjs.GlobalWorkerOptions) {
+  if (pdfjs?.GlobalWorkerOptions) {
     pdfjs.GlobalWorkerOptions.workerSrc = '';
   }
   
