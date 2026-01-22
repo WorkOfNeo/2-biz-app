@@ -38,6 +38,28 @@ interface OrderPlan {
   action: 'create_po' | 'skip_overstocked' | 'review_needed';
 }
 
+interface StockTableRow {
+  section: string;
+  row_label: string | null;
+  sizes: string[];
+  values: number[];
+  total: number;
+}
+
+interface StockTableData {
+  sizes: string[];
+  stock: number[];
+  soldSum: number[];
+  soldRows: StockTableRow[];
+  purchaseSum: number[];
+  purchaseRows: StockTableRow[];
+  netNeed: number[];
+  stockTotal: number;
+  soldTotal: number;
+  purchaseTotal: number;
+  netNeedTotal: number;
+}
+
 interface ColorBreakdownPlan {
   style_no: string;
   style_name: string;
@@ -48,6 +70,8 @@ interface ColorBreakdownPlan {
   source_stock_available: number;
   source_stock_remaining: number;
   action: string;
+  look_sales?: boolean;
+  stock_table?: StockTableData;
 }
 
 interface WaitReminder {
@@ -292,6 +316,7 @@ export default function QuickPoFlow({
               <ul className="text-xs space-y-0.5 text-amber-700">
                 <li><code className="bg-amber-100 px-1 rounded">STYLE COLOR - ORDER Xpcs</code> — Create a PO for X pieces</li>
                 <li><code className="bg-amber-100 px-1 rounded">STYLE COLOR - Color breakdown for Xpcs</code> — Distribute WHITE WEFT into colors</li>
+                <li><code className="bg-amber-100 px-1 rounded">STYLE COLOR - Color breakdown for Xpcs. Look sales</code> — Same + show stock table</li>
                 <li><code className="bg-amber-100 px-1 rounded">STYLE COLOR - Wait X weeks</code> — Add a reminder to revisit</li>
                 <li><code className="bg-amber-100 px-1 rounded">STYLE COLOR - Make sure stock is fixed</code> — Smooth out stock curves</li>
               </ul>
@@ -497,6 +522,7 @@ KAXY NAVY - Make sure stock is fixed`}
                           <div className="font-medium">{plan.style_name}</div>
                           <div className="text-xs text-slate-500">
                             {plan.style_no} · Source: {plan.source_color}
+                            {plan.look_sales && <span className="ml-2 text-purple-600">(with sales data)</span>}
                           </div>
                         </div>
                         <Badge className="bg-purple-100 text-purple-700">
@@ -518,6 +544,61 @@ KAXY NAVY - Make sure stock is fixed`}
                           <span className="ml-1">{plan.source_stock_remaining}</span>
                         </div>
                       </div>
+                      
+                      {/* Stock Table (when look_sales is true) */}
+                      {plan.look_sales && plan.stock_table && (
+                        <div className="mb-4 overflow-x-auto">
+                          <table className="w-full text-xs border-collapse">
+                            <thead>
+                              <tr className="bg-slate-100">
+                                <th className="p-2 text-left border-b font-medium">Section</th>
+                                {plan.stock_table.sizes.map((size, i) => (
+                                  <th key={i} className="p-2 text-right border-b font-medium w-14">{size}</th>
+                                ))}
+                                <th className="p-2 text-right border-b font-medium w-16">Total</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {/* Stock Row */}
+                              <tr>
+                                <td className="p-2 border-b font-medium">Stock</td>
+                                {plan.stock_table.stock.map((v, i) => (
+                                  <td key={i} className="p-2 text-right border-b">{v}</td>
+                                ))}
+                                <td className="p-2 text-right border-b font-medium">{plan.stock_table.stockTotal}</td>
+                              </tr>
+                              {/* Sold Row */}
+                              <tr>
+                                <td className="p-2 border-b font-medium text-red-600">Sold</td>
+                                {plan.stock_table.soldSum.map((v, i) => (
+                                  <td key={i} className="p-2 text-right border-b text-red-600">{v > 0 ? `-${v}` : v}</td>
+                                ))}
+                                <td className="p-2 text-right border-b font-medium text-red-700">
+                                  {plan.stock_table.soldTotal > 0 ? `-${plan.stock_table.soldTotal}` : plan.stock_table.soldTotal}
+                                </td>
+                              </tr>
+                              {/* Purchase Row */}
+                              <tr>
+                                <td className="p-2 border-b font-medium text-green-600">Purchase</td>
+                                {plan.stock_table.purchaseSum.map((v, i) => (
+                                  <td key={i} className="p-2 text-right border-b text-green-600">{v}</td>
+                                ))}
+                                <td className="p-2 text-right border-b font-medium text-green-700">{plan.stock_table.purchaseTotal}</td>
+                              </tr>
+                              {/* Net Need Row */}
+                              <tr className="bg-slate-50">
+                                <td className="p-2 font-semibold">Net Need</td>
+                                {plan.stock_table.netNeed.map((v, i) => (
+                                  <td key={i} className={`p-2 text-right font-semibold ${v < 0 ? 'text-red-700' : v > 0 ? 'text-green-700' : ''}`}>{v}</td>
+                                ))}
+                                <td className={`p-2 text-right font-bold ${plan.stock_table.netNeedTotal < 0 ? 'text-red-700' : plan.stock_table.netNeedTotal > 0 ? 'text-green-700' : ''}`}>
+                                  {plan.stock_table.netNeedTotal}
+                                </td>
+                              </tr>
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
                       
                       {/* Color distribution */}
                       <div className="space-y-1">

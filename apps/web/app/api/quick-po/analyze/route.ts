@@ -19,6 +19,7 @@ interface ParsedCommand {
   command_type: 'order' | 'color_breakdown' | 'wait' | 'stock_fix' | 'unknown';
   quantity: number | null;
   wait_weeks: number | null;
+  look_sales: boolean; // "look sales" modifier for color_breakdown
   parsed_successfully: boolean;
   parse_error: string | null;
 }
@@ -38,6 +39,28 @@ interface OrderPlan {
   action: 'create_po' | 'skip_overstocked' | 'review_needed';
 }
 
+interface StockTableRow {
+  section: string;
+  row_label: string | null;
+  sizes: string[];
+  values: number[];
+  total: number;
+}
+
+interface StockTableData {
+  sizes: string[];
+  stock: number[];
+  soldSum: number[];
+  soldRows: StockTableRow[];
+  purchaseSum: number[];
+  purchaseRows: StockTableRow[];
+  netNeed: number[];
+  stockTotal: number;
+  soldTotal: number;
+  purchaseTotal: number;
+  netNeedTotal: number;
+}
+
 interface ColorBreakdownPlan {
   style_no: string;
   style_name: string;
@@ -48,6 +71,8 @@ interface ColorBreakdownPlan {
   source_stock_available: number;
   source_stock_remaining: number;
   action: string;
+  look_sales: boolean;
+  stock_table?: StockTableData;
 }
 
 interface WaitReminder {
@@ -89,6 +114,7 @@ function parseCommandText(text: string): ParsedCommand[] {
       command_type: 'unknown',
       quantity: null,
       wait_weeks: null,
+      look_sales: false,
       parsed_successfully: false,
       parse_error: null
     };
@@ -128,11 +154,13 @@ function parseCommandText(text: string): ParsedCommand[] {
       continue;
     }
     
-    // Color breakdown for Xpcs
+    // Color breakdown for Xpcs (optionally with "look sales" modifier)
     const colorMatch = lowerCmd.match(/color\s+breakdown\s+(?:for\s+)?(\d+)\s*(?:pcs|pieces)?/i);
     if (colorMatch) {
       cmd.command_type = 'color_breakdown';
       cmd.quantity = parseInt(colorMatch[1]!, 10);
+      // Check for "look sales" or "look stock" modifier
+      cmd.look_sales = /look\s*(sales|stock)/i.test(lowerCmd);
       cmd.parsed_successfully = true;
       commands.push(cmd);
       continue;
@@ -471,6 +499,69 @@ export async function POST(req: Request) {
             }
           }
           
+          // If look_sales modifier is present, fetch full stock table data
+          let stockTableData: StockTableData | undefined;
+          if (cmd.look_sales) {
+            // Fetch all style_stock rows for this style/color
+            const { data: fullStockData } = await supabase
+              .from('style_stock')
+              .select('style_no, color, section, row_label, sizes, values')
+              .eq('style_no', styleNo)
+              .eq('color', color || 'WHITE WEFT');
+            
+            if (fullStockData && fullStockData.length > 0) {
+              // Process into stock table format
+              const stockRows = fullStockData.filter(r => r.section === 'Stock');
+              const soldRows = fullStockData.filter(r => r.section === 'Sold');
+              const purchaseRows = fullStockData.filter(r => r.section === 'Purchase (Running + Shipped)' || r.section?.includes('Purchase'));
+              const netNeedRows = fullStockData.filter(r => r.section === 'Net Need');
+              
+              const sizes = stockRows[0]?.sizes || soldRows[0]?.sizes || purchaseRows[0]?.sizes || [];
+              const numSizes = sizes.length;
+              const zero = Array(numSizes).fill(0);
+              
+              const sumArrays = (rows: any[]): number[] => {
+                return rows.reduce((acc, row) => {
+                  const vals = row.values || [];
+                  return acc.map((v: number, i: number) => v + (vals[i] || 0));
+                }, zero.slice());
+              };
+              
+              const sum = (arr: number[]) => arr.reduce((a, b) => a + (b || 0), 0);
+              
+              const stock = stockRows[0]?.values || zero;
+              const soldSum = sumArrays(soldRows);
+              const purchaseSum = sumArrays(purchaseRows);
+              const netNeed = netNeedRows[0]?.values || stock.map((s: number, i: number) => s - soldSum[i] + purchaseSum[i]);
+              
+              stockTableData = {
+                sizes,
+                stock,
+                soldSum,
+                soldRows: soldRows.map(r => ({
+                  section: r.section,
+                  row_label: r.row_label,
+                  sizes: r.sizes || [],
+                  values: r.values || [],
+                  total: sum(r.values || [])
+                })),
+                purchaseSum,
+                purchaseRows: purchaseRows.map(r => ({
+                  section: r.section,
+                  row_label: r.row_label,
+                  sizes: r.sizes || [],
+                  values: r.values || [],
+                  total: sum(r.values || [])
+                })),
+                netNeed,
+                stockTotal: sum(stock),
+                soldTotal: sum(soldSum),
+                purchaseTotal: sum(purchaseSum),
+                netNeedTotal: sum(netNeed)
+              };
+            }
+          }
+          
           colorBreakdownPlans.push({
             style_no: styleNo,
             style_name: cmd.style_name || styleNo,
@@ -480,7 +571,9 @@ export async function POST(req: Request) {
             source_stock_needed: cmd.quantity,
             source_stock_available: whiteWeftStock.stock,
             source_stock_remaining: whiteWeftStock.stock - cmd.quantity,
-            action: 'create_coloring_po'
+            action: 'create_coloring_po',
+            look_sales: cmd.look_sales,
+            stock_table: stockTableData
           });
           break;
         }
