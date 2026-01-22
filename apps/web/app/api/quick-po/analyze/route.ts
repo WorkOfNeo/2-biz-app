@@ -527,13 +527,13 @@ export async function POST(req: Request) {
               const vals = r.values || [];
               return acc.map((v, i) => v + (vals[i] || 0));
             }, zero.slice());
-            const soldTotal = sold.reduce((a, b) => a + (b || 0), 0);
+            const soldTotal = sold.reduce((a: number, b: number) => a + (b || 0), 0);
             
             const purchase = purchaseRows.reduce((acc: number[], r: any) => {
               const vals = r.values || [];
               return acc.map((v, i) => v + (vals[i] || 0));
             }, zero.slice());
-            const purchaseTotal = purchase.reduce((a, b) => a + (b || 0), 0);
+            const purchaseTotal = purchase.reduce((a: number, b: number) => a + (b || 0), 0);
             
             let netNeed: number[];
             let netNeedTotal: number;
