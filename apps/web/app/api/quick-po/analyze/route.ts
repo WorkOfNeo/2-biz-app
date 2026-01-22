@@ -93,17 +93,117 @@ interface StockFixSuggestion {
 }
 
 // Helper: Parse command text into structured commands
-function parseCommandText(text: string): ParsedCommand[] {
+// AI-powered command parsing
+async function parseCommandsWithAI(text: string, availableStyles: Array<{ style_no: string; style_name: string }>): Promise<ParsedCommand[]> {
+  const lines = text.split('\n').filter(l => l.trim());
+  
+  if (lines.length === 0) {
+    return [];
+  }
+
+  // Build style reference for AI
+  const styleReference = availableStyles.slice(0, 50).map(s => `${s.style_no}: ${s.style_name}`).join('\n');
+  
+  const systemPrompt = `You are a purchase order command parser for a fashion wholesale company.
+Parse the user's text commands and return structured JSON.
+
+## AVAILABLE STYLES (partial list for reference):
+${styleReference}
+
+## COMMAND TYPES TO RECOGNIZE:
+1. ORDER - e.g., "RANY WHITE - ORDER 400pcs", "ORDER 600 RANY SAND"
+2. COLOR_BREAKDOWN - e.g., "Color breakdown for 200pcs", "colour breakdown 300pcs. Look sales"  
+3. WAIT - e.g., "Wait 2 weeks", "wait 3 wks"
+4. STOCK_FIX - e.g., "Make sure stock is fixed", "fix the stock"
+
+## PARSING RULES:
+- Style names are uppercase like RANY, KAXY, KARCEMONA, ILLIE
+- Colors are words like WHITE, BLACK, NAVY, SAND, DENIM, ROSE SMOKE, NEW KITT, OIL GREEN
+- "look sales" or "look stock" is a modifier for COLOR_BREAKDOWN
+- Be flexible with formatting - users don't always use exact syntax
+- Extract quantities even if written as "400pcs", "400 pieces", "400", "four hundred"
+
+## OUTPUT FORMAT:
+Return a JSON array of parsed commands:
+[
+  {
+    "line_number": 1,
+    "original_text": "RANY WHITE - ORDER 400pcs",
+    "style_name": "RANY",
+    "color": "WHITE",
+    "command_type": "order",
+    "quantity": 400,
+    "wait_weeks": null,
+    "look_sales": false,
+    "parsed_successfully": true,
+    "parse_error": null
+  }
+]
+
+command_type must be one of: "order", "color_breakdown", "wait", "stock_fix", "unknown"
+If you can't parse a line, set parsed_successfully to false and explain in parse_error.`;
+
+  const userPrompt = `Parse these commands:\n\n${text}`;
+
+  try {
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt }
+      ],
+      response_format: { type: 'json_object' },
+      temperature: 0.1,
+      max_tokens: 4000
+    });
+
+    const responseText = completion.choices[0]?.message?.content || '{}';
+    let parsed: any;
+    
+    try {
+      parsed = JSON.parse(responseText);
+    } catch {
+      console.error('[Quick PO] Failed to parse AI response as JSON:', responseText);
+      // Fallback to basic parsing
+      return parseCommandTextFallback(text);
+    }
+
+    // Handle both { commands: [...] } and direct array
+    const commandsArray = Array.isArray(parsed) ? parsed : (parsed.commands || parsed.parsed_commands || []);
+    
+    // Normalize the response
+    const commands: ParsedCommand[] = commandsArray.map((cmd: any, idx: number) => ({
+      line_number: cmd.line_number || idx + 1,
+      original_text: cmd.original_text || lines[idx] || '',
+      style_no: cmd.style_no || null,
+      style_name: cmd.style_name || null,
+      color: cmd.color || null,
+      command_type: cmd.command_type || 'unknown',
+      quantity: typeof cmd.quantity === 'number' ? cmd.quantity : null,
+      wait_weeks: typeof cmd.wait_weeks === 'number' ? cmd.wait_weeks : null,
+      look_sales: !!cmd.look_sales,
+      parsed_successfully: cmd.parsed_successfully !== false,
+      parse_error: cmd.parse_error || null
+    }));
+
+    console.log('[Quick PO] AI parsed', commands.length, 'commands');
+    return commands;
+
+  } catch (error: any) {
+    console.error('[Quick PO] AI parsing failed:', error);
+    // Fallback to rule-based parsing
+    return parseCommandTextFallback(text);
+  }
+}
+
+// Fallback rule-based parsing (used if AI fails)
+function parseCommandTextFallback(text: string): ParsedCommand[] {
   const lines = text.split('\n').filter(l => l.trim());
   const commands: ParsedCommand[] = [];
   
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!.trim();
     const lineNum = i + 1;
-    
-    // Try to parse the line
-    // Format: STYLE_NAME COLOR - COMMAND
-    // E.g., "RANY WHITE - ORDER 400pcs"
     
     const cmd: ParsedCommand = {
       line_number: lineNum,
@@ -159,7 +259,6 @@ function parseCommandText(text: string): ParsedCommand[] {
     if (colorMatch) {
       cmd.command_type = 'color_breakdown';
       cmd.quantity = parseInt(colorMatch[1]!, 10);
-      // Check for "look sales" or "look stock" modifier
       cmd.look_sales = /look\s*(sales|stock)/i.test(lowerCmd);
       cmd.parsed_successfully = true;
       commands.push(cmd);
@@ -273,21 +372,34 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'months array is required' }, { status: 400 });
     }
     
-    // 1. Parse commands
-    const parsedCommands = parseCommandText(commandText);
+    // 1. First fetch all styles for AI reference
+    const { data: allStylesData } = await supabase
+      .from('styles')
+      .select('id, style_no, style_name, supplier')
+      .limit(500);
     
-    // 2. Extract unique style names for lookup
+    const stylesForAI = (allStylesData || []).map(s => ({
+      style_no: s.style_no,
+      style_name: s.style_name || s.style_no
+    }));
+    
+    // 2. Parse commands with AI
+    console.log('[Quick PO] Parsing commands with AI...');
+    const parsedCommands = await parseCommandsWithAI(commandText, stylesForAI);
+    console.log('[Quick PO] Parsed', parsedCommands.length, 'commands');
+    
+    // 3. Extract unique style names for detailed lookup
     const styleNames = [...new Set(
       parsedCommands
         .filter(c => c.style_name)
         .map(c => c.style_name!.toLowerCase())
     )];
     
-    // 3. Fetch styles from DB
+    // 4. Fetch styles from DB for matching
     const { data: stylesData, error: stylesError } = await supabase
       .from('styles')
       .select('id, style_no, style_name, supplier')
-      .or(styleNames.map(n => `style_name.ilike.%${n}%`).join(','));
+      .or(styleNames.length > 0 ? styleNames.map(n => `style_name.ilike.%${n}%`).join(',') : 'id.is.null');
     
     if (stylesError) {
       console.error('[Quick PO] Error fetching styles:', stylesError);
