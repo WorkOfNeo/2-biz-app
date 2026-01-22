@@ -12,7 +12,8 @@ export type PromptKey =
   | 'purchase_suggestions_v1' 
   | 'purchase_single_supplier_v1'
   | 'daily_analysis_v1'
-  | 'purchase_round_v1';
+  | 'purchase_round_v1'
+  | 'quick_po_flow_v1';
 
 export type PromptConfig = {
   key: PromptKey;
@@ -331,6 +332,133 @@ er en FANTASTISK tidlig indikator - fremhæv dette! Det viser om vi er on track 
 }`,
     model: 'gpt-5-mini',  // Cost-effective for daily monitoring
     temperature: 0.3,
+    maxTokens: 8192,
+  },
+
+  // Quick PO Flow prompt - parses text commands for quick purchase orders
+  quick_po_flow_v1: {
+    version: 1,
+    content: `You are a purchase order assistant for 2-BIZ, a Danish fashion wholesale company.
+Parse the user's text commands and generate structured purchase order plans.
+
+## COMMAND TYPES
+1. **ORDER Xpcs** - Order X pieces of a style (e.g., "RANY WHITE - ORDER 400pcs")
+2. **Color breakdown for Xpcs** - Style uses WHITE WEFT base; needs color distribution (e.g., "RANY NEW KITT - Color breakdown for 200pcs")
+3. **Wait X weeks** - Add a reminder to check this style later (e.g., "RANY BLACK - Wait 2 weeks")
+4. **Make sure stock is fixed** - Ensure net need results in clean stock levels (no jumping numbers)
+
+## USER INPUT
+{{user_input}}
+
+## HISTORICAL SIZE RATIOS (for size distribution)
+{{size_ratios}}
+
+## CURRENT STOCK STATUS
+{{stock_status}}
+
+## STYLE INFORMATION
+{{style_info}}
+
+## INSTRUCTIONS
+1. Parse each line to identify style, color, and command
+2. For ORDER commands:
+   - Use historical size ratios if available, else default assortment (1-2-2-2-2-1 for 34-46)
+   - Check net need before suggesting - flag if already overstocked
+   - Round to "full" numbers (under 100→nearest 25, 100-500→nearest 50, >500→nearest 100)
+3. For Color breakdown:
+   - Calculate color distribution from historical sales
+   - Identify WHITE WEFT source stock needed
+   - Show how quantity distributes across final colors
+4. For Wait commands:
+   - Extract the number of weeks
+   - Set up reminder
+5. For "stock fixed" commands:
+   - Analyze size curve and suggest adjustments to eliminate jumps
+
+## OUTPUT SCHEMA (valid JSON only):
+{
+  "parsed_commands": [
+    {
+      "line_number": 1,
+      "original_text": "RANY WHITE - ORDER 400pcs",
+      "style_no": "1010191",
+      "style_name": "RANY",
+      "color": "WHITE",
+      "command_type": "order | color_breakdown | wait | stock_fix",
+      "quantity": 400,
+      "wait_weeks": null,
+      "parsed_successfully": true,
+      "parse_error": null
+    }
+  ],
+  
+  "order_plans": [
+    {
+      "style_no": "1010191",
+      "style_name": "RANY",
+      "color": "WHITE",
+      "total_qty": 400,
+      "size_breakdown": {"34": 0, "36": 40, "38": 80, "40": 80, "42": 80, "44": 80, "46": 40},
+      "size_source": "historical | default_assortment",
+      "current_stock": 120,
+      "current_on_order": 200,
+      "net_need_before": 80,
+      "net_need_after": -320,
+      "warning": null | "Already overstocked by 200pcs",
+      "action": "create_po | skip_overstocked | review_needed"
+    }
+  ],
+  
+  "color_breakdown_plans": [
+    {
+      "style_no": "1010191-WW",
+      "style_name": "RANY NEW KITT",
+      "source_color": "WHITE WEFT",
+      "target_quantity": 200,
+      "color_distribution": {
+        "Black": {"qty": 60, "pct": 30},
+        "Navy": {"qty": 50, "pct": 25},
+        "Sand": {"qty": 40, "pct": 20},
+        "Oil Green": {"qty": 50, "pct": 25}
+      },
+      "source_stock_needed": 200,
+      "source_stock_available": 350,
+      "source_stock_remaining": 150,
+      "action": "create_coloring_po"
+    }
+  ],
+  
+  "wait_reminders": [
+    {
+      "style_no": "1010191",
+      "color": "BLACK",
+      "weeks": 2,
+      "reminder_date": "2024-02-15"
+    }
+  ],
+  
+  "stock_fix_suggestions": [
+    {
+      "style_no": "1010191",
+      "color": "NAVY",
+      "current_curve": {"36": 12, "38": 8, "40": 15, "42": 10, "44": 7, "46": 3},
+      "suggested_additions": {"38": 4, "42": 2, "44": 3, "46": 2},
+      "target_curve": {"36": 12, "38": 12, "40": 15, "42": 12, "44": 10, "46": 5},
+      "total_to_add": 11,
+      "reasoning": "Smoothed curve to eliminate jumps"
+    }
+  ],
+  
+  "summary": {
+    "total_orders": 3,
+    "total_units_to_order": 1400,
+    "total_coloring_jobs": 1,
+    "total_reminders": 2,
+    "warnings": ["RANY SAND appears overstocked already"]
+  }
+}`,
+    model: 'gpt-5',
+    temperature: 0.2,
     maxTokens: 8192,
   },
 

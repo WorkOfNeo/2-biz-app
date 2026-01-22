@@ -7,9 +7,10 @@ import { Button } from '../../../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../../components/ui/card';
 import { Input } from '../../../components/ui/input';
 import { Badge } from '../../../components/ui/badge';
-import { Settings } from 'lucide-react';
+import { Settings, Zap, ClipboardList, X } from 'lucide-react';
 import FullAnalysisModal from './FullAnalysisModal';
 import CallOffSetsModal from './CallOffSetsModal';
+import QuickPoFlow from './QuickPoFlow';
 
 type Selection = { style_no: string; color: string };
 type InputRecord = Record<string, number[]>;
@@ -109,6 +110,8 @@ export default function CallOffPage() {
     endDate: 'callOff.process.endDate',
     selectedSetId: 'callOff.process.selectedSetId',
     selectedMonths: 'callOff.process.selectedMonths',
+    sizeRatioOverrides: 'callOff.process.sizeRatioOverrides', // Per-style month overrides for size-% ratio
+    waitReminders: 'callOff.waitReminders', // Quick PO wait reminders
   }), []);
 
   const [started, setStarted] = React.useState<boolean>(false);
@@ -125,6 +128,17 @@ export default function CallOffPage() {
   
   // Selected months for multi-month historical analysis (e.g. ['2024-01', '2024-02'])
   const [selectedMonths, setSelectedMonths] = React.useState<string[]>([]);
+  
+  // Per-style month overrides for size-% ratio calculation { [style_no]: ['2024-01', '2024-02'] }
+  const [sizeRatioOverrides, setSizeRatioOverrides] = React.useState<Record<string, string[]>>({});
+  
+  // Wait reminders from Quick PO (style+color -> {days, createdAt})
+  const [waitReminders, setWaitReminders] = React.useState<Array<{
+    style_no: string;
+    color: string;
+    days: number;
+    createdAt: string;
+  }>>([]);
   
   // NOOS styles (auto-loaded) - fallback when no set selected
   const [noosStyles, setNoosStyles] = React.useState<string[]>([]);
@@ -327,6 +341,16 @@ export default function CallOffPage() {
       if (months) {
         try { setSelectedMonths(JSON.parse(months) as string[]); } catch {}
       }
+      // Load per-style month overrides
+      const overrides = localStorage.getItem(STORAGE_KEYS.sizeRatioOverrides);
+      if (overrides) {
+        try { setSizeRatioOverrides(JSON.parse(overrides) as Record<string, string[]>); } catch {}
+      }
+      // Load wait reminders
+      const reminders = localStorage.getItem(STORAGE_KEYS.waitReminders);
+      if (reminders) {
+        try { setWaitReminders(JSON.parse(reminders)); } catch {}
+      }
     } catch {}
   }, [STORAGE_KEYS]);
 
@@ -361,6 +385,14 @@ export default function CallOffPage() {
   React.useEffect(() => {
     try { localStorage.setItem(STORAGE_KEYS.selectedMonths, JSON.stringify(selectedMonths)); } catch {}
   }, [selectedMonths, STORAGE_KEYS.selectedMonths]);
+
+  React.useEffect(() => {
+    try { localStorage.setItem(STORAGE_KEYS.sizeRatioOverrides, JSON.stringify(sizeRatioOverrides)); } catch {}
+  }, [sizeRatioOverrides, STORAGE_KEYS.sizeRatioOverrides]);
+
+  React.useEffect(() => {
+    try { localStorage.setItem(STORAGE_KEYS.waitReminders, JSON.stringify(waitReminders)); } catch {}
+  }, [waitReminders, STORAGE_KEYS.waitReminders]);
 
   function startProcess() {
     try {
@@ -397,6 +429,31 @@ export default function CallOffPage() {
     } catch {}
   }
 
+  // Active flow tab: 'noos' or 'quickpo'
+  const [activeFlow, setActiveFlow] = React.useState<'noos' | 'quickpo'>('noos');
+  
+  // Handle wait reminders from Quick PO Flow
+  const handleAddWaitReminders = (reminders: Array<{ style_no: string; color: string; weeks: number; reminder_date: string }>) => {
+    const newReminders = reminders.map(r => ({
+      style_no: r.style_no,
+      color: r.color,
+      days: r.weeks * 7,
+      createdAt: new Date().toISOString()
+    }));
+    setWaitReminders(prev => [...prev, ...newReminders]);
+  };
+  
+  // Calculate remaining days for reminders
+  const activeReminders = waitReminders.filter(r => {
+    const createdAt = new Date(r.createdAt);
+    const endDate = new Date(createdAt.getTime() + r.days * 24 * 60 * 60 * 1000);
+    return endDate > new Date();
+  });
+  
+  const dismissReminder = (idx: number) => {
+    setWaitReminders(prev => prev.filter((_, i) => i !== idx));
+  };
+
   return (
     <div className="p-4 space-y-4 max-w-7xl mx-auto">
       <div className="flex items-center justify-between">
@@ -420,8 +477,79 @@ export default function CallOffPage() {
           </Button>
         </div>
       </div>
+      
+      {/* Flow Tabs */}
+      <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-1 w-fit">
+        <button
+          onClick={() => setActiveFlow('noos')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all ${
+            activeFlow === 'noos'
+              ? 'bg-white text-[#8FA894] shadow-sm'
+              : 'text-slate-600 hover:text-slate-900'
+          }`}
+        >
+          <ClipboardList className="h-4 w-4" />
+          NOOS Call-Off
+        </button>
+        <button
+          onClick={() => setActiveFlow('quickpo')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all ${
+            activeFlow === 'quickpo'
+              ? 'bg-white text-[#8FA894] shadow-sm'
+              : 'text-slate-600 hover:text-slate-900'
+          }`}
+        >
+          <Zap className="h-4 w-4" />
+          Quick PO
+        </button>
+      </div>
+      
+      {/* Wait Reminders */}
+      {activeReminders.length > 0 && (
+        <div className="space-y-2">
+          {activeReminders.map((reminder, idx) => {
+            const createdAt = new Date(reminder.createdAt);
+            const endDate = new Date(createdAt.getTime() + reminder.days * 24 * 60 * 60 * 1000);
+            const daysRemaining = Math.ceil((endDate.getTime() - Date.now()) / (24 * 60 * 60 * 1000));
+            
+            return (
+              <div key={idx} className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-2 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="bg-amber-100 rounded-full p-2">
+                    <svg className="h-4 w-4 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                  </div>
+                  <div>
+                    <div className="text-sm font-medium text-amber-900">
+                      {reminder.style_no} - {reminder.color}
+                    </div>
+                    <div className="text-xs text-amber-700">
+                      {daysRemaining} day{daysRemaining !== 1 ? 's' : ''} remaining
+                    </div>
+                  </div>
+                </div>
+                <button
+                  onClick={() => dismissReminder(idx)}
+                  className="text-amber-600 hover:text-amber-800 p-1"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
-      {/* Progress indicator */}
+      {/* Quick PO Flow Tab Content */}
+      {activeFlow === 'quickpo' && (
+        <QuickPoFlow onAddWaitReminders={handleAddWaitReminders} />
+      )}
+
+      {/* NOOS Call-Off Tab Content */}
+      {activeFlow === 'noos' && (
+        <>
+          {/* Progress indicator */}
       {started && (
         <div className="flex items-center gap-2">
           {[1, 2, 3, 4].map((s) => (
@@ -489,6 +617,8 @@ export default function CallOffPage() {
           setColorsData={setColorsData ?? []}
           selectedMonths={selectedMonths}
           setSelectedMonths={setSelectedMonths}
+          sizeRatioOverrides={sizeRatioOverrides}
+          setSizeRatioOverrides={setSizeRatioOverrides}
           selections={selections}
           setSelections={setSelections}
           onRunAIAnalysis={async () => {
@@ -534,7 +664,7 @@ export default function CallOffPage() {
       />
       {started && step === 2 && (
         <Step2AIResults 
-          selections={selections}
+          selections={selections} 
           selectedMonths={selectedMonths}
           loading={fullAnalysisLoading}
           result={fullAnalysisResult}
@@ -575,6 +705,8 @@ export default function CallOffPage() {
           onReset={resetProcess} 
         />
       )}
+        </>
+      )}
     </div>
   );
 }
@@ -588,6 +720,8 @@ function Step1SelectSet({
   setColorsData,
   selectedMonths,
   setSelectedMonths,
+  sizeRatioOverrides,
+  setSizeRatioOverrides,
   selections,
   setSelections,
   onRunAIAnalysis,
@@ -612,12 +746,18 @@ function Step1SelectSet({
   }>;
   selectedMonths: string[];
   setSelectedMonths: React.Dispatch<React.SetStateAction<string[]>>;
+  sizeRatioOverrides: Record<string, string[]>;
+  setSizeRatioOverrides: React.Dispatch<React.SetStateAction<Record<string, string[]>>>;
   selections: Selection[];
   setSelections: React.Dispatch<React.SetStateAction<Selection[]>>;
   onRunAIAnalysis: () => void;
   onOpenSetsModal: () => void;
   isAnalysisReady: boolean;
 }) {
+  // State for collapsed override section
+  const [showOverrides, setShowOverrides] = React.useState(false);
+  const [overrideSearch, setOverrideSearch] = React.useState('');
+  const [selectedOverrideStyle, setSelectedOverrideStyle] = React.useState<string>('');
   // Build style_id -> style_no map
   const styleIdToNo = React.useMemo(() => {
     const map = new Map<string, string>();
@@ -742,6 +882,135 @@ function Step1SelectSet({
             )}
           </div>
 
+          {/* Per-Style Month Overrides (Collapsed, Optional) */}
+          <div className="border rounded-lg border-slate-200 bg-slate-50/50">
+            <button
+              type="button"
+              onClick={() => setShowOverrides(!showOverrides)}
+              className="w-full px-3 py-2 flex items-center justify-between text-left hover:bg-slate-100 transition-colors rounded-lg"
+            >
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-medium text-slate-600">
+                  Override months for specific styles
+                </span>
+                <span className="text-xs text-slate-400">(optional, for size-% ratio)</span>
+                {Object.keys(sizeRatioOverrides).length > 0 && (
+                  <Badge className="bg-[#8FA894] text-white text-[10px]">
+                    {Object.keys(sizeRatioOverrides).length} override{Object.keys(sizeRatioOverrides).length !== 1 ? 's' : ''}
+                  </Badge>
+                )}
+              </div>
+              <svg className={`w-4 h-4 text-slate-400 transition-transform ${showOverrides ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+            
+            {showOverrides && (
+              <div className="px-3 pb-3 space-y-3">
+                <p className="text-xs text-slate-500">
+                  Use different months for size distribution on specific styles. Default uses the global months above.
+                </p>
+                
+                {/* Add override */}
+                <div className="flex gap-2">
+                  <select
+                    value={selectedOverrideStyle}
+                    onChange={(e) => setSelectedOverrideStyle(e.target.value)}
+                    className="flex-1 h-9 rounded-md border border-slate-200 bg-white px-2 text-xs focus:outline-none focus:ring-2 focus:ring-[#8FA894]"
+                  >
+                    <option value="">Select a style to override...</option>
+                    {setStylesData
+                      .filter(s => !sizeRatioOverrides[s.style_no])
+                      .map(s => (
+                        <option key={s.style_no} value={s.style_no}>
+                          {s.style_no} - {s.style_name || 'Unknown'}
+                        </option>
+                      ))
+                    }
+                  </select>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={!selectedOverrideStyle}
+                    onClick={() => {
+                      if (selectedOverrideStyle) {
+                        setSizeRatioOverrides(prev => ({
+                          ...prev,
+                          [selectedOverrideStyle]: selectedMonths.length > 0 ? [...selectedMonths] : []
+                        }));
+                        setSelectedOverrideStyle('');
+                      }
+                    }}
+                    className="text-xs"
+                  >
+                    Add Override
+                  </Button>
+                </div>
+
+                {/* List of overrides */}
+                {Object.keys(sizeRatioOverrides).length > 0 && (
+                  <div className="space-y-2">
+                    {Object.entries(sizeRatioOverrides).map(([styleNo, months]) => {
+                      const styleInfo = setStylesData.find(s => s.style_no === styleNo);
+                      return (
+                        <div key={styleNo} className="bg-white rounded-md p-2 border border-slate-200">
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-xs font-medium">{styleNo} - {styleInfo?.style_name || 'Unknown'}</span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSizeRatioOverrides(prev => {
+                                  const next = { ...prev };
+                                  delete next[styleNo];
+                                  return next;
+                                });
+                              }}
+                              className="text-xs text-red-500 hover:underline"
+                            >
+                              Remove
+                            </button>
+                          </div>
+                          <div className="flex flex-wrap gap-1">
+                            {monthOptions.slice(0, 24).map(opt => {
+                              const isSelected = months.includes(opt.value);
+                              return (
+                                <button
+                                  key={opt.value}
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    setSizeRatioOverrides(prev => {
+                                      const current = prev[styleNo] || [];
+                                      const newMonths = isSelected
+                                        ? current.filter(m => m !== opt.value)
+                                        : [...current, opt.value].sort();
+                                      return { ...prev, [styleNo]: newMonths };
+                                    });
+                                  }}
+                                  className={`px-2 py-0.5 rounded text-[10px] transition-all ${
+                                    isSelected
+                                      ? 'bg-[#8FA894] text-white'
+                                      : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+                                  }`}
+                                >
+                                  {opt.label}
+                                </button>
+                              );
+                            })}
+                          </div>
+                          {months.length === 0 && (
+                            <p className="text-[10px] text-amber-600 mt-1">Select at least one month</p>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
           {/* Style/Color Selection */}
           <div className="border-t pt-4">
             <div className="flex items-center justify-between mb-3">
@@ -788,15 +1057,15 @@ function Step1SelectSet({
                 const someColorsSelected = selectedColorsForStyle.length > 0 && selectedColorsForStyle.length < styleColors.length;
                 
                 return (
-                  <div
-                    key={style.id}
+              <div
+                key={style.id}
                     className={`border rounded-lg p-3 transition-colors ${
                       selectedColorsForStyle.length > 0 
                         ? 'border-[#8FA894] bg-[#F5F3F0]/50' 
                         : 'border-slate-200 bg-white'
                     }`}
-                  >
-                    <div className="flex items-start gap-3">
+              >
+                <div className="flex items-start gap-3">
                       {/* Style checkbox */}
                       <input
                         type="checkbox"
@@ -820,27 +1089,27 @@ function Step1SelectSet({
                         className="mt-1 h-4 w-4 rounded border-slate-300 text-[#8FA894] focus:ring-[#8FA894]"
                       />
                       
-                      {style.image_url ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={style.image_url}
-                          alt={style.style_name || style.style_no}
+                  {style.image_url ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={style.image_url}
+                      alt={style.style_name || style.style_no}
                           className="h-12 w-12 object-cover rounded border"
-                        />
-                      ) : (
+                    />
+                  ) : (
                         <div className="h-12 w-12 rounded border bg-gray-100 flex items-center justify-center text-xs text-gray-400">
                           —
-                        </div>
-                      )}
+                    </div>
+                  )}
                       
-                      <div className="flex-1 min-w-0">
-                        <div className="text-sm font-semibold">{style.style_no}</div>
-                        <div className="text-xs text-slate-600 truncate">
-                          {style.style_name || '—'}
-                        </div>
-                        {style.supplier && (
-                          <Badge className="mt-1 text-[10px]">{style.supplier}</Badge>
-                        )}
+                  <div className="flex-1 min-w-0">
+                      <div className="text-sm font-semibold">{style.style_no}</div>
+                    <div className="text-xs text-slate-600 truncate">
+                      {style.style_name || '—'}
+                    </div>
+                    {style.supplier && (
+                      <Badge className="mt-1 text-[10px]">{style.supplier}</Badge>
+                    )}
                         
                         {/* Color checkboxes */}
                         <div className="flex flex-wrap gap-2 mt-2">
@@ -873,9 +1142,9 @@ function Step1SelectSet({
                               </button>
                             );
                           })}
-                        </div>
-                      </div>
-                    </div>
+                  </div>
+                </div>
+              </div>
                   </div>
                 );
               })}
