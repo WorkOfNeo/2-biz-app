@@ -529,24 +529,84 @@ export async function POST(req: Request) {
         case 'order': {
           if (!styleNo || !color || !cmd.quantity) break;
           
+          // Fetch full stock table for this style/color
+          const { data: orderStockData } = await supabase
+            .from('style_stock')
+            .select('style_no, color, section, row_label, sizes, values')
+            .eq('style_no', styleNo)
+            .ilike('color', `%${color}%`);
+          
+          // Build stock table data
+          let orderStockTable: StockTableData | undefined;
+          if (orderStockData && orderStockData.length > 0) {
+            const stockRows = orderStockData.filter((r: any) => r.section === 'Stock');
+            const soldRows = orderStockData.filter((r: any) => r.section === 'Sold');
+            const purchaseRows = orderStockData.filter((r: any) => r.section?.includes('Purchase'));
+            const netNeedRows = orderStockData.filter((r: any) => r.section === 'Net Need');
+            
+            const sizes = stockRows[0]?.sizes || [];
+            const numSizes = sizes.length;
+            const zero = Array(numSizes).fill(0);
+            
+            const sumArrays = (rows: any[]): number[] => {
+              return rows.reduce((acc, row) => {
+                const vals = row.values || [];
+                return acc.map((v: number, i: number) => v + (vals[i] || 0));
+              }, zero.slice());
+            };
+            
+            const sum = (arr: number[]) => arr.reduce((a: number, b: number) => a + (b || 0), 0);
+            
+            const stock = stockRows[0]?.values || zero;
+            const soldSum = sumArrays(soldRows);
+            const purchaseSum = sumArrays(purchaseRows);
+            const netNeed = netNeedRows[0]?.values || stock.map((s: number, i: number) => s - (soldSum[i] ?? 0) + (purchaseSum[i] ?? 0));
+            
+            orderStockTable = {
+              sizes,
+              stock,
+              soldSum,
+              soldRows: soldRows.map((r: any) => ({
+                section: r.section,
+                row_label: r.row_label,
+                sizes: r.sizes || [],
+                values: r.values || [],
+                total: sum(r.values || [])
+              })),
+              purchaseSum,
+              purchaseRows: purchaseRows.map((r: any) => ({
+                section: r.section,
+                row_label: r.row_label,
+                sizes: r.sizes || [],
+                values: r.values || [],
+                total: sum(r.values || [])
+              })),
+              netNeed,
+              stockTotal: sum(stock),
+              soldTotal: sum(soldSum),
+              purchaseTotal: sum(purchaseSum),
+              netNeedTotal: sum(netNeed)
+            };
+          }
+          
           // Get size ratio
           const ratio = sizeRatios[styleNo];
           let sizeBreakdown: Record<string, number>;
           let sizeSource: 'historical' | 'default_assortment';
-          let sizes = stockInfo.sizes.length > 0 ? stockInfo.sizes : ['36', '38', '40', '42', '44', '46'];
+          let sizes = orderStockTable?.sizes || stockInfo.sizes || ['36', '38', '40', '42', '44', '46'];
           
           if (ratio && Object.keys(ratio.ratioBySize).length > 0) {
             sizeBreakdown = calculateSizeBreakdown(cmd.quantity, ratio.ratioBySize, ratio.sizes.length > 0 ? ratio.sizes : sizes);
             sizeSource = 'historical';
           } else {
             // Use default assortment
-            const isNumeric = sizes.some(s => /^\d+$/.test(s));
+            const isNumeric = sizes.some((s: string) => /^\d+$/.test(s));
             const defaultRatio = isNumeric ? DEFAULT_ASSORTMENT_NUMERIC : DEFAULT_ASSORTMENT_LETTER;
             sizeBreakdown = calculateSizeBreakdown(cmd.quantity, defaultRatio, sizes);
             sizeSource = 'default_assortment';
           }
           
-          const netNeedBefore = stockInfo.net_need;
+          const netNeedBefore = orderStockTable?.netNeedTotal ?? stockInfo.net_need;
           const netNeedAfter = netNeedBefore - cmd.quantity;
           
           let warning: string | null = null;
@@ -567,12 +627,13 @@ export async function POST(req: Request) {
             total_qty: cmd.quantity,
             size_breakdown: sizeBreakdown,
             size_source: sizeSource,
-            current_stock: stockInfo.stock,
-            current_on_order: stockInfo.on_order,
+            current_stock: orderStockTable?.stockTotal ?? stockInfo.stock,
+            current_on_order: orderStockTable?.purchaseTotal ?? stockInfo.on_order,
             net_need_before: netNeedBefore,
             net_need_after: netNeedAfter,
             warning,
-            action
+            action,
+            stock_table: orderStockTable
           });
           break;
         }
@@ -703,6 +764,8 @@ export async function POST(req: Request) {
             stockData: ColorStockData;
             newNetNeed: number; // Net need after this order
             isTarget: boolean; // Is this the target color from the command?
+            newOrderBySize: number[]; // Size breakdown for new order
+            newNetNeedBySize: number[]; // Net need by size after order
           };
           const colorDistribution: Record<string, ColorDistItem> = {};
           
@@ -742,13 +805,37 @@ export async function POST(req: Request) {
           for (const cn of colorStockData) {
             const isTarget = matchedTargetColor?.color === cn.color;
             const qty = isTarget ? (cmd.quantity || 0) : 0;
+            const numSizes = cn.sizes.length;
+            
+            // Calculate size breakdown for the target color
+            let newOrderBySize: number[] = Array(numSizes).fill(0);
+            if (isTarget && qty > 0) {
+              // Try to use historical data for size distribution
+              const ratio = sizeRatios[styleNo];
+              if (ratio && Object.keys(ratio.ratioBySize).length > 0) {
+                const breakdown = calculateSizeBreakdown(qty, ratio.ratioBySize, cn.sizes);
+                // Convert from object to array matching cn.sizes order
+                newOrderBySize = cn.sizes.map(sz => breakdown[sz] || 0);
+              } else {
+                // Use default assortment
+                const isNumeric = cn.sizes.some(s => /^\d+$/.test(s));
+                const defaultRatio = isNumeric ? DEFAULT_ASSORTMENT_NUMERIC : DEFAULT_ASSORTMENT_LETTER;
+                const breakdown = calculateSizeBreakdown(qty, defaultRatio, cn.sizes);
+                newOrderBySize = cn.sizes.map(sz => breakdown[sz] || 0);
+              }
+            }
+            
+            // Calculate new net need by size
+            const newNetNeedBySize = cn.netNeed.map((need, i) => need - (newOrderBySize[i] || 0));
             
             colorDistribution[cn.color] = {
               qty,
               pct: isTarget ? 100 : 0,
               stockData: cn,
               newNetNeed: cn.netNeedTotal - qty,
-              isTarget
+              isTarget,
+              newOrderBySize,
+              newNetNeedBySize
             };
           }
           

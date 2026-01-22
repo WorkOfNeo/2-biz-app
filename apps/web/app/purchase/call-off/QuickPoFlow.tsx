@@ -36,6 +36,7 @@ interface OrderPlan {
   net_need_after: number;
   warning: string | null;
   action: 'create_po' | 'skip_overstocked' | 'review_needed';
+  stock_table?: StockTableData;
 }
 
 interface StockTableRow {
@@ -80,6 +81,8 @@ interface ColorDistItem {
   stockData: ColorStockData;
   newNetNeed: number;
   isTarget?: boolean;
+  newOrderBySize?: number[];
+  newNetNeedBySize?: number[];
 }
 
 interface ColorBreakdownPlan {
@@ -460,7 +463,11 @@ KAXY NAVY - Make sure stock is fixed`}
               </CardHeader>
               <CardContent>
                 <div className="space-y-3">
-                  {result.order_plans.map((plan, idx) => (
+                  {result.order_plans.map((plan, idx) => {
+                    const st = plan.stock_table;
+                    const sizes = st?.sizes || Object.keys(plan.size_breakdown);
+                    
+                    return (
                     <div
                       key={idx}
                       className={`border rounded-lg p-3 ${
@@ -472,7 +479,7 @@ KAXY NAVY - Make sure stock is fixed`}
                       <div className="flex items-start justify-between mb-2">
                         <div>
                           <div className="font-medium">{plan.style_name} - {plan.color}</div>
-                          <div className="text-xs text-slate-500">{plan.style_no}</div>
+                          <div className="text-xs text-slate-500">{plan.style_no} · Size source: {plan.size_source === 'historical' ? 'Historical' : 'Default'}</div>
                         </div>
                         <Badge className={
                           plan.action === 'create_po' ? 'bg-green-100 text-green-700' :
@@ -485,32 +492,88 @@ KAXY NAVY - Make sure stock is fixed`}
                         </Badge>
                       </div>
                       
-                      <div className="grid grid-cols-4 gap-2 text-xs mb-2">
-                        <div>
-                          <span className="text-slate-500">Order:</span>
-                          <span className="ml-1 font-medium">{plan.total_qty} pcs</span>
-                        </div>
-                        <div>
-                          <span className="text-slate-500">Stock:</span>
-                          <span className="ml-1">{plan.current_stock}</span>
-                        </div>
-                        <div>
-                          <span className="text-slate-500">On Order:</span>
-                          <span className="ml-1">{plan.current_on_order}</span>
-                        </div>
-                        <div>
-                          <span className="text-slate-500">Source:</span>
-                          <span className="ml-1">{plan.size_source === 'historical' ? 'Historical' : 'Default'}</span>
-                        </div>
-                      </div>
-                      
-                      {/* Size breakdown */}
-                      <div className="flex flex-wrap gap-1">
-                        {Object.entries(plan.size_breakdown).map(([size, qty]) => (
-                          <span key={size} className="bg-slate-100 rounded px-1.5 py-0.5 text-[10px]">
-                            {size}: <strong>{qty}</strong>
-                          </span>
-                        ))}
+                      {/* Full Stock Table */}
+                      <div className="overflow-x-auto mb-2">
+                        <table className="w-full text-[11px] border-collapse">
+                          <thead>
+                            <tr className="bg-slate-50">
+                              <th className="p-1.5 text-left border-b font-medium w-24">Section</th>
+                              {sizes.map((size, i) => (
+                                <th key={i} className="p-1.5 text-right border-b font-medium w-10">{size}</th>
+                              ))}
+                              <th className="p-1.5 text-right border-b font-medium w-14">Total</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {/* Stock */}
+                            <tr>
+                              <td className="p-1.5 border-b text-slate-600">Stock</td>
+                              {sizes.map((size, i) => (
+                                <td key={i} className="p-1.5 text-right border-b">{st?.stock[i] ?? '-'}</td>
+                              ))}
+                              <td className="p-1.5 text-right border-b font-medium">{st?.stockTotal ?? plan.current_stock}</td>
+                            </tr>
+                            {/* Sold */}
+                            <tr>
+                              <td className="p-1.5 border-b text-red-600">Sold</td>
+                              {sizes.map((size, i) => (
+                                <td key={i} className="p-1.5 text-right border-b text-red-600">
+                                  {st?.soldSum[i] !== undefined ? (st.soldSum[i] > 0 ? `-${st.soldSum[i]}` : st.soldSum[i]) : '-'}
+                                </td>
+                              ))}
+                              <td className="p-1.5 text-right border-b font-medium text-red-700">
+                                {st?.soldTotal !== undefined ? (st.soldTotal > 0 ? `-${st.soldTotal}` : st.soldTotal) : '-'}
+                              </td>
+                            </tr>
+                            {/* Purchase */}
+                            <tr>
+                              <td className="p-1.5 border-b text-green-600">PO's</td>
+                              {sizes.map((size, i) => (
+                                <td key={i} className="p-1.5 text-right border-b text-green-600">{st?.purchaseSum[i] ?? '-'}</td>
+                              ))}
+                              <td className="p-1.5 text-right border-b font-medium text-green-700">{st?.purchaseTotal ?? plan.current_on_order}</td>
+                            </tr>
+                            {/* Net Need */}
+                            <tr className="bg-amber-50/50">
+                              <td className="p-1.5 border-b font-medium">Net Need</td>
+                              {sizes.map((size, i) => (
+                                <td key={i} className={`p-1.5 text-right border-b font-medium ${(st?.netNeed[i] ?? 0) > 0 ? 'text-red-600' : (st?.netNeed[i] ?? 0) < 0 ? 'text-green-600' : ''}`}>
+                                  {st?.netNeed[i] ?? '-'}
+                                </td>
+                              ))}
+                              <td className={`p-1.5 text-right border-b font-bold ${plan.net_need_before > 0 ? 'text-red-700' : plan.net_need_before < 0 ? 'text-green-700' : ''}`}>
+                                {plan.net_need_before}
+                              </td>
+                            </tr>
+                            {/* New Order */}
+                            <tr className="bg-purple-50">
+                              <td className="p-1.5 border-b text-purple-700 font-medium">+ New Order</td>
+                              {sizes.map((size, i) => (
+                                <td key={i} className="p-1.5 text-right border-b text-purple-600 font-medium">
+                                  +{plan.size_breakdown[size] ?? 0}
+                                </td>
+                              ))}
+                              <td className="p-1.5 text-right border-b font-bold text-purple-700">+{plan.total_qty}</td>
+                            </tr>
+                            {/* New Net Need */}
+                            <tr className="bg-green-50">
+                              <td className="p-1.5 font-semibold">New Net Need</td>
+                              {sizes.map((size, i) => {
+                                const oldNeed = st?.netNeed[i] ?? 0;
+                                const newOrder = plan.size_breakdown[size] ?? 0;
+                                const newNeed = oldNeed - newOrder;
+                                return (
+                                  <td key={i} className={`p-1.5 text-right font-medium ${newNeed > 0 ? 'text-amber-600' : newNeed < 0 ? 'text-green-600' : ''}`}>
+                                    {newNeed}
+                                  </td>
+                                );
+                              })}
+                              <td className={`p-1.5 text-right font-bold ${plan.net_need_after > 0 ? 'text-amber-600' : plan.net_need_after < 0 ? 'text-green-700' : 'text-slate-600'}`}>
+                                {plan.net_need_after > 0 ? plan.net_need_after : plan.net_need_after === 0 ? '✓ Covered' : `+${Math.abs(plan.net_need_after)} surplus`}
+                              </td>
+                            </tr>
+                          </tbody>
+                        </table>
                       </div>
                       
                       {plan.warning && (
@@ -520,7 +583,8 @@ KAXY NAVY - Make sure stock is fixed`}
                         </div>
                       )}
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </CardContent>
             </Card>
@@ -717,15 +781,26 @@ KAXY NAVY - Make sure stock is fixed`}
                                     {/* New Order */}
                                     <tr className="bg-purple-50">
                                       <td className="p-1.5 border-b text-purple-700 font-medium">+ New Order</td>
-                                      <td colSpan={sd.sizes.length} className="p-1.5 text-center border-b text-purple-600 text-[10px]">
-                                        (distributed proportionally)
-                                      </td>
+                                      {sd.sizes.map((_, i) => (
+                                        <td key={i} className="p-1.5 text-right border-b text-purple-600 font-medium">
+                                          {dist.newOrderBySize?.[i] !== undefined && dist.newOrderBySize[i] > 0 
+                                            ? `+${dist.newOrderBySize[i]}` 
+                                            : dist.newOrderBySize?.[i] === 0 ? '-' : '-'}
+                                        </td>
+                                      ))}
                                       <td className="p-1.5 text-right border-b font-bold text-purple-700">+{dist.qty}</td>
                                     </tr>
                                     {/* New Net Need */}
                                     <tr className="bg-green-50">
                                       <td className="p-1.5 font-semibold">New Net Need</td>
-                                      <td colSpan={sd.sizes.length} className="p-1.5"></td>
+                                      {sd.sizes.map((_, i) => {
+                                        const newNeed = dist.newNetNeedBySize?.[i] ?? sd.netNeed[i];
+                                        return (
+                                          <td key={i} className={`p-1.5 text-right font-medium ${newNeed > 0 ? 'text-amber-600' : newNeed < 0 ? 'text-green-600' : ''}`}>
+                                            {newNeed}
+                                          </td>
+                                        );
+                                      })}
                                       <td className={`p-1.5 text-right font-bold ${dist.newNetNeed > 0 ? 'text-amber-600' : dist.newNetNeed < 0 ? 'text-green-700' : 'text-slate-600'}`}>
                                         {dist.newNetNeed > 0 ? dist.newNetNeed : dist.newNetNeed === 0 ? '✓ Covered' : `+${Math.abs(dist.newNetNeed)} surplus`}
                                       </td>
