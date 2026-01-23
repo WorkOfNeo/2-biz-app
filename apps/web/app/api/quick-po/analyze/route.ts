@@ -3,6 +3,12 @@ import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 import OpenAI from 'openai';
 import { getPromptConfig } from '../../../../lib/ai/prompts';
+import {
+  fetchStyleStockData,
+  aggregateStockData,
+  isWhiteWeft,
+  type StockRow
+} from '../../../../lib/stock-aggregation';
 
 export const runtime = 'nodejs';
 export const maxDuration = 120;
@@ -745,79 +751,28 @@ export async function POST(req: Request) {
         case 'order': {
           if (!styleNo || !color || !cmd.quantity) break;
           
-          // Fetch full stock table for this style/color
-          const { data: orderStockData } = await supabase
-            .from('style_stock')
-            .select('style_no, color, section, row_label, sizes, values')
-            .eq('style_no', styleNo);
+          // Fetch ALL stock data for this style using shared utility
+          const allStyleStockRows = await fetchStyleStockData(supabase, styleNo);
           
-          // Filter by color more strictly - avoid "WHITE" matching "WHITE WEFT"
-          // First try exact match (case-insensitive), then fuzzy match with word boundaries
-          const colorLower = color.toLowerCase().trim();
-          const filteredOrderStockData = (orderStockData || []).filter((row: any) => {
-            const rowColor = (row.color || '').toLowerCase().trim();
-            // Exact match
-            if (rowColor === colorLower) return true;
-            // Match if row color ends with our color (e.g., "807 BLACK" matches "BLACK")
-            if (rowColor.endsWith(` ${colorLower}`)) return true;
-            // Match if our color ends with row color number prefix removed
-            const rowColorWithoutNumber = rowColor.replace(/^\d+\s*/, '');
-            if (rowColorWithoutNumber === colorLower) return true;
-            // DON'T match if row color contains our color as a prefix of another word
-            // e.g., "WHITE" should NOT match "WHITE WEFT"
-            return false;
-          });
+          // Aggregate stock data for this specific color using shared logic
+          // This matches exactly how /styles/stock-list aggregates data
+          const aggregated = aggregateStockData(allStyleStockRows, styleNo, color);
           
-          // Build stock table data
+          // Convert to StockTableData format
           let orderStockTable: StockTableData | undefined;
-          if (filteredOrderStockData && filteredOrderStockData.length > 0) {
-            const stockRows = filteredOrderStockData.filter((r: any) => r.section === 'Stock');
-            const soldRows = filteredOrderStockData.filter((r: any) => r.section === 'Sold');
-            const purchaseRows = filteredOrderStockData.filter((r: any) => r.section?.includes('Purchase'));
-            const netNeedRows = filteredOrderStockData.filter((r: any) => r.section === 'Net Need');
-            
-            const sizes = stockRows[0]?.sizes || [];
-            const numSizes = sizes.length;
-            const zero = Array(numSizes).fill(0);
-            
-            const sumArrays = (rows: any[]): number[] => {
-              return rows.reduce((acc, row) => {
-                const vals = row.values || [];
-                return acc.map((v: number, i: number) => v + (vals[i] || 0));
-              }, zero.slice());
-            };
-            
-            const sum = (arr: number[]) => arr.reduce((a: number, b: number) => a + (b || 0), 0);
-            
-            const stock = stockRows[0]?.values || zero;
-            const soldSum = sumArrays(soldRows);
-            const purchaseSum = sumArrays(purchaseRows);
-            const netNeed = netNeedRows[0]?.values || stock.map((s: number, i: number) => s - (soldSum[i] ?? 0) + (purchaseSum[i] ?? 0));
-            
+          if (aggregated) {
             orderStockTable = {
-              sizes,
-              stock,
-              soldSum,
-              soldRows: soldRows.map((r: any) => ({
-                section: r.section,
-                row_label: r.row_label,
-                sizes: r.sizes || [],
-                values: r.values || [],
-                total: sum(r.values || [])
-              })),
-              purchaseSum,
-              purchaseRows: purchaseRows.map((r: any) => ({
-                section: r.section,
-                row_label: r.row_label,
-                sizes: r.sizes || [],
-                values: r.values || [],
-                total: sum(r.values || [])
-              })),
-              netNeed,
-              stockTotal: sum(stock),
-              soldTotal: sum(soldSum),
-              purchaseTotal: sum(purchaseSum),
-              netNeedTotal: sum(netNeed)
+              sizes: aggregated.sizes,
+              stock: aggregated.stock,
+              soldSum: aggregated.soldSum,
+              soldRows: aggregated.soldRows,
+              purchaseSum: aggregated.purchaseSum,
+              purchaseRows: aggregated.purchaseRows,
+              netNeed: aggregated.netNeed,
+              stockTotal: aggregated.stockTotal,
+              soldTotal: aggregated.soldTotal,
+              purchaseTotal: aggregated.purchaseTotal,
+              netNeedTotal: aggregated.netNeedTotal
             };
           }
           
@@ -879,91 +834,61 @@ export async function POST(req: Request) {
         case 'color_breakdown': {
           if (!styleNo || !cmd.quantity) break;
           
-          // Fetch ALL stock data for this style (all colors) to get net need per color
-          const { data: allStyleStock } = await supabase
-            .from('style_stock')
-            .select('style_no, color, section, row_label, sizes, values')
-            .eq('style_no', styleNo);
+          // Fetch ALL stock data for this style using shared utility
+          const allStyleStockRows = await fetchStyleStockData(supabase, styleNo);
           
-          // Group by color
-          const stockByColor = new Map<string, any[]>();
-          for (const row of (allStyleStock || [])) {
-            const clr = row.color?.toLowerCase() || '';
-            if (!stockByColor.has(clr)) stockByColor.set(clr, []);
-            stockByColor.get(clr)!.push(row);
+          // Find WHITE WEFT color (exact match only)
+          const whiteWeftColor = Array.from(new Set(allStyleStockRows.map(r => r.color)))
+            .find(c => isWhiteWeft(c)) || null;
+          
+          if (!whiteWeftColor) {
+            warnings.push(
+              `⚠️ No WHITE WEFT found for ${styleNo}. ` +
+              `Color breakdowns require WHITE WEFT PO's to be available. ` +
+              `Please create a Purchase Order for ${styleNo} - WHITE WEFT first.`
+            );
+            break;
           }
           
-          // Get WHITE WEFT data - MUST be exact "white weft", NOT just "white"
-          // WHITE WEFT is the raw uncolored material, WHITE is a finished color
-          let whiteWeftRows = stockByColor.get('white weft') || [];
-          if (whiteWeftRows.length === 0) {
-            whiteWeftRows = stockByColor.get('whiteweft') || [];
+          // Aggregate WHITE WEFT stock data using shared logic
+          const whiteWeftAggregated = aggregateStockData(allStyleStockRows, styleNo, whiteWeftColor);
+          
+          if (!whiteWeftAggregated) {
+            warnings.push(
+              `⚠️ Could not aggregate WHITE WEFT data for ${styleNo}. ` +
+              `Please ensure stock data is scraped for this style.`
+            );
+            break;
           }
           
-          // Build full WHITE WEFT table with all sections
-          // IMPORTANT: For color breakdowns, we use PO's as the source (what's on order to be colored)
-          // NOT stock (which is already finished product)
-          const whiteWeftStockRow = whiteWeftRows.find((r: any) => r.section === 'Stock');
-          const whiteWeftSoldRows = whiteWeftRows.filter((r: any) => r.section === 'Sold');
-          const whiteWeftPurchaseRows = whiteWeftRows.filter((r: any) => r.section?.includes('Purchase'));
-          const whiteWeftNetNeedRow = whiteWeftRows.find((r: any) => r.section === 'Net Need');
-          
-          // Use Purchase row sizes as primary (since that's what we're coloring)
-          const whiteWeftSizes = whiteWeftPurchaseRows[0]?.sizes || whiteWeftStockRow?.sizes || [];
-          const numWhiteWeftSizes = whiteWeftSizes.length;
-          const whiteWeftZero = Array(numWhiteWeftSizes).fill(0);
-          
-          const whiteWeftStockValues = whiteWeftStockRow?.values || whiteWeftZero;
-          const whiteWeftStock = whiteWeftStockValues.reduce((a: number, b: number) => a + (b || 0), 0);
-          
-          const whiteWeftSoldSum = whiteWeftSoldRows.reduce((acc: number[], r: any) => {
-            const vals = r.values || [];
-            return acc.map((v, i) => v + (vals[i] || 0));
-          }, whiteWeftZero.slice());
-          const whiteWeftSoldTotal = whiteWeftSoldSum.reduce((a: number, b: number) => a + (b || 0), 0);
-          
-          // PO's are the key value for WHITE WEFT - this is what we can color
-          const whiteWeftPurchaseSum = whiteWeftPurchaseRows.reduce((acc: number[], r: any) => {
-            const vals = r.values || [];
-            return acc.map((v, i) => v + (vals[i] || 0));
-          }, whiteWeftZero.slice());
-          const whiteWeftPurchaseTotal = whiteWeftPurchaseSum.reduce((a: number, b: number) => a + (b || 0), 0);
-          
-          const whiteWeftNetNeed = whiteWeftNetNeedRow?.values || 
-            whiteWeftStockValues.map((s: number, i: number) => s - (whiteWeftSoldSum[i] || 0) + (whiteWeftPurchaseSum[i] || 0));
-          const whiteWeftNetNeedTotal = whiteWeftNetNeed.reduce((a: number, b: number) => a + (b || 0), 0);
-          
-          // Build WHITE WEFT table for display - PO's are the primary "available" value
+          // Convert to StockTableData format
           const whiteWeftStockTable: StockTableData = {
-            sizes: whiteWeftSizes,
-            stock: whiteWeftStockValues,
-            soldSum: whiteWeftSoldSum,
-            soldRows: whiteWeftSoldRows.map((r: any) => ({
-              section: r.section,
-              row_label: r.row_label,
-              sizes: r.sizes || [],
-              values: r.values || [],
-              total: (r.values || []).reduce((a: number, b: number) => a + (b || 0), 0)
-            })),
-            purchaseSum: whiteWeftPurchaseSum,
-            purchaseRows: whiteWeftPurchaseRows.map((r: any) => ({
-              section: r.section,
-              row_label: r.row_label,
-              sizes: r.sizes || [],
-              values: r.values || [],
-              total: (r.values || []).reduce((a: number, b: number) => a + (b || 0), 0)
-            })),
-            netNeed: whiteWeftNetNeed,
-            stockTotal: whiteWeftStock,
-            soldTotal: whiteWeftSoldTotal,
-            purchaseTotal: whiteWeftPurchaseTotal,
-            netNeedTotal: whiteWeftNetNeedTotal
+            sizes: whiteWeftAggregated.sizes,
+            stock: whiteWeftAggregated.stock,
+            soldSum: whiteWeftAggregated.soldSum,
+            soldRows: whiteWeftAggregated.soldRows,
+            purchaseSum: whiteWeftAggregated.purchaseSum,
+            purchaseRows: whiteWeftAggregated.purchaseRows,
+            netNeed: whiteWeftAggregated.netNeed,
+            stockTotal: whiteWeftAggregated.stockTotal,
+            soldTotal: whiteWeftAggregated.soldTotal,
+            purchaseTotal: whiteWeftAggregated.purchaseTotal,
+            netNeedTotal: whiteWeftAggregated.netNeedTotal
           };
           
           // Use PO total as what's available to color, not stock
-          const whiteWeftAvailable = whiteWeftPurchaseTotal;
+          const whiteWeftAvailable = whiteWeftAggregated.purchaseTotal;
           
-          console.log('[Quick PO] WHITE WEFT POs:', whiteWeftPurchaseTotal, 'Stock:', whiteWeftStock, 'sizes:', whiteWeftSizes.length);
+          // Warn if no WHITE WEFT PO's available
+          if (whiteWeftAvailable === 0) {
+            warnings.push(
+              `⚠️ No WHITE WEFT Purchase Orders found for ${styleNo}. ` +
+              `Color breakdowns require WHITE WEFT PO's. ` +
+              `Please create a Purchase Order for ${styleNo} - WHITE WEFT first.`
+            );
+          }
+          
+          console.log('[Quick PO] WHITE WEFT POs:', whiteWeftAvailable, 'Stock:', whiteWeftAggregated.stockTotal, 'sizes:', whiteWeftAggregated.sizes.length);
           console.log('[Quick PO] Available colors:', Array.from(stockByColor.keys()).join(', '));
           
           // Calculate full stock data for each color (excluding WHITE WEFT)
@@ -993,71 +918,37 @@ export async function POST(req: Request) {
           const historicalByColor: Record<string, number> = {};
           for (const row of (historicalData || [])) {
             const clr = row.color?.toLowerCase() || '';
-            if (clr !== 'white weft') {
+            if (!isWhiteWeft(clr)) {
               historicalByColor[clr] = (historicalByColor[clr] || 0) + row.quantity;
             }
           }
           
-          for (const [clr, rows] of stockByColor) {
-            // Skip WHITE WEFT - this is the source material, not a sellable color
-            // IMPORTANT: "white weft" is NOT the same as "white" - they are different colors!
-            if (clr === 'white weft' || clr === 'whiteweft') continue;
-            
-            const stockRow = rows.find((r: any) => r.section === 'Stock');
-            const soldRows = rows.filter((r: any) => r.section === 'Sold');
-            const purchaseRows = rows.filter((r: any) => r.section?.includes('Purchase'));
-            const netNeedRow = rows.find((r: any) => r.section === 'Net Need');
-            
-            const sizes = stockRow?.sizes || [];
-            const numSizes = sizes.length;
-            const zero = Array(numSizes).fill(0);
-            
-            const stock = stockRow?.values || zero;
-            const stockTotal = stock.reduce((a: number, b: number) => a + (b || 0), 0);
-            
-            const sold = soldRows.reduce((acc: number[], r: any) => {
-              const vals = r.values || [];
-              return acc.map((v, i) => v + (vals[i] || 0));
-            }, zero.slice());
-            const soldTotal = sold.reduce((a: number, b: number) => a + (b || 0), 0);
-            
-            const purchase = purchaseRows.reduce((acc: number[], r: any) => {
-              const vals = r.values || [];
-              return acc.map((v, i) => v + (vals[i] || 0));
-            }, zero.slice());
-            const purchaseTotal = purchase.reduce((a: number, b: number) => a + (b || 0), 0);
-            
-            let netNeed: number[];
-            let netNeedTotal: number;
-            
-            if (netNeedRow?.values) {
-              netNeed = netNeedRow.values;
-              netNeedTotal = netNeedRow.values.reduce((a: number, b: number) => a + (b || 0), 0);
-            } else {
-              // Net Need 1 = Stock - Sold + POs (consistent with ORDER calculation)
-              netNeed = stock.map((s: number, i: number) => s - (sold[i] || 0) + (purchase[i] || 0));
-              netNeedTotal = netNeed.reduce((a, b) => a + (b || 0), 0);
-            }
-            
-            const displayColor = rows[0]?.color || clr;
+          // Get all unique colors from stock data (excluding WHITE WEFT)
+          const allColors = Array.from(new Set(allStyleStockRows.map(r => r.color)))
+            .filter(c => c && !isWhiteWeft(c));
+          
+          // Aggregate stock data for each color using shared utility
+          for (const colorName of allColors) {
+            const aggregated = aggregateStockData(allStyleStockRows, styleNo, colorName);
+            if (!aggregated) continue;
             
             colorStockData.push({
-              color: displayColor,
-              sizes,
-              stock,
-              stockTotal,
-              sold,
-              soldTotal,
-              purchase,
-              purchaseTotal,
-              netNeed,
-              netNeedTotal,
-              historicalSales: historicalByColor[clr] || 0
+              color: colorName,
+              sizes: aggregated.sizes,
+              stock: aggregated.stock,
+              stockTotal: aggregated.stockTotal,
+              sold: aggregated.soldSum,
+              soldTotal: aggregated.soldTotal,
+              purchase: aggregated.purchaseSum,
+              purchaseTotal: aggregated.purchaseTotal,
+              netNeed: aggregated.netNeed,
+              netNeedTotal: aggregated.netNeedTotal,
+              historicalSales: historicalByColor[colorName.toLowerCase()] || 0
             });
             
             // Only count positive net need for distribution
-            if (netNeedTotal > 0) {
-              totalNetNeed += netNeedTotal;
+            if (aggregated.netNeedTotal > 0) {
+              totalNetNeed += aggregated.netNeedTotal;
             }
           }
           
@@ -1160,69 +1051,36 @@ export async function POST(req: Request) {
           
           // Build stock table for WHITE WEFT if look_sales is true
           let stockTableData: StockTableData | undefined;
-          if (cmd.look_sales && whiteWeftRows.length > 0) {
-            const stockRows = whiteWeftRows.filter((r: any) => r.section === 'Stock');
-            const soldRows = whiteWeftRows.filter((r: any) => r.section === 'Sold');
-            const purchaseRows = whiteWeftRows.filter((r: any) => r.section?.includes('Purchase'));
-            const netNeedRows = whiteWeftRows.filter((r: any) => r.section === 'Net Need');
-            
-            const sizes = stockRows[0]?.sizes || [];
-            const numSizes = sizes.length;
-            const zero = Array(numSizes).fill(0);
-            
-            const sumArrays = (rows: any[]): number[] => {
-              return rows.reduce((acc, row) => {
-                const vals = row.values || [];
-                return acc.map((v: number, i: number) => v + (vals[i] || 0));
-              }, zero.slice());
-            };
-            
-            const sum = (arr: number[]) => arr.reduce((a, b) => a + (b || 0), 0);
-            
-            const stock = stockRows[0]?.values || zero;
-            const soldSum = sumArrays(soldRows);
-            const purchaseSum = sumArrays(purchaseRows);
-            const netNeed = netNeedRows[0]?.values || stock.map((s: number, i: number) => s - (soldSum[i] ?? 0) + (purchaseSum[i] ?? 0));
-            
+          if (cmd.look_sales && whiteWeftAggregated) {
             stockTableData = {
-              sizes,
-              stock,
-              soldSum,
-              soldRows: soldRows.map((r: any) => ({
-                section: r.section,
-                row_label: r.row_label,
-                sizes: r.sizes || [],
-                values: r.values || [],
-                total: sum(r.values || [])
-              })),
-              purchaseSum,
-              purchaseRows: purchaseRows.map((r: any) => ({
-                section: r.section,
-                row_label: r.row_label,
-                sizes: r.sizes || [],
-                values: r.values || [],
-                total: sum(r.values || [])
-              })),
-              netNeed,
-              stockTotal: sum(stock),
-              soldTotal: sum(soldSum),
-              purchaseTotal: sum(purchaseSum),
-              netNeedTotal: sum(netNeed)
+              sizes: whiteWeftAggregated.sizes,
+              stock: whiteWeftAggregated.stock,
+              soldSum: whiteWeftAggregated.soldSum,
+              soldRows: whiteWeftAggregated.soldRows,
+              purchaseSum: whiteWeftAggregated.purchaseSum,
+              purchaseRows: whiteWeftAggregated.purchaseRows,
+              netNeed: whiteWeftAggregated.netNeed,
+              stockTotal: whiteWeftAggregated.stockTotal,
+              soldTotal: whiteWeftAggregated.soldTotal,
+              purchaseTotal: whiteWeftAggregated.purchaseTotal,
+              netNeedTotal: whiteWeftAggregated.netNeedTotal
             };
           }
           
           // Calculate remaining WHITE WEFT PO's by size after deducting the color order
           // We use PO's as the source (what's on order to be colored), not stock
-          const whiteWeftRemainingBySize = whiteWeftPurchaseSum.map((poQty: number, i: number) => {
-            // Sum up all order quantities for this size from colorDistribution
-            let totalOrderedForSize = 0;
-            for (const [_, dist] of Object.entries(colorDistribution)) {
-              if (dist.isTarget && dist.newOrderBySize && dist.newOrderBySize[i]) {
-                totalOrderedForSize += dist.newOrderBySize[i];
-              }
-            }
-            return poQty - totalOrderedForSize;
-          });
+          const whiteWeftRemainingBySize = whiteWeftAggregated
+            ? whiteWeftAggregated.purchaseSum.map((poQty: number, i: number) => {
+                // Sum up all order quantities for this size from colorDistribution
+                let totalOrderedForSize = 0;
+                for (const [_, dist] of Object.entries(colorDistribution)) {
+                  if (dist.isTarget && dist.newOrderBySize && dist.newOrderBySize[i]) {
+                    totalOrderedForSize += dist.newOrderBySize[i];
+                  }
+                }
+                return poQty - totalOrderedForSize;
+              })
+            : [];
           
           colorBreakdownPlans.push({
             style_no: styleNo,
