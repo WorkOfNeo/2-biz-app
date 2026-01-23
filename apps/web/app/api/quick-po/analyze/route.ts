@@ -20,6 +20,7 @@ interface ParsedCommand {
   quantity: number | null;
   wait_weeks: number | null;
   look_sales: boolean; // "look sales" modifier for color_breakdown
+  size_adjustments?: Record<string, 'extra' | 'less'>; // e.g., { "42": "extra", "44": "extra", "46": "extra" }
   parsed_successfully: boolean;
   parse_error: string | null;
 }
@@ -130,28 +131,33 @@ ${styleReference}
 ## PARSING RULES:
 - Style names are uppercase like RANY, KAXY, KARCEMONA, ILLIE
 - Colors are words like WHITE, BLACK, NAVY, SAND, DENIM, ROSE SMOKE, NEW KITT, OIL GREEN
-- "look sales" or "look stock" is a modifier for COLOR_BREAKDOWN
+- "look sales" or "look stock" is a modifier for COLOR_BREAKDOWN - set look_sales to true
+- Size adjustment instructions like "add extra in 42, 44, 46" or "less in 34, 36" should be parsed into size_adjustments
 - Be flexible with formatting - users don't always use exact syntax
 - Extract quantities even if written as "400pcs", "400 pieces", "400", "four hundred"
 
 ## OUTPUT FORMAT:
-Return a JSON array of parsed commands:
-[
-  {
-    "line_number": 1,
-    "original_text": "RANY WHITE - ORDER 400pcs",
-    "style_name": "RANY",
-    "color": "WHITE",
-    "command_type": "order",
-    "quantity": 400,
-    "wait_weeks": null,
-    "look_sales": false,
-    "parsed_successfully": true,
-    "parse_error": null
-  }
-]
+Return a JSON object with a "commands" array:
+{
+  "commands": [
+    {
+      "line_number": 1,
+      "original_text": "RANY WHITE - ORDER 400pcs. Add extra in 42, 44 and 46",
+      "style_name": "RANY",
+      "color": "WHITE",
+      "command_type": "order",
+      "quantity": 400,
+      "wait_weeks": null,
+      "look_sales": false,
+      "size_adjustments": { "42": "extra", "44": "extra", "46": "extra" },
+      "parsed_successfully": true,
+      "parse_error": null
+    }
+  ]
+}
 
 command_type must be one of: "order", "color_breakdown", "wait", "stock_fix", "unknown"
+size_adjustments is an object mapping size strings to "extra" or "less" (e.g., {"42": "extra", "44": "extra"})
 If you can't parse a line, set parsed_successfully to false and explain in parse_error.`;
 
   const userPrompt = `Parse these commands:\n\n${text}`;
@@ -205,6 +211,7 @@ If you can't parse a line, set parsed_successfully to false and explain in parse
       quantity: typeof cmd.quantity === 'number' ? cmd.quantity : null,
       wait_weeks: typeof cmd.wait_weeks === 'number' ? cmd.wait_weeks : null,
       look_sales: !!cmd.look_sales,
+      size_adjustments: cmd.size_adjustments || undefined,
       parsed_successfully: cmd.parsed_successfully !== false,
       parse_error: cmd.parse_error || null
     }));
@@ -385,6 +392,7 @@ interface SmartBreakdownParams {
   netNeedBySize: number[]; // Current net need per size
   historicalRatioBySize?: Record<string, number>; // 0-1 ratio from historical sales
   feedbackAdjustment?: Record<string, number>; // Past corrections
+  sizeAdjustments?: Record<string, 'extra' | 'less'>; // User-specified adjustments like "add extra in 42, 44"
 }
 
 interface SmartBreakdownResult {
@@ -400,7 +408,7 @@ interface SmartBreakdownResult {
 }
 
 function calculateSmartSizeBreakdown(params: SmartBreakdownParams): SmartBreakdownResult {
-  const { total, sizes, netNeedBySize, historicalRatioBySize, feedbackAdjustment } = params;
+  const { total, sizes, netNeedBySize, historicalRatioBySize, feedbackAdjustment, sizeAdjustments } = params;
   
   // Determine if we have historical data
   const hasHistorical = historicalRatioBySize && Object.keys(historicalRatioBySize).length > 0;
@@ -441,16 +449,24 @@ function calculateSmartSizeBreakdown(params: SmartBreakdownParams): SmartBreakdo
     // 4. Apply feedback adjustment if available
     const feedbackMult = feedbackAdjustment?.[size] ?? 1.0;
     
+    // 5. Apply user-specified size adjustments ("add extra in 42, 44, 46")
+    let userAdjMult = 1.0;
+    if (sizeAdjustments) {
+      const adj = sizeAdjustments[size];
+      if (adj === 'extra') userAdjMult = 1.25; // +25% for "extra"
+      else if (adj === 'less') userAdjMult = 0.75; // -25% for "less"
+    }
+    
     // Combined weight formula:
     // - 25% base assortment (keeps the "shape" of the curve)
     // - 45% historical sales (what actually sells)
     // - 30% net need (fill the gaps first)
-    // Then multiply by feedback adjustment
+    // Then multiply by feedback adjustment and user size adjustment
     const combinedWeight = (
       0.25 * baseWeight +
       0.45 * historicalWeight +
       0.30 * netNeedWeight
-    ) * feedbackMult;
+    ) * feedbackMult * userAdjMult;
     
     factors[size] = {
       baseWeight,
@@ -811,12 +827,14 @@ export async function POST(req: Request) {
           // 1. Default assortment curve (25%)
           // 2. Historical sales ratio (45%)
           // 3. Current net need per size (30%)
+          // 4. User-specified size adjustments ("add extra in 42, 44, 46")
           const smartResult = calculateSmartSizeBreakdown({
             total: cmd.quantity,
             sizes,
             netNeedBySize: orderStockTable?.netNeed || Array(sizes.length).fill(0),
             historicalRatioBySize: ratio?.ratioBySize,
-            feedbackAdjustment: feedbackByStyle[styleNo]
+            feedbackAdjustment: feedbackByStyle[styleNo],
+            sizeAdjustments: cmd.size_adjustments
           });
           
           const sizeBreakdown = smartResult.breakdown;
@@ -954,7 +972,8 @@ export async function POST(req: Request) {
               netNeed = netNeedRow.values;
               netNeedTotal = netNeedRow.values.reduce((a: number, b: number) => a + (b || 0), 0);
             } else {
-              netNeed = stock.map((s: number, i: number) => -s + (sold[i] || 0) - (purchase[i] || 0));
+              // Net Need 1 = Stock - Sold + POs (consistent with ORDER calculation)
+              netNeed = stock.map((s: number, i: number) => s - (sold[i] || 0) + (purchase[i] || 0));
               netNeedTotal = netNeed.reduce((a, b) => a + (b || 0), 0);
             }
             
@@ -1043,7 +1062,8 @@ export async function POST(req: Request) {
                 sizes: cn.sizes,
                 netNeedBySize: cn.netNeed,
                 historicalRatioBySize: ratio?.ratioBySize,
-                feedbackAdjustment: feedbackByStyle[styleNo]
+                feedbackAdjustment: feedbackByStyle[styleNo],
+                sizeAdjustments: cmd.size_adjustments
               });
               newOrderBySize = cn.sizes.map(sz => smartResult.breakdown[sz] || 0);
             }
