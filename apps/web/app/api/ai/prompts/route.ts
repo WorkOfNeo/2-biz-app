@@ -30,10 +30,12 @@ export async function GET(req: Request) {
     }
 
     // Group by key for UI convenience
-    const byKey: Record<string, typeof data> = {};
+    const byKey: Record<string, NonNullable<typeof data>> = {};
     for (const prompt of data || []) {
-      if (!byKey[prompt.key]) byKey[prompt.key] = [];
-      byKey[prompt.key].push(prompt);
+      if (!byKey[prompt.key]) {
+        byKey[prompt.key] = [];
+      }
+      byKey[prompt.key]!.push(prompt);
     }
 
     return NextResponse.json({ 
