@@ -934,7 +934,21 @@ export async function POST(req: Request) {
             sizes: whiteWeftSizes,
             stock: whiteWeftStockValues,
             soldSum: whiteWeftSoldSum,
+            soldRows: whiteWeftSoldRows.map((r: any) => ({
+              section: r.section,
+              row_label: r.row_label,
+              sizes: r.sizes || [],
+              values: r.values || [],
+              total: (r.values || []).reduce((a: number, b: number) => a + (b || 0), 0)
+            })),
             purchaseSum: whiteWeftPurchaseSum,
+            purchaseRows: whiteWeftPurchaseRows.map((r: any) => ({
+              section: r.section,
+              row_label: r.row_label,
+              sizes: r.sizes || [],
+              values: r.values || [],
+              total: (r.values || []).reduce((a: number, b: number) => a + (b || 0), 0)
+            })),
             netNeed: whiteWeftNetNeed,
             stockTotal: whiteWeftStock,
             soldTotal: whiteWeftSoldTotal,
