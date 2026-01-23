@@ -253,9 +253,17 @@ export default function QuickPoFlow({
   const [createResult, setCreateResult] = React.useState<{ success: number; failed: number } | null>(null);
   const [feedbackSent, setFeedbackSent] = React.useState<Record<string, 'correct' | 'incorrect'>>({});
   const [sendingFeedback, setSendingFeedback] = React.useState<string | null>(null);
+  const [correctionModal, setCorrectionModal] = React.useState<{
+    plan: OrderPlan;
+    corrections: Record<string, number>;
+  } | null>(null);
   
   // Send feedback for an order plan
-  const handleSendFeedback = async (plan: OrderPlan, verdict: 'correct' | 'incorrect') => {
+  const handleSendFeedback = async (
+    plan: OrderPlan, 
+    verdict: 'correct' | 'incorrect',
+    actualOrder?: Record<string, number>
+  ) => {
     const key = `${plan.style_no}|${plan.color}`;
     setSendingFeedback(key);
     
@@ -268,20 +276,43 @@ export default function QuickPoFlow({
           color: plan.color,
           verdict,
           suggested_order: plan.size_breakdown,
+          actual_order: actualOrder || null,
           notes: verdict === 'incorrect' 
-            ? `Size distribution was wrong. Source: ${plan.size_source}` 
+            ? `Size distribution was wrong. Source: ${plan.size_source}${actualOrder ? '. Corrected by user.' : ''}` 
             : `Size distribution was correct. Source: ${plan.size_source}`
         })
       });
       
       if (response.ok) {
         setFeedbackSent(prev => ({ ...prev, [key]: verdict }));
+        setCorrectionModal(null);
       }
     } catch (err) {
       console.error('Failed to send feedback:', err);
     } finally {
       setSendingFeedback(null);
     }
+  };
+  
+  // Open correction modal
+  const openCorrectionModal = (plan: OrderPlan) => {
+    // Initialize with suggested values
+    setCorrectionModal({
+      plan,
+      corrections: { ...plan.size_breakdown }
+    });
+  };
+  
+  // Update a correction value
+  const updateCorrection = (size: string, value: number) => {
+    if (!correctionModal) return;
+    setCorrectionModal({
+      ...correctionModal,
+      corrections: {
+        ...correctionModal.corrections,
+        [size]: value
+      }
+    });
   };
 
   // Parse and analyze
@@ -555,10 +586,10 @@ KAXY NAVY - Make sure stock is fixed`}
                                   {isSending ? <Loader2 className="h-4 w-4 animate-spin" /> : <ThumbsUp className="h-4 w-4" />}
                                 </button>
                                 <button
-                                  onClick={() => handleSendFeedback(plan, 'incorrect')}
+                                  onClick={() => openCorrectionModal(plan)}
                                   disabled={isSending}
                                   className="p-1 rounded hover:bg-red-100 text-slate-400 hover:text-red-600 transition-colors"
-                                  title="Distribution is wrong"
+                                  title="Distribution is wrong - click to enter correct quantities"
                                 >
                                   <ThumbsDown className="h-4 w-4" />
                                 </button>
@@ -1065,6 +1096,127 @@ KAXY NAVY - Make sure stock is fixed`}
             </Card>
           )}
         </>
+      )}
+      
+      {/* Correction Modal */}
+      {correctionModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-lg w-full max-h-[90vh] overflow-y-auto">
+            <div className="p-4 border-b">
+              <h3 className="font-semibold text-lg">Correct Size Distribution</h3>
+              <p className="text-sm text-slate-500 mt-1">
+                Enter the correct quantities so the AI can learn for next time.
+              </p>
+            </div>
+            
+            <div className="p-4">
+              <div className="mb-4">
+                <div className="text-sm font-medium text-slate-700">
+                  {correctionModal.plan.style_name} - {correctionModal.plan.color}
+                </div>
+                <div className="text-xs text-slate-500">
+                  {correctionModal.plan.style_no} · Total: {correctionModal.plan.total_qty} pcs
+                </div>
+              </div>
+              
+              <div className="space-y-2">
+                <div className="grid grid-cols-4 text-xs font-medium text-slate-500 pb-1 border-b">
+                  <span>Size</span>
+                  <span className="text-right">Suggested</span>
+                  <span className="text-right">Correct</span>
+                  <span className="text-right">Diff</span>
+                </div>
+                
+                {Object.keys(correctionModal.plan.size_breakdown)
+                  .sort((a, b) => {
+                    const numA = parseInt(a);
+                    const numB = parseInt(b);
+                    if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
+                    return a.localeCompare(b);
+                  })
+                  .map(size => {
+                    const suggested = correctionModal.plan.size_breakdown[size] || 0;
+                    const corrected = correctionModal.corrections[size] || 0;
+                    const diff = corrected - suggested;
+                    
+                    return (
+                      <div key={size} className="grid grid-cols-4 items-center gap-2 py-1">
+                        <span className="text-sm font-medium">{size}</span>
+                        <span className="text-sm text-right text-slate-500">{suggested}</span>
+                        <input
+                          type="number"
+                          min="0"
+                          value={corrected}
+                          onChange={(e) => updateCorrection(size, parseInt(e.target.value) || 0)}
+                          className="w-full text-right text-sm border rounded px-2 py-1 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                        />
+                        <span className={`text-sm text-right font-medium ${
+                          diff > 0 ? 'text-green-600' : diff < 0 ? 'text-red-600' : 'text-slate-400'
+                        }`}>
+                          {diff > 0 ? `+${diff}` : diff}
+                        </span>
+                      </div>
+                    );
+                  })}
+                
+                <div className="pt-2 border-t mt-2">
+                  <div className="grid grid-cols-4 items-center text-sm font-medium">
+                    <span>Total</span>
+                    <span className="text-right text-slate-500">
+                      {Object.values(correctionModal.plan.size_breakdown).reduce((a, b) => a + b, 0)}
+                    </span>
+                    <span className="text-right">
+                      {Object.values(correctionModal.corrections).reduce((a, b) => a + b, 0)}
+                    </span>
+                    <span className={`text-right ${
+                      Object.values(correctionModal.corrections).reduce((a, b) => a + b, 0) !== 
+                      Object.values(correctionModal.plan.size_breakdown).reduce((a, b) => a + b, 0)
+                        ? 'text-amber-600' : 'text-slate-400'
+                    }`}>
+                      {(() => {
+                        const corrTotal = Object.values(correctionModal.corrections).reduce((a, b) => a + b, 0);
+                        const sugTotal = Object.values(correctionModal.plan.size_breakdown).reduce((a, b) => a + b, 0);
+                        const diff = corrTotal - sugTotal;
+                        return diff > 0 ? `+${diff}` : diff;
+                      })()}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            <div className="p-4 border-t bg-slate-50 flex justify-end gap-2">
+              <Button
+                variant="outline"
+                onClick={() => setCorrectionModal(null)}
+                className="border-slate-300"
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={() => handleSendFeedback(
+                  correctionModal.plan, 
+                  'incorrect',
+                  correctionModal.corrections
+                )}
+                disabled={sendingFeedback !== null}
+                className="bg-red-600 hover:bg-red-700 text-white"
+              >
+                {sendingFeedback ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Saving...
+                  </>
+                ) : (
+                  <>
+                    <ThumbsDown className="h-4 w-4 mr-2" />
+                    Submit Correction
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
