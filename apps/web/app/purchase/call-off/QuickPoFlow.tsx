@@ -1219,7 +1219,8 @@ KAXY NAVY - Make sure stock is fixed`}
           let totalNetNeed2 = 0;
           
           for (let i = 0; i < sizes.length; i++) {
-            const size = sizes[i];
+            const size = sizes[i] as string;
+            if (!size) continue;
             const netNeed1 = st?.netNeed[i] ?? 0;
             const correctedOrder = correctionModal.corrections[size] ?? 0;
             const netNeed2 = netNeed1 + correctedOrder;
