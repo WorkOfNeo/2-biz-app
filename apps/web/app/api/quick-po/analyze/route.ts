@@ -657,11 +657,18 @@ export async function POST(req: Request) {
             stockByColor.get(clr)!.push(row);
           }
           
-          // Get WHITE WEFT data
-          const whiteWeftRows = stockByColor.get('white weft') || [];
+          // Get WHITE WEFT data - MUST be exact "white weft", NOT just "white"
+          // WHITE WEFT is the raw uncolored material, WHITE is a finished color
+          let whiteWeftRows = stockByColor.get('white weft') || [];
+          if (whiteWeftRows.length === 0) {
+            whiteWeftRows = stockByColor.get('whiteweft') || [];
+          }
           const whiteWeftStockRow = whiteWeftRows.find(r => r.section === 'Stock');
           const whiteWeftStock = whiteWeftStockRow?.values?.reduce((a: number, b: number) => a + (b || 0), 0) || 0;
           const whiteWeftSizes = whiteWeftStockRow?.sizes || [];
+          
+          console.log('[Quick PO] WHITE WEFT stock:', whiteWeftStock, 'sizes:', whiteWeftSizes.length);
+          console.log('[Quick PO] Available colors:', Array.from(stockByColor.keys()).join(', '));
           
           // Calculate full stock data for each color (excluding WHITE WEFT)
           type ColorStockData = {
@@ -696,7 +703,9 @@ export async function POST(req: Request) {
           }
           
           for (const [clr, rows] of stockByColor) {
-            if (clr === 'white weft') continue;
+            // Skip WHITE WEFT - this is the source material, not a sellable color
+            // IMPORTANT: "white weft" is NOT the same as "white" - they are different colors!
+            if (clr === 'white weft' || clr === 'whiteweft') continue;
             
             const stockRow = rows.find((r: any) => r.section === 'Stock');
             const soldRows = rows.filter((r: any) => r.section === 'Sold');
@@ -803,15 +812,15 @@ export async function POST(req: Request) {
           
           console.log('[Quick PO] Matched target color:', matchedTargetColor?.color || 'NOT FOUND');
           
-          // Build distribution: target color gets ALL the qty, others get 0
-          for (const cn of colorStockData) {
-            const isTarget = matchedTargetColor?.color === cn.color;
-            const qty = isTarget ? (cmd.quantity || 0) : 0;
+          // ONLY add the TARGET color to distribution (not all colors!)
+          if (matchedTargetColor) {
+            const cn = matchedTargetColor;
+            const qty = cmd.quantity || 0;
             const numSizes = cn.sizes.length;
             
             // Calculate size breakdown for the target color
             let newOrderBySize: number[] = Array(numSizes).fill(0);
-            if (isTarget && qty > 0) {
+            if (qty > 0) {
               // Try to use historical data for size distribution
               const ratio = sizeRatios[styleNo];
               if (ratio && Object.keys(ratio.ratioBySize).length > 0) {
@@ -832,10 +841,10 @@ export async function POST(req: Request) {
             
             colorDistribution[cn.color] = {
               qty,
-              pct: isTarget ? 100 : 0,
+              pct: 100,
               stockData: cn,
               newNetNeed: cn.netNeedTotal - qty,
-              isTarget,
+              isTarget: true,
               newOrderBySize,
               newNetNeedBySize
             };
@@ -843,7 +852,7 @@ export async function POST(req: Request) {
           
           // If target color wasn't found, add a warning
           if (!matchedTargetColor && targetColorLower) {
-            warnings.push(`${styleNo}: Target color "${color}" not found in stock data`);
+            warnings.push(`${styleNo}: Target color "${color}" not found in stock data. Available colors: ${colorStockData.map(c => c.color).join(', ')}`);
           }
           
           console.log('[Quick PO] Color distribution for', styleNo, ':', Object.entries(colorDistribution).map(([clr, d]) => ({

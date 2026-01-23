@@ -1876,7 +1876,7 @@ export default function StatisticsGeneralPage() {
                     const indexQty = visitedS2Qty === 0 ? 100 : (qtyIndexRatio * 100);
                     const indexPrice = visitedS2Price === 0 ? 100 : (priceIndexRatio * 100);
                     
-                    // Prognosis: apply current index to unvisited customers' S2 totals, add visited S1 totals
+                    // Prognosis (index-independent): treat current S1 (visited) as final, and add missing S2 totals for customers not yet visited.
                     const unvisitedRows = items.filter(r => {
                       const hasS1Activity = r.s1Qty > 0 || r.s1Price > 0;
                       const isExcluded = isNulled(r.account_no);
@@ -1885,8 +1885,8 @@ export default function StatisticsGeneralPage() {
                     const unvisitedS2Qty = unvisitedRows.reduce((a, r) => a + r.s2Qty, 0);
                     const unvisitedS2Price = unvisitedRows.reduce((a, r) => a + r.s2Price, 0);
                     
-                    const prognosedQty = visitedS1Qty + (unvisitedS2Qty * qtyIndexRatio);
-                    const prognosedPrice = visitedS1Price + (unvisitedS2Price * priceIndexRatio);
+                    const prognosedQty = visitedS1Qty + unvisitedS2Qty;
+                    const prognosedPrice = visitedS1Price + unvisitedS2Price;
                     
                     return (
                       <>
@@ -1932,12 +1932,12 @@ export default function StatisticsGeneralPage() {
                             <div className="rounded-md border p-3">
                               <div className="text-xs text-gray-500">Prognose QTY</div>
                               <div className="text-xl font-semibold">{Math.round(prognosedQty).toLocaleString('da-DK')}</div>
-                              <div className="text-[11px] text-gray-400">if index holds</div>
+                              <div className="text-[11px] text-gray-400">visited S1 + missing S2 (unvisited)</div>
                             </div>
                             <div className="rounded-md border p-3">
                               <div className="text-xs text-gray-500">Prognose PRICE</div>
                               <div className="text-xl font-semibold">{Math.round(prognosedPrice).toLocaleString('da-DK')}</div>
-                              <div className="text-[11px] text-gray-400">if index holds</div>
+                              <div className="text-[11px] text-gray-400">visited S1 + missing S2 (unvisited)</div>
                             </div>
                           </div>
                         </div>
