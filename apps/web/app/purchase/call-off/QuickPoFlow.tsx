@@ -274,7 +274,7 @@ export default function QuickPoFlow({
     let promptVersion: number | null = null;
     if (result?.promptVersion) {
       const match = result.promptVersion.match(/^(.+)_v(\d+)$/);
-      if (match) {
+      if (match && match[1] && match[2]) {
         promptKey = match[1];
         promptVersion = parseInt(match[2]);
       } else {
