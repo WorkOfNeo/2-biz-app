@@ -889,7 +889,11 @@ export async function POST(req: Request) {
           }
           
           console.log('[Quick PO] WHITE WEFT POs:', whiteWeftAvailable, 'Stock:', whiteWeftAggregated.stockTotal, 'sizes:', whiteWeftAggregated.sizes.length);
-          console.log('[Quick PO] Available colors:', Array.from(stockByColor.keys()).join(', '));
+          
+          // Get all unique colors for logging
+          const allColors = Array.from(new Set(allStyleStockRows.map(r => r.color)))
+            .filter(c => c && !isWhiteWeft(c));
+          console.log('[Quick PO] Available colors:', allColors.join(', '));
           
           // Calculate full stock data for each color (excluding WHITE WEFT)
           type ColorStockData = {
