@@ -106,6 +106,8 @@ interface ColorBreakdownPlan {
   action: string;
   look_sales?: boolean;
   stock_table?: StockTableData;
+  white_weft_stock_table?: StockTableData; // WHITE WEFT source material stock levels
+  white_weft_remaining_by_size?: number[]; // WHITE WEFT stock after colors are deducted
 }
 
 interface WaitReminder {
@@ -789,73 +791,83 @@ KAXY NAVY - Make sure stock is fixed`}
                         </Badge>
                       </div>
                       
-                      <div className="grid grid-cols-3 gap-2 text-xs mb-3">
-                        <div>
-                          <span className="text-slate-500">Source Needed:</span>
-                          <span className="ml-1 font-medium">{plan.source_stock_needed}</span>
+                      {/* ==================== SECTION 1: WHITE WEFT SOURCE STOCK ==================== */}
+                      {plan.white_weft_stock_table && (
+                        <div className="mb-4">
+                          <div className="bg-amber-100 text-amber-800 rounded px-2 py-1 mb-2 text-xs font-medium flex items-center gap-1">
+                            🧵 WHITE WEFT - Source Material Stock
+                          </div>
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-xs border-collapse">
+                              <thead>
+                                <tr className="bg-amber-50">
+                                  <th className="p-2 text-left border-b font-medium">Section</th>
+                                  {plan.white_weft_stock_table.sizes.map((size, i) => (
+                                    <th key={i} className="p-2 text-right border-b font-medium w-14">{size}</th>
+                                  ))}
+                                  <th className="p-2 text-right border-b font-medium w-16">Total</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {/* Stock Row */}
+                                <tr>
+                                  <td className="p-2 border-b font-medium">Stock</td>
+                                  {plan.white_weft_stock_table.stock.map((v, i) => (
+                                    <td key={i} className="p-2 text-right border-b">{v}</td>
+                                  ))}
+                                  <td className="p-2 text-right border-b font-medium">{plan.white_weft_stock_table.stockTotal}</td>
+                                </tr>
+                                {/* Sold Row */}
+                                <tr>
+                                  <td className="p-2 border-b font-medium text-red-600">Sold</td>
+                                  {plan.white_weft_stock_table.soldSum.map((v, i) => (
+                                    <td key={i} className="p-2 text-right border-b text-red-600">{v > 0 ? `-${v}` : v}</td>
+                                  ))}
+                                  <td className="p-2 text-right border-b font-medium text-red-700">
+                                    {plan.white_weft_stock_table.soldTotal > 0 ? `-${plan.white_weft_stock_table.soldTotal}` : plan.white_weft_stock_table.soldTotal}
+                                  </td>
+                                </tr>
+                                {/* Purchase Row */}
+                                <tr>
+                                  <td className="p-2 border-b font-medium text-green-600">Purchase</td>
+                                  {plan.white_weft_stock_table.purchaseSum.map((v, i) => (
+                                    <td key={i} className="p-2 text-right border-b text-green-600">{v > 0 ? `+${v}` : v}</td>
+                                  ))}
+                                  <td className="p-2 text-right border-b font-medium text-green-700">
+                                    {plan.white_weft_stock_table.purchaseTotal > 0 ? `+${plan.white_weft_stock_table.purchaseTotal}` : plan.white_weft_stock_table.purchaseTotal}
+                                  </td>
+                                </tr>
+                                {/* Net Need Row */}
+                                <tr className="bg-amber-50">
+                                  <td className="p-2 font-semibold">Net Need 1</td>
+                                  {plan.white_weft_stock_table.netNeed.map((v, i) => (
+                                    <td key={i} className={`p-2 text-right font-semibold ${v < 0 ? 'text-red-700' : 'text-slate-700'}`}>{v}</td>
+                                  ))}
+                                  <td className={`p-2 text-right font-bold ${plan.white_weft_stock_table.netNeedTotal < 0 ? 'text-red-700' : 'text-slate-700'}`}>
+                                    {plan.white_weft_stock_table.netNeedTotal}
+                                  </td>
+                                </tr>
+                              </tbody>
+                            </table>
+                          </div>
                         </div>
-                        <div>
-                          <span className="text-slate-500">Available:</span>
-                          <span className="ml-1">{plan.source_stock_available}</span>
-                        </div>
-                        <div>
-                          <span className="text-slate-500">Remaining:</span>
-                          <span className="ml-1">{plan.source_stock_remaining}</span>
-                        </div>
-                      </div>
+                      )}
                       
-                      {/* Stock Table (when look_sales is true) */}
-                      {plan.look_sales && plan.stock_table && (
-                        <div className="mb-4 overflow-x-auto">
-                          <table className="w-full text-xs border-collapse">
-                            <thead>
-                              <tr className="bg-slate-100">
-                                <th className="p-2 text-left border-b font-medium">Section</th>
-                                {plan.stock_table.sizes.map((size, i) => (
-                                  <th key={i} className="p-2 text-right border-b font-medium w-14">{size}</th>
-                                ))}
-                                <th className="p-2 text-right border-b font-medium w-16">Total</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {/* Stock Row */}
-                              <tr>
-                                <td className="p-2 border-b font-medium">Stock</td>
-                                {plan.stock_table.stock.map((v, i) => (
-                                  <td key={i} className="p-2 text-right border-b">{v}</td>
-                                ))}
-                                <td className="p-2 text-right border-b font-medium">{plan.stock_table.stockTotal}</td>
-                              </tr>
-                              {/* Sold Row */}
-                              <tr>
-                                <td className="p-2 border-b font-medium text-red-600">Sold</td>
-                                {plan.stock_table.soldSum.map((v, i) => (
-                                  <td key={i} className="p-2 text-right border-b text-red-600">{v > 0 ? `-${v}` : v}</td>
-                                ))}
-                                <td className="p-2 text-right border-b font-medium text-red-700">
-                                  {plan.stock_table.soldTotal > 0 ? `-${plan.stock_table.soldTotal}` : plan.stock_table.soldTotal}
-                                </td>
-                              </tr>
-                              {/* Purchase Row */}
-                              <tr>
-                                <td className="p-2 border-b font-medium text-green-600">Purchase</td>
-                                {plan.stock_table.purchaseSum.map((v, i) => (
-                                  <td key={i} className="p-2 text-right border-b text-green-600">{v}</td>
-                                ))}
-                                <td className="p-2 text-right border-b font-medium text-green-700">{plan.stock_table.purchaseTotal}</td>
-                              </tr>
-                              {/* Net Need Row */}
-                              <tr className="bg-slate-50">
-                                <td className="p-2 font-semibold">Net Need</td>
-                                {plan.stock_table.netNeed.map((v, i) => (
-                                  <td key={i} className={`p-2 text-right font-semibold ${v < 0 ? 'text-red-700' : v > 0 ? 'text-green-700' : ''}`}>{v}</td>
-                                ))}
-                                <td className={`p-2 text-right font-bold ${plan.stock_table.netNeedTotal < 0 ? 'text-red-700' : plan.stock_table.netNeedTotal > 0 ? 'text-green-700' : ''}`}>
-                                  {plan.stock_table.netNeedTotal}
-                                </td>
-                              </tr>
-                            </tbody>
-                          </table>
+                      {/* Fallback summary if no white weft stock table */}
+                      {!plan.white_weft_stock_table && (
+                        <div className="grid grid-cols-3 gap-2 text-xs mb-3">
+                          <div>
+                            <span className="text-slate-500">Source Needed:</span>
+                            <span className="ml-1 font-medium">{plan.source_stock_needed}</span>
+                          </div>
+                          <div>
+                            <span className="text-slate-500">Available:</span>
+                            <span className="ml-1">{plan.source_stock_available}</span>
+                          </div>
+                          <div>
+                            <span className="text-slate-500">Remaining:</span>
+                            <span className="ml-1">{plan.source_stock_remaining}</span>
+                          </div>
                         </div>
                       )}
                       
@@ -994,6 +1006,69 @@ KAXY NAVY - Make sure stock is fixed`}
                           );
                         })}
                       </div>
+                      
+                      {/* ==================== SECTION 3: WHITE WEFT REMAINING AFTER COLORS ==================== */}
+                      {plan.white_weft_stock_table && plan.white_weft_remaining_by_size && (
+                        <div className="mt-4">
+                          <div className="bg-teal-100 text-teal-800 rounded px-2 py-1 mb-2 text-xs font-medium flex items-center gap-1">
+                            ✅ WHITE WEFT - Remaining After Coloring
+                          </div>
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-xs border-collapse">
+                              <thead>
+                                <tr className="bg-teal-50">
+                                  <th className="p-2 text-left border-b font-medium">Section</th>
+                                  {plan.white_weft_stock_table.sizes.map((size, i) => (
+                                    <th key={i} className="p-2 text-right border-b font-medium w-14">{size}</th>
+                                  ))}
+                                  <th className="p-2 text-right border-b font-medium w-16">Total</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {/* Original Net Need */}
+                                <tr className="text-slate-500">
+                                  <td className="p-2 border-b font-medium">Net Need 1</td>
+                                  {plan.white_weft_stock_table.netNeed.map((v, i) => (
+                                    <td key={i} className="p-2 text-right border-b">{v}</td>
+                                  ))}
+                                  <td className="p-2 text-right border-b font-medium">{plan.white_weft_stock_table.netNeedTotal}</td>
+                                </tr>
+                                {/* Color Deduction */}
+                                <tr>
+                                  <td className="p-2 border-b font-medium text-purple-600">- Coloring</td>
+                                  {plan.white_weft_stock_table.sizes.map((_, i) => {
+                                    const deduction = (plan.white_weft_stock_table?.netNeed[i] ?? 0) - (plan.white_weft_remaining_by_size?.[i] ?? 0);
+                                    return (
+                                      <td key={i} className="p-2 text-right border-b text-purple-600">
+                                        {deduction > 0 ? `-${deduction}` : deduction}
+                                      </td>
+                                    );
+                                  })}
+                                  <td className="p-2 text-right border-b font-medium text-purple-700">
+                                    -{plan.target_quantity}
+                                  </td>
+                                </tr>
+                                {/* Final Remaining */}
+                                <tr className="bg-teal-50">
+                                  <td className="p-2 font-semibold">Net Need 2</td>
+                                  {plan.white_weft_remaining_by_size.map((v, i) => (
+                                    <td key={i} className={`p-2 text-right font-semibold ${v < 0 ? 'text-red-700' : 'text-teal-700'}`}>{v}</td>
+                                  ))}
+                                  <td className={`p-2 text-right font-bold ${plan.source_stock_remaining < 0 ? 'text-red-700' : 'text-teal-700'}`}>
+                                    {plan.source_stock_remaining}
+                                  </td>
+                                </tr>
+                              </tbody>
+                            </table>
+                          </div>
+                          {plan.source_stock_remaining < 0 && (
+                            <div className="mt-2 text-xs text-red-600 flex items-center gap-1">
+                              <AlertTriangle className="h-3 w-3" />
+                              Not enough WHITE WEFT stock! Need {Math.abs(plan.source_stock_remaining)} more pieces.
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>

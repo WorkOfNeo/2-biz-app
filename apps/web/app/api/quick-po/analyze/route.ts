@@ -85,6 +85,8 @@ interface ColorBreakdownPlan {
   action: string;
   look_sales: boolean;
   stock_table?: StockTableData;
+  white_weft_stock_table?: StockTableData; // WHITE WEFT source material stock levels
+  white_weft_remaining_by_size?: number[]; // WHITE WEFT stock after colors are deducted
 }
 
 interface WaitReminder {
@@ -897,9 +899,48 @@ export async function POST(req: Request) {
           if (whiteWeftRows.length === 0) {
             whiteWeftRows = stockByColor.get('whiteweft') || [];
           }
-          const whiteWeftStockRow = whiteWeftRows.find(r => r.section === 'Stock');
-          const whiteWeftStock = whiteWeftStockRow?.values?.reduce((a: number, b: number) => a + (b || 0), 0) || 0;
+          
+          // Build full WHITE WEFT stock table with all sections
+          const whiteWeftStockRow = whiteWeftRows.find((r: any) => r.section === 'Stock');
+          const whiteWeftSoldRows = whiteWeftRows.filter((r: any) => r.section === 'Sold');
+          const whiteWeftPurchaseRows = whiteWeftRows.filter((r: any) => r.section?.includes('Purchase'));
+          const whiteWeftNetNeedRow = whiteWeftRows.find((r: any) => r.section === 'Net Need');
+          
           const whiteWeftSizes = whiteWeftStockRow?.sizes || [];
+          const numWhiteWeftSizes = whiteWeftSizes.length;
+          const whiteWeftZero = Array(numWhiteWeftSizes).fill(0);
+          
+          const whiteWeftStockValues = whiteWeftStockRow?.values || whiteWeftZero;
+          const whiteWeftStock = whiteWeftStockValues.reduce((a: number, b: number) => a + (b || 0), 0);
+          
+          const whiteWeftSoldSum = whiteWeftSoldRows.reduce((acc: number[], r: any) => {
+            const vals = r.values || [];
+            return acc.map((v, i) => v + (vals[i] || 0));
+          }, whiteWeftZero.slice());
+          const whiteWeftSoldTotal = whiteWeftSoldSum.reduce((a: number, b: number) => a + (b || 0), 0);
+          
+          const whiteWeftPurchaseSum = whiteWeftPurchaseRows.reduce((acc: number[], r: any) => {
+            const vals = r.values || [];
+            return acc.map((v, i) => v + (vals[i] || 0));
+          }, whiteWeftZero.slice());
+          const whiteWeftPurchaseTotal = whiteWeftPurchaseSum.reduce((a: number, b: number) => a + (b || 0), 0);
+          
+          const whiteWeftNetNeed = whiteWeftNetNeedRow?.values || 
+            whiteWeftStockValues.map((s: number, i: number) => s - (whiteWeftSoldSum[i] || 0) + (whiteWeftPurchaseSum[i] || 0));
+          const whiteWeftNetNeedTotal = whiteWeftNetNeed.reduce((a: number, b: number) => a + (b || 0), 0);
+          
+          // Build WHITE WEFT stock table for display
+          const whiteWeftStockTable: StockTableData = {
+            sizes: whiteWeftSizes,
+            stock: whiteWeftStockValues,
+            soldSum: whiteWeftSoldSum,
+            purchaseSum: whiteWeftPurchaseSum,
+            netNeed: whiteWeftNetNeed,
+            stockTotal: whiteWeftStock,
+            soldTotal: whiteWeftSoldTotal,
+            purchaseTotal: whiteWeftPurchaseTotal,
+            netNeedTotal: whiteWeftNetNeedTotal
+          };
           
           console.log('[Quick PO] WHITE WEFT stock:', whiteWeftStock, 'sizes:', whiteWeftSizes.length);
           console.log('[Quick PO] Available colors:', Array.from(stockByColor.keys()).join(', '));
@@ -1149,6 +1190,18 @@ export async function POST(req: Request) {
             };
           }
           
+          // Calculate remaining WHITE WEFT stock by size after deducting the color order
+          const whiteWeftRemainingBySize = whiteWeftNetNeed.map((netNeed: number, i: number) => {
+            // Sum up all order quantities for this size from colorDistribution
+            let totalOrderedForSize = 0;
+            for (const [_, dist] of Object.entries(colorDistribution)) {
+              if (dist.isTarget && dist.newOrderBySize && dist.newOrderBySize[i]) {
+                totalOrderedForSize += dist.newOrderBySize[i];
+              }
+            }
+            return netNeed - totalOrderedForSize;
+          });
+          
           colorBreakdownPlans.push({
             style_no: styleNo,
             style_name: cmd.style_name || styleNo,
@@ -1160,7 +1213,9 @@ export async function POST(req: Request) {
             source_stock_remaining: whiteWeftStock - cmd.quantity,
             action: 'create_coloring_po',
             look_sales: cmd.look_sales,
-            stock_table: stockTableData
+            stock_table: stockTableData,
+            white_weft_stock_table: whiteWeftStockTable,
+            white_weft_remaining_by_size: whiteWeftRemainingBySize
           });
           break;
         }
