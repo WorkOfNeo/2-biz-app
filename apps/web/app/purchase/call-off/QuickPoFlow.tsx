@@ -794,7 +794,7 @@ KAXY NAVY - Make sure stock is fixed`}
                                     <tr className="bg-green-50">
                                       <td className="p-1.5 font-semibold">New Net Need</td>
                                       {sd.sizes.map((_, i) => {
-                                        const newNeed = dist.newNetNeedBySize?.[i] ?? sd.netNeed[i];
+                                        const newNeed = dist.newNetNeedBySize?.[i] ?? sd.netNeed[i] ?? 0;
                                         return (
                                           <td key={i} className={`p-1.5 text-right font-medium ${newNeed > 0 ? 'text-amber-600' : newNeed < 0 ? 'text-green-600' : ''}`}>
                                             {newNeed}
