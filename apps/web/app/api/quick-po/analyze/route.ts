@@ -24,21 +24,6 @@ interface ParsedCommand {
   parse_error: string | null;
 }
 
-interface OrderPlan {
-  style_no: string;
-  style_name: string;
-  color: string;
-  total_qty: number;
-  size_breakdown: Record<string, number>;
-  size_source: 'historical' | 'default_assortment';
-  current_stock: number;
-  current_on_order: number;
-  net_need_before: number;
-  net_need_after: number;
-  warning: string | null;
-  action: 'create_po' | 'skip_overstocked' | 'review_needed';
-}
-
 interface StockTableRow {
   section: string;
   row_label: string | null;
@@ -59,6 +44,23 @@ interface StockTableData {
   soldTotal: number;
   purchaseTotal: number;
   netNeedTotal: number;
+  historicalSales?: number;
+}
+
+interface OrderPlan {
+  style_no: string;
+  style_name: string;
+  color: string;
+  total_qty: number;
+  size_breakdown: Record<string, number>;
+  size_source: 'historical' | 'default_assortment';
+  current_stock: number;
+  current_on_order: number;
+  net_need_before: number;
+  net_need_after: number;
+  warning: string | null;
+  action: 'create_po' | 'skip_overstocked' | 'review_needed';
+  stock_table?: StockTableData;
 }
 
 interface ColorBreakdownPlan {
