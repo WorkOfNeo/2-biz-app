@@ -80,8 +80,8 @@ interface ColorBreakdownPlan {
   target_quantity: number;
   color_distribution: Record<string, { qty: number; pct: number }>;
   source_stock_needed: number;
-  source_stock_available: number;
-  source_stock_remaining: number;
+  source_po_available: number;  // WHITE WEFT PO's available to color
+  source_po_remaining: number;  // WHITE WEFT PO's remaining after coloring
   action: string;
   look_sales: boolean;
   stock_table?: StockTableData;
@@ -900,13 +900,16 @@ export async function POST(req: Request) {
             whiteWeftRows = stockByColor.get('whiteweft') || [];
           }
           
-          // Build full WHITE WEFT stock table with all sections
+          // Build full WHITE WEFT table with all sections
+          // IMPORTANT: For color breakdowns, we use PO's as the source (what's on order to be colored)
+          // NOT stock (which is already finished product)
           const whiteWeftStockRow = whiteWeftRows.find((r: any) => r.section === 'Stock');
           const whiteWeftSoldRows = whiteWeftRows.filter((r: any) => r.section === 'Sold');
           const whiteWeftPurchaseRows = whiteWeftRows.filter((r: any) => r.section?.includes('Purchase'));
           const whiteWeftNetNeedRow = whiteWeftRows.find((r: any) => r.section === 'Net Need');
           
-          const whiteWeftSizes = whiteWeftStockRow?.sizes || [];
+          // Use Purchase row sizes as primary (since that's what we're coloring)
+          const whiteWeftSizes = whiteWeftPurchaseRows[0]?.sizes || whiteWeftStockRow?.sizes || [];
           const numWhiteWeftSizes = whiteWeftSizes.length;
           const whiteWeftZero = Array(numWhiteWeftSizes).fill(0);
           
@@ -919,6 +922,7 @@ export async function POST(req: Request) {
           }, whiteWeftZero.slice());
           const whiteWeftSoldTotal = whiteWeftSoldSum.reduce((a: number, b: number) => a + (b || 0), 0);
           
+          // PO's are the key value for WHITE WEFT - this is what we can color
           const whiteWeftPurchaseSum = whiteWeftPurchaseRows.reduce((acc: number[], r: any) => {
             const vals = r.values || [];
             return acc.map((v, i) => v + (vals[i] || 0));
@@ -929,7 +933,7 @@ export async function POST(req: Request) {
             whiteWeftStockValues.map((s: number, i: number) => s - (whiteWeftSoldSum[i] || 0) + (whiteWeftPurchaseSum[i] || 0));
           const whiteWeftNetNeedTotal = whiteWeftNetNeed.reduce((a: number, b: number) => a + (b || 0), 0);
           
-          // Build WHITE WEFT stock table for display
+          // Build WHITE WEFT table for display - PO's are the primary "available" value
           const whiteWeftStockTable: StockTableData = {
             sizes: whiteWeftSizes,
             stock: whiteWeftStockValues,
@@ -956,7 +960,10 @@ export async function POST(req: Request) {
             netNeedTotal: whiteWeftNetNeedTotal
           };
           
-          console.log('[Quick PO] WHITE WEFT stock:', whiteWeftStock, 'sizes:', whiteWeftSizes.length);
+          // Use PO total as what's available to color, not stock
+          const whiteWeftAvailable = whiteWeftPurchaseTotal;
+          
+          console.log('[Quick PO] WHITE WEFT POs:', whiteWeftPurchaseTotal, 'Stock:', whiteWeftStock, 'sizes:', whiteWeftSizes.length);
           console.log('[Quick PO] Available colors:', Array.from(stockByColor.keys()).join(', '));
           
           // Calculate full stock data for each color (excluding WHITE WEFT)
@@ -1204,8 +1211,9 @@ export async function POST(req: Request) {
             };
           }
           
-          // Calculate remaining WHITE WEFT stock by size after deducting the color order
-          const whiteWeftRemainingBySize = whiteWeftNetNeed.map((netNeed: number, i: number) => {
+          // Calculate remaining WHITE WEFT PO's by size after deducting the color order
+          // We use PO's as the source (what's on order to be colored), not stock
+          const whiteWeftRemainingBySize = whiteWeftPurchaseSum.map((poQty: number, i: number) => {
             // Sum up all order quantities for this size from colorDistribution
             let totalOrderedForSize = 0;
             for (const [_, dist] of Object.entries(colorDistribution)) {
@@ -1213,7 +1221,7 @@ export async function POST(req: Request) {
                 totalOrderedForSize += dist.newOrderBySize[i];
               }
             }
-            return netNeed - totalOrderedForSize;
+            return poQty - totalOrderedForSize;
           });
           
           colorBreakdownPlans.push({
@@ -1223,8 +1231,8 @@ export async function POST(req: Request) {
             target_quantity: cmd.quantity,
             color_distribution: colorDistribution,
             source_stock_needed: cmd.quantity,
-            source_stock_available: whiteWeftStock,
-            source_stock_remaining: whiteWeftStock - cmd.quantity,
+            source_po_available: whiteWeftAvailable,  // PO's available to color
+            source_po_remaining: whiteWeftAvailable - cmd.quantity,  // PO's remaining after coloring
             action: 'create_coloring_po',
             look_sales: cmd.look_sales,
             stock_table: stockTableData,
@@ -1346,7 +1354,7 @@ export async function POST(req: Request) {
       colorBreakdownPlans.forEach((plan, idx) => {
         console.log(`[Quick PO] Breakdown ${idx + 1}: ${plan.style_name} - WHITE WEFT`);
         console.log(`  - Target: ${plan.target_quantity} pcs`);
-        console.log(`  - Source available: ${plan.source_stock_available}`);
+        console.log(`  - WHITE WEFT PO's available: ${plan.source_po_available}`);
         console.log(`  - Colors in distribution:`, Object.keys(plan.color_distribution).length);
         Object.entries(plan.color_distribution).forEach(([color, dist]: [string, any]) => {
           console.log(`    • ${color}: qty=${dist.qty}, netNeed=${dist.stockData?.netNeedTotal ?? 'N/A'}, newNetNeed=${dist.newNetNeed ?? 'N/A'}`);
