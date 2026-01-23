@@ -650,15 +650,15 @@ KAXY NAVY - Make sure stock is fixed`}
                               ))}
                               <td className="p-1.5 text-right border-b font-medium text-green-700">{st?.purchaseTotal ?? plan.current_on_order}</td>
                             </tr>
-                            {/* Net Need */}
+                            {/* Net Need 1 = Stock - Sold + POs */}
                             <tr className="bg-amber-50/50">
-                              <td className="p-1.5 border-b font-medium">Net Need</td>
+                              <td className="p-1.5 border-b font-medium">Net Need 1</td>
                               {sizes.map((size, i) => (
-                                <td key={i} className={`p-1.5 text-right border-b font-medium ${(st?.netNeed[i] ?? 0) > 0 ? 'text-red-600' : (st?.netNeed[i] ?? 0) < 0 ? 'text-green-600' : ''}`}>
+                                <td key={i} className={`p-1.5 text-right border-b font-medium ${(st?.netNeed[i] ?? 0) < 0 ? 'text-red-600' : 'text-slate-700'}`}>
                                   {st?.netNeed[i] ?? '-'}
                                 </td>
                               ))}
-                              <td className={`p-1.5 text-right border-b font-bold ${plan.net_need_before > 0 ? 'text-red-700' : plan.net_need_before < 0 ? 'text-green-700' : ''}`}>
+                              <td className={`p-1.5 text-right border-b font-bold ${plan.net_need_before < 0 ? 'text-red-700' : 'text-slate-700'}`}>
                                 {plan.net_need_before}
                               </td>
                             </tr>
@@ -689,21 +689,29 @@ KAXY NAVY - Make sure stock is fixed`}
                               <td className="p-1.5 text-right border-b font-bold text-purple-700">+{plan.total_qty}</td>
                             </tr>
                             {/* New Net Need */}
+                            {/* Net Need 2 = Net Need 1 + New Order (stock position after order arrives) */}
                             <tr className="bg-green-50">
-                              <td className="p-1.5 font-semibold">New Net Need</td>
+                              <td className="p-1.5 font-semibold">Net Need 2</td>
                               {sizes.map((size, i) => {
-                                const oldNeed = st?.netNeed[i] ?? 0;
+                                const netNeed1 = st?.netNeed[i] ?? 0;
                                 const newOrder = plan.size_breakdown[size] ?? 0;
-                                const newNeed = oldNeed - newOrder;
+                                const netNeed2 = netNeed1 + newOrder; // ADD the order, not subtract
                                 return (
-                                  <td key={i} className={`p-1.5 text-right font-medium ${newNeed > 0 ? 'text-amber-600' : newNeed < 0 ? 'text-green-600' : ''}`}>
-                                    {newNeed > 0 ? newNeed : newNeed < 0 ? `+${Math.abs(newNeed)}` : '0'}
+                                  <td key={i} className={`p-1.5 text-right font-medium ${netNeed2 < 0 ? 'text-red-600' : 'text-green-600'}`}>
+                                    {netNeed2}
                                   </td>
                                 );
                               })}
-                              <td className={`p-1.5 text-right font-bold ${plan.net_need_after > 0 ? 'text-amber-600' : plan.net_need_after < 0 ? 'text-green-700' : 'text-slate-600'}`}>
-                                {plan.net_need_after > 0 ? plan.net_need_after : plan.net_need_after === 0 ? '✓ Covered' : `+${Math.abs(plan.net_need_after)} surplus`}
-                              </td>
+                              {(() => {
+                                // Calculate total Net Need 2 = Net Need 1 + New Order
+                                const totalNetNeed1 = st?.netNeedTotal ?? plan.net_need_before;
+                                const totalNetNeed2 = totalNetNeed1 + plan.total_qty;
+                                return (
+                                  <td className={`p-1.5 text-right font-bold ${totalNetNeed2 < 0 ? 'text-red-700' : 'text-green-700'}`}>
+                                    {totalNetNeed2}
+                                  </td>
+                                );
+                              })()}
                             </tr>
                           </tbody>
                         </table>
@@ -933,11 +941,11 @@ KAXY NAVY - Make sure stock is fixed`}
                                       ))}
                                       <td className="p-1.5 text-right border-b font-medium text-green-700">{sd.purchaseTotal}</td>
                                     </tr>
-                                    {/* Net Need (current) */}
+                                    {/* Net Need 1 = Stock - Sold + POs */}
                                     <tr className="bg-amber-50/50">
-                                      <td className="p-1.5 border-b font-medium">Net Need</td>
+                                      <td className="p-1.5 border-b font-medium">Net Need 1</td>
                                       {sd.netNeed.map((v, i) => (
-                                        <td key={i} className={`p-1.5 text-right border-b font-medium ${v > 0 ? 'text-red-600' : v < 0 ? 'text-green-600' : ''}`}>{v}</td>
+                                        <td key={i} className={`p-1.5 text-right border-b font-medium ${v < 0 ? 'text-red-600' : 'text-slate-700'}`}>{v}</td>
                                       ))}
                                       <td className={`p-1.5 text-right border-b font-bold ${sd.netNeedTotal > 0 ? 'text-red-700' : sd.netNeedTotal < 0 ? 'text-green-700' : ''}`}>
                                         {sd.netNeedTotal}
@@ -955,20 +963,29 @@ KAXY NAVY - Make sure stock is fixed`}
                                       ))}
                                       <td className="p-1.5 text-right border-b font-bold text-purple-700">+{dist.qty}</td>
                                     </tr>
-                                    {/* New Net Need */}
+                                    {/* Net Need 2 = Net Need 1 + New Order */}
                                     <tr className="bg-green-50">
-                                      <td className="p-1.5 font-semibold">New Net Need</td>
+                                      <td className="p-1.5 font-semibold">Net Need 2</td>
                                       {sd.sizes.map((_, i) => {
-                                        const newNeed = dist.newNetNeedBySize?.[i] ?? sd.netNeed[i] ?? 0;
+                                        const netNeed1 = sd.netNeed[i] ?? 0;
+                                        const newOrder = dist.newOrderBySize?.[i] ?? 0;
+                                        const netNeed2 = netNeed1 + newOrder;
                                         return (
-                                          <td key={i} className={`p-1.5 text-right font-medium ${newNeed > 0 ? 'text-amber-600' : newNeed < 0 ? 'text-green-600' : ''}`}>
-                                            {newNeed > 0 ? newNeed : newNeed < 0 ? `+${Math.abs(newNeed)}` : '0'}
+                                          <td key={i} className={`p-1.5 text-right font-medium ${netNeed2 < 0 ? 'text-red-600' : 'text-green-600'}`}>
+                                            {netNeed2}
                                           </td>
                                         );
                                       })}
-                                      <td className={`p-1.5 text-right font-bold ${dist.newNetNeed > 0 ? 'text-amber-600' : dist.newNetNeed < 0 ? 'text-green-700' : 'text-slate-600'}`}>
-                                        {dist.newNetNeed > 0 ? dist.newNetNeed : dist.newNetNeed === 0 ? '✓ Covered' : `+${Math.abs(dist.newNetNeed)} surplus`}
-                                      </td>
+                                      {(() => {
+                                        // Net Need 2 = Net Need 1 + New Order
+                                        const netNeed1Total = sd.netNeedTotal;
+                                        const netNeed2Total = netNeed1Total + dist.qty;
+                                        return (
+                                          <td className={`p-1.5 text-right font-bold ${netNeed2Total < 0 ? 'text-red-700' : 'text-green-700'}`}>
+                                            {netNeed2Total}
+                                          </td>
+                                        );
+                                      })()}
                                     </tr>
                                   </tbody>
                                 </table>

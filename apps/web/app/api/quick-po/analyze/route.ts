@@ -731,16 +731,32 @@ export async function POST(req: Request) {
           const { data: orderStockData } = await supabase
             .from('style_stock')
             .select('style_no, color, section, row_label, sizes, values')
-            .eq('style_no', styleNo)
-            .ilike('color', `%${color}%`);
+            .eq('style_no', styleNo);
+          
+          // Filter by color more strictly - avoid "WHITE" matching "WHITE WEFT"
+          // First try exact match (case-insensitive), then fuzzy match with word boundaries
+          const colorLower = color.toLowerCase().trim();
+          const filteredOrderStockData = (orderStockData || []).filter((row: any) => {
+            const rowColor = (row.color || '').toLowerCase().trim();
+            // Exact match
+            if (rowColor === colorLower) return true;
+            // Match if row color ends with our color (e.g., "807 BLACK" matches "BLACK")
+            if (rowColor.endsWith(` ${colorLower}`)) return true;
+            // Match if our color ends with row color number prefix removed
+            const rowColorWithoutNumber = rowColor.replace(/^\d+\s*/, '');
+            if (rowColorWithoutNumber === colorLower) return true;
+            // DON'T match if row color contains our color as a prefix of another word
+            // e.g., "WHITE" should NOT match "WHITE WEFT"
+            return false;
+          });
           
           // Build stock table data
           let orderStockTable: StockTableData | undefined;
-          if (orderStockData && orderStockData.length > 0) {
-            const stockRows = orderStockData.filter((r: any) => r.section === 'Stock');
-            const soldRows = orderStockData.filter((r: any) => r.section === 'Sold');
-            const purchaseRows = orderStockData.filter((r: any) => r.section?.includes('Purchase'));
-            const netNeedRows = orderStockData.filter((r: any) => r.section === 'Net Need');
+          if (filteredOrderStockData && filteredOrderStockData.length > 0) {
+            const stockRows = filteredOrderStockData.filter((r: any) => r.section === 'Stock');
+            const soldRows = filteredOrderStockData.filter((r: any) => r.section === 'Sold');
+            const purchaseRows = filteredOrderStockData.filter((r: any) => r.section?.includes('Purchase'));
+            const netNeedRows = filteredOrderStockData.filter((r: any) => r.section === 'Net Need');
             
             const sizes = stockRows[0]?.sizes || [];
             const numSizes = sizes.length;
