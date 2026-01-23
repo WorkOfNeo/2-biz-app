@@ -61,6 +61,28 @@ function ensureNums(arr: any[], len: number): number[] {
  * - Handles unnamed POs (NULL row_label) as separate entries
  * - Aggregates Stock, Sold, and Purchase sections
  */
+/**
+ * Fuzzy match color - handles cases like "WHITE" matching "807 WHITE" or "BLACK" matching "807 BLACK"
+ */
+function fuzzyMatchColor(rowColor: string, targetColor: string): boolean {
+  const rowLower = (rowColor || '').toLowerCase().trim();
+  const targetLower = (targetColor || '').toLowerCase().trim();
+  
+  // Exact match
+  if (rowLower === targetLower) return true;
+  
+  // Match if row color ends with our color (e.g., "807 BLACK" matches "BLACK")
+  if (rowLower.endsWith(` ${targetLower}`)) return true;
+  
+  // Match if our color ends with row color number prefix removed
+  const rowColorWithoutNumber = rowLower.replace(/^\d+\s*/, '');
+  if (rowColorWithoutNumber === targetLower) return true;
+  
+  // DON'T match if row color contains our color as a prefix of another word
+  // e.g., "WHITE" should NOT match "WHITE WEFT"
+  return false;
+}
+
 export function aggregateStockData(
   rows: StockRow[],
   styleNo: string,
@@ -68,9 +90,9 @@ export function aggregateStockData(
 ): AggregatedStockData | null {
   if (!rows || rows.length === 0) return null;
 
-  // Filter to this style/color
+  // Filter to this style/color with fuzzy matching
   const filteredRows = rows.filter(
-    r => r.style_no === styleNo && r.color?.toLowerCase() === color.toLowerCase()
+    r => r.style_no === styleNo && fuzzyMatchColor(r.color || '', color)
   );
 
   if (filteredRows.length === 0) return null;
