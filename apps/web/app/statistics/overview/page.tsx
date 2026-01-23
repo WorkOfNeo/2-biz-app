@@ -1029,7 +1029,7 @@ export default function OverviewPage() {
               <div className="text-[11px] text-gray-400">
                 {collectedIndex.visitedS2Qty === 0
                   ? 'Calc: visited S2 is 0 → 100.0'
-                  : `Calc: (${collectedIndex.visitedS1Qty.toLocaleString('da-DK')} / ${collectedIndex.visitedS2Qty.toLocaleString('da-DK')}) × 100 = ${collectedIndex.indexQty.toFixed(1)}`}
+                  : 'Calc: (visited S1 / visited S2) × 100'}
               </div>
               <button
                 type="button"
@@ -1049,7 +1049,7 @@ export default function OverviewPage() {
               <div className="text-[11px] text-gray-400">
                 {collectedIndex.visitedS2Price === 0
                   ? 'Calc: visited S2 is 0 → 100.0'
-                  : `Calc: (${Math.round(collectedIndex.visitedS1Price).toLocaleString('da-DK')} / ${Math.round(collectedIndex.visitedS2Price).toLocaleString('da-DK')}) × 100 = ${collectedIndex.indexPrice.toFixed(1)}`}
+                  : 'Calc: (visited S1 / visited S2) × 100'}
               </div>
               <button
                 type="button"
@@ -1065,7 +1065,7 @@ export default function OverviewPage() {
               <div className="text-xl font-semibold">{Math.round(collectedIndex.prognosedQty).toLocaleString('da-DK')}</div>
               <div className="text-[11px] text-gray-400">if index holds</div>
               <div className="text-[11px] text-gray-400">
-                {`Calc: visited S1 + unvisited S2 = ${Math.round(collectedIndex.visitedS1Qty).toLocaleString('da-DK')} + ${Math.round(collectedIndex.unvisitedS2Qty).toLocaleString('da-DK')} = ${Math.round(collectedIndex.prognosedQty).toLocaleString('da-DK')}`}
+                Calc: visited S1 + unvisited S2
               </div>
               <button
                 type="button"
@@ -1081,7 +1081,7 @@ export default function OverviewPage() {
               <div className="text-xl font-semibold">{Math.round(collectedIndex.prognosedPrice).toLocaleString('da-DK')} DKK</div>
               <div className="text-[11px] text-gray-400">if index holds</div>
               <div className="text-[11px] text-gray-400">
-                {`Calc: visited S1 + unvisited S2 = ${Math.round(collectedIndex.visitedS1Price).toLocaleString('da-DK')} + ${Math.round(collectedIndex.unvisitedS2Price).toLocaleString('da-DK')} = ${Math.round(collectedIndex.prognosedPrice).toLocaleString('da-DK')}`}
+                Calc: visited S1 + unvisited S2
               </div>
               <button
                 type="button"
