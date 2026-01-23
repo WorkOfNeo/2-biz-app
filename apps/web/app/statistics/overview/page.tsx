@@ -888,7 +888,12 @@ export default function OverviewPage() {
               </tr>
             ))}
             <tr className="border-t bg-gray-50">
-              <td className="p-2 font-semibold">Avg/total</td>
+              <td className="p-2 font-semibold">
+                <div className="flex flex-col leading-tight">
+                  <span>Avg</span>
+                  <span className="text-xs text-gray-500">Totals</span>
+                </div>
+              </td>
               <td className="p-2">
                 <div className="flex flex-col leading-tight">
                   <span>{Math.round(salesmenSummary.avgNulled).toLocaleString('da-DK')}</span>
