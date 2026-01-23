@@ -1861,20 +1861,29 @@ export default function StatisticsGeneralPage() {
                     const nulledCount = items.reduce((a, r) => a + (nulledSeasonal.has(r.account_no) ? 1 : 0), 0);
                     const permClosedCount = items.reduce((a, r) => a + (closedCustomers?.setClosed.has(r.account_no) ? 1 : 0), 0);
                     
-                    // Index calculation: Include both VISITED and NULLED customers
-                    const visitedRows = items.filter(r => (r.s1Qty > 0 || r.s1Price > 0) || isNulled(r.account_no));
-                    
-                    // Aggregate visited + nulled customers S1/S2 totals for index calculation
-                    const visitedS1Qty = visitedRows.reduce((a, r) => a + r.s1Qty, 0);
-                    const visitedS2Qty = visitedRows.reduce((a, r) => a + r.s2Qty, 0);
-                    const visitedS1Price = visitedRows.reduce((a, r) => a + r.s1Price, 0);
-                    const visitedS2Price = visitedRows.reduce((a, r) => a + r.s2Price, 0);
-                    
-                    // Index ratios (visited S1 vs S2, with safe zero-div handling)
-                    const qtyIndexRatio = visitedS2Qty === 0 ? 1 : visitedS1Qty / visitedS2Qty;
-                    const priceIndexRatio = visitedS2Price === 0 ? 1 : visitedS1Price / visitedS2Price;
-                    const indexQty = visitedS2Qty === 0 ? 100 : (qtyIndexRatio * 100);
-                    const indexPrice = visitedS2Price === 0 ? 100 : (priceIndexRatio * 100);
+                    // Index calculation (visited-only)
+                    const visitedOnlyRows = items.filter(r => (r.s1Qty > 0 || r.s1Price > 0));
+                    const visitedOnlyS1Qty = visitedOnlyRows.reduce((a, r) => a + r.s1Qty, 0);
+                    const visitedOnlyS2Qty = visitedOnlyRows.reduce((a, r) => a + r.s2Qty, 0);
+                    const visitedOnlyS1Price = visitedOnlyRows.reduce((a, r) => a + r.s1Price, 0);
+                    const visitedOnlyS2Price = visitedOnlyRows.reduce((a, r) => a + r.s2Price, 0);
+
+                    const qtyIndexRatio = visitedOnlyS2Qty === 0 ? 1 : visitedOnlyS1Qty / visitedOnlyS2Qty;
+                    const priceIndexRatio = visitedOnlyS2Price === 0 ? 1 : visitedOnlyS1Price / visitedOnlyS2Price;
+                    const indexQty = visitedOnlyS2Qty === 0 ? 100 : (qtyIndexRatio * 100);
+                    const indexPrice = visitedOnlyS2Price === 0 ? 100 : (priceIndexRatio * 100);
+
+                    // Index calculation (incl. NULLED + PERM CLOSED)
+                    const visitedInclRows = items.filter(r => (r.s1Qty > 0 || r.s1Price > 0) || isNulled(r.account_no));
+                    const visitedInclS1Qty = visitedInclRows.reduce((a, r) => a + r.s1Qty, 0);
+                    const visitedInclS2Qty = visitedInclRows.reduce((a, r) => a + r.s2Qty, 0);
+                    const visitedInclS1Price = visitedInclRows.reduce((a, r) => a + r.s1Price, 0);
+                    const visitedInclS2Price = visitedInclRows.reduce((a, r) => a + r.s2Price, 0);
+
+                    const qtyIndexRatioIncl = visitedInclS2Qty === 0 ? 1 : visitedInclS1Qty / visitedInclS2Qty;
+                    const priceIndexRatioIncl = visitedInclS2Price === 0 ? 1 : visitedInclS1Price / visitedInclS2Price;
+                    const indexQtyIncl = visitedInclS2Qty === 0 ? 100 : (qtyIndexRatioIncl * 100);
+                    const indexPriceIncl = visitedInclS2Price === 0 ? 100 : (priceIndexRatioIncl * 100);
                     
                     // Prognosis (index-independent): treat current S1 (visited) as final, and add missing S2 totals for customers not yet visited.
                     const unvisitedRows = items.filter(r => {
@@ -1885,8 +1894,8 @@ export default function StatisticsGeneralPage() {
                     const unvisitedS2Qty = unvisitedRows.reduce((a, r) => a + r.s2Qty, 0);
                     const unvisitedS2Price = unvisitedRows.reduce((a, r) => a + r.s2Price, 0);
                     
-                    const prognosedQty = visitedS1Qty + unvisitedS2Qty;
-                    const prognosedPrice = visitedS1Price + unvisitedS2Price;
+                    const prognosedQty = visitedOnlyS1Qty + unvisitedS2Qty;
+                    const prognosedPrice = visitedOnlyS1Price + unvisitedS2Price;
                     
                     return (
                       <>
@@ -1922,9 +1931,9 @@ export default function StatisticsGeneralPage() {
                             <div className="rounded-md border p-3">
                               <div className="text-xs text-gray-500">Index QTY</div>
                               <div className="text-xl font-semibold">{indexQty.toFixed(1)}</div>
-                              <div className="text-[11px] text-gray-400">{visitedS1Qty} vs {visitedS2Qty} (visited + nulled)</div>
+                              <div className="text-[11px] text-gray-400">{visitedOnlyS1Qty} vs {visitedOnlyS2Qty} (visited)</div>
                               <div className="text-[11px] text-gray-400">
-                                {visitedS2Qty === 0
+                                {visitedOnlyS2Qty === 0
                                   ? 'Calc: visited S2 is 0 → 100.0'
                                   : 'Calc: (visited S1 / visited S2) × 100'}
                               </div>
@@ -1932,11 +1941,31 @@ export default function StatisticsGeneralPage() {
                             <div className="rounded-md border p-3">
                               <div className="text-xs text-gray-500">Index PRICE</div>
                               <div className="text-xl font-semibold">{indexPrice.toFixed(1)}</div>
-                              <div className="text-[11px] text-gray-400">{Math.round(visitedS1Price).toLocaleString('da-DK')} vs {Math.round(visitedS2Price).toLocaleString('da-DK')} (visited + nulled)</div>
+                              <div className="text-[11px] text-gray-400">{Math.round(visitedOnlyS1Price).toLocaleString('da-DK')} vs {Math.round(visitedOnlyS2Price).toLocaleString('da-DK')} (visited)</div>
                               <div className="text-[11px] text-gray-400">
-                                {visitedS2Price === 0
+                                {visitedOnlyS2Price === 0
                                   ? 'Calc: visited S2 is 0 → 100.0'
                                   : 'Calc: (visited S1 / visited S2) × 100'}
+                              </div>
+                            </div>
+                            <div className="rounded-md border p-3">
+                              <div className="text-xs text-gray-500">Index QTY (incl. nulled/closed)</div>
+                              <div className="text-xl font-semibold">{indexQtyIncl.toFixed(1)}</div>
+                              <div className="text-[11px] text-gray-400">{visitedInclS1Qty} vs {visitedInclS2Qty} (visited + nulled + perm closed)</div>
+                              <div className="text-[11px] text-gray-400">
+                                {visitedInclS2Qty === 0
+                                  ? 'Calc: visited+excluded S2 is 0 → 100.0'
+                                  : 'Calc: (visited+excluded S1 / visited+excluded S2) × 100'}
+                              </div>
+                            </div>
+                            <div className="rounded-md border p-3">
+                              <div className="text-xs text-gray-500">Index PRICE (incl. nulled/closed)</div>
+                              <div className="text-xl font-semibold">{indexPriceIncl.toFixed(1)}</div>
+                              <div className="text-[11px] text-gray-400">{Math.round(visitedInclS1Price).toLocaleString('da-DK')} vs {Math.round(visitedInclS2Price).toLocaleString('da-DK')} (visited + nulled + perm closed)</div>
+                              <div className="text-[11px] text-gray-400">
+                                {visitedInclS2Price === 0
+                                  ? 'Calc: visited+excluded S2 is 0 → 100.0'
+                                  : 'Calc: (visited+excluded S1 / visited+excluded S2) × 100'}
                               </div>
                             </div>
                             <div className="rounded-md border p-3">

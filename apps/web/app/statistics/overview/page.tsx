@@ -598,6 +598,16 @@ export default function OverviewPage() {
     const priceIndexRatio = visitedS2Price === 0 ? 1 : visitedS1Price / visitedS2Price;
     const indexQty = visitedS2Qty === 0 ? 100 : qtyIndexRatio * 100;
     const indexPrice = visitedS2Price === 0 ? 100 : priceIndexRatio * 100;
+
+    const visitedIncl = values.filter((v) => (v.s1Qty > 0 || v.s1Price > 0) || v.isNulled);
+    const visitedInclS1Qty = visitedIncl.reduce((a, v) => a + v.s1Qty, 0);
+    const visitedInclS1Price = visitedIncl.reduce((a, v) => a + v.s1Price, 0);
+    const visitedInclS2Qty = visitedIncl.reduce((a, v) => a + v.s2Qty, 0);
+    const visitedInclS2Price = visitedIncl.reduce((a, v) => a + v.s2Price, 0);
+    const qtyIndexRatioIncl = visitedInclS2Qty === 0 ? 1 : visitedInclS1Qty / visitedInclS2Qty;
+    const priceIndexRatioIncl = visitedInclS2Price === 0 ? 1 : visitedInclS1Price / visitedInclS2Price;
+    const indexQtyIncl = visitedInclS2Qty === 0 ? 100 : qtyIndexRatioIncl * 100;
+    const indexPriceIncl = visitedInclS2Price === 0 ? 100 : priceIndexRatioIncl * 100;
     const unvisited = values.filter((v) => v.s1Qty === 0 && v.s1Price === 0 && !v.isNulled);
     const unvisitedS2Qty = unvisited.reduce((a, v) => a + v.s2Qty, 0);
     const unvisitedS2Price = unvisited.reduce((a, v) => a + v.s2Price, 0);
@@ -636,10 +646,16 @@ export default function OverviewPage() {
       visitedS2Qty,
       visitedS1Price,
       visitedS2Price,
+      visitedInclS1Qty,
+      visitedInclS2Qty,
+      visitedInclS1Price,
+      visitedInclS2Price,
       unvisitedS2Qty,
       unvisitedS2Price,
       indexQty,
       indexPrice,
+      indexQtyIncl,
+      indexPriceIncl,
       prognosedQty,
       prognosedPrice,
       visitedRows,
@@ -1059,6 +1075,30 @@ export default function OverviewPage() {
               >
                 View records
               </button>
+            </div>
+            <div className="rounded-md border p-3">
+              <div className="text-xs text-gray-500">Index QTY (incl. nulled/closed)</div>
+              <div className="text-xl font-semibold">{collectedIndex.indexQtyIncl.toFixed(1)}</div>
+              <div className="text-[11px] text-gray-400">
+                {collectedIndex.visitedInclS1Qty.toLocaleString('da-DK')} vs {collectedIndex.visitedInclS2Qty.toLocaleString('da-DK')} (visited + nulled/perm closed)
+              </div>
+              <div className="text-[11px] text-gray-400">
+                {collectedIndex.visitedInclS2Qty === 0
+                  ? 'Calc: visited+excluded S2 is 0 → 100.0'
+                  : 'Calc: (visited+excluded S1 / visited+excluded S2) × 100'}
+              </div>
+            </div>
+            <div className="rounded-md border p-3">
+              <div className="text-xs text-gray-500">Index PRICE (incl. nulled/closed)</div>
+              <div className="text-xl font-semibold">{collectedIndex.indexPriceIncl.toFixed(1)}</div>
+              <div className="text-[11px] text-gray-400">
+                {Math.round(collectedIndex.visitedInclS1Price).toLocaleString('da-DK')} vs {Math.round(collectedIndex.visitedInclS2Price).toLocaleString('da-DK')} (visited + nulled/perm closed · DKK)
+              </div>
+              <div className="text-[11px] text-gray-400">
+                {collectedIndex.visitedInclS2Price === 0
+                  ? 'Calc: visited+excluded S2 is 0 → 100.0'
+                  : 'Calc: (visited+excluded S1 / visited+excluded S2) × 100'}
+              </div>
             </div>
             <div className="rounded-md border p-3">
               <div className="text-xs text-gray-500">Prognose QTY</div>
