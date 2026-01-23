@@ -34,6 +34,7 @@ import { runAiAnalysis } from './jobs/runAiAnalysis.js';
 import { exportAiAnalysis } from './jobs/exportAiAnalysis.js';
 import { exportPurchaseRoundPdf } from './jobs/exportPurchaseRoundPdf.js';
 import { runStatisticsEmailPipeline } from './jobs/runStatisticsEmailPipeline.js';
+import { runManualSendoutPipeline } from './jobs/runManualSendoutPipeline.js';
 // (imported with .js extension above)
 
 const SUPABASE_URL = process.env.SUPABASE_URL!;
@@ -254,7 +255,8 @@ const BROWSERLESS_JOB_TYPES = new Set([
   'apply_customer_preview',
   // Internal orchestration jobs
   'export_stock_list_after_update_stock',
-  'run_statistics_email_pipeline'
+  'run_statistics_email_pipeline',
+  'run_manual_sendout_pipeline'
 ]);
 
 async function runJob(job: JobRow) {
@@ -436,6 +438,12 @@ async function runJob(job: JobRow) {
       // Handle run_statistics_email_pipeline job
       if ((job.type as any) === 'run_statistics_email_pipeline') {
         await runStatisticsEmailPipeline(job, log, saveResult, setJobSucceeded, setJobFailedOrRequeue);
+        return;
+      }
+
+      // Handle run_manual_sendout_pipeline job
+      if ((job.type as any) === 'run_manual_sendout_pipeline') {
+        await runManualSendoutPipeline(job, log, saveResult, setJobSucceeded, setJobFailedOrRequeue);
         return;
       }
 

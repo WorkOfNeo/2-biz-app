@@ -800,6 +800,21 @@ export default function StatisticsDashboardPage() {
   const [stFormSendToOverall, setStFormSendToOverall] = React.useState(false);
   const [stFormOverallRecipientsCsv, setStFormOverallRecipientsCsv] = React.useState('');
 
+  // ============================================================================
+  // SEND OUT SECTION STATE
+  // ============================================================================
+  const [sendOutSalespersons, setSendOutSalespersons] = React.useState<Set<string>>(new Set());
+  const [sendOutExtraEmails, setSendOutExtraEmails] = React.useState('');
+  const [sendOutIncludeCountries, setSendOutIncludeCountries] = React.useState(true);
+  const [sendOutIncludeTop15Salesmen, setSendOutIncludeTop15Salesmen] = React.useState(true);
+  const [sendOutIncludeTop15Overall, setSendOutIncludeTop15Overall] = React.useState(false);
+  const [sendOutIncludeOverview, setSendOutIncludeOverview] = React.useState(false);
+  const [sendOutIncludeGeneralCombined, setSendOutIncludeGeneralCombined] = React.useState(false);
+  const [sendOutStockLists, setSendOutStockLists] = React.useState<Set<string>>(new Set());
+  const [sendOutScrapeFirst, setSendOutScrapeFirst] = React.useState(false);
+  const [sendOutSending, setSendOutSending] = React.useState(false);
+  const [sendOutLastJobId, setSendOutLastJobId] = React.useState<string | null>(null);
+
   // Load statistic schedules from app_settings (check both old and new keys for migration)
   useSWR('dashboard:statistic_schedules', async () => {
     // Try new key first, fallback to old key for migration
@@ -1057,6 +1072,76 @@ export default function StatisticsDashboardPage() {
       alert(`Error: ${err?.message || 'Failed to start pipeline'}`);
     } finally {
       setRunningPipelineScheduleId(null);
+    }
+  }
+
+  // ============================================================================
+  // SEND OUT HANDLER
+  // ============================================================================
+  async function handleSendOut() {
+    if (sendOutSending) return;
+
+    // Validate: must have at least one recipient
+    const salespersonEmails = Array.from(sendOutSalespersons)
+      .map(id => (salespersons ?? []).find(sp => sp.id === id))
+      .filter(sp => sp?.email)
+      .map(sp => sp!.email!);
+    
+    const extraEmails = sendOutExtraEmails
+      .split(/[,;\s\n]+/)
+      .map(e => e.trim().toLowerCase())
+      .filter(e => e && e.includes('@'));
+    
+    const allRecipients = [...new Set([...salespersonEmails, ...extraEmails])];
+    
+    if (allRecipients.length === 0) {
+      alert('Please select at least one salesperson with email or enter extra emails');
+      return;
+    }
+
+    // Validate: must have either statistics PDFs or stock lists selected
+    const hasStatistics = sendOutIncludeCountries || sendOutIncludeTop15Salesmen || 
+                          sendOutIncludeTop15Overall || sendOutIncludeOverview || 
+                          sendOutIncludeGeneralCombined || sendOutSalespersons.size > 0;
+    const hasStockLists = sendOutStockLists.size > 0;
+
+    if (!hasStatistics && !hasStockLists) {
+      alert('Please select at least one statistics PDF or stock list to send');
+      return;
+    }
+
+    setSendOutSending(true);
+    setSendOutLastJobId(null);
+
+    try {
+      const res = await fetch('/api/statistics/send-out', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          scrapeFirst: sendOutScrapeFirst,
+          salespersonIds: Array.from(sendOutSalespersons),
+          emails: extraEmails,
+          include: {
+            countries: sendOutIncludeCountries,
+            top15Salesmen: sendOutIncludeTop15Salesmen,
+            top15Overall: sendOutIncludeTop15Overall,
+            overview: sendOutIncludeOverview,
+            generalCombined: sendOutIncludeGeneralCombined,
+          },
+          stockLists: Array.from(sendOutStockLists),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(`Failed to start send out: ${data.error || 'Unknown error'}`);
+        return;
+      }
+      setSendOutLastJobId(data.jobId);
+      alert(`Send out queued! Job ID: ${data.jobId}\n\n${sendOutScrapeFirst ? 'Will scrape + export first, then send.' : 'Will send using latest exports.'}\n\nView progress in Settings → Jobs`);
+    } catch (err: any) {
+      alert(`Error: ${err?.message || 'Failed to start send out'}`);
+    } finally {
+      setSendOutSending(false);
     }
   }
 
@@ -1590,6 +1675,211 @@ export default function StatisticsDashboardPage() {
                   </Table>
                 </div>
               )}
+            </CardContent>
+          </Card>
+
+          {/* Send Out Section */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Send out</CardTitle>
+              <CardDescription>Manually send statistics and stock lists to recipients</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              {/* Recipients Row */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {/* Salespersons Selection */}
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="text-sm text-gray-600 font-medium">Salespersons</label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const allIds = (salespersons ?? []).filter(sp => sp.email).map(sp => sp.id);
+                        const allSelected = allIds.every(id => sendOutSalespersons.has(id));
+                        if (allSelected) {
+                          setSendOutSalespersons(new Set());
+                        } else {
+                          setSendOutSalespersons(new Set(allIds));
+                        }
+                      }}
+                      className="text-xs text-slate-600 hover:text-slate-900"
+                    >
+                      {(salespersons ?? []).filter(sp => sp.email).every(sp => sendOutSalespersons.has(sp.id)) ? 'Deselect all' : 'Select all'}
+                    </button>
+                  </div>
+                  <div className="max-h-40 overflow-auto rounded-md border">
+                    <Table>
+                      <TableBody>
+                        {(salespersons ?? []).map((sp) => {
+                          const hasEmail = Boolean(sp.email);
+                          const on = sendOutSalespersons.has(sp.id);
+                          return (
+                            <TableRow 
+                              key={sp.id} 
+                              className={!hasEmail ? 'opacity-50' : 'cursor-pointer hover:bg-slate-50'}
+                              onClick={() => {
+                                if (!hasEmail) return;
+                                setSendOutSalespersons(prev => {
+                                  const n = new Set(prev);
+                                  if (n.has(sp.id)) n.delete(sp.id);
+                                  else n.add(sp.id);
+                                  return n;
+                                });
+                              }}
+                            >
+                              <TableCell className="w-10 py-1.5">
+                                <div className={`h-4 w-4 rounded border ${on ? 'bg-slate-900 border-slate-900' : 'bg-white border-slate-300'} flex items-center justify-center`}>
+                                  {on && <span className="text-white text-[10px]">✓</span>}
+                                </div>
+                              </TableCell>
+                              <TableCell className="font-medium text-sm py-1.5">{sp.name}</TableCell>
+                              <TableCell className="text-xs text-gray-500 py-1.5">{sp.email || '(no email)'}</TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1">Each salesperson receives their personal PDF</p>
+                </div>
+
+                {/* Extra Emails */}
+                <div>
+                  <label className="text-sm text-gray-600 font-medium block mb-2">Extra emails (comma-separated)</label>
+                  <textarea
+                    className="w-full min-h-[100px] rounded-md border border-slate-200 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-offset-2"
+                    placeholder="email1@example.com, email2@example.com, ..."
+                    value={sendOutExtraEmails}
+                    onChange={(e) => setSendOutExtraEmails(e.target.value)}
+                  />
+                  <p className="text-xs text-gray-500 mt-1">Additional recipients (no personal PDF, only selected global PDFs)</p>
+                </div>
+              </div>
+
+              {/* Statistics PDFs Selection */}
+              <div>
+                <label className="text-sm text-gray-600 font-medium block mb-2">Statistics PDFs to include</label>
+                <div className="grid grid-cols-2 lg:grid-cols-5 gap-2">
+                  <div className="flex items-center justify-between p-2 rounded-md border bg-slate-50">
+                    <div className="flex items-center gap-2">
+                      <Toggle
+                        checked={sendOutIncludeCountries}
+                        onChange={() => setSendOutIncludeCountries(v => !v)}
+                        size="sm"
+                      />
+                      <span className="text-sm">Countries</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between p-2 rounded-md border bg-slate-50">
+                    <div className="flex items-center gap-2">
+                      <Toggle
+                        checked={sendOutIncludeTop15Salesmen}
+                        onChange={() => setSendOutIncludeTop15Salesmen(v => !v)}
+                        size="sm"
+                      />
+                      <span className="text-sm">Top 15 Salesmen</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between p-2 rounded-md border bg-slate-50">
+                    <div className="flex items-center gap-2">
+                      <Toggle
+                        checked={sendOutIncludeTop15Overall}
+                        onChange={() => setSendOutIncludeTop15Overall(v => !v)}
+                        size="sm"
+                      />
+                      <span className="text-sm">Top 15 Overall</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between p-2 rounded-md border bg-slate-50">
+                    <div className="flex items-center gap-2">
+                      <Toggle
+                        checked={sendOutIncludeOverview}
+                        onChange={() => setSendOutIncludeOverview(v => !v)}
+                        size="sm"
+                      />
+                      <span className="text-sm">Overview</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between p-2 rounded-md border bg-slate-50">
+                    <div className="flex items-center gap-2">
+                      <Toggle
+                        checked={sendOutIncludeGeneralCombined}
+                        onChange={() => setSendOutIncludeGeneralCombined(v => !v)}
+                        size="sm"
+                      />
+                      <span className="text-sm">General Combined</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Stock Lists Selection */}
+              {availableStockLists.length > 0 && (
+                <div>
+                  <label className="text-sm text-gray-600 font-medium block mb-2">Stock lists to send (separate email)</label>
+                  <div className="flex flex-wrap gap-2">
+                    {availableStockLists.map((l) => {
+                      const on = sendOutStockLists.has(l.name);
+                      const exp = latestStockListByName.get(l.name);
+                      return (
+                        <div key={l.id} className="flex items-center gap-1">
+                          <Badge
+                            className={`cursor-pointer select-none transition-colors ${on ? 'bg-slate-900 text-white border-slate-900' : 'bg-white hover:bg-slate-50'}`}
+                            onClick={() => {
+                              setSendOutStockLists(prev => {
+                                const n = new Set(prev);
+                                if (n.has(l.name)) n.delete(l.name);
+                                else n.add(l.name);
+                                return n;
+                              });
+                            }}
+                          >
+                            {l.name}
+                          </Badge>
+                          {exp?.public_url && (
+                            <Button variant="ghost" size="sm" className="h-5 w-5 p-0" onClick={() => setPreviewUrl(exp.public_url || null)} title="Preview">
+                              <Eye className="h-3 w-3" />
+                            </Button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1">Stock lists are sent as a separate email (they can be heavy)</p>
+                </div>
+              )}
+
+              {/* Scrape First + Send Button */}
+              <div className="flex items-center justify-between pt-4 border-t">
+                <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-2 p-2 rounded-md border bg-slate-50">
+                    <Toggle
+                      checked={sendOutScrapeFirst}
+                      onChange={() => setSendOutScrapeFirst(v => !v)}
+                      size="sm"
+                    />
+                    <span className="text-sm font-medium">Scrape first</span>
+                  </div>
+                  <p className="text-xs text-gray-500">
+                    {sendOutScrapeFirst 
+                      ? 'Will refresh statistics + stock lists before sending' 
+                      : 'Will use latest available exports'}
+                  </p>
+                </div>
+                <div className="flex items-center gap-3">
+                  {sendOutLastJobId && (
+                    <span className="text-xs text-gray-500">Last job: {sendOutLastJobId.slice(0, 8)}...</span>
+                  )}
+                  <Button 
+                    onClick={handleSendOut}
+                    disabled={sendOutSending}
+                    className="min-w-[120px]"
+                  >
+                    <Send className="h-4 w-4 mr-2" />
+                    {sendOutSending ? 'Sending…' : 'Send out'}
+                  </Button>
+                </div>
+              </div>
             </CardContent>
           </Card>
 

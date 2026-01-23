@@ -693,6 +693,8 @@ export default function JobsOverviewPage() {
                 { type: 'send_stock_list_email', label: 'Send Stock List Email' },
                 { type: 'apply_customer_preview', label: 'Apply Customer Preview' },
                 { type: 'export_stock_list_after_update_stock', label: 'Export Stock Lists After Stock Update (Internal)' },
+                { type: 'run_statistics_email_pipeline', label: 'Run Statistics Email Pipeline' },
+                { type: 'run_manual_sendout_pipeline', label: 'Manual Send Out Pipeline' },
                 { type: 'enrich_styles', label: 'Enrich Styles (Legacy)' },
               ]
             }
