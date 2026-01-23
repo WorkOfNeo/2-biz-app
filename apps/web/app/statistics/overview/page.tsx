@@ -50,7 +50,8 @@ export default function OverviewPage() {
   } = useStatisticsData();
 
   const [country, setCountry] = useState<typeof COUNTRIES[number]>('All');
-  const [indexModal, setIndexModal] = useState<{ mode: 'visited' | 'unvisited' } | null>(null);
+  const [calcTab, setCalcTab] = useState<'visited' | 'visited_incl'>('visited');
+  const [indexModal, setIndexModal] = useState<{ mode: 'visited' | 'visited_incl' | 'unvisited' } | null>(null);
   const [detailModal, setDetailModal] = useState<{ salespersonId: string; salespersonName: string; season: 's1' | 's2'; seasonLabel: string } | null>(null);
   const [notVisitedModal, setNotVisitedModal] = useState<{ salespersonId: string; salespersonName: string; customers: Customer[] } | null>(null);
 
@@ -622,6 +623,7 @@ export default function OverviewPage() {
       s1Price: number;
       s2Qty: number;
       s2Price: number;
+      isNulled: boolean;
     };
     const formatRow = (bucket: Bucket): DetailRow => {
       const meta = customersById.get(bucket.accountId);
@@ -633,11 +635,15 @@ export default function OverviewPage() {
         s1Price: bucket.s1Price,
         s2Qty: bucket.s2Qty,
         s2Price: bucket.s2Price,
+        isNulled: bucket.isNulled,
       };
     };
     const visitedRows = visited
       .map(formatRow)
       .sort((a, b) => b.s1Price - a.s1Price);
+    const visitedInclRows = visitedIncl
+      .map(formatRow)
+      .sort((a, b) => b.s2Price - a.s2Price);
     const unvisitedRows = unvisited
       .map(formatRow)
       .sort((a, b) => b.s2Price - a.s2Price);
@@ -659,6 +665,7 @@ export default function OverviewPage() {
       prognosedQty,
       prognosedPrice,
       visitedRows,
+      visitedInclRows,
       unvisitedRows,
     };
   }, [customers, stats, invoices, country, s1, s2, currencyRatesRow, ratesS1, ratesS2, spCurrencyById, overrides, closedCustomers]);
@@ -1039,79 +1046,117 @@ export default function OverviewPage() {
 
       {collectedIndex && (
         <div className="rounded-lg border bg-white">
-          <div className="border-b p-3 text-sm font-semibold">Collected Index & Prognosis</div>
+          <div className="border-b p-3">
+            <div className="text-sm font-semibold">Collected Index & Prognosis</div>
+            <div className="mt-2 inline-flex rounded-md border bg-white p-0.5 text-xs">
+              <button
+                type="button"
+                onClick={() => setCalcTab('visited')}
+                className={'rounded px-3 py-1.5 ' + (calcTab === 'visited' ? 'bg-slate-900 text-white' : 'text-slate-700 hover:bg-slate-50')}
+              >
+                Visited
+              </button>
+              <button
+                type="button"
+                onClick={() => setCalcTab('visited_incl')}
+                className={'rounded px-3 py-1.5 ' + (calcTab === 'visited_incl' ? 'bg-slate-900 text-white' : 'text-slate-700 hover:bg-slate-50')}
+              >
+                Visited + Nulled
+              </button>
+            </div>
+            <div className="mt-2 text-xs text-gray-600">
+              {calcTab === 'visited'
+                ? 'Visited: Index is calculated from customers that have Season 1 activity.'
+                : 'Visited + Nulled: Index basis includes visited customers plus customers that are nulled / permanently closed (may have last-year numbers).'}
+            </div>
+          </div>
+
           <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4">
-            <div className="rounded-md border p-3">
-              <div className="text-xs text-gray-500">Index QTY</div>
-              <div className="text-xl font-semibold">{collectedIndex.indexQty.toFixed(1)}</div>
-              <div className="text-[11px] text-gray-400">
-                {collectedIndex.visitedS1Qty.toLocaleString('da-DK')} vs {collectedIndex.visitedS2Qty.toLocaleString('da-DK')} (visited)
-              </div>
-              <div className="text-[11px] text-gray-400">
-                {collectedIndex.visitedS2Qty === 0
-                  ? 'Calc: visited S2 is 0 → 100.0'
-                  : 'Calc: (visited S1 / visited S2) × 100'}
-              </div>
-              <button
-                type="button"
-                onClick={() => setIndexModal({ mode: 'visited' })}
-                className="mt-1 text-xs text-blue-600 underline underline-offset-2 disabled:text-gray-400 disabled:no-underline"
-                disabled={collectedIndex.visitedRows.length === 0}
-              >
-                View records
-              </button>
-            </div>
-            <div className="rounded-md border p-3">
-              <div className="text-xs text-gray-500">Index PRICE</div>
-              <div className="text-xl font-semibold">{collectedIndex.indexPrice.toFixed(1)}</div>
-              <div className="text-[11px] text-gray-400">
-                {Math.round(collectedIndex.visitedS1Price).toLocaleString('da-DK')} vs {Math.round(collectedIndex.visitedS2Price).toLocaleString('da-DK')} (visited · DKK)
-              </div>
-              <div className="text-[11px] text-gray-400">
-                {collectedIndex.visitedS2Price === 0
-                  ? 'Calc: visited S2 is 0 → 100.0'
-                  : 'Calc: (visited S1 / visited S2) × 100'}
-              </div>
-              <button
-                type="button"
-                onClick={() => setIndexModal({ mode: 'visited' })}
-                className="mt-1 text-xs text-blue-600 underline underline-offset-2 disabled:text-gray-400 disabled:no-underline"
-                disabled={collectedIndex.visitedRows.length === 0}
-              >
-                View records
-              </button>
-            </div>
-            <div className="rounded-md border p-3">
-              <div className="text-xs text-gray-500">Index QTY (incl. nulled/closed)</div>
-              <div className="text-xl font-semibold">{collectedIndex.indexQtyIncl.toFixed(1)}</div>
-              <div className="text-[11px] text-gray-400">
-                {collectedIndex.visitedInclS1Qty.toLocaleString('da-DK')} vs {collectedIndex.visitedInclS2Qty.toLocaleString('da-DK')} (visited + nulled/perm closed)
-              </div>
-              <div className="text-[11px] text-gray-400">
-                {collectedIndex.visitedInclS2Qty === 0
-                  ? 'Calc: visited+excluded S2 is 0 → 100.0'
-                  : 'Calc: (visited+excluded S1 / visited+excluded S2) × 100'}
-              </div>
-            </div>
-            <div className="rounded-md border p-3">
-              <div className="text-xs text-gray-500">Index PRICE (incl. nulled/closed)</div>
-              <div className="text-xl font-semibold">{collectedIndex.indexPriceIncl.toFixed(1)}</div>
-              <div className="text-[11px] text-gray-400">
-                {Math.round(collectedIndex.visitedInclS1Price).toLocaleString('da-DK')} vs {Math.round(collectedIndex.visitedInclS2Price).toLocaleString('da-DK')} (visited + nulled/perm closed · DKK)
-              </div>
-              <div className="text-[11px] text-gray-400">
-                {collectedIndex.visitedInclS2Price === 0
-                  ? 'Calc: visited+excluded S2 is 0 → 100.0'
-                  : 'Calc: (visited+excluded S1 / visited+excluded S2) × 100'}
-              </div>
-            </div>
+            {calcTab === 'visited' ? (
+              <>
+                <div className="rounded-md border p-3">
+                  <div className="text-xs text-gray-500">Index QTY</div>
+                  <div className="text-xl font-semibold">{collectedIndex.indexQty.toFixed(1)}</div>
+                  <div className="text-[11px] text-gray-400">
+                    {collectedIndex.visitedS1Qty.toLocaleString('da-DK')} vs {collectedIndex.visitedS2Qty.toLocaleString('da-DK')} (visited)
+                  </div>
+                  <div className="text-[11px] text-gray-400">
+                    {collectedIndex.visitedS2Qty === 0 ? 'Calc: visited S2 is 0 → 100.0' : 'Calc: (visited S1 / visited S2) × 100'}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIndexModal({ mode: 'visited' })}
+                    className="mt-1 text-xs text-blue-600 underline underline-offset-2 disabled:text-gray-400 disabled:no-underline"
+                    disabled={collectedIndex.visitedRows.length === 0}
+                  >
+                    View records
+                  </button>
+                </div>
+                <div className="rounded-md border p-3">
+                  <div className="text-xs text-gray-500">Index PRICE</div>
+                  <div className="text-xl font-semibold">{collectedIndex.indexPrice.toFixed(1)}</div>
+                  <div className="text-[11px] text-gray-400">
+                    {Math.round(collectedIndex.visitedS1Price).toLocaleString('da-DK')} vs {Math.round(collectedIndex.visitedS2Price).toLocaleString('da-DK')} (visited · DKK)
+                  </div>
+                  <div className="text-[11px] text-gray-400">
+                    {collectedIndex.visitedS2Price === 0 ? 'Calc: visited S2 is 0 → 100.0' : 'Calc: (visited S1 / visited S2) × 100'}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIndexModal({ mode: 'visited' })}
+                    className="mt-1 text-xs text-blue-600 underline underline-offset-2 disabled:text-gray-400 disabled:no-underline"
+                    disabled={collectedIndex.visitedRows.length === 0}
+                  >
+                    View records
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="rounded-md border p-3">
+                  <div className="text-xs text-gray-500">Index QTY</div>
+                  <div className="text-xl font-semibold">{collectedIndex.indexQtyIncl.toFixed(1)}</div>
+                  <div className="text-[11px] text-gray-400">
+                    {collectedIndex.visitedInclS1Qty.toLocaleString('da-DK')} vs {collectedIndex.visitedInclS2Qty.toLocaleString('da-DK')} (visited + nulled/closed)
+                  </div>
+                  <div className="text-[11px] text-gray-400">
+                    {collectedIndex.visitedInclS2Qty === 0 ? 'Calc: visited+excluded S2 is 0 → 100.0' : 'Calc: (visited+excluded S1 / visited+excluded S2) × 100'}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIndexModal({ mode: 'visited_incl' })}
+                    className="mt-1 text-xs text-blue-600 underline underline-offset-2 disabled:text-gray-400 disabled:no-underline"
+                    disabled={collectedIndex.visitedInclRows.length === 0}
+                  >
+                    View records
+                  </button>
+                </div>
+                <div className="rounded-md border p-3">
+                  <div className="text-xs text-gray-500">Index PRICE</div>
+                  <div className="text-xl font-semibold">{collectedIndex.indexPriceIncl.toFixed(1)}</div>
+                  <div className="text-[11px] text-gray-400">
+                    {Math.round(collectedIndex.visitedInclS1Price).toLocaleString('da-DK')} vs {Math.round(collectedIndex.visitedInclS2Price).toLocaleString('da-DK')} (visited + nulled/closed · DKK)
+                  </div>
+                  <div className="text-[11px] text-gray-400">
+                    {collectedIndex.visitedInclS2Price === 0 ? 'Calc: visited+excluded S2 is 0 → 100.0' : 'Calc: (visited+excluded S1 / visited+excluded S2) × 100'}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIndexModal({ mode: 'visited_incl' })}
+                    className="mt-1 text-xs text-blue-600 underline underline-offset-2 disabled:text-gray-400 disabled:no-underline"
+                    disabled={collectedIndex.visitedInclRows.length === 0}
+                  >
+                    View records
+                  </button>
+                </div>
+              </>
+            )}
+
             <div className="rounded-md border p-3">
               <div className="text-xs text-gray-500">Prognose QTY</div>
               <div className="text-xl font-semibold">{Math.round(collectedIndex.prognosedQty).toLocaleString('da-DK')}</div>
               <div className="text-[11px] text-gray-400">if index holds</div>
-              <div className="text-[11px] text-gray-400">
-                Calc: visited S1 + unvisited S2
-              </div>
+              <div className="text-[11px] text-gray-400">Calc: visited S1 + unvisited S2</div>
               <button
                 type="button"
                 onClick={() => setIndexModal({ mode: 'unvisited' })}
@@ -1125,9 +1170,7 @@ export default function OverviewPage() {
               <div className="text-xs text-gray-500">Prognose PRICE</div>
               <div className="text-xl font-semibold">{Math.round(collectedIndex.prognosedPrice).toLocaleString('da-DK')} DKK</div>
               <div className="text-[11px] text-gray-400">if index holds</div>
-              <div className="text-[11px] text-gray-400">
-                Calc: visited S1 + unvisited S2
-              </div>
+              <div className="text-[11px] text-gray-400">Calc: visited S1 + unvisited S2</div>
               <button
                 type="button"
                 onClick={() => setIndexModal({ mode: 'unvisited' })}
@@ -1147,6 +1190,8 @@ export default function OverviewPage() {
         title={
           indexModal?.mode === 'visited'
             ? 'Visited customers · Index basis'
+            : indexModal?.mode === 'visited_incl'
+              ? 'Visited + nulled/closed · Index basis'
             : 'Pending customers · Prognosis basis'
         }
         maxWidth="max-w-4xl"
@@ -1162,7 +1207,12 @@ export default function OverviewPage() {
       >
         {(() => {
           if (!indexModal || !collectedIndex) return null;
-          const rows = indexModal.mode === 'visited' ? collectedIndex.visitedRows : collectedIndex.unvisitedRows;
+          const rows =
+            indexModal.mode === 'visited'
+              ? collectedIndex.visitedRows
+              : indexModal.mode === 'visited_incl'
+                ? collectedIndex.visitedInclRows
+                : collectedIndex.unvisitedRows;
           if (rows.length === 0) {
             return <div className="p-4 text-sm text-gray-600">Nothing to show for this selection.</div>;
           }
@@ -1182,8 +1232,13 @@ export default function OverviewPage() {
                 </thead>
                 <tbody>
                   {rows.map((row) => (
-                    <tr key={row.accountId} className="border-t hover:bg-gray-50">
-                      <td className="p-2">{row.customer}</td>
+                    <tr key={row.accountId} className={`border-t hover:bg-gray-50 ${row.isNulled ? 'bg-amber-50' : ''}`}>
+                      <td className="p-2">
+                        <div className="flex items-center gap-2">
+                          <span>{row.customer}</span>
+                          {row.isNulled && <span className="text-[10px] rounded bg-amber-100 px-1.5 py-0.5 text-amber-800">nulled/closed</span>}
+                        </div>
+                      </td>
                       <td className="p-2">{row.city || '-'}</td>
                       <td className="p-2 text-right">{Number(row.s1Qty || 0).toLocaleString('da-DK')}</td>
                       <td className="p-2 text-right">{Math.round(row.s1Price || 0).toLocaleString('da-DK')}</td>

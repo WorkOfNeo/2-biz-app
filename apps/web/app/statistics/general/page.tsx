@@ -45,6 +45,8 @@ export default function StatisticsGeneralPage() {
     return data as { id: string; kind: string; title: string | null; path: string; public_url: string | null; meta: any; created_at: string } | null;
   }, { refreshInterval: 10000 });
   const [activePerson, setActivePerson] = useState<string>('');
+  const [calcTab, setCalcTab] = useState<'visited' | 'visited_incl'>('visited');
+  const [indexBasisModal, setIndexBasisModal] = useState<{ mode: 'visited' | 'visited_incl'; rows: any[] } | null>(null);
   const [showSave, setShowSave] = useState(false);
   const [updating, setUpdating] = useState(false);
   const [updatePct, setUpdatePct] = useState(0);
@@ -1926,48 +1928,102 @@ export default function StatisticsGeneralPage() {
                         
                         {/* CALCULATIONS Section */}
                         <div className="rounded-lg border bg-white p-4">
-                          <h3 className="text-sm font-semibold text-gray-700 mb-3">CALCULATIONS</h3>
+                          <div className="flex items-start justify-between gap-3 mb-3">
+                            <h3 className="text-sm font-semibold text-gray-700">CALCULATIONS</h3>
+                            <div className="inline-flex rounded-md border bg-white p-0.5 text-xs">
+                              <button
+                                type="button"
+                                onClick={() => setCalcTab('visited')}
+                                className={'rounded px-3 py-1.5 ' + (calcTab === 'visited' ? 'bg-slate-900 text-white' : 'text-slate-700 hover:bg-slate-50')}
+                              >
+                                Visited
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setCalcTab('visited_incl')}
+                                className={'rounded px-3 py-1.5 ' + (calcTab === 'visited_incl' ? 'bg-slate-900 text-white' : 'text-slate-700 hover:bg-slate-50')}
+                              >
+                                Visited + Nulled
+                              </button>
+                            </div>
+                          </div>
+                          <div className="text-xs text-gray-600 mb-3">
+                            {calcTab === 'visited'
+                              ? 'Visited: Index is calculated from customers that have Season 1 activity.'
+                              : 'Visited + Nulled: Index basis includes visited customers plus customers that are nulled / permanently closed (may have last-year numbers).'}
+                          </div>
                           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                            <div className="rounded-md border p-3">
-                              <div className="text-xs text-gray-500">Index QTY</div>
-                              <div className="text-xl font-semibold">{indexQty.toFixed(1)}</div>
-                              <div className="text-[11px] text-gray-400">{visitedOnlyS1Qty} vs {visitedOnlyS2Qty} (visited)</div>
-                              <div className="text-[11px] text-gray-400">
-                                {visitedOnlyS2Qty === 0
-                                  ? 'Calc: visited S2 is 0 → 100.0'
-                                  : 'Calc: (visited S1 / visited S2) × 100'}
-                              </div>
-                            </div>
-                            <div className="rounded-md border p-3">
-                              <div className="text-xs text-gray-500">Index PRICE</div>
-                              <div className="text-xl font-semibold">{indexPrice.toFixed(1)}</div>
-                              <div className="text-[11px] text-gray-400">{Math.round(visitedOnlyS1Price).toLocaleString('da-DK')} vs {Math.round(visitedOnlyS2Price).toLocaleString('da-DK')} (visited)</div>
-                              <div className="text-[11px] text-gray-400">
-                                {visitedOnlyS2Price === 0
-                                  ? 'Calc: visited S2 is 0 → 100.0'
-                                  : 'Calc: (visited S1 / visited S2) × 100'}
-                              </div>
-                            </div>
-                            <div className="rounded-md border p-3">
-                              <div className="text-xs text-gray-500">Index QTY (incl. nulled/closed)</div>
-                              <div className="text-xl font-semibold">{indexQtyIncl.toFixed(1)}</div>
-                              <div className="text-[11px] text-gray-400">{visitedInclS1Qty} vs {visitedInclS2Qty} (visited + nulled + perm closed)</div>
-                              <div className="text-[11px] text-gray-400">
-                                {visitedInclS2Qty === 0
-                                  ? 'Calc: visited+excluded S2 is 0 → 100.0'
-                                  : 'Calc: (visited+excluded S1 / visited+excluded S2) × 100'}
-                              </div>
-                            </div>
-                            <div className="rounded-md border p-3">
-                              <div className="text-xs text-gray-500">Index PRICE (incl. nulled/closed)</div>
-                              <div className="text-xl font-semibold">{indexPriceIncl.toFixed(1)}</div>
-                              <div className="text-[11px] text-gray-400">{Math.round(visitedInclS1Price).toLocaleString('da-DK')} vs {Math.round(visitedInclS2Price).toLocaleString('da-DK')} (visited + nulled + perm closed)</div>
-                              <div className="text-[11px] text-gray-400">
-                                {visitedInclS2Price === 0
-                                  ? 'Calc: visited+excluded S2 is 0 → 100.0'
-                                  : 'Calc: (visited+excluded S1 / visited+excluded S2) × 100'}
-                              </div>
-                            </div>
+                            {calcTab === 'visited' ? (
+                              <>
+                                <div className="rounded-md border p-3">
+                                  <div className="text-xs text-gray-500">Index QTY</div>
+                                  <div className="text-xl font-semibold">{indexQty.toFixed(1)}</div>
+                                  <div className="text-[11px] text-gray-400">{visitedOnlyS1Qty} vs {visitedOnlyS2Qty} (visited)</div>
+                                  <div className="text-[11px] text-gray-400">
+                                    {visitedOnlyS2Qty === 0 ? 'Calc: visited S2 is 0 → 100.0' : 'Calc: (visited S1 / visited S2) × 100'}
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => setIndexBasisModal({ mode: 'visited', rows: visitedOnlyRows })}
+                                    className="mt-1 text-xs text-blue-600 underline underline-offset-2 disabled:text-gray-400 disabled:no-underline"
+                                    disabled={visitedOnlyRows.length === 0}
+                                  >
+                                    View records
+                                  </button>
+                                </div>
+                                <div className="rounded-md border p-3">
+                                  <div className="text-xs text-gray-500">Index PRICE</div>
+                                  <div className="text-xl font-semibold">{indexPrice.toFixed(1)}</div>
+                                  <div className="text-[11px] text-gray-400">{Math.round(visitedOnlyS1Price).toLocaleString('da-DK')} vs {Math.round(visitedOnlyS2Price).toLocaleString('da-DK')} (visited)</div>
+                                  <div className="text-[11px] text-gray-400">
+                                    {visitedOnlyS2Price === 0 ? 'Calc: visited S2 is 0 → 100.0' : 'Calc: (visited S1 / visited S2) × 100'}
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => setIndexBasisModal({ mode: 'visited', rows: visitedOnlyRows })}
+                                    className="mt-1 text-xs text-blue-600 underline underline-offset-2 disabled:text-gray-400 disabled:no-underline"
+                                    disabled={visitedOnlyRows.length === 0}
+                                  >
+                                    View records
+                                  </button>
+                                </div>
+                              </>
+                            ) : (
+                              <>
+                                <div className="rounded-md border p-3">
+                                  <div className="text-xs text-gray-500">Index QTY</div>
+                                  <div className="text-xl font-semibold">{indexQtyIncl.toFixed(1)}</div>
+                                  <div className="text-[11px] text-gray-400">{visitedInclS1Qty} vs {visitedInclS2Qty} (visited + nulled + perm closed)</div>
+                                  <div className="text-[11px] text-gray-400">
+                                    {visitedInclS2Qty === 0 ? 'Calc: visited+excluded S2 is 0 → 100.0' : 'Calc: (visited+excluded S1 / visited+excluded S2) × 100'}
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => setIndexBasisModal({ mode: 'visited_incl', rows: visitedInclRows })}
+                                    className="mt-1 text-xs text-blue-600 underline underline-offset-2 disabled:text-gray-400 disabled:no-underline"
+                                    disabled={visitedInclRows.length === 0}
+                                  >
+                                    View records
+                                  </button>
+                                </div>
+                                <div className="rounded-md border p-3">
+                                  <div className="text-xs text-gray-500">Index PRICE</div>
+                                  <div className="text-xl font-semibold">{indexPriceIncl.toFixed(1)}</div>
+                                  <div className="text-[11px] text-gray-400">{Math.round(visitedInclS1Price).toLocaleString('da-DK')} vs {Math.round(visitedInclS2Price).toLocaleString('da-DK')} (visited + nulled + perm closed)</div>
+                                  <div className="text-[11px] text-gray-400">
+                                    {visitedInclS2Price === 0 ? 'Calc: visited+excluded S2 is 0 → 100.0' : 'Calc: (visited+excluded S1 / visited+excluded S2) × 100'}
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => setIndexBasisModal({ mode: 'visited_incl', rows: visitedInclRows })}
+                                    className="mt-1 text-xs text-blue-600 underline underline-offset-2 disabled:text-gray-400 disabled:no-underline"
+                                    disabled={visitedInclRows.length === 0}
+                                  >
+                                    View records
+                                  </button>
+                                </div>
+                              </>
+                            )}
                             <div className="rounded-md border p-3">
                               <div className="text-xs text-gray-500">Prognose QTY</div>
                               <div className="text-xl font-semibold">{Math.round(prognosedQty).toLocaleString('da-DK')}</div>
@@ -1985,6 +2041,64 @@ export default function StatisticsGeneralPage() {
                               </div>
                             </div>
                           </div>
+
+                          <Modal
+                            open={Boolean(indexBasisModal)}
+                            onClose={() => setIndexBasisModal(null)}
+                            title={indexBasisModal?.mode === 'visited' ? 'Visited customers · Index basis' : 'Visited + nulled/closed · Index basis'}
+                            maxWidth="max-w-4xl"
+                            footer={
+                              <button
+                                type="button"
+                                className="rounded border px-3 py-1.5 text-sm"
+                                onClick={() => setIndexBasisModal(null)}
+                              >
+                                Close
+                              </button>
+                            }
+                          >
+                            {(() => {
+                              if (!indexBasisModal) return null;
+                              const rows = indexBasisModal.rows ?? [];
+                              if (rows.length === 0) return <div className="p-4 text-sm text-gray-600">Nothing to show.</div>;
+                              return (
+                                <div className="max-h-[60vh] overflow-auto">
+                                  <table className="min-w-full text-sm">
+                                    <thead>
+                                      <tr className="bg-gray-50 text-left">
+                                        <th className="p-2 font-semibold">Customer</th>
+                                        <th className="p-2 font-semibold">City</th>
+                                        <th className="p-2 text-right font-semibold">S1 Qty</th>
+                                        <th className="p-2 text-right font-semibold">S1 Price</th>
+                                        <th className="p-2 text-right font-semibold">S2 Qty</th>
+                                        <th className="p-2 text-right font-semibold">S2 Price</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {rows.map((row) => {
+                                        const nulled = isNulled(row.account_no);
+                                        return (
+                                          <tr key={row.account_no} className={`border-t hover:bg-gray-50 ${nulled ? 'bg-amber-50' : ''}`}>
+                                            <td className="p-2">
+                                              <div className="flex items-center gap-2">
+                                                <span>{row.customer ?? row.account_no ?? '-'}</span>
+                                                {nulled && <span className="text-[10px] rounded bg-amber-100 px-1.5 py-0.5 text-amber-800">nulled/closed</span>}
+                                              </div>
+                                            </td>
+                                            <td className="p-2">{row.city ?? '-'}</td>
+                                            <td className="p-2 text-right">{Number(row.s1Qty || 0).toLocaleString('da-DK')}</td>
+                                            <td className="p-2 text-right">{Math.round(row.s1Price || 0).toLocaleString('da-DK')}</td>
+                                            <td className="p-2 text-right">{Number(row.s2Qty || 0).toLocaleString('da-DK')}</td>
+                                            <td className="p-2 text-right">{Math.round(row.s2Price || 0).toLocaleString('da-DK')}</td>
+                                          </tr>
+                                        );
+                                      })}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              );
+                            })()}
+                          </Modal>
                         </div>
                       </>
                     );
