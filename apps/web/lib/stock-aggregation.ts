@@ -63,6 +63,8 @@ function ensureNums(arr: any[], len: number): number[] {
  */
 /**
  * Fuzzy match color - handles cases like "WHITE" matching "807 WHITE" or "BLACK" matching "807 BLACK"
+ * 
+ * IMPORTANT: Prevents false matches like "WHITE" matching "WHITE WEFT"
  */
 function fuzzyMatchColor(rowColor: string, targetColor: string): boolean {
   const rowLower = (rowColor || '').toLowerCase().trim();
@@ -72,14 +74,24 @@ function fuzzyMatchColor(rowColor: string, targetColor: string): boolean {
   if (rowLower === targetLower) return true;
   
   // Match if row color ends with our color (e.g., "807 BLACK" matches "BLACK")
-  if (rowLower.endsWith(` ${targetLower}`)) return true;
+  // But ensure it's a word boundary - not part of a longer word
+  if (rowLower.endsWith(` ${targetLower}`)) {
+    // Check that the character before the space is not part of the target
+    // This prevents "WHITE" from matching "WHITE WEFT"
+    const beforeMatch = rowLower.slice(0, rowLower.length - targetLower.length - 1);
+    // If there's more text after our match, it's a false match
+    // e.g., "white weft" - "weft" = "white " - we want to reject this
+    // But "807 black" - "black" = "807 " - we want to accept this
+    // So we check: if the remaining part (beforeMatch) ends with a space or is just numbers, it's OK
+    if (beforeMatch.endsWith(' ') || /^\d+\s*$/.test(beforeMatch)) {
+      return true;
+    }
+  }
   
-  // Match if our color ends with row color number prefix removed
+  // Match if row color without number prefix equals target
   const rowColorWithoutNumber = rowLower.replace(/^\d+\s*/, '');
   if (rowColorWithoutNumber === targetLower) return true;
   
-  // DON'T match if row color contains our color as a prefix of another word
-  // e.g., "WHITE" should NOT match "WHITE WEFT"
   return false;
 }
 
