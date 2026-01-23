@@ -636,6 +636,8 @@ export default function OverviewPage() {
       visitedS2Qty,
       visitedS1Price,
       visitedS2Price,
+      unvisitedS2Qty,
+      unvisitedS2Price,
       indexQty,
       indexPrice,
       prognosedQty,
@@ -644,6 +646,76 @@ export default function OverviewPage() {
       unvisitedRows,
     };
   }, [customers, stats, invoices, country, s1, s2, currencyRatesRow, ratesS1, ratesS2, spCurrencyById, overrides, closedCustomers]);
+
+  const salesmenSummary = useMemo(() => {
+    const n = rows.length || 0;
+    const sums = rows.reduce(
+      (acc, r) => {
+        acc.nulled += Number(r.nulledCount || 0);
+        acc.visited += Number(r.visited || 0);
+        acc.total += Number(r.effectiveTotal || 0);
+        acc.notVisited += Number(r.notVisited || 0);
+        acc.s1Qty += Number(r.s1Qty || 0);
+        acc.s1Price += Number(r.s1Price || 0);
+        acc.s2Qty += Number(r.s2Qty || 0);
+        acc.s2Price += Number(r.s2Price || 0);
+        acc.s1AvgSum += Number(r.s1Avg || 0);
+        acc.s2AvgSum += Number(r.s2Avg || 0);
+        acc.visitedPctSum += Number(r.visitedPct || 0);
+        // Match table logic for price pct
+        const perRowPricePct =
+          typeof r.diffPct === 'number'
+            ? r.diffPct
+            : (Number(r.s2Price || 0) === 0 ? 0 : ((Number(r.s1Price || 0) - Number(r.s2Price || 0)) / Number(r.s2Price || 0)) * 100);
+        acc.qtyPctSum += (Number(r.s2Qty || 0) === 0 ? 0 : ((Number(r.s1Qty || 0) - Number(r.s2Qty || 0)) / Number(r.s2Qty || 0)) * 100);
+        acc.pricePctSum += perRowPricePct;
+        return acc;
+      },
+      {
+        nulled: 0,
+        visited: 0,
+        total: 0,
+        notVisited: 0,
+        s1Qty: 0,
+        s1Price: 0,
+        s2Qty: 0,
+        s2Price: 0,
+        s1AvgSum: 0,
+        s2AvgSum: 0,
+        visitedPctSum: 0,
+        qtyPctSum: 0,
+        pricePctSum: 0,
+      }
+    );
+    const avg = (v: number) => (n === 0 ? 0 : v / n);
+    const overallVisitedPct = sums.total === 0 ? 0 : (sums.visited / sums.total) * 100;
+    const overallS1Avg = sums.s1Qty === 0 ? 0 : sums.s1Price / sums.s1Qty;
+    const overallS2Avg = sums.s2Qty === 0 ? 0 : sums.s2Price / sums.s2Qty;
+    const overallQtyPct = sums.s2Qty === 0 ? 0 : ((sums.s1Qty - sums.s2Qty) / sums.s2Qty) * 100;
+    const overallPricePct = sums.s2Price === 0 ? 0 : ((sums.s1Price - sums.s2Price) / sums.s2Price) * 100;
+    return {
+      n,
+      sums,
+      avgNulled: avg(sums.nulled),
+      avgVisited: avg(sums.visited),
+      avgTotal: avg(sums.total),
+      avgNotVisited: avg(sums.notVisited),
+      avgVisitedPct: avg(sums.visitedPctSum),
+      overallVisitedPct,
+      avgS1Qty: avg(sums.s1Qty),
+      avgS1Price: avg(sums.s1Price),
+      avgS2Qty: avg(sums.s2Qty),
+      avgS2Price: avg(sums.s2Price),
+      avgS1Avg: avg(sums.s1AvgSum),
+      avgS2Avg: avg(sums.s2AvgSum),
+      overallS1Avg,
+      overallS2Avg,
+      avgQtyPct: avg(sums.qtyPctSum),
+      avgPricePct: avg(sums.pricePctSum),
+      overallQtyPct,
+      overallPricePct,
+    };
+  }, [rows]);
 
   // navigation helper
   function buildDetailsHref(spId: string, mode: 'nulled' | 'not_visited' | 'visited') {
@@ -799,6 +871,85 @@ export default function OverviewPage() {
                 })()}
               </tr>
             ))}
+            <tr className="border-t bg-gray-50">
+              <td className="p-2 font-semibold">Avg/total</td>
+              <td className="p-2">
+                <div className="flex flex-col leading-tight">
+                  <span>{Math.round(salesmenSummary.avgNulled).toLocaleString('da-DK')}</span>
+                  <span className="text-xs text-gray-500">{Math.round(salesmenSummary.sums.nulled).toLocaleString('da-DK')}</span>
+                </div>
+              </td>
+              <td className="p-2">
+                <div className="flex flex-col leading-tight">
+                  <span>
+                    {Math.round(salesmenSummary.avgVisited).toLocaleString('da-DK')}/{Math.round(salesmenSummary.avgTotal).toLocaleString('da-DK')}
+                  </span>
+                  <span className="text-xs text-gray-500">
+                    {Math.round(salesmenSummary.sums.visited).toLocaleString('da-DK')}/{Math.round(salesmenSummary.sums.total).toLocaleString('da-DK')}
+                  </span>
+                </div>
+              </td>
+              <td className="p-2">
+                <div className="flex flex-col leading-tight">
+                  <span>{Math.round(salesmenSummary.avgNotVisited).toLocaleString('da-DK')}</span>
+                  <span className="text-xs text-gray-500">{Math.round(salesmenSummary.sums.notVisited).toLocaleString('da-DK')}</span>
+                </div>
+              </td>
+              <td className="p-2">
+                <div className="flex flex-col leading-tight">
+                  <span>{salesmenSummary.avgVisitedPct.toFixed(1)}%</span>
+                  <span className="text-xs text-gray-500">{salesmenSummary.overallVisitedPct.toFixed(1)}%</span>
+                </div>
+              </td>
+              <td className="p-2 text-center">
+                <div className="flex flex-col leading-tight">
+                  <span>{Math.round(salesmenSummary.avgS1Qty).toLocaleString('da-DK')}</span>
+                  <span className="text-xs text-gray-500">{Math.round(salesmenSummary.sums.s1Qty).toLocaleString('da-DK')}</span>
+                </div>
+              </td>
+              <td className="p-2 text-center">
+                <div className="flex flex-col leading-tight">
+                  <span>{Math.round(salesmenSummary.avgS1Price).toLocaleString('da-DK')}</span>
+                  <span className="text-xs text-gray-500">{Math.round(salesmenSummary.sums.s1Price).toLocaleString('da-DK')}</span>
+                </div>
+              </td>
+              <td className="p-2 text-center">
+                <div className="flex flex-col leading-tight">
+                  <span>{Math.round(salesmenSummary.avgS1Avg).toLocaleString('da-DK')}</span>
+                  <span className="text-xs text-gray-500">{Math.round(salesmenSummary.overallS1Avg).toLocaleString('da-DK')}</span>
+                </div>
+              </td>
+              <td className="p-2 text-center">
+                <div className="flex flex-col leading-tight">
+                  <span>{Math.round(salesmenSummary.avgS2Qty).toLocaleString('da-DK')}</span>
+                  <span className="text-xs text-gray-500">{Math.round(salesmenSummary.sums.s2Qty).toLocaleString('da-DK')}</span>
+                </div>
+              </td>
+              <td className="p-2 text-center">
+                <div className="flex flex-col leading-tight">
+                  <span>{Math.round(salesmenSummary.avgS2Price).toLocaleString('da-DK')}</span>
+                  <span className="text-xs text-gray-500">{Math.round(salesmenSummary.sums.s2Price).toLocaleString('da-DK')}</span>
+                </div>
+              </td>
+              <td className="p-2 text-center">
+                <div className="flex flex-col leading-tight">
+                  <span>{Math.round(salesmenSummary.avgS2Avg).toLocaleString('da-DK')}</span>
+                  <span className="text-xs text-gray-500">{Math.round(salesmenSummary.overallS2Avg).toLocaleString('da-DK')}</span>
+                </div>
+              </td>
+              <td className="p-2 text-center">
+                <div className="flex flex-col leading-tight">
+                  <span>{salesmenSummary.avgQtyPct.toFixed(2)}%</span>
+                  <span className="text-xs text-gray-500">{salesmenSummary.overallQtyPct.toFixed(2)}%</span>
+                </div>
+              </td>
+              <td className="p-2 text-center">
+                <div className="flex flex-col leading-tight">
+                  <span>{salesmenSummary.avgPricePct.toFixed(2)}%</span>
+                  <span className="text-xs text-gray-500">{salesmenSummary.overallPricePct.toFixed(2)}%</span>
+                </div>
+              </td>
+            </tr>
           </tbody>
         </table>
       </div>
@@ -875,6 +1026,11 @@ export default function OverviewPage() {
               <div className="text-[11px] text-gray-400">
                 {collectedIndex.visitedS1Qty.toLocaleString('da-DK')} vs {collectedIndex.visitedS2Qty.toLocaleString('da-DK')} (visited)
               </div>
+              <div className="text-[11px] text-gray-400">
+                {collectedIndex.visitedS2Qty === 0
+                  ? 'Calc: visited S2 is 0 → 100.0'
+                  : `Calc: (${collectedIndex.visitedS1Qty.toLocaleString('da-DK')} / ${collectedIndex.visitedS2Qty.toLocaleString('da-DK')}) × 100 = ${collectedIndex.indexQty.toFixed(1)}`}
+              </div>
               <button
                 type="button"
                 onClick={() => setIndexModal({ mode: 'visited' })}
@@ -890,6 +1046,11 @@ export default function OverviewPage() {
               <div className="text-[11px] text-gray-400">
                 {Math.round(collectedIndex.visitedS1Price).toLocaleString('da-DK')} vs {Math.round(collectedIndex.visitedS2Price).toLocaleString('da-DK')} (visited · DKK)
               </div>
+              <div className="text-[11px] text-gray-400">
+                {collectedIndex.visitedS2Price === 0
+                  ? 'Calc: visited S2 is 0 → 100.0'
+                  : `Calc: (${Math.round(collectedIndex.visitedS1Price).toLocaleString('da-DK')} / ${Math.round(collectedIndex.visitedS2Price).toLocaleString('da-DK')}) × 100 = ${collectedIndex.indexPrice.toFixed(1)}`}
+              </div>
               <button
                 type="button"
                 onClick={() => setIndexModal({ mode: 'visited' })}
@@ -903,6 +1064,9 @@ export default function OverviewPage() {
               <div className="text-xs text-gray-500">Prognose QTY</div>
               <div className="text-xl font-semibold">{Math.round(collectedIndex.prognosedQty).toLocaleString('da-DK')}</div>
               <div className="text-[11px] text-gray-400">if index holds</div>
+              <div className="text-[11px] text-gray-400">
+                {`Calc: visited S1 + unvisited S2 = ${Math.round(collectedIndex.visitedS1Qty).toLocaleString('da-DK')} + ${Math.round(collectedIndex.unvisitedS2Qty).toLocaleString('da-DK')} = ${Math.round(collectedIndex.prognosedQty).toLocaleString('da-DK')}`}
+              </div>
               <button
                 type="button"
                 onClick={() => setIndexModal({ mode: 'unvisited' })}
@@ -916,6 +1080,9 @@ export default function OverviewPage() {
               <div className="text-xs text-gray-500">Prognose PRICE</div>
               <div className="text-xl font-semibold">{Math.round(collectedIndex.prognosedPrice).toLocaleString('da-DK')} DKK</div>
               <div className="text-[11px] text-gray-400">if index holds</div>
+              <div className="text-[11px] text-gray-400">
+                {`Calc: visited S1 + unvisited S2 = ${Math.round(collectedIndex.visitedS1Price).toLocaleString('da-DK')} + ${Math.round(collectedIndex.unvisitedS2Price).toLocaleString('da-DK')} = ${Math.round(collectedIndex.prognosedPrice).toLocaleString('da-DK')}`}
+              </div>
               <button
                 type="button"
                 onClick={() => setIndexModal({ mode: 'unvisited' })}

@@ -1923,21 +1923,37 @@ export default function StatisticsGeneralPage() {
                               <div className="text-xs text-gray-500">Index QTY</div>
                               <div className="text-xl font-semibold">{indexQty.toFixed(1)}</div>
                               <div className="text-[11px] text-gray-400">{visitedS1Qty} vs {visitedS2Qty} (visited + nulled)</div>
+                              <div className="text-[11px] text-gray-400">
+                                {visitedS2Qty === 0
+                                  ? 'Calc: visited S2 is 0 → 100.0'
+                                  : `Calc: (${visitedS1Qty} / ${visitedS2Qty}) × 100 = ${indexQty.toFixed(1)}`}
+                              </div>
                             </div>
                             <div className="rounded-md border p-3">
                               <div className="text-xs text-gray-500">Index PRICE</div>
                               <div className="text-xl font-semibold">{indexPrice.toFixed(1)}</div>
                               <div className="text-[11px] text-gray-400">{Math.round(visitedS1Price).toLocaleString('da-DK')} vs {Math.round(visitedS2Price).toLocaleString('da-DK')} (visited + nulled)</div>
+                              <div className="text-[11px] text-gray-400">
+                                {visitedS2Price === 0
+                                  ? 'Calc: visited S2 is 0 → 100.0'
+                                  : `Calc: (${Math.round(visitedS1Price).toLocaleString('da-DK')} / ${Math.round(visitedS2Price).toLocaleString('da-DK')}) × 100 = ${indexPrice.toFixed(1)}`}
+                              </div>
                             </div>
                             <div className="rounded-md border p-3">
                               <div className="text-xs text-gray-500">Prognose QTY</div>
                               <div className="text-xl font-semibold">{Math.round(prognosedQty).toLocaleString('da-DK')}</div>
                               <div className="text-[11px] text-gray-400">visited S1 + missing S2 (unvisited)</div>
+                              <div className="text-[11px] text-gray-400">
+                                {`Calc: visited S1 + unvisited S2 = ${Math.round(visitedS1Qty).toLocaleString('da-DK')} + ${Math.round(unvisitedS2Qty).toLocaleString('da-DK')} = ${Math.round(prognosedQty).toLocaleString('da-DK')}`}
+                              </div>
                             </div>
                             <div className="rounded-md border p-3">
                               <div className="text-xs text-gray-500">Prognose PRICE</div>
                               <div className="text-xl font-semibold">{Math.round(prognosedPrice).toLocaleString('da-DK')}</div>
                               <div className="text-[11px] text-gray-400">visited S1 + missing S2 (unvisited)</div>
+                              <div className="text-[11px] text-gray-400">
+                                {`Calc: visited S1 + unvisited S2 = ${Math.round(visitedS1Price).toLocaleString('da-DK')} + ${Math.round(unvisitedS2Price).toLocaleString('da-DK')} = ${Math.round(prognosedPrice).toLocaleString('da-DK')}`}
+                              </div>
                             </div>
                           </div>
                         </div>
