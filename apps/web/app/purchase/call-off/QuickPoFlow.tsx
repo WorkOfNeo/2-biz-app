@@ -1208,9 +1208,44 @@ KAXY NAVY - Make sure stock is fixed`}
       )}
       
       {/* Correction Modal */}
-      {correctionModal && (
+      {correctionModal && (() => {
+        const plan = correctionModal.plan;
+        const st = plan.stock_table;
+        const sizes = st?.sizes || Object.keys(plan.size_breakdown).sort((a, b) => {
+          const numA = parseInt(a);
+          const numB = parseInt(b);
+          if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
+          return a.localeCompare(b);
+        });
+        
+        // Calculate Net Need 2 with corrections
+        const calculateNetNeed2 = () => {
+          const netNeed2BySize: Record<string, number> = {};
+          let totalNetNeed2 = 0;
+          
+          for (let i = 0; i < sizes.length; i++) {
+            const size = sizes[i];
+            const netNeed1 = st?.netNeed[i] ?? 0;
+            const correctedOrder = correctionModal.corrections[size] ?? 0;
+            const netNeed2 = netNeed1 + correctedOrder;
+            netNeed2BySize[size] = netNeed2;
+            totalNetNeed2 += netNeed2;
+          }
+          
+          return { netNeed2BySize, totalNetNeed2 };
+        };
+        
+        const { netNeed2BySize, totalNetNeed2 } = calculateNetNeed2();
+        
+        // Calculate % distribution of Net Need 2
+        const getDistributionPct = (value: number) => {
+          if (totalNetNeed2 === 0) return 0;
+          return (value / totalNetNeed2) * 100;
+        };
+        
+        return (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-xl max-w-lg w-full max-h-[90vh] overflow-y-auto">
+          <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
             <div className="p-4 border-b">
               <h3 className="font-semibold text-lg">Correct Size Distribution</h3>
               <p className="text-sm text-slate-500 mt-1">
@@ -1221,76 +1256,125 @@ KAXY NAVY - Make sure stock is fixed`}
             <div className="p-4">
               <div className="mb-4">
                 <div className="text-sm font-medium text-slate-700">
-                  {correctionModal.plan.style_name} - {correctionModal.plan.color}
+                  {plan.style_name} - {plan.color}
                 </div>
                 <div className="text-xs text-slate-500">
-                  {correctionModal.plan.style_no} · Total: {correctionModal.plan.total_qty} pcs
+                  {plan.style_no} · Total: {plan.total_qty} pcs
                 </div>
               </div>
               
-              <div className="space-y-2">
-                <div className="grid grid-cols-4 text-xs font-medium text-slate-500 pb-1 border-b">
-                  <span>Size</span>
-                  <span className="text-right">Suggested</span>
-                  <span className="text-right">Correct</span>
-                  <span className="text-right">Diff</span>
-                </div>
-                
-                {Object.keys(correctionModal.plan.size_breakdown)
-                  .sort((a, b) => {
-                    const numA = parseInt(a);
-                    const numB = parseInt(b);
-                    if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
-                    return a.localeCompare(b);
-                  })
-                  .map(size => {
-                    const suggested = correctionModal.plan.size_breakdown[size] || 0;
-                    const corrected = correctionModal.corrections[size] || 0;
-                    const diff = corrected - suggested;
+              {/* Full table with Net Need 1, Order, Net Need 2 */}
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs border-collapse">
+                  <thead>
+                    <tr className="bg-slate-100">
+                      <th className="p-2 text-left font-medium">Section</th>
+                      {sizes.map((size, i) => (
+                        <th key={i} className="p-2 text-right font-medium w-12">{size}</th>
+                      ))}
+                      <th className="p-2 text-right font-medium w-16">Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {/* Net Need 1 */}
+                    {st && (
+                      <tr className="bg-amber-50/50">
+                        <td className="p-2 font-medium border-b">Net Need 1</td>
+                        {sizes.map((size, i) => (
+                          <td key={i} className={`p-2 text-right border-b ${(st.netNeed[i] ?? 0) < 0 ? 'text-red-600' : ''}`}>
+                            {st.netNeed[i] ?? 0}
+                          </td>
+                        ))}
+                        <td className="p-2 text-right border-b font-medium">{st.netNeedTotal}</td>
+                      </tr>
+                    )}
                     
-                    return (
-                      <div key={size} className="grid grid-cols-4 items-center gap-2 py-1">
-                        <span className="text-sm font-medium">{size}</span>
-                        <span className="text-sm text-right text-slate-500">{suggested}</span>
-                        <input
-                          type="number"
-                          min="0"
-                          value={corrected}
-                          onChange={(e) => updateCorrection(size, parseInt(e.target.value) || 0)}
-                          className="w-full text-right text-sm border rounded px-2 py-1 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                        />
-                        <span className={`text-sm text-right font-medium ${
-                          diff > 0 ? 'text-green-600' : diff < 0 ? 'text-red-600' : 'text-slate-400'
-                        }`}>
-                          {diff > 0 ? `+${diff}` : diff}
-                        </span>
-                      </div>
-                    );
-                  })}
-                
-                <div className="pt-2 border-t mt-2">
-                  <div className="grid grid-cols-4 items-center text-sm font-medium">
-                    <span>Total</span>
-                    <span className="text-right text-slate-500">
-                      {Object.values(correctionModal.plan.size_breakdown).reduce((a, b) => a + b, 0)}
+                    {/* Suggested Order */}
+                    <tr className="text-slate-500">
+                      <td className="p-2 font-medium border-b">Suggested</td>
+                      {sizes.map((size) => (
+                        <td key={size} className="p-2 text-right border-b">
+                          {plan.size_breakdown[size] ?? 0}
+                        </td>
+                      ))}
+                      <td className="p-2 text-right border-b font-medium">
+                        {Object.values(plan.size_breakdown).reduce((a, b) => a + b, 0)}
+                      </td>
+                    </tr>
+                    
+                    {/* Corrected Order (editable) */}
+                    <tr className="bg-indigo-50">
+                      <td className="p-2 font-medium border-b text-indigo-700">Correct Order</td>
+                      {sizes.map((size) => {
+                        const suggested = plan.size_breakdown[size] ?? 0;
+                        const corrected = correctionModal.corrections[size] ?? 0;
+                        const diff = corrected - suggested;
+                        return (
+                          <td key={size} className="p-1 border-b">
+                            <input
+                              type="number"
+                              min="0"
+                              value={corrected}
+                              onChange={(e) => updateCorrection(size, parseInt(e.target.value) || 0)}
+                              className={`w-full text-right text-xs border rounded px-1 py-0.5 focus:ring-1 focus:ring-indigo-500 ${
+                                diff !== 0 ? 'bg-indigo-100 font-medium' : ''
+                              }`}
+                            />
+                          </td>
+                        );
+                      })}
+                      <td className="p-2 text-right border-b font-bold text-indigo-700">
+                        {Object.values(correctionModal.corrections).reduce((a, b) => a + b, 0)}
+                      </td>
+                    </tr>
+                    
+                    {/* Net Need 2 (after correction) */}
+                    <tr className="bg-green-50">
+                      <td className="p-2 font-semibold">Net Need 2</td>
+                      {sizes.map((size) => {
+                        const nn2 = netNeed2BySize[size] ?? 0;
+                        return (
+                          <td key={size} className={`p-2 text-right font-medium ${nn2 < 0 ? 'text-red-600' : 'text-green-600'}`}>
+                            {nn2}
+                          </td>
+                        );
+                      })}
+                      <td className={`p-2 text-right font-bold ${totalNetNeed2 < 0 ? 'text-red-700' : 'text-green-700'}`}>
+                        {totalNetNeed2}
+                      </td>
+                    </tr>
+                    
+                    {/* % Distribution of Net Need 2 */}
+                    <tr className="text-slate-500 text-[10px]">
+                      <td className="p-2 font-medium">% Dist</td>
+                      {sizes.map((size) => {
+                        const nn2 = netNeed2BySize[size] ?? 0;
+                        const pct = getDistributionPct(nn2);
+                        return (
+                          <td key={size} className="p-2 text-right">
+                            {totalNetNeed2 !== 0 ? `${pct.toFixed(0)}%` : '-'}
+                          </td>
+                        );
+                      })}
+                      <td className="p-2 text-right">100%</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              
+              {/* Diff summary */}
+              <div className="mt-3 text-xs text-slate-500">
+                {(() => {
+                  const corrTotal = Object.values(correctionModal.corrections).reduce((a, b) => a + b, 0);
+                  const sugTotal = Object.values(plan.size_breakdown).reduce((a, b) => a + b, 0);
+                  const diff = corrTotal - sugTotal;
+                  if (diff === 0) return <span className="text-slate-400">No change in total quantity</span>;
+                  return (
+                    <span className={diff > 0 ? 'text-green-600' : 'text-red-600'}>
+                      {diff > 0 ? '+' : ''}{diff} units compared to suggested
                     </span>
-                    <span className="text-right">
-                      {Object.values(correctionModal.corrections).reduce((a, b) => a + b, 0)}
-                    </span>
-                    <span className={`text-right ${
-                      Object.values(correctionModal.corrections).reduce((a, b) => a + b, 0) !== 
-                      Object.values(correctionModal.plan.size_breakdown).reduce((a, b) => a + b, 0)
-                        ? 'text-amber-600' : 'text-slate-400'
-                    }`}>
-                      {(() => {
-                        const corrTotal = Object.values(correctionModal.corrections).reduce((a, b) => a + b, 0);
-                        const sugTotal = Object.values(correctionModal.plan.size_breakdown).reduce((a, b) => a + b, 0);
-                        const diff = corrTotal - sugTotal;
-                        return diff > 0 ? `+${diff}` : diff;
-                      })()}
-                    </span>
-                  </div>
-                </div>
+                  );
+                })()}
               </div>
             </div>
             
@@ -1304,7 +1388,7 @@ KAXY NAVY - Make sure stock is fixed`}
               </Button>
               <Button
                 onClick={() => handleSendFeedback(
-                  correctionModal.plan, 
+                  plan, 
                   'incorrect',
                   correctionModal.corrections
                 )}
@@ -1326,7 +1410,8 @@ KAXY NAVY - Make sure stock is fixed`}
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
     </div>
   );
 }
