@@ -695,7 +695,7 @@ function ExamplesLibraryTab() {
                   {ex.tags.length > 0 && (
                     <div className="flex gap-1 mt-1">
                       {ex.tags.map(t => (
-                        <Badge key={t} variant="outline" className="text-xs">{t}</Badge>
+                        <Badge key={t} className="text-xs border-slate-300">{t}</Badge>
                       ))}
                     </div>
                   )}
