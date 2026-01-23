@@ -47,13 +47,22 @@ interface StockTableData {
   historicalSales?: number;
 }
 
+interface SizeFactors {
+  baseWeight: number;
+  historicalWeight: number;
+  netNeedWeight: number;
+  combinedWeight: number;
+  quantity: number;
+}
+
 interface OrderPlan {
   style_no: string;
   style_name: string;
   color: string;
   total_qty: number;
   size_breakdown: Record<string, number>;
-  size_source: 'historical' | 'default_assortment';
+  size_source: 'smart_hybrid' | 'historical_only' | 'default_only' | 'historical' | 'default_assortment';
+  size_factors?: Record<string, SizeFactors>;
   current_stock: number;
   current_on_order: number;
   net_need_before: number;
@@ -349,7 +358,7 @@ function calculateSizeBreakdown(
   return result;
 }
 
-// Default assortments
+// Default assortments (base curve)
 const DEFAULT_ASSORTMENT_NUMERIC: Record<string, number> = {
   '34': 0,
   '36': 1/10,
@@ -367,6 +376,145 @@ const DEFAULT_ASSORTMENT_LETTER: Record<string, number> = {
   'XL': 0.25,
   'XXL': 0.125
 };
+
+// Smart size breakdown with hybrid logic
+// Combines: base assortment + historical sales + current net need
+interface SmartBreakdownParams {
+  total: number;
+  sizes: string[];
+  netNeedBySize: number[]; // Current net need per size
+  historicalRatioBySize?: Record<string, number>; // 0-1 ratio from historical sales
+  feedbackAdjustment?: Record<string, number>; // Past corrections
+}
+
+interface SmartBreakdownResult {
+  breakdown: Record<string, number>;
+  factors: Record<string, {
+    baseWeight: number;
+    historicalWeight: number;
+    netNeedWeight: number;
+    combinedWeight: number;
+    quantity: number;
+  }>;
+  sizeSource: 'smart_hybrid' | 'historical_only' | 'default_only';
+}
+
+function calculateSmartSizeBreakdown(params: SmartBreakdownParams): SmartBreakdownResult {
+  const { total, sizes, netNeedBySize, historicalRatioBySize, feedbackAdjustment } = params;
+  
+  // Determine if we have historical data
+  const hasHistorical = historicalRatioBySize && Object.keys(historicalRatioBySize).length > 0;
+  
+  // Determine size type for default assortment
+  const isNumeric = sizes.some(s => /^\d+$/.test(s));
+  const defaultAssortment = isNumeric ? DEFAULT_ASSORTMENT_NUMERIC : DEFAULT_ASSORTMENT_LETTER;
+  
+  // Calculate total positive net need (sizes that actually need stock)
+  const positiveNetNeed = netNeedBySize.reduce((sum, n) => sum + Math.max(0, n), 0);
+  
+  // Build weight factors for each size
+  const factors: SmartBreakdownResult['factors'] = {};
+  const weights: Array<{ size: string; weight: number }> = [];
+  
+  for (let i = 0; i < sizes.length; i++) {
+    const size = sizes[i] as string;
+    const currentNetNeed = netNeedBySize[i] ?? 0;
+    
+    // 1. Base weight from default assortment (normalized to 0-1)
+    const baseWeight = defaultAssortment[size] ?? (1 / sizes.length);
+    
+    // 2. Historical weight (if available, otherwise use base)
+    const historicalWeight = hasHistorical 
+      ? (historicalRatioBySize![size] ?? baseWeight)
+      : baseWeight;
+    
+    // 3. Net need weight: prioritize sizes that actually need replenishment
+    // Positive net need = needs stock, negative = surplus
+    let netNeedWeight = 0;
+    if (positiveNetNeed > 0) {
+      netNeedWeight = Math.max(0, currentNetNeed) / positiveNetNeed;
+    } else {
+      // If all sizes are in surplus, use equal weight
+      netNeedWeight = 1 / sizes.length;
+    }
+    
+    // 4. Apply feedback adjustment if available
+    const feedbackMult = feedbackAdjustment?.[size] ?? 1.0;
+    
+    // Combined weight formula:
+    // - 25% base assortment (keeps the "shape" of the curve)
+    // - 45% historical sales (what actually sells)
+    // - 30% net need (fill the gaps first)
+    // Then multiply by feedback adjustment
+    const combinedWeight = (
+      0.25 * baseWeight +
+      0.45 * historicalWeight +
+      0.30 * netNeedWeight
+    ) * feedbackMult;
+    
+    factors[size] = {
+      baseWeight,
+      historicalWeight,
+      netNeedWeight,
+      combinedWeight,
+      quantity: 0 // Will be filled after distribution
+    };
+    
+    weights.push({ size, weight: combinedWeight });
+  }
+  
+  // Normalize weights to sum to 1
+  const totalWeight = weights.reduce((sum, w) => sum + w.weight, 0);
+  if (totalWeight > 0) {
+    for (const w of weights) {
+      w.weight = w.weight / totalWeight;
+    }
+  }
+  
+  // Distribute quantity using largest remainder method
+  const breakdown: Record<string, number> = {};
+  let assigned = 0;
+  const remainders: Array<{ size: string; rem: number }> = [];
+  
+  for (const { size, weight } of weights) {
+    const exact = total * weight;
+    const floor = Math.floor(exact);
+    breakdown[size] = floor;
+    assigned += floor;
+    remainders.push({ size, rem: exact - floor });
+  }
+  
+  // Distribute remainder to sizes with largest remainders
+  remainders.sort((a, b) => b.rem - a.rem);
+  let remaining = total - assigned;
+  for (const item of remainders) {
+    if (remaining <= 0) break;
+    breakdown[item.size] = (breakdown[item.size] || 0) + 1;
+    remaining--;
+  }
+  
+  // Update factors with final quantities
+  for (const size of sizes) {
+    if (factors[size]) {
+      factors[size].quantity = breakdown[size] ?? 0;
+    }
+  }
+  
+  // Determine source type
+  let sizeSource: SmartBreakdownResult['sizeSource'];
+  if (hasHistorical && positiveNetNeed > 0) {
+    sizeSource = 'smart_hybrid';
+  } else if (hasHistorical) {
+    sizeSource = 'historical_only';
+  } else {
+    sizeSource = 'default_only';
+  }
+  
+  console.log('[Smart Breakdown] Total:', total, 'Source:', sizeSource);
+  console.log('[Smart Breakdown] Factors:', JSON.stringify(factors, null, 2));
+  
+  return { breakdown, factors, sizeSource };
+}
 
 export async function POST(req: Request) {
   try {
@@ -512,6 +660,54 @@ export async function POST(req: Request) {
       }
     }
     
+    // 6b. Fetch past feedback for these styles (for learning)
+    type FeedbackAdjustment = Record<string, number>; // size -> multiplier
+    const feedbackByStyle: Record<string, FeedbackAdjustment> = {};
+    
+    if (styleNos.length > 0) {
+      const { data: feedbackData } = await supabase
+        .from('call_off_feedback')
+        .select('style_no, color, verdict, suggested_order, actual_order')
+        .in('style_no', styleNos)
+        .eq('verdict', 'incorrect')
+        .order('created_at', { ascending: false })
+        .limit(50);
+      
+      // Aggregate feedback to create adjustments
+      // If a style has been marked "incorrect" multiple times, we try to learn from corrections
+      if (feedbackData && feedbackData.length > 0) {
+        console.log('[Quick PO] Found', feedbackData.length, 'past feedback entries for learning');
+        
+        for (const fb of feedbackData) {
+          const styleNo = fb.style_no;
+          if (!feedbackByStyle[styleNo]) {
+            feedbackByStyle[styleNo] = {};
+          }
+          
+          // If we have actual_order, compare it to suggested_order to learn
+          if (fb.suggested_order && fb.actual_order) {
+            const suggested = fb.suggested_order as Record<string, number>;
+            const actual = fb.actual_order as Record<string, number>;
+            
+            for (const size of Object.keys(suggested)) {
+              const suggestedQty = suggested[size] || 0;
+              const actualQty = actual[size] || 0;
+              
+              if (suggestedQty > 0) {
+                // Calculate adjustment multiplier
+                const ratio = actualQty / suggestedQty;
+                // Blend with existing adjustment (exponential moving average)
+                const existing = feedbackByStyle[styleNo]![size] ?? 1.0;
+                feedbackByStyle[styleNo]![size] = existing * 0.7 + ratio * 0.3;
+              }
+            }
+          }
+        }
+        
+        console.log('[Quick PO] Feedback adjustments:', feedbackByStyle);
+      }
+    }
+    
     // 7. Process each command type
     const orderPlans: OrderPlan[] = [];
     const colorBreakdownPlans: ColorBreakdownPlan[] = [];
@@ -591,22 +787,25 @@ export async function POST(req: Request) {
             };
           }
           
-          // Get size ratio
+          // Get size ratio from historical data
           const ratio = sizeRatios[styleNo];
-          let sizeBreakdown: Record<string, number>;
-          let sizeSource: 'historical' | 'default_assortment';
-          let sizes = orderStockTable?.sizes || stockInfo.sizes || ['36', '38', '40', '42', '44', '46'];
+          const sizes = orderStockTable?.sizes || stockInfo.sizes || ['36', '38', '40', '42', '44', '46'];
           
-          if (ratio && Object.keys(ratio.ratioBySize).length > 0) {
-            sizeBreakdown = calculateSizeBreakdown(cmd.quantity, ratio.ratioBySize, ratio.sizes.length > 0 ? ratio.sizes : sizes);
-            sizeSource = 'historical';
-          } else {
-            // Use default assortment
-            const isNumeric = sizes.some((s: string) => /^\d+$/.test(s));
-            const defaultRatio = isNumeric ? DEFAULT_ASSORTMENT_NUMERIC : DEFAULT_ASSORTMENT_LETTER;
-            sizeBreakdown = calculateSizeBreakdown(cmd.quantity, defaultRatio, sizes);
-            sizeSource = 'default_assortment';
-          }
+          // Use smart hybrid breakdown that considers:
+          // 1. Default assortment curve (25%)
+          // 2. Historical sales ratio (45%)
+          // 3. Current net need per size (30%)
+          const smartResult = calculateSmartSizeBreakdown({
+            total: cmd.quantity,
+            sizes,
+            netNeedBySize: orderStockTable?.netNeed || Array(sizes.length).fill(0),
+            historicalRatioBySize: ratio?.ratioBySize,
+            feedbackAdjustment: feedbackByStyle[styleNo]
+          });
+          
+          const sizeBreakdown = smartResult.breakdown;
+          const sizeSource = smartResult.sizeSource;
+          const sizeFactors = smartResult.factors;
           
           const netNeedBefore = orderStockTable?.netNeedTotal ?? stockInfo.net_need;
           const netNeedAfter = netNeedBefore - cmd.quantity;
@@ -629,6 +828,7 @@ export async function POST(req: Request) {
             total_qty: cmd.quantity,
             size_breakdown: sizeBreakdown,
             size_source: sizeSource,
+            size_factors: sizeFactors,
             current_stock: orderStockTable?.stockTotal ?? stockInfo.stock,
             current_on_order: orderStockTable?.purchaseTotal ?? stockInfo.on_order,
             net_need_before: netNeedBefore,
@@ -818,22 +1018,18 @@ export async function POST(req: Request) {
             const qty = cmd.quantity || 0;
             const numSizes = cn.sizes.length;
             
-            // Calculate size breakdown for the target color
+            // Calculate size breakdown for the target color using smart hybrid
             let newOrderBySize: number[] = Array(numSizes).fill(0);
             if (qty > 0) {
-              // Try to use historical data for size distribution
               const ratio = sizeRatios[styleNo];
-              if (ratio && Object.keys(ratio.ratioBySize).length > 0) {
-                const breakdown = calculateSizeBreakdown(qty, ratio.ratioBySize, cn.sizes);
-                // Convert from object to array matching cn.sizes order
-                newOrderBySize = cn.sizes.map(sz => breakdown[sz] || 0);
-              } else {
-                // Use default assortment
-                const isNumeric = cn.sizes.some(s => /^\d+$/.test(s));
-                const defaultRatio = isNumeric ? DEFAULT_ASSORTMENT_NUMERIC : DEFAULT_ASSORTMENT_LETTER;
-                const breakdown = calculateSizeBreakdown(qty, defaultRatio, cn.sizes);
-                newOrderBySize = cn.sizes.map(sz => breakdown[sz] || 0);
-              }
+              const smartResult = calculateSmartSizeBreakdown({
+                total: qty,
+                sizes: cn.sizes,
+                netNeedBySize: cn.netNeed,
+                historicalRatioBySize: ratio?.ratioBySize,
+                feedbackAdjustment: feedbackByStyle[styleNo]
+              });
+              newOrderBySize = cn.sizes.map(sz => smartResult.breakdown[sz] || 0);
             }
             
             // Calculate new net need by size

@@ -6,7 +6,7 @@ import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../../components/ui/card';
 import { Button } from '../../../components/ui/button';
 import { Badge } from '../../../components/ui/badge';
-import { Info, Loader2, AlertTriangle, Check, Clock, Zap, Package, Palette } from 'lucide-react';
+import { Info, Loader2, AlertTriangle, Check, Clock, Zap, Package, Palette, ThumbsUp, ThumbsDown } from 'lucide-react';
 
 // ==================== Types ====================
 
@@ -23,13 +23,22 @@ interface ParsedCommand {
   parse_error: string | null;
 }
 
+interface SizeFactors {
+  baseWeight: number;
+  historicalWeight: number;
+  netNeedWeight: number;
+  combinedWeight: number;
+  quantity: number;
+}
+
 interface OrderPlan {
   style_no: string;
   style_name: string;
   color: string;
   total_qty: number;
   size_breakdown: Record<string, number>;
-  size_source: 'historical' | 'default_assortment';
+  size_source: 'smart_hybrid' | 'historical_only' | 'default_only' | 'historical' | 'default_assortment';
+  size_factors?: Record<string, SizeFactors>;
   current_stock: number;
   current_on_order: number;
   net_need_before: number;
@@ -242,6 +251,38 @@ export default function QuickPoFlow({
   const [error, setError] = React.useState<string | null>(null);
   const [creatingPos, setCreatingPos] = React.useState(false);
   const [createResult, setCreateResult] = React.useState<{ success: number; failed: number } | null>(null);
+  const [feedbackSent, setFeedbackSent] = React.useState<Record<string, 'correct' | 'incorrect'>>({});
+  const [sendingFeedback, setSendingFeedback] = React.useState<string | null>(null);
+  
+  // Send feedback for an order plan
+  const handleSendFeedback = async (plan: OrderPlan, verdict: 'correct' | 'incorrect') => {
+    const key = `${plan.style_no}|${plan.color}`;
+    setSendingFeedback(key);
+    
+    try {
+      const response = await fetch('/api/call-off/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          style_no: plan.style_no,
+          color: plan.color,
+          verdict,
+          suggested_order: plan.size_breakdown,
+          notes: verdict === 'incorrect' 
+            ? `Size distribution was wrong. Source: ${plan.size_source}` 
+            : `Size distribution was correct. Source: ${plan.size_source}`
+        })
+      });
+      
+      if (response.ok) {
+        setFeedbackSent(prev => ({ ...prev, [key]: verdict }));
+      }
+    } catch (err) {
+      console.error('Failed to send feedback:', err);
+    } finally {
+      setSendingFeedback(null);
+    }
+  };
 
   // Parse and analyze
   const handleAnalyze = async () => {
@@ -479,17 +520,62 @@ KAXY NAVY - Make sure stock is fixed`}
                       <div className="flex items-start justify-between mb-2">
                         <div>
                           <div className="font-medium">{plan.style_name} - {plan.color}</div>
-                          <div className="text-xs text-slate-500">{plan.style_no} · Size source: {plan.size_source === 'historical' ? 'Historical' : 'Default'}</div>
+                          <div className="text-xs text-slate-500">
+                            {plan.style_no} · Size source: {
+                              plan.size_source === 'smart_hybrid' ? '🎯 Smart (25% base, 45% hist, 30% need)' :
+                              plan.size_source === 'historical_only' ? '📊 Historical' :
+                              plan.size_source === 'historical' ? '📊 Historical' :
+                              '📐 Default Assortment'
+                            }
+                          </div>
                         </div>
-                        <Badge className={
-                          plan.action === 'create_po' ? 'bg-green-100 text-green-700' :
-                          plan.action === 'skip_overstocked' ? 'bg-amber-100 text-amber-700' :
-                          'bg-blue-100 text-blue-700'
-                        }>
-                          {plan.action === 'create_po' ? 'Ready' :
-                           plan.action === 'skip_overstocked' ? 'Overstocked' :
-                           'Review Needed'}
-                        </Badge>
+                        <div className="flex items-center gap-2">
+                          {/* Feedback buttons */}
+                          {(() => {
+                            const key = `${plan.style_no}|${plan.color}`;
+                            const sent = feedbackSent[key];
+                            const isSending = sendingFeedback === key;
+                            
+                            if (sent) {
+                              return (
+                                <span className={`text-xs px-2 py-0.5 rounded ${sent === 'correct' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                                  {sent === 'correct' ? '✓ Good' : '✗ Wrong'}
+                                </span>
+                              );
+                            }
+                            
+                            return (
+                              <div className="flex gap-1">
+                                <button
+                                  onClick={() => handleSendFeedback(plan, 'correct')}
+                                  disabled={isSending}
+                                  className="p-1 rounded hover:bg-green-100 text-slate-400 hover:text-green-600 transition-colors"
+                                  title="Distribution looks good"
+                                >
+                                  {isSending ? <Loader2 className="h-4 w-4 animate-spin" /> : <ThumbsUp className="h-4 w-4" />}
+                                </button>
+                                <button
+                                  onClick={() => handleSendFeedback(plan, 'incorrect')}
+                                  disabled={isSending}
+                                  className="p-1 rounded hover:bg-red-100 text-slate-400 hover:text-red-600 transition-colors"
+                                  title="Distribution is wrong"
+                                >
+                                  <ThumbsDown className="h-4 w-4" />
+                                </button>
+                              </div>
+                            );
+                          })()}
+                          
+                          <Badge className={
+                            plan.action === 'create_po' ? 'bg-green-100 text-green-700' :
+                            plan.action === 'skip_overstocked' ? 'bg-amber-100 text-amber-700' :
+                            'bg-blue-100 text-blue-700'
+                          }>
+                            {plan.action === 'create_po' ? 'Ready' :
+                             plan.action === 'skip_overstocked' ? 'Overstocked' :
+                             'Review Needed'}
+                          </Badge>
+                        </div>
                       </div>
                       
                       {/* Full Stock Table */}
@@ -545,6 +631,22 @@ KAXY NAVY - Make sure stock is fixed`}
                                 {plan.net_need_before}
                               </td>
                             </tr>
+                            {/* Weight Factors (only show if smart_hybrid) */}
+                            {plan.size_factors && plan.size_source === 'smart_hybrid' && (
+                              <tr className="bg-indigo-50/50">
+                                <td className="p-1.5 border-b text-indigo-600 text-[10px]">Weight %</td>
+                                {sizes.map((size, i) => {
+                                  const factor = plan.size_factors?.[size];
+                                  const pct = factor ? Math.round(factor.combinedWeight * 100) : 0;
+                                  return (
+                                    <td key={i} className="p-1.5 text-right border-b text-indigo-500 text-[10px]">
+                                      {pct}%
+                                    </td>
+                                  );
+                                })}
+                                <td className="p-1.5 text-right border-b text-indigo-600 text-[10px]">100%</td>
+                              </tr>
+                            )}
                             {/* New Order */}
                             <tr className="bg-purple-50">
                               <td className="p-1.5 border-b text-purple-700 font-medium">+ New Order</td>
@@ -564,7 +666,7 @@ KAXY NAVY - Make sure stock is fixed`}
                                 const newNeed = oldNeed - newOrder;
                                 return (
                                   <td key={i} className={`p-1.5 text-right font-medium ${newNeed > 0 ? 'text-amber-600' : newNeed < 0 ? 'text-green-600' : ''}`}>
-                                    {newNeed}
+                                    {newNeed > 0 ? newNeed : newNeed < 0 ? `+${Math.abs(newNeed)}` : '0'}
                                   </td>
                                 );
                               })}
@@ -581,6 +683,38 @@ KAXY NAVY - Make sure stock is fixed`}
                           <AlertTriangle className="h-3 w-3" />
                           {plan.warning}
                         </div>
+                      )}
+                      
+                      {/* Calculation Details */}
+                      {plan.size_factors && plan.size_source === 'smart_hybrid' && (
+                        <details className="mt-2">
+                          <summary className="text-xs text-indigo-600 cursor-pointer hover:text-indigo-800">
+                            📊 Show calculation breakdown
+                          </summary>
+                          <div className="mt-1 p-2 bg-indigo-50 rounded text-[10px] font-mono">
+                            <div className="grid grid-cols-4 gap-1 text-indigo-700 mb-1 font-semibold">
+                              <span>Size</span>
+                              <span>Base</span>
+                              <span>Hist</span>
+                              <span>Need</span>
+                            </div>
+                            {sizes.map((size) => {
+                              const f = plan.size_factors?.[size];
+                              if (!f) return null;
+                              return (
+                                <div key={size} className="grid grid-cols-4 gap-1 text-indigo-600">
+                                  <span className="font-medium">{size}</span>
+                                  <span>{(f.baseWeight * 100).toFixed(0)}%</span>
+                                  <span>{(f.historicalWeight * 100).toFixed(0)}%</span>
+                                  <span>{(f.netNeedWeight * 100).toFixed(0)}%</span>
+                                </div>
+                              );
+                            })}
+                            <div className="mt-1 pt-1 border-t border-indigo-200 text-indigo-700">
+                              Formula: 25% base + 45% historical + 30% net need
+                            </div>
+                          </div>
+                        </details>
                       )}
                     </div>
                     );
@@ -797,7 +931,7 @@ KAXY NAVY - Make sure stock is fixed`}
                                         const newNeed = dist.newNetNeedBySize?.[i] ?? sd.netNeed[i] ?? 0;
                                         return (
                                           <td key={i} className={`p-1.5 text-right font-medium ${newNeed > 0 ? 'text-amber-600' : newNeed < 0 ? 'text-green-600' : ''}`}>
-                                            {newNeed}
+                                            {newNeed > 0 ? newNeed : newNeed < 0 ? `+${Math.abs(newNeed)}` : '0'}
                                           </td>
                                         );
                                       })}
