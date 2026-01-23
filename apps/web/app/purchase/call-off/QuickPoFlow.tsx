@@ -269,6 +269,19 @@ export default function QuickPoFlow({
     const key = `${plan.style_no}|${plan.color}`;
     setSendingFeedback(key);
     
+    // Parse prompt version for attribution (format: "key_vN")
+    let promptKey: string | null = null;
+    let promptVersion: number | null = null;
+    if (result?.promptVersion) {
+      const match = result.promptVersion.match(/^(.+)_v(\d+)$/);
+      if (match) {
+        promptKey = match[1];
+        promptVersion = parseInt(match[2]);
+      } else {
+        promptKey = result.promptVersion;
+      }
+    }
+    
     try {
       const response = await fetch('/api/call-off/feedback', {
         method: 'POST',
@@ -281,7 +294,11 @@ export default function QuickPoFlow({
           actual_order: actualOrder || null,
           notes: verdict === 'incorrect' 
             ? `Size distribution was wrong. Source: ${plan.size_source}${actualOrder ? '. Corrected by user.' : ''}` 
-            : `Size distribution was correct. Source: ${plan.size_source}`
+            : `Size distribution was correct. Source: ${plan.size_source}`,
+          // Attribution for learning
+          flow: 'quick_po',
+          prompt_key: promptKey,
+          prompt_version: promptVersion
         })
       });
       

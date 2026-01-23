@@ -63,7 +63,13 @@ export async function POST(req: Request) {
       verdict, 
       notes, 
       suggested_order, 
-      actual_order 
+      actual_order,
+      // New attribution fields for learning
+      flow,
+      prompt_key,
+      prompt_version,
+      reason_codes,
+      context_snapshot
     } = body;
 
     if (!style_no || !color || !verdict) {
@@ -91,7 +97,13 @@ export async function POST(req: Request) {
         notes: notes?.trim() || null,
         suggested_order: suggested_order || null,
         actual_order: actual_order || null,
-        created_by: user?.id || null
+        created_by: user?.id || null,
+        // Attribution fields
+        flow: flow || 'quick_po', // Default to quick_po for backwards compatibility
+        prompt_key: prompt_key || null,
+        prompt_version: prompt_version || null,
+        reason_codes: reason_codes || [],
+        context_snapshot: context_snapshot || null
       })
       .select()
       .single();

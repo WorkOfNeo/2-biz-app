@@ -13,7 +13,8 @@ export type PromptKey =
   | 'purchase_single_supplier_v1'
   | 'daily_analysis_v1'
   | 'purchase_round_v1'
-  | 'quick_po_flow_v1';
+  | 'quick_po_flow_v1'
+  | 'call_off_analysis_v2';
 
 export type PromptConfig = {
   key: PromptKey;
@@ -543,6 +544,43 @@ This is a PURCHASE ROUND - we are making actual buying decisions for stock reple
     model: 'gpt-5',  // Full model for complex purchase decisions
     temperature: 0.2,  // Lower temp for consistent purchasing advice
     maxTokens: 16384,
+  },
+
+  // NOOS Call-Off Analysis prompt - historical sales = target stock
+  call_off_analysis_v2: {
+    version: 2,
+    content: `[NOOS Call-Off Analysis v2]
+You are analyzing NOOS inventory. The GOAL is to match historical sales - if we sold X units in the selected period, we need X units available for the next period.
+
+FORMULA: Gap = Historical Sales - (Current Stock + On Order)
+         Call Home = min(Gap, Bell Rain Available)
+         New Order = Gap - Call Home
+
+{{bell_rain_info}}
+
+PERIOD: {{period_display}}
+STATUS: {{status_summary}}
+
+TOTAL GAP TO FILL: {{total_suggested_order}} units
+- CALL HOME from Bell Rain: {{total_bell_rain_call_home}} units
+- ORDER NEW: {{total_new_order_needed}} units
+
+{{bell_rain_items}}
+
+{{critical_items}}
+
+{{trending_items}}
+
+Based on the V2 logic (Historical = Target), provide:
+1. Priority CALL HOME actions (Bell Rain stock to retrieve immediately)
+2. Priority NEW ORDER actions (what to order after calling home)
+3. Any items that are well-stocked (no action needed)
+
+Be specific with quantities. Focus on the biggest gaps first.
+{{feedback_summary}}`,
+    model: 'gpt-5-mini',  // Cost-effective for call-off analysis
+    temperature: 1,  // GPT-5 uses default temperature
+    maxTokens: 600,
   },
 };
 

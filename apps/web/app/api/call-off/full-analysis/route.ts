@@ -2,6 +2,7 @@ import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 import OpenAI from 'openai';
+import { getPromptConfig, interpolatePrompt } from '../../../../lib/ai/prompts';
 
 type StockRow = {
   style_no: string;
@@ -803,54 +804,71 @@ export async function POST(req: Request) {
     const topSurplus = items.filter(i => i.status === 'surplus').slice(0, 3);
     const topTrending = items.filter(i => i.trendDirection === 'up').slice(0, 3);
 
-    // PROMPT VERSION: v2 - Historical = Target
-    const promptVersion = 'v2';
+    // Get prompt config from DB or code defaults
+    let promptConfig;
+    let promptVersion = 'call_off_analysis_v2';
+    try {
+      promptConfig = await getPromptConfig('call_off_analysis_v2');
+      promptVersion = `${promptConfig.key}_v${promptConfig.version}`;
+    } catch (e) {
+      console.error('[call-off] Failed to get prompt config:', e);
+    }
     
-    const aiPrompt = `[NOOS Call-Off Analysis v2]
-You are analyzing NOOS inventory. The GOAL is to match historical sales - if we sold X units in ${periodDisplay}, we need X units available for the next period.
-
-FORMULA: Gap = Historical Sales - (Current Stock + On Order)
-         Call Home = min(Gap, Bell Rain Available)
-         New Order = Gap - Call Home
-
+    // Build Bell Rain items section
+    const bellRainItemsSection = bellRainItems.length > 0 
+      ? `🔔 BELL RAIN - CALL HOME FIRST (secondary storage):\n${bellRainItems.slice(0, 8).map(i => {
+          const avail = i.totalBellRainAvailable;
+          return `• ${i.style_name} (${i.color}): ${avail} available → call home ${i.bellRainCallHome}, then order ${i.newOrderNeeded} new`;
+        }).join('\n')}`
+      : '';
+    
+    // Build critical items section
+    const criticalItemsSection = topCritical.length > 0 
+      ? `🚨 CRITICAL (stock vs target):\n${topCritical.map(i => {
+          const gap = i.targetStock - i.totalNetStock - (i.totalPurchaseRunning - i.totalBellRainAvailable);
+          return `• ${i.style_name} (${i.color}): Sold ${i.totalHistorical} | Stock ${i.totalNetStock} | On Order ${i.totalPurchaseRunning} | Gap ${gap > 0 ? '+' + gap : gap}`;
+        }).join('\n')}`
+      : '';
+    
+    // Build trending items section
+    const trendingItemsSection = topTrending.length > 0 
+      ? `📈 RISING DEMAND (next month comparison):\n${topTrending.map(i => `• ${i.style_name} (${i.color}): +${i.trendPercent.toFixed(0)}% expected`).join('\n')}`
+      : '';
+    
+    // Interpolate the prompt template
+    const aiPrompt = promptConfig 
+      ? interpolatePrompt(promptConfig.content, {
+          bell_rain_info: bellRainInfo,
+          period_display: periodDisplay,
+          status_summary: `${criticalItems} critical, ${lowItems} low, ${okItems} OK, ${surplusItems} surplus`,
+          total_suggested_order: String(totalSuggestedOrder),
+          total_bell_rain_call_home: String(totalBellRainCallHome),
+          total_new_order_needed: String(totalNewOrderNeeded),
+          bell_rain_items: bellRainItemsSection,
+          critical_items: criticalItemsSection,
+          trending_items: trendingItemsSection,
+          feedback_summary: feedbackSummary
+        })
+      : `[NOOS Call-Off Analysis v2]
+Analyzing NOOS inventory. Historical = Target.
 ${bellRainInfo}
-
 PERIOD: ${periodDisplay}
 STATUS: ${criticalItems} critical, ${lowItems} low, ${okItems} OK, ${surplusItems} surplus
-
-TOTAL GAP TO FILL: ${totalSuggestedOrder} units
-- CALL HOME from Bell Rain: ${totalBellRainCallHome} units
-- ORDER NEW: ${totalNewOrderNeeded} units
-
-${bellRainItems.length > 0 ? `🔔 BELL RAIN - CALL HOME FIRST (secondary storage):
-${bellRainItems.slice(0, 8).map(i => {
-  const avail = i.totalBellRainAvailable;
-  return `• ${i.style_name} (${i.color}): ${avail} available → call home ${i.bellRainCallHome}, then order ${i.newOrderNeeded} new`;
-}).join('\n')}` : ''}
-
-${topCritical.length > 0 ? `🚨 CRITICAL (stock vs target):
-${topCritical.map(i => {
-  const gap = i.targetStock - i.totalNetStock - (i.totalPurchaseRunning - i.totalBellRainAvailable);
-  return `• ${i.style_name} (${i.color}): Sold ${i.totalHistorical} | Stock ${i.totalNetStock} | On Order ${i.totalPurchaseRunning} | Gap ${gap > 0 ? '+' + gap : gap}`;
-}).join('\n')}` : ''}
-
-${topTrending.length > 0 ? `📈 RISING DEMAND (next month comparison):
-${topTrending.map(i => `• ${i.style_name} (${i.color}): +${i.trendPercent.toFixed(0)}% expected`).join('\n')}` : ''}
-
-Based on the V2 logic (Historical = Target), provide:
-1. Priority CALL HOME actions (Bell Rain stock to retrieve immediately)
-2. Priority NEW ORDER actions (what to order after calling home)
-3. Any items that are well-stocked (no action needed)
-
-Be specific with quantities. Focus on the biggest gaps first.
+TOTAL GAP: ${totalSuggestedOrder} units (Call Home: ${totalBellRainCallHome}, Order: ${totalNewOrderNeeded})
+${bellRainItemsSection}
+${criticalItemsSection}
+${trendingItemsSection}
 ${feedbackSummary}`;
 
     let aiSummary = '';
     try {
+      const modelToUse = promptConfig?.model || 'gpt-5-mini';
+      const maxTokens = promptConfig?.maxTokens || 600;
+      
       const completion = await openai.chat.completions.create({
-        model: 'gpt-5-mini',
+        model: modelToUse,
         messages: [{ role: 'user', content: aiPrompt }],
-        max_completion_tokens: 600,  // GPT-5 uses max_completion_tokens
+        max_completion_tokens: maxTokens,  // GPT-5 uses max_completion_tokens
         // GPT-5 only supports temperature=1 (default)
       });
       aiSummary = completion.choices[0]?.message?.content || 'Unable to generate AI summary.';
