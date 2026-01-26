@@ -993,36 +993,42 @@ export default function CorrectionPage() {
       const wb = XLSX.utils.book_new();
 
       const selectedRuns = recentRuns.filter((r) => selectedRunIds.has(r.id));
-
-      const usedNames = new Set<string>();
-      const makeSheetName = (base: string) => {
-        let name = base.replace(/[\\/?*[\]:]/g, '').trim() || 'Run';
-        name = name.slice(0, 31);
-        let candidate = name;
-        let i = 2;
-        while (usedNames.has(candidate)) {
-          const suffix = `_${i++}`;
-          candidate = (name.slice(0, 31 - suffix.length) + suffix).slice(0, 31);
-        }
-        usedNames.add(candidate);
-        return candidate;
-      };
+      const metaCols = ['Run ID', 'Run created_at', 'File name', 'Style No', 'Run Toldref', 'First date', 'Last date'];
+      const sheetData: any[][] = [[...metaCols, ...OUTPUT_COLUMNS]];
 
       for (const run of selectedRuns) {
         const res = await fetch(`/api/finance/correction-runs/${run.id}`);
         if (!res.ok) continue;
         const data = await res.json();
         const rows = (data.rows ?? []) as OutputRow[];
+        const runData = data.run as any;
 
-        const sheetData = [
-          [...OUTPUT_COLUMNS],
-          ...rows.map((r) => rowToArray(r).map((cell) => (cell == null ? '' : cell))),
-        ];
-        const ws = XLSX.utils.aoa_to_sheet(sheetData);
+        const runMeta = {
+          id: runData?.id ?? run.id,
+          created_at: runData?.created_at ?? run.created_at,
+          file_name: runData?.file_name ?? run.file_name,
+          style_no: runData?.style_no ?? run.style_no,
+          toldref: runData?.toldref ?? run.toldref,
+          first_date: runData?.first_date ?? run.first_date,
+          last_date: runData?.last_date ?? run.last_date,
+        };
 
-        const base = `${run.style_no || 'Run'}_${String(run.first_date || run.created_at || '').slice(0, 10)}`;
-        XLSX.utils.book_append_sheet(wb, ws, makeSheetName(base));
+        for (const r of rows) {
+          sheetData.push([
+            runMeta.id ?? '',
+            runMeta.created_at ?? '',
+            runMeta.file_name ?? '',
+            runMeta.style_no ?? '',
+            runMeta.toldref ?? '',
+            runMeta.first_date ?? '',
+            runMeta.last_date ?? '',
+            ...rowToArray(r).map((cell) => (cell == null ? '' : cell)),
+          ]);
+        }
       }
+
+      const ws = XLSX.utils.aoa_to_sheet(sheetData);
+      XLSX.utils.book_append_sheet(wb, ws, 'Collected');
 
       const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
       const blob = new Blob([wbout], {
