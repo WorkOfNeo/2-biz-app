@@ -5,6 +5,7 @@ import { Button } from '../../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
 import { Dropzone } from '../../../components/ui/dropzone';
 import { Badge } from '../../../components/ui/badge';
+import { ChevronDown, ChevronRight } from 'lucide-react';
 import {
   Table,
   TableBody,
@@ -156,6 +157,39 @@ function formatCell(cell: string | number | null, colIndex: number): string {
   return String(cell);
 }
 
+type ExportNoSumUp = {
+  id: string;
+  created_at: string;
+  file_name: string | null;
+  style_no: string | null;
+  export_no_count: number;
+  export_nos: string[];
+};
+
+type UploadStatus = 'queued' | 'parsing' | 'saving' | 'done' | 'error';
+
+type SumUpUploadItem = {
+  id: string;
+  fileName: string;
+  progress: number; // 0..100
+  status: UploadStatus;
+  message?: string;
+  exportNoCount?: number;
+  sumupId?: string;
+};
+
+function findExportNoColumnIndex(headerRow: any[] | undefined): number {
+  if (!headerRow || headerRow.length === 0) return 3; // default column D
+  const normalized = headerRow.map((v) => String(v ?? '').trim().toLowerCase());
+  const exactIdx = normalized.findIndex((v) => v === 'export no.' || v === 'export no' || v === 'exportno');
+  if (exactIdx >= 0) return exactIdx;
+
+  const looseIdx = normalized.findIndex((v) => v.includes('export') && (v.includes('no') || v.includes('nr')));
+  if (looseIdx >= 0) return looseIdx;
+
+  return 3;
+}
+
 export default function CorrectionPage() {
   const [step, setStep] = React.useState<Step>('upload');
   const [busy, setBusy] = React.useState(false);
@@ -176,9 +210,18 @@ export default function CorrectionPage() {
   const [recentRuns, setRecentRuns] = React.useState<Run[]>([]);
   const [loadingRuns, setLoadingRuns] = React.useState(false);
 
+  // Export No. Sum Ups
+  const [sumUps, setSumUps] = React.useState<ExportNoSumUp[]>([]);
+  const [loadingSumUps, setLoadingSumUps] = React.useState(false);
+  const [sumUpBusy, setSumUpBusy] = React.useState(false);
+  const [sumUpError, setSumUpError] = React.useState<string | null>(null);
+  const [openSumUps, setOpenSumUps] = React.useState<Set<string>>(() => new Set());
+  const [sumUpUploads, setSumUpUploads] = React.useState<SumUpUploadItem[]>([]);
+
   // Fetch recent runs on mount
   React.useEffect(() => {
     fetchRecentRuns();
+    fetchRecentSumUps();
   }, []);
 
   async function fetchRecentRuns() {
@@ -193,6 +236,154 @@ export default function CorrectionPage() {
       // Ignore errors for recent runs
     } finally {
       setLoadingRuns(false);
+    }
+  }
+
+  async function fetchRecentSumUps() {
+    try {
+      setLoadingSumUps(true);
+      const res = await fetch('/api/finance/correction-export-no-sumups?limit=10');
+      if (res.ok) {
+        const data = await res.json();
+        setSumUps(data.sumups ?? []);
+      }
+    } catch {
+      // Ignore errors for recent sum ups
+    } finally {
+      setLoadingSumUps(false);
+    }
+  }
+
+  const toggleSumUp = (id: string) => {
+    setOpenSumUps((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const updateUploadItem = React.useCallback((id: string, patch: Partial<SumUpUploadItem>) => {
+    setSumUpUploads((prev) => prev.map((it) => (it.id === id ? { ...it, ...patch } : it)));
+  }, []);
+
+  async function processSingleSumUpFile(file: File, itemId: string) {
+    updateUploadItem(itemId, { status: 'parsing', progress: 5, message: 'Reading file...' });
+
+    const XLSX = await import('xlsx');
+    const buf = await file.arrayBuffer();
+    updateUploadItem(itemId, { progress: 15, message: 'Parsing workbook...' });
+
+    const wb = XLSX.read(buf, { type: 'array' });
+    const sheetName = wb.SheetNames?.[0];
+    if (!sheetName) throw new Error('No sheet found in the Excel file');
+    const sheet = wb.Sheets[sheetName];
+    if (!sheet) throw new Error('Empty sheet');
+
+    const data = XLSX.utils.sheet_to_json(sheet, { header: 1 }) as any[][];
+    if (data.length < 5) throw new Error('File must have at least 5 rows (header at row 4, data from row 5)');
+
+    const extractedStyleNo = String(data[0]?.[2] ?? '').trim();
+    const headerRow = data[3];
+    const exportNoColIndex = findExportNoColumnIndex(headerRow);
+
+    updateUploadItem(itemId, { progress: 25, message: 'Extracting Export No. values...' });
+
+    const exportNosRaw: string[] = [];
+    const totalRows = Math.max(1, data.length - 4);
+    for (let i = 4; i < data.length; i++) {
+      const row = data[i];
+      if (!row || row.length === 0) continue;
+      const v = row[exportNoColIndex];
+      const s = String(v ?? '').trim();
+      if (s) exportNosRaw.push(s);
+
+      // Light-weight progress updates (avoid too many re-renders)
+      if ((i - 4) % 250 === 0) {
+        const p = 25 + Math.min(55, Math.round(((i - 4) / totalRows) * 55));
+        updateUploadItem(itemId, { progress: p });
+        // Yield to paint progress in large files
+        // eslint-disable-next-line no-await-in-loop
+        await new Promise((r) => setTimeout(r, 0));
+      }
+    }
+
+    const exportNos = Array.from(new Set(exportNosRaw)).sort((a, b) => a.localeCompare(b));
+    if (exportNos.length === 0) throw new Error('No Export No. values found in the file');
+
+    updateUploadItem(itemId, {
+      status: 'saving',
+      progress: 85,
+      message: 'Saving to database...',
+      exportNoCount: exportNos.length,
+    });
+
+    const res = await fetch('/api/finance/correction-export-no-sumups', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        fileName: file.name,
+        styleNo: extractedStyleNo || undefined,
+        exportNos,
+      }),
+    });
+
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || 'Failed to save Export No. Sum Up');
+    }
+
+    const payload = (await res.json()) as { sumup: ExportNoSumUp; deduped?: boolean };
+    const sumup = payload.sumup;
+
+    updateUploadItem(itemId, {
+      status: 'done',
+      progress: 100,
+      message: payload.deduped ? 'Already saved (deduped)' : 'Saved',
+      sumupId: sumup.id,
+    });
+
+    // Update list immediately + auto-open the saved card
+    setSumUps((prev) => {
+      const next = [sumup, ...prev.filter((x) => x.id !== sumup.id)];
+      return next.slice(0, 10);
+    });
+    setOpenSumUps((prev) => new Set(prev).add(sumup.id));
+  }
+
+  async function onSumUpFilesSelected(files: File[]) {
+    setSumUpError(null);
+    if (!files || files.length === 0) return;
+
+    const newItems: SumUpUploadItem[] = files.map((f) => ({
+      id: `${Date.now()}_${Math.random().toString(16).slice(2)}`,
+      fileName: f.name,
+      progress: 0,
+      status: 'queued',
+      message: 'Queued',
+    }));
+
+    setSumUpUploads((prev) => [...newItems, ...prev].slice(0, 20));
+    setSumUpBusy(true);
+
+    try {
+      // Process sequentially to keep UI responsive and avoid memory spikes
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i]!;
+        const itemId = newItems[i]!.id;
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          await processSingleSumUpFile(file, itemId);
+        } catch (e: any) {
+          updateUploadItem(itemId, {
+            status: 'error',
+            progress: 100,
+            message: e?.message || 'Failed',
+          });
+        }
+      }
+    } finally {
+      setSumUpBusy(false);
     }
   }
 
@@ -455,6 +646,137 @@ export default function CorrectionPage() {
           </div>
         </div>
       )}
+
+      {/* Export No. Sum Up */}
+      <Card className="border-slate-200 shadow-sm">
+        <CardHeader className="pb-4">
+          <CardTitle className="text-base font-semibold">Export No. Sum Up</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <p className="text-sm text-slate-600">
+            Upload the same CORRECTION Excel file and we’ll extract <span className="font-medium">unique “Export No.”</span> values and save them for quick lookup later.
+          </p>
+
+          {sumUpError && (
+            <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-800">
+              {sumUpError}
+            </div>
+          )}
+
+          <Dropzone accept=".xlsx,.xls" multiple={true} onFiles={onSumUpFilesSelected} />
+
+          {sumUpBusy && (
+            <div className="flex items-center gap-2 text-sm text-blue-600">
+              <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+              </svg>
+              Saving Export No. list...
+            </div>
+          )}
+
+          {sumUpUploads.length > 0 && (
+            <div className="space-y-2">
+              {sumUpUploads.slice(0, 10).map((u) => (
+                <div key={u.id} className="rounded-lg border border-slate-200 bg-white px-4 py-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-sm font-semibold text-slate-900 truncate">{u.fileName}</div>
+                      <div className="text-xs text-slate-600">
+                        {u.status === 'queued' && 'Queued'}
+                        {u.status === 'parsing' && 'Parsing'}
+                        {u.status === 'saving' && 'Saving'}
+                        {u.status === 'done' && 'Done'}
+                        {u.status === 'error' && 'Error'}
+                        {u.exportNoCount != null && u.status !== 'error' ? ` • ${u.exportNoCount.toLocaleString('da-DK')} Export No.` : ''}
+                        {u.message ? ` • ${u.message}` : ''}
+                      </div>
+                    </div>
+                    <Badge className="bg-slate-100 text-slate-700 border-slate-200">
+                      {Math.round(u.progress)}%
+                    </Badge>
+                  </div>
+                  <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-slate-100">
+                    <div
+                      className={[
+                        'h-full rounded-full transition-all',
+                        u.status === 'error'
+                          ? 'bg-red-500'
+                          : u.status === 'done'
+                            ? 'bg-emerald-500'
+                            : 'bg-blue-500',
+                      ].join(' ')}
+                      style={{ width: `${Math.min(100, Math.max(0, u.progress))}%` }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="pt-2">
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-medium text-slate-700">Recent Export No. lists</p>
+              <Button variant="ghost" size="sm" onClick={fetchRecentSumUps} disabled={loadingSumUps || sumUpBusy}>
+                Refresh
+              </Button>
+            </div>
+
+            {loadingSumUps ? (
+              <div className="mt-3 text-sm text-slate-500">Loading...</div>
+            ) : sumUps.length === 0 ? (
+              <div className="mt-3 text-sm text-slate-500">No saved Export No. lists yet.</div>
+            ) : (
+              <div className="mt-3 space-y-2">
+                {sumUps.map((s) => {
+                  const isOpen = openSumUps.has(s.id);
+                  const created = new Date(s.created_at).toLocaleString('da-DK', {
+                    day: '2-digit',
+                    month: '2-digit',
+                    year: '2-digit',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                  });
+                  return (
+                    <div key={s.id} className="rounded-lg border border-slate-200 bg-white">
+                      <button
+                        type="button"
+                        onClick={() => toggleSumUp(s.id)}
+                        className="w-full flex items-center justify-between px-4 py-3 hover:bg-slate-50 rounded-lg transition-colors"
+                      >
+                        <div className="flex flex-col items-start gap-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-sm font-semibold text-slate-900">{s.export_no_count.toLocaleString('da-DK')} Export No.</span>
+                            {s.style_no && <Badge className="border-slate-300">Style: {s.style_no}</Badge>}
+                            {s.file_name && <span className="text-xs text-slate-500">{s.file_name}</span>}
+                          </div>
+                          <span className="text-xs text-slate-500">Saved {created}</span>
+                        </div>
+                        {isOpen ? (
+                          <ChevronDown className="h-4 w-4 text-slate-500" />
+                        ) : (
+                          <ChevronRight className="h-4 w-4 text-slate-500" />
+                        )}
+                      </button>
+                      {isOpen && (
+                        <div className="px-4 pb-4">
+                          <div className="flex flex-wrap gap-2">
+                            {s.export_nos.map((v) => (
+                              <Badge key={v} className="bg-slate-100 text-slate-700 border-slate-200">
+                                {v}
+                              </Badge>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Upload Section */}
       <Card className="border-slate-200 shadow-sm">
