@@ -80,6 +80,17 @@ type Run = {
 
 type Step = 'upload' | 'preview';
 
+type UploadStatus = 'queued' | 'parsing' | 'uploading' | 'done' | 'error';
+
+type UploadJob = {
+  id: string;
+  fileName: string;
+  status: UploadStatus;
+  progress: number; // 0..100
+  message?: string;
+  runId?: string;
+};
+
 const OUTPUT_COLUMNS = [
   'Toldref',
   'Varenr',
@@ -206,6 +217,10 @@ function parseDkkRateInput(raw: string): number | null {
   return n;
 }
 
+function makeJobId() {
+  return `${Date.now()}_${Math.random().toString(16).slice(2)}`;
+}
+
 export default function CorrectionPage() {
   const [step, setStep] = React.useState<Step>('upload');
   const [busy, setBusy] = React.useState(false);
@@ -225,6 +240,7 @@ export default function CorrectionPage() {
   // Recent runs
   const [recentRuns, setRecentRuns] = React.useState<Run[]>([]);
   const [loadingRuns, setLoadingRuns] = React.useState(false);
+  const [uploadJobs, setUploadJobs] = React.useState<UploadJob[]>([]);
 
   // Export No. Sum Up (inside the CORRECTION flow)
   const [exportNos, setExportNos] = React.useState<string[]>([]);
@@ -240,12 +256,15 @@ export default function CorrectionPage() {
   >({});
 
   // Currencies (customs/global rates, NOT season-based)
-  const [currenciesOpen, setCurrenciesOpen] = React.useState(false);
+  const [settingsOpen, setSettingsOpen] = React.useState(false);
   const [currencyRates, setCurrencyRates] = React.useState<Record<string, CustomsCurrencyRate>>({});
   const [currencyInputs, setCurrencyInputs] = React.useState<Record<string, string>>({});
   const [loadingCurrencyRates, setLoadingCurrencyRates] = React.useState(false);
   const [savingCurrencyKey, setSavingCurrencyKey] = React.useState<string | null>(null);
   const [currencyError, setCurrencyError] = React.useState<string | null>(null);
+  const [usdLog, setUsdLog] = React.useState<CustomsCurrencyRate[]>([]);
+  const [manualUsdMonth, setManualUsdMonth] = React.useState<string>('');
+  const [manualUsdRate, setManualUsdRate] = React.useState<string>('');
 
   // Fetch recent runs on mount
   React.useEffect(() => {
@@ -343,9 +362,43 @@ export default function CorrectionPage() {
   React.useEffect(() => {
     // If we detect USD and any month is missing, auto-open the currencies panel
     if (step === 'preview' && activeCurrency === 'USD' && usdMonths.length > 0 && missingUsdMonths.length > 0) {
-      setCurrenciesOpen(true);
+      setSettingsOpen(true);
     }
   }, [step, activeCurrency, usdMonths.length, missingUsdMonths.length]);
+
+  const fetchUsdLog = React.useCallback(async () => {
+    setCurrencyError(null);
+    setLoadingCurrencyRates(true);
+    try {
+      const res = await fetch('/api/finance/customs-currency-rates?currency=USD');
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Failed to load currency rates');
+      }
+      const data = await res.json();
+      const rates = (data.rates || []) as CustomsCurrencyRate[];
+      setUsdLog(rates);
+      setCurrencyRates((prev) => {
+        const next = { ...prev };
+        for (const r of rates) {
+          next[monthKey(r.year, r.month)] = r;
+        }
+        return next;
+      });
+      setCurrencyInputs((prev) => {
+        const next = { ...prev };
+        for (const r of rates) {
+          const k = monthKey(r.year, r.month);
+          if (next[k] == null) next[k] = String(r.rate_dkk);
+        }
+        return next;
+      });
+    } catch (e: any) {
+      setCurrencyError(e?.message || 'Failed to load currency rates');
+    } finally {
+      setLoadingCurrencyRates(false);
+    }
+  }, []);
 
   const fetchUsdRatesForMonths = React.useCallback(async (months: string[]) => {
     if (!months || months.length === 0) return;
@@ -385,11 +438,14 @@ export default function CorrectionPage() {
   }, []);
 
   React.useEffect(() => {
-    if (!currenciesOpen) return;
-    if (activeCurrency !== 'USD') return;
-    if (usdMonths.length === 0) return;
-    fetchUsdRatesForMonths(usdMonths);
-  }, [currenciesOpen, activeCurrency, usdMonths, fetchUsdRatesForMonths]);
+    if (!settingsOpen) return;
+    // Always load the log so months can be added/edited manually
+    fetchUsdLog();
+    // Also load any required months for the current run (if USD)
+    if (activeCurrency === 'USD' && usdMonths.length > 0) {
+      fetchUsdRatesForMonths(usdMonths);
+    }
+  }, [settingsOpen, activeCurrency, usdMonths, fetchUsdLog, fetchUsdRatesForMonths]);
 
   const saveUsdRate = React.useCallback(
     async (k: string) => {
@@ -424,6 +480,12 @@ export default function CorrectionPage() {
         const saved = data.rate as CustomsCurrencyRate;
         setCurrencyRates((prev) => ({ ...prev, [k]: saved }));
         setCurrencyInputs((prev) => ({ ...prev, [k]: String(saved.rate_dkk) }));
+        // Keep the log fresh
+        setUsdLog((prev) => {
+          const next = [saved, ...prev.filter((x) => monthKey(x.year, x.month) !== k)];
+          next.sort((a, b) => (b.year - a.year) || (b.month - a.month));
+          return next.slice(0, 36);
+        });
       } catch (e: any) {
         setCurrencyError(e?.message || 'Failed to save rate');
       } finally {
@@ -433,97 +495,97 @@ export default function CorrectionPage() {
     [currencyInputs]
   );
 
-  async function onFilesSelected(files: File[]) {
-    setError(null);
-    resetState();
-    if (!files || files.length === 0) return;
-
-    setBusy(true);
-    try {
-      const XLSX = await import('xlsx');
-      const file = files[0]!;
-      setUploadedFile(file);
-
-      const buf = await file.arrayBuffer();
-      const wb = XLSX.read(buf, { type: 'array' });
-      const sheetName = wb.SheetNames?.[0];
-      if (!sheetName) throw new Error('No sheet found in the Excel file');
-
-      const sheet = wb.Sheets[sheetName];
-      if (!sheet) throw new Error('Empty sheet');
-
-      const data = XLSX.utils.sheet_to_json(sheet, { header: 1 }) as any[][];
-      if (data.length < 5) throw new Error('File must have at least 5 rows (header at row 4, data from row 5)');
-
-      // Extract Style No from C1 (row index 0, col index 2)
-      const extractedStyleNo = String(data[0]?.[2] ?? '').trim();
-      if (!extractedStyleNo) {
-        throw new Error('Style No not found in cell C1');
-      }
-      setStyleNo(extractedStyleNo);
-
-      // Extract Customs Tariff from C2 (row index 1, col index 2)
-      const extractedTariff = String(data[1]?.[2] ?? '').trim();
-      setFileTariff(extractedTariff);
-
-      // Header is at row 4 (index 3), data starts at row 5 (index 4)
-      // Columns: A(0)=TransDate, B(1)=CustomsRef, C(2)=ComInv, D(3)=ExportNo, E(4)=ExportDate, 
-      //          F(5)=Type, G(6)=Delivery, H(7)=Invoice, I(8)=Customer, J(9)=Country,
-      //          K(10)=EU, L(11)=CustomsType, M(12)=QTY
-      const parsed: InputRow[] = [];
-      for (let i = 4; i < data.length; i++) {
-        const row = data[i];
-        if (!row || row.length === 0) continue;
-
-        // Skip empty rows (check if at least transaction date or qty exists)
-        const transDate = row[0];
-        const qty = row[12];
-        if (transDate == null && qty == null) continue;
-
-        parsed.push({
-          rowNo: i + 1, // 1-based row number (Excel row)
-          transactionDate: transDate != null ? String(transDate) : '',
-          customsRef: String(row[1] ?? ''),
-          exportNo: String(row[3] ?? ''),
-          type: String(row[5] ?? ''),
-          delivery: String(row[6] ?? ''),
-          eu: String(row[10] ?? ''),
-          qty: Number(row[12]) || 0,
-        });
-      }
-
-      if (parsed.length === 0) {
-        throw new Error('No data rows found (data expected from row 5 onwards)');
-      }
-
-      setInputRows(parsed);
-
-      // Export No. Sum Up (inside this upload): extract unique Export No. values (saving happens server-side with the run)
-      const uniqueExportNos = Array.from(
-        new Set(
-          parsed
-            .map((r) => String(r.exportNo || '').trim())
-            .filter(Boolean)
-        )
-      ).sort((a, b) => a.localeCompare(b));
-      setExportNos(uniqueExportNos);
-      setExportNosOpen(false);
-      setExportNoSumUpStatus(uniqueExportNos.length ? 'saving' : 'idle');
-      setExportNoSumUpProgress(uniqueExportNos.length ? 25 : 0);
-      setExportNoSumUpMessage(uniqueExportNos.length ? 'Saving with run...' : '');
-      setExportNoSumUpId(null);
-
-      // Now call the API to process and persist
-      await processRows(file.name, extractedStyleNo, extractedTariff, parsed);
-    } catch (e: any) {
-      setError(e?.message || 'Failed to parse file');
-      setStep('upload');
-    } finally {
-      setBusy(false);
+  const saveManualUsd = React.useCallback(async () => {
+    const k = String(manualUsdMonth || '').trim();
+    const m = k.match(/^(\d{4})-(\d{2})$/);
+    if (!m) {
+      setCurrencyError('Month must be in format YYYY-MM');
+      return;
     }
+    setCurrencyInputs((prev) => ({ ...prev, [k]: manualUsdRate }));
+    await saveUsdRate(k);
+    setManualUsdMonth('');
+    setManualUsdRate('');
+  }, [manualUsdMonth, manualUsdRate, saveUsdRate]);
+
+  const updateJob = React.useCallback((id: string, patch: Partial<UploadJob>) => {
+    setUploadJobs((prev) => prev.map((j) => (j.id === id ? { ...j, ...patch } : j)));
+  }, []);
+
+  async function parseCorrectionFile(file: File, jobId?: string) {
+    const XLSX = await import('xlsx');
+    const buf = await file.arrayBuffer();
+    if (jobId) updateJob(jobId, { progress: 10, message: 'Reading workbook…' });
+    const wb = XLSX.read(buf, { type: 'array' });
+    const sheetName = wb.SheetNames?.[0];
+    if (!sheetName) throw new Error('No sheet found in the Excel file');
+
+    const sheet = wb.Sheets[sheetName];
+    if (!sheet) throw new Error('Empty sheet');
+
+    const data = XLSX.utils.sheet_to_json(sheet, { header: 1 }) as any[][];
+    if (data.length < 5) throw new Error('File must have at least 5 rows (header at row 4, data from row 5)');
+
+    // Extract Style No from C1 (row index 0, col index 2)
+    const extractedStyleNo = String(data[0]?.[2] ?? '').trim();
+    if (!extractedStyleNo) {
+      throw new Error('Style No not found in cell C1');
+    }
+
+    // Extract Customs Tariff from C2 (row index 1, col index 2)
+    const extractedTariff = String(data[1]?.[2] ?? '').trim();
+
+    // Header is at row 4 (index 3), data starts at row 5 (index 4)
+    const parsed: InputRow[] = [];
+    const totalRows = Math.max(1, data.length - 4);
+    for (let i = 4; i < data.length; i++) {
+      const row = data[i];
+      if (!row || row.length === 0) continue;
+
+      // Skip empty rows (check if at least transaction date or qty exists)
+      const transDate = row[0];
+      const qty = row[12];
+      if (transDate == null && qty == null) continue;
+
+      parsed.push({
+        rowNo: i + 1, // 1-based row number (Excel row)
+        transactionDate: transDate != null ? String(transDate) : '',
+        customsRef: String(row[1] ?? ''),
+        exportNo: String(row[3] ?? ''),
+        type: String(row[5] ?? ''),
+        delivery: String(row[6] ?? ''),
+        eu: String(row[10] ?? ''),
+        qty: Number(row[12]) || 0,
+      });
+
+      if (jobId && (i - 4) % 250 === 0) {
+        updateJob(jobId, { progress: 10 + Math.min(55, Math.round(((i - 4) / totalRows) * 55)) });
+        // eslint-disable-next-line no-await-in-loop
+        await new Promise((r) => setTimeout(r, 0));
+      }
+    }
+
+    if (parsed.length === 0) {
+      throw new Error('No data rows found (data expected from row 5 onwards)');
+    }
+
+    const uniqueExportNos = Array.from(
+      new Set(
+        parsed
+          .map((r) => String(r.exportNo || '').trim())
+          .filter(Boolean)
+      )
+    ).sort((a, b) => a.localeCompare(b));
+
+    return {
+      styleNo: extractedStyleNo,
+      fileTariff: extractedTariff,
+      rows: parsed,
+      uniqueExportNos,
+    };
   }
 
-  async function processRows(fileName: string, sNo: string, fTariff: string, rows: InputRow[]) {
+  async function processRowsData(fileName: string, sNo: string, fTariff: string, rows: InputRow[]) {
     const res = await fetch('/api/finance/correction-runs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -540,7 +602,83 @@ export default function CorrectionPage() {
       throw new Error(data.error || 'Failed to process file');
     }
 
-    const data = await res.json();
+    return await res.json();
+  }
+
+  async function onFilesSelected(files: File[]) {
+    setError(null);
+    resetState();
+    if (!files || files.length === 0) return;
+
+    const queuedJobs: UploadJob[] = files.map((f) => ({
+      id: makeJobId(),
+      fileName: f.name,
+      status: 'queued',
+      progress: 0,
+      message: 'Queued',
+    }));
+    setUploadJobs((prev) => [...queuedJobs, ...prev].slice(0, 20));
+
+    setBusy(true);
+    try {
+      for (let idx = 0; idx < files.length; idx++) {
+        const file = files[idx]!;
+        const jobId = queuedJobs[idx]!.id;
+
+        updateJob(jobId, { status: 'parsing', progress: 1, message: 'Parsing…' });
+        const parsed = await parseCorrectionFile(file, jobId);
+
+        // Update preview state as we go (last file ends up displayed)
+        setUploadedFile(file);
+        setStyleNo(parsed.styleNo);
+        setFileTariff(parsed.fileTariff);
+        setInputRows(parsed.rows);
+        setExportNos(parsed.uniqueExportNos);
+        setExportNosOpen(false);
+        setExportNoSumUpStatus(parsed.uniqueExportNos.length ? 'saving' : 'idle');
+        setExportNoSumUpProgress(parsed.uniqueExportNos.length ? 25 : 0);
+        setExportNoSumUpMessage(parsed.uniqueExportNos.length ? 'Saving with run...' : '');
+        setExportNoSumUpId(null);
+
+        updateJob(jobId, { status: 'uploading', progress: 80, message: 'Saving run…' });
+        const data = await processRowsData(file.name, parsed.styleNo, parsed.fileTariff, parsed.rows);
+
+        updateJob(jobId, { status: 'done', progress: 100, message: 'Saved', runId: data.runId });
+
+        // If this is the currently displayed (last processed) run, populate preview
+        setRunId(data.runId);
+        setStyleMeta(data.styleMeta);
+        setOutputRows(data.outputRows ?? []);
+        setStep('preview');
+        if (data.exportNoSumUpId) {
+          setExportNoSumUpId(data.exportNoSumUpId);
+          setExportNoSumUpStatus('done');
+          setExportNoSumUpProgress(100);
+          setExportNoSumUpMessage('Saved');
+        } else if (data.exportNoCount > 0) {
+          setExportNoSumUpStatus('error');
+          setExportNoSumUpProgress(100);
+          setExportNoSumUpMessage('Could not save (migration missing?)');
+        } else {
+          setExportNoSumUpStatus('idle');
+          setExportNoSumUpProgress(0);
+          setExportNoSumUpMessage('');
+          setExportNoSumUpId(null);
+        }
+
+        // Refresh diary list after each successful run
+        await fetchRecentRuns();
+      }
+    } catch (e: any) {
+      setError(e?.message || 'Failed to parse file(s)');
+      setStep('upload');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function processRows(fileName: string, sNo: string, fTariff: string, rows: InputRow[]) {
+    const data = await processRowsData(fileName, sNo, fTariff, rows);
     setRunId(data.runId);
     setStyleMeta(data.styleMeta);
     setOutputRows(data.outputRows ?? []);
@@ -582,9 +720,8 @@ export default function CorrectionPage() {
     setExportNoSumUpId(null);
   }
 
-  async function downloadXlsx() {
-    if (outputRows.length === 0) return;
-
+  async function downloadRowsXlsx(rows: OutputRow[], options?: { styleNo?: string; originalFileName?: string }) {
+    if (!rows || rows.length === 0) return;
     try {
       setBusy(true);
       const [XLSX, { default: saveAs }] = await Promise.all([
@@ -597,7 +734,7 @@ export default function CorrectionPage() {
       // Build data array with Danish number formatting
       const sheetData = [
         [...OUTPUT_COLUMNS],
-        ...outputRows.map((r) => {
+        ...rows.map((r) => {
           const arr = rowToArray(r);
           return arr.map((cell, colIndex) => {
             // Keep numbers as numbers for Excel, but format strings for display columns
@@ -615,11 +752,34 @@ export default function CorrectionPage() {
         type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       });
 
-      const fileName = uploadedFile
-        ? `Correction_${styleNo}_${uploadedFile.name.replace(/\.xlsx?$/i, '')}.xlsx`
-        : `Correction_${styleNo}.xlsx`;
+      const base = options?.originalFileName ? options.originalFileName.replace(/\.xlsx?$/i, '') : 'Export';
+      const sNo = options?.styleNo || styleNo || 'UnknownStyle';
+      const fileName = `Correction_${sNo}_${base}.xlsx`;
 
       saveAs(blob, fileName);
+    } catch (e: any) {
+      alert(e?.message || 'Failed to export XLSX');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function downloadXlsx() {
+    return downloadRowsXlsx(outputRows, { styleNo, originalFileName: uploadedFile?.name });
+  }
+
+  async function downloadRunXlsx(run: Run) {
+    try {
+      setBusy(true);
+      const res = await fetch(`/api/finance/correction-runs/${run.id}`);
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Failed to load run');
+      }
+      const data = await res.json();
+      const rows = (data.rows ?? []) as OutputRow[];
+      const runData = data.run;
+      await downloadRowsXlsx(rows, { styleNo: runData?.style_no || run.style_no, originalFileName: run.file_name || undefined });
     } catch (e: any) {
       alert(e?.message || 'Failed to export XLSX');
     } finally {
@@ -743,7 +903,7 @@ export default function CorrectionPage() {
             Upload an Excel file with <span className="font-medium">Style No in C1</span>, optional Customs Tariff in C2, 
             header at row 4 (A–N), and data from row 5.
           </p>
-          <Dropzone accept=".xlsx,.xls" multiple={false} onFiles={onFilesSelected} />
+          <Dropzone accept=".xlsx,.xls" multiple={true} onFiles={onFilesSelected} />
           {uploadedFile && (
             <div className="flex items-center justify-between bg-slate-50 rounded-lg px-4 py-3">
               <div className="flex items-center gap-3">
@@ -949,16 +1109,14 @@ export default function CorrectionPage() {
                 <Button variant="outline" onClick={resetState} disabled={busy}>
                   Upload New File
                 </Button>
-                {activeCurrency === 'USD' && (
-                  <Button
-                    variant={missingUsdMonths.length > 0 ? 'default' : 'outline'}
-                    onClick={() => setCurrenciesOpen((v) => !v)}
-                    disabled={busy}
-                  >
-                    Currencies
-                    {missingUsdMonths.length > 0 ? ` (${missingUsdMonths.length})` : ''}
-                  </Button>
-                )}
+                <Button
+                  variant={activeCurrency === 'USD' && missingUsdMonths.length > 0 ? 'default' : 'outline'}
+                  onClick={() => setSettingsOpen((v) => !v)}
+                  disabled={busy}
+                >
+                  Settings
+                  {activeCurrency === 'USD' && missingUsdMonths.length > 0 ? ` (${missingUsdMonths.length})` : ''}
+                </Button>
                 {runId && (
                   <span className="text-xs text-slate-500 ml-auto">
                     Run: <code className="bg-slate-100 px-1.5 py-0.5 rounded">{runId.slice(0, 8)}...</code>
@@ -968,16 +1126,14 @@ export default function CorrectionPage() {
             </CardContent>
           </Card>
 
-          {/* Currencies panel (USD for now) */}
-          {activeCurrency === 'USD' && currenciesOpen && (
+          {/* Settings panel (Currencies for now) */}
+          {settingsOpen && (
             <Card className="border-slate-200 shadow-sm">
               <CardHeader className="pb-3">
-                <CardTitle className="text-base font-semibold">Currencies</CardTitle>
+                <CardTitle className="text-base font-semibold">Settings</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                <p className="text-sm text-slate-600">
-                  Monthly customs conversion rates. Format: <span className="font-medium">1 $ = X.XXX DKK</span>
-                </p>
+                <p className="text-sm text-slate-600">Customs-related settings for CORRECTION.</p>
 
                 {currencyError && (
                   <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-800">
@@ -990,12 +1146,69 @@ export default function CorrectionPage() {
                     <TabsTrigger value="USD">USD</TabsTrigger>
                   </TabsList>
                   <TabsContent value="USD" className="space-y-3">
+                    <div className="rounded-lg border border-slate-200 bg-white p-4 space-y-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <div className="text-sm font-semibold text-slate-900">Currencies (Log)</div>
+                          <div className="text-xs text-slate-600">
+                            Store monthly rates as <span className="font-medium">1 $ = X.XXX DKK</span>
+                          </div>
+                        </div>
+                        <Button variant="ghost" size="sm" onClick={fetchUsdLog} disabled={loadingCurrencyRates || busy}>
+                          Refresh
+                        </Button>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+                        <div>
+                          <div className="text-xs text-slate-600 mb-1">Month (YYYY-MM)</div>
+                          <Input
+                            placeholder="2026-01"
+                            value={manualUsdMonth}
+                            onChange={(e) => setManualUsdMonth(e.currentTarget.value)}
+                            className="max-w-[220px]"
+                          />
+                        </div>
+                        <div>
+                          <div className="text-xs text-slate-600 mb-1">1 $ =</div>
+                          <Input
+                            inputMode="decimal"
+                            placeholder="7.123"
+                            value={manualUsdRate}
+                            onChange={(e) => setManualUsdRate(e.currentTarget.value)}
+                            className="max-w-[220px]"
+                          />
+                        </div>
+                        <div className="flex items-end gap-2">
+                          <div className="text-sm text-slate-600 pb-2">DKK</div>
+                          <Button
+                            onClick={saveManualUsd}
+                            disabled={
+                              busy ||
+                              loadingCurrencyRates ||
+                              !String(manualUsdMonth || '').trim().match(/^(\d{4})-(\d{2})$/) ||
+                              !parseDkkRateInput(manualUsdRate)
+                            }
+                          >
+                            Add month
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+
                     {loadingCurrencyRates ? (
                       <div className="text-sm text-slate-500">Loading rates...</div>
+                    ) : activeCurrency !== 'USD' ? (
+                      <div className="text-sm text-slate-500">
+                        This run is not in USD. (USD rates can still be added above.)
+                      </div>
                     ) : usdMonths.length === 0 ? (
                       <div className="text-sm text-slate-500">No months detected in this run.</div>
                     ) : (
                       <div className="space-y-2">
+                        <div className="text-xs text-slate-600">
+                          Required for this run{missingUsdMonths.length > 0 ? ` • ${missingUsdMonths.length} missing` : ''}
+                        </div>
                         {usdMonths.map((k) => {
                           const saved = currencyRates[k];
                           const missing = !saved;
@@ -1050,6 +1263,25 @@ export default function CorrectionPage() {
                             </div>
                           );
                         })}
+
+                        {usdLog.length > 0 && (
+                          <div className="pt-2">
+                            <div className="text-xs text-slate-600 mb-2">Recent saved USD rates</div>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                              {usdLog.slice(0, 12).map((r) => {
+                                const k = monthKey(r.year, r.month);
+                                return (
+                                  <div key={r.id} className="rounded-lg border border-slate-200 bg-white px-3 py-2 flex items-center justify-between">
+                                    <span className="text-sm font-medium text-slate-900">{k}</span>
+                                    <span className="text-sm text-slate-700 font-mono">
+                                      {Number(r.rate_dkk).toLocaleString('da-DK', { minimumFractionDigits: 3, maximumFractionDigits: 4 })}
+                                    </span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )}
                   </TabsContent>
@@ -1063,9 +1295,41 @@ export default function CorrectionPage() {
       {/* Recent Runs */}
       <Card className="border-slate-200 shadow-sm">
         <CardHeader className="pb-3">
-          <CardTitle className="text-base font-semibold">Recent Runs</CardTitle>
+          <CardTitle className="text-base font-semibold">Diary</CardTitle>
         </CardHeader>
         <CardContent className="p-0">
+          {uploadJobs.some((j) => j.status === 'queued' || j.status === 'parsing' || j.status === 'uploading') && (
+            <div className="border-t p-4 space-y-2">
+              {uploadJobs
+                .filter((j) => j.status === 'queued' || j.status === 'parsing' || j.status === 'uploading')
+                .slice(0, 8)
+                .map((j) => (
+                  <div key={j.id} className="rounded-lg border border-slate-200 bg-white px-4 py-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-sm font-semibold text-slate-900 truncate">{j.fileName}</div>
+                        <div className="text-xs text-slate-600">
+                          {j.status === 'queued' && 'Queued'}
+                          {j.status === 'parsing' && 'Parsing'}
+                          {j.status === 'uploading' && 'Saving'}
+                          {j.message ? ` • ${j.message}` : ''}
+                        </div>
+                      </div>
+                      <Badge className="bg-slate-100 text-slate-700 border-slate-200">
+                        {Math.round(j.progress)}%
+                      </Badge>
+                    </div>
+                    <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-slate-100">
+                      <div
+                        className="h-full rounded-full bg-blue-500 transition-all"
+                        style={{ width: `${Math.min(100, Math.max(0, j.progress))}%` }}
+                      />
+                    </div>
+                  </div>
+                ))}
+            </div>
+          )}
+
           {loadingRuns ? (
             <div className="p-6 text-sm text-slate-500 flex items-center gap-2">
               <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
@@ -1075,7 +1339,7 @@ export default function CorrectionPage() {
               Loading...
             </div>
           ) : recentRuns.length === 0 ? (
-            <div className="p-6 text-sm text-slate-500">No recent runs found.</div>
+            <div className="p-6 text-sm text-slate-500">No diary entries found.</div>
           ) : (
             <div className="border-t">
               <Table>
@@ -1086,7 +1350,7 @@ export default function CorrectionPage() {
                     <TableHead>Date Range</TableHead>
                     <TableHead>Export No.</TableHead>
                     <TableHead className="text-right">Rows</TableHead>
-                    <TableHead className="w-[120px]">Actions</TableHead>
+                    <TableHead className="w-[180px]">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -1173,6 +1437,15 @@ export default function CorrectionPage() {
                               className="h-7 px-2 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
                             >
                               Load
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => downloadRunXlsx(run)}
+                              disabled={busy}
+                              className="h-7 px-2 text-slate-700 hover:text-slate-900 hover:bg-slate-100"
+                            >
+                              XLSX
                             </Button>
                             <Button
                               variant="ghost"
