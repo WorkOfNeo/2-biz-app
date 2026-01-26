@@ -154,6 +154,14 @@ function buildNonEu(eksportTil: string, exportNo: string): string {
   return 'Ja';
 }
 
+function stableHashExportNos(exportNos: string[]): string {
+  return exportNos
+    .map((s) => String(s || '').trim())
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b))
+    .join('|');
+}
+
 // POST: create a new correction run
 export async function POST(req: Request) {
   try {
@@ -241,9 +249,19 @@ export async function POST(req: Request) {
     const firstDate = dates[0] || null;
     const lastDate = dates[dates.length - 1] || null;
 
+    // Extract unique Export No values (for run linkage + UI)
+    const exportNos = Array.from(
+      new Set(
+        rows
+          .map((r) => String(r.exportNo || '').trim())
+          .filter(Boolean)
+      )
+    ).sort((a, b) => a.localeCompare(b));
+
     console.log('[Correction API] Extracted values:', {
       firstToldref,
       uniqueToldrefs: [...new Set(allToldrefs)].slice(0, 5),
+      exportNoCount: exportNos.length,
       firstDate,
       lastDate,
       sampleRow: outputRows[0] ? { toldref: outputRows[0].toldref, dato: outputRows[0].dato } : null,
@@ -290,6 +308,53 @@ export async function POST(req: Request) {
 
     const runId = runData.id;
     console.log('[Correction API] Run created with ID:', runId);
+
+    // Create / link Export No. sumup for this run (best-effort)
+    let exportNoSumUpId: string | null = null;
+    if (exportNos.length > 0) {
+      const exportNosHash = stableHashExportNos(exportNos);
+      const { data: sumup, error: sumupError } = await supabase
+        .from('finance_correction_export_no_sumups')
+        .insert({
+          file_name: fileName || null,
+          style_no: styleNo,
+          export_nos: exportNos,
+          export_no_count: exportNos.length,
+          export_nos_hash: exportNosHash,
+        })
+        .select('id')
+        .single();
+
+      if (sumupError) {
+        if ((sumupError as any)?.code === '23505') {
+          const { data: existing } = await supabase
+            .from('finance_correction_export_no_sumups')
+            .select('id')
+            .eq('export_nos_hash', exportNosHash)
+            .maybeSingle();
+          exportNoSumUpId = existing?.id ?? null;
+        } else {
+          console.error('[Correction API] Export No sumup insert error:', sumupError);
+          // This is a nice-to-have; do not fail the run creation.
+        }
+      } else {
+        exportNoSumUpId = sumup?.id ?? null;
+      }
+
+      if (exportNoSumUpId) {
+        const { error: runUpdateError } = await supabase
+          .from('finance_correction_runs')
+          .update({
+            export_no_sumup_id: exportNoSumUpId,
+            export_no_count: exportNos.length,
+          })
+          .eq('id', runId);
+
+        if (runUpdateError) {
+          console.error('[Correction API] Failed updating run with export no sumup:', runUpdateError);
+        }
+      }
+    }
 
     // Insert rows in batches
     const batchSize = 500;
@@ -339,6 +404,8 @@ export async function POST(req: Request) {
     return NextResponse.json({
       runId,
       rowCount: outputRows.length,
+      exportNoCount: exportNos.length,
+      exportNoSumUpId,
       styleMeta: {
         style_no: styleNo,
         style_name: styleName,
@@ -364,7 +431,7 @@ export async function GET(req: Request) {
 
     const { data, error } = await supabase
       .from('finance_correction_runs')
-      .select('id, created_at, file_name, style_no, style_name, row_count, toldref, first_date, last_date')
+      .select('id, created_at, file_name, style_no, style_name, row_count, toldref, first_date, last_date, export_no_count, export_no_sumup_id')
       .order('created_at', { ascending: false })
       .limit(limit);
 

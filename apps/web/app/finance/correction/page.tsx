@@ -72,6 +72,8 @@ type Run = {
   toldref: string | null;
   first_date: string | null;
   last_date: string | null;
+  export_no_count?: number;
+  export_no_sumup_id?: string | null;
 };
 
 type Step = 'upload' | 'preview';
@@ -207,6 +209,11 @@ export default function CorrectionPage() {
   const [exportNoSumUpProgress, setExportNoSumUpProgress] = React.useState(0);
   const [exportNoSumUpMessage, setExportNoSumUpMessage] = React.useState<string>('');
   const [exportNoSumUpId, setExportNoSumUpId] = React.useState<string | null>(null);
+
+  const [openRunExportNos, setOpenRunExportNos] = React.useState<Set<string>>(() => new Set());
+  const [runExportNos, setRunExportNos] = React.useState<
+    Record<string, { loading: boolean; error?: string; exportNos?: string[]; count?: number }>
+  >({});
 
   // Fetch recent runs on mount
   React.useEffect(() => {
@@ -347,7 +354,7 @@ export default function CorrectionPage() {
 
       setInputRows(parsed);
 
-      // Export No. Sum Up (inside this upload): extract unique Export No. values and save
+      // Export No. Sum Up (inside this upload): extract unique Export No. values (saving happens server-side with the run)
       const uniqueExportNos = Array.from(
         new Set(
           parsed
@@ -358,16 +365,12 @@ export default function CorrectionPage() {
       setExportNos(uniqueExportNos);
       setExportNosOpen(false);
       setExportNoSumUpStatus(uniqueExportNos.length ? 'saving' : 'idle');
-      setExportNoSumUpProgress(uniqueExportNos.length ? 5 : 0);
-      setExportNoSumUpMessage(uniqueExportNos.length ? 'Preparing...' : '');
-      const saveSumUpTask =
-        uniqueExportNos.length > 0 ? saveExportNoSumUp(file.name, extractedStyleNo, uniqueExportNos) : Promise.resolve();
+      setExportNoSumUpProgress(uniqueExportNos.length ? 25 : 0);
+      setExportNoSumUpMessage(uniqueExportNos.length ? 'Saving with run...' : '');
+      setExportNoSumUpId(null);
 
       // Now call the API to process and persist
       await processRows(file.name, extractedStyleNo, extractedTariff, parsed);
-
-      // Ensure sum up save finishes (but do not block preview rendering)
-      await saveSumUpTask;
     } catch (e: any) {
       setError(e?.message || 'Failed to parse file');
       setStep('upload');
@@ -398,6 +401,21 @@ export default function CorrectionPage() {
     setStyleMeta(data.styleMeta);
     setOutputRows(data.outputRows ?? []);
     setStep('preview');
+    if (data.exportNoSumUpId) {
+      setExportNoSumUpId(data.exportNoSumUpId);
+      setExportNoSumUpStatus('done');
+      setExportNoSumUpProgress(100);
+      setExportNoSumUpMessage('Saved');
+    } else if (data.exportNoCount > 0) {
+      setExportNoSumUpStatus('error');
+      setExportNoSumUpProgress(100);
+      setExportNoSumUpMessage('Could not save (migration missing?)');
+    } else {
+      setExportNoSumUpStatus('idle');
+      setExportNoSumUpProgress(0);
+      setExportNoSumUpMessage('');
+      setExportNoSumUpId(null);
+    }
 
     // Refresh recent runs
     fetchRecentRuns();
@@ -484,6 +502,10 @@ export default function CorrectionPage() {
       setRunId(runData.id);
       setStyleNo(runData.style_no);
       setFileTariff(runData.file_customs_tariff || '');
+      setExportNoSumUpId(runData.export_no_sumup_id || null);
+      setExportNoSumUpStatus('idle');
+      setExportNoSumUpProgress(0);
+      setExportNoSumUpMessage('');
       // Use fresh style data from the database lookup
       setStyleMeta(freshStyleMeta || {
         style_no: runData.style_no,
@@ -818,23 +840,84 @@ export default function CorrectionPage() {
                     <TableHead>Toldref</TableHead>
                     <TableHead>Varenavn</TableHead>
                     <TableHead>Date Range</TableHead>
+                    <TableHead>Export No.</TableHead>
                     <TableHead className="text-right">Rows</TableHead>
                     <TableHead className="w-[120px]">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {recentRuns.map((run, i) => {
+                  {recentRuns.flatMap((run, i) => {
                     const dateRange = run.first_date && run.last_date
                       ? run.first_date === run.last_date
                         ? formatDateDK(run.first_date)
                         : `${formatDateDK(run.first_date)} – ${formatDateDK(run.last_date)}`
                       : '—';
+
+                    const expanded = openRunExportNos.has(run.id);
+                    const sumupId = run.export_no_sumup_id || null;
+                    const exportCount = run.export_no_count || 0;
+                    const key = sumupId || run.id;
+                    const details = runExportNos[key];
                     
-                    return (
+                    const toggle = async () => {
+                      if (!sumupId || exportCount <= 0) return;
+                      setOpenRunExportNos((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(run.id)) next.delete(run.id);
+                        else next.add(run.id);
+                        return next;
+                      });
+                      if (!details || (!details.loading && !details.exportNos && !details.error)) {
+                        setRunExportNos((prev) => ({ ...prev, [key]: { loading: true } }));
+                        try {
+                          const res = await fetch(`/api/finance/correction-export-no-sumups/${sumupId}`);
+                          if (!res.ok) {
+                            const data = await res.json().catch(() => ({}));
+                            throw new Error(data.error || 'Failed to load Export No.');
+                          }
+                          const data = await res.json();
+                          const nos = (data.sumup?.export_nos || []) as string[];
+                          setRunExportNos((prev) => ({
+                            ...prev,
+                            [key]: { loading: false, exportNos: nos, count: nos.length },
+                          }));
+                        } catch (e: any) {
+                          setRunExportNos((prev) => ({
+                            ...prev,
+                            [key]: { loading: false, error: e?.message || 'Failed' },
+                          }));
+                        }
+                      }
+                    };
+
+                    const rowsOut: React.ReactNode[] = [];
+                    rowsOut.push(
                       <TableRow key={run.id} className={i % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'}>
                         <TableCell className="font-mono font-medium">{run.toldref || '—'}</TableCell>
                         <TableCell>{run.style_name || run.style_no || '—'}</TableCell>
                         <TableCell className="whitespace-nowrap text-slate-600">{dateRange}</TableCell>
+                        <TableCell className="whitespace-nowrap">
+                          {exportCount > 0 && sumupId ? (
+                            <button
+                              type="button"
+                              onClick={toggle}
+                              disabled={busy}
+                              className="inline-flex items-center gap-2 rounded-md px-2 py-1 hover:bg-slate-100 transition-colors"
+                              aria-label={expanded ? 'Collapse Export No.' : 'Expand Export No.'}
+                            >
+                              <Badge className="bg-slate-100 text-slate-700 border-slate-200">
+                                {exportCount.toLocaleString('da-DK')}
+                              </Badge>
+                              {expanded ? (
+                                <ChevronDown className="h-4 w-4 text-slate-500" />
+                              ) : (
+                                <ChevronRight className="h-4 w-4 text-slate-500" />
+                              )}
+                            </button>
+                          ) : (
+                            <span className="text-xs text-slate-400">—</span>
+                          )}
+                        </TableCell>
                         <TableCell className="text-right font-mono">{run.row_count.toLocaleString('da-DK')}</TableCell>
                         <TableCell>
                           <div className="flex items-center gap-2">
@@ -860,6 +943,32 @@ export default function CorrectionPage() {
                         </TableCell>
                       </TableRow>
                     );
+
+                    if (expanded && sumupId && exportCount > 0) {
+                      rowsOut.push(
+                        <TableRow key={`${run.id}-exportnos`} className={i % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'}>
+                          <TableCell colSpan={6}>
+                            {details?.loading ? (
+                              <div className="py-2 text-sm text-slate-500">Loading Export No...</div>
+                            ) : details?.error ? (
+                              <div className="py-2 text-sm text-red-600">{details.error}</div>
+                            ) : (details?.exportNos || []).length === 0 ? (
+                              <div className="py-2 text-sm text-slate-500">No Export No. found.</div>
+                            ) : (
+                              <div className="flex flex-wrap gap-2 py-2">
+                                {(details?.exportNos || []).map((v) => (
+                                  <Badge key={v} className="bg-slate-100 text-slate-700 border-slate-200">
+                                    {v}
+                                  </Badge>
+                                ))}
+                              </div>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    }
+
+                    return rowsOut;
                   })}
                 </TableBody>
               </Table>
