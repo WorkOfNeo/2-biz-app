@@ -209,9 +209,34 @@ function monthKey(year: number, month: number): string {
 }
 
 function parseDkkRateInput(raw: string): number | null {
-  // Accept Danish decimals with comma or dot, strip spaces
-  const s = String(raw || '').trim().replace(/\s+/g, '').replace(',', '.');
+  // Accept Danish decimals with comma or dot, allow thousands separators, strip spaces.
+  // Examples accepted:
+  // - 6,446400
+  // - 6.446400
+  // - 6.446,400 (DK style with thousands + decimal)
+  // - 6,446,400 (commas used as thousands) -> 6446.400
+  // - 6.446.400 (dots used as thousands) -> 6446.400
+  let s = String(raw || '').trim().replace(/\s+/g, '');
   if (!s) return null;
+
+  const hasComma = s.includes(',');
+  const hasDot = s.includes('.');
+
+  if (hasComma && hasDot) {
+    // Assume dot as thousands separator and comma as decimal separator (common DK)
+    s = s.replace(/\./g, '').replace(',', '.');
+  } else if (hasComma) {
+    // If multiple commas, keep the last as decimal separator
+    const last = s.lastIndexOf(',');
+    s = s.slice(0, last).replace(/,/g, '') + '.' + s.slice(last + 1);
+  } else if (hasDot) {
+    // If multiple dots, keep the last as decimal separator
+    const last = s.lastIndexOf('.');
+    if (s.indexOf('.') !== last) {
+      s = s.slice(0, last).replace(/\./g, '') + '.' + s.slice(last + 1);
+    }
+  }
+
   const n = Number(s);
   if (!isFinite(n) || n <= 0) return null;
   return n;
@@ -471,7 +496,7 @@ export default function CorrectionPage() {
       const month = parseInt(m[2]!, 10);
       const rate = parseDkkRateInput(currencyInputs[k] || '');
       if (!rate) {
-        setCurrencyError(`Invalid rate for ${k}. Example: 7.123`);
+        setCurrencyError(`Invalid DKK/USD rate for ${k}. Example: 6,446400`);
         return;
       }
 
@@ -990,7 +1015,7 @@ export default function CorrectionPage() {
                     <div>
                       <div className="text-sm font-semibold text-slate-900">Currencies (Log)</div>
                       <div className="text-xs text-slate-600">
-                        Store monthly rates as <span className="font-medium">1 $ = X.XXX DKK</span>
+                        Store monthly rates as <span className="font-medium">DKK/USD = X,XXXXXX</span>
                       </div>
                     </div>
                     <Button variant="ghost" size="sm" onClick={fetchUsdLog} disabled={loadingCurrencyRates || busy}>
@@ -1009,17 +1034,17 @@ export default function CorrectionPage() {
                       />
                     </div>
                     <div>
-                      <div className="text-xs text-slate-600 mb-1">1 $ =</div>
+                          <div className="text-xs text-slate-600 mb-1">DKK/USD =</div>
                       <Input
                         inputMode="decimal"
-                        placeholder="7.123"
+                            placeholder="6,446400"
                         value={manualUsdRate}
                         onChange={(e) => setManualUsdRate(e.currentTarget.value)}
                         className="max-w-[220px]"
                       />
                     </div>
                     <div className="flex items-end gap-2">
-                      <div className="text-sm text-slate-600 pb-2">DKK</div>
+                          <div className="text-sm text-slate-600 pb-2">per 1 USD</div>
                       <Button
                         onClick={saveManualUsd}
                         disabled={
@@ -1079,23 +1104,23 @@ export default function CorrectionPage() {
 
                           <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
                             <div className="md:col-span-2">
-                              <div className="text-xs text-slate-600 mb-1">1 $ =</div>
+                                  <div className="text-xs text-slate-600 mb-1">DKK/USD =</div>
                               <Input
                                 inputMode="decimal"
-                                placeholder="7.123"
+                                    placeholder="6,446400"
                                 value={currencyInputs[k] ?? ''}
                                 onChange={(e) => setCurrencyInputs((prev) => ({ ...prev, [k]: e.currentTarget.value }))}
                                 className="max-w-[220px]"
                               />
                             </div>
                             <div className="text-sm text-slate-600">
-                              DKK
+                                  per 1 USD
                               {saved ? (
                                 <div className="text-xs text-slate-500 mt-1">
                                   Saved:{' '}
                                   {Number(saved.rate_dkk).toLocaleString('da-DK', {
-                                    minimumFractionDigits: 3,
-                                    maximumFractionDigits: 4,
+                                        minimumFractionDigits: 6,
+                                        maximumFractionDigits: 6,
                                   })}
                                 </div>
                               ) : null}
@@ -1119,8 +1144,8 @@ export default function CorrectionPage() {
                                 <span className="text-sm font-medium text-slate-900">{k}</span>
                                 <span className="text-sm text-slate-700 font-mono">
                                   {Number(r.rate_dkk).toLocaleString('da-DK', {
-                                    minimumFractionDigits: 3,
-                                    maximumFractionDigits: 4,
+                                    minimumFractionDigits: 6,
+                                    maximumFractionDigits: 6,
                                   })}
                                 </span>
                               </div>
