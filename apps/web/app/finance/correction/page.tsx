@@ -6,6 +6,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui
 import { Dropzone } from '../../../components/ui/dropzone';
 import { Badge } from '../../../components/ui/badge';
 import { ChevronDown, ChevronRight } from 'lucide-react';
+import { Input } from '../../../components/ui/input';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../components/ui/tabs';
 import {
   Table,
   TableBody,
@@ -170,6 +172,15 @@ type ExportNoSumUp = {
 
 type ExportNoSumUpStatus = 'idle' | 'saving' | 'done' | 'error';
 
+type CustomsCurrencyRate = {
+  id: string;
+  created_at: string;
+  currency_code: string;
+  year: number;
+  month: number;
+  rate_dkk: number;
+};
+
 function findExportNoColumnIndex(headerRow: any[] | undefined): number {
   if (!headerRow || headerRow.length === 0) return 3; // default column D
   const normalized = headerRow.map((v) => String(v ?? '').trim().toLowerCase());
@@ -180,6 +191,19 @@ function findExportNoColumnIndex(headerRow: any[] | undefined): number {
   if (looseIdx >= 0) return looseIdx;
 
   return 3;
+}
+
+function monthKey(year: number, month: number): string {
+  return `${year}-${String(month).padStart(2, '0')}`;
+}
+
+function parseDkkRateInput(raw: string): number | null {
+  // Accept Danish decimals with comma or dot, strip spaces
+  const s = String(raw || '').trim().replace(/\s+/g, '').replace(',', '.');
+  if (!s) return null;
+  const n = Number(s);
+  if (!isFinite(n) || n <= 0) return null;
+  return n;
 }
 
 export default function CorrectionPage() {
@@ -214,6 +238,14 @@ export default function CorrectionPage() {
   const [runExportNos, setRunExportNos] = React.useState<
     Record<string, { loading: boolean; error?: string; exportNos?: string[]; count?: number }>
   >({});
+
+  // Currencies (customs/global rates, NOT season-based)
+  const [currenciesOpen, setCurrenciesOpen] = React.useState(false);
+  const [currencyRates, setCurrencyRates] = React.useState<Record<string, CustomsCurrencyRate>>({});
+  const [currencyInputs, setCurrencyInputs] = React.useState<Record<string, string>>({});
+  const [loadingCurrencyRates, setLoadingCurrencyRates] = React.useState(false);
+  const [savingCurrencyKey, setSavingCurrencyKey] = React.useState<string | null>(null);
+  const [currencyError, setCurrencyError] = React.useState<string | null>(null);
 
   // Fetch recent runs on mount
   React.useEffect(() => {
@@ -288,6 +320,118 @@ export default function CorrectionPage() {
     ).sort((a, b) => a.localeCompare(b));
     setExportNos(unique);
   }, [step, outputRows]);
+
+  const activeCurrency = React.useMemo(() => {
+    const c = (styleMeta?.cost_price_currency || outputRows[0]?.valuta_original || '').toString().trim().toUpperCase();
+    return c;
+  }, [styleMeta, outputRows]);
+
+  const usdMonths = React.useMemo(() => {
+    if (step !== 'preview' || activeCurrency !== 'USD' || outputRows.length === 0) return [];
+    const keys = new Set<string>();
+    for (const r of outputRows) {
+      if (r.year && r.month) keys.add(monthKey(r.year, r.month));
+    }
+    return Array.from(keys).sort();
+  }, [step, activeCurrency, outputRows]);
+
+  const missingUsdMonths = React.useMemo(() => {
+    if (activeCurrency !== 'USD') return [];
+    return usdMonths.filter((k) => !currencyRates[k]);
+  }, [activeCurrency, usdMonths, currencyRates]);
+
+  React.useEffect(() => {
+    // If we detect USD and any month is missing, auto-open the currencies panel
+    if (step === 'preview' && activeCurrency === 'USD' && usdMonths.length > 0 && missingUsdMonths.length > 0) {
+      setCurrenciesOpen(true);
+    }
+  }, [step, activeCurrency, usdMonths.length, missingUsdMonths.length]);
+
+  const fetchUsdRatesForMonths = React.useCallback(async (months: string[]) => {
+    if (!months || months.length === 0) return;
+    setCurrencyError(null);
+    setLoadingCurrencyRates(true);
+    try {
+      const res = await fetch(
+        `/api/finance/customs-currency-rates?currency=USD&months=${encodeURIComponent(months.join(','))}`
+      );
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Failed to load currency rates');
+      }
+      const data = await res.json();
+      const rates = (data.rates || []) as CustomsCurrencyRate[];
+      setCurrencyRates((prev) => {
+        const next = { ...prev };
+        for (const r of rates) {
+          next[monthKey(r.year, r.month)] = r;
+        }
+        return next;
+      });
+      // Prime inputs from saved rates if not already typed
+      setCurrencyInputs((prev) => {
+        const next = { ...prev };
+        for (const r of rates) {
+          const k = monthKey(r.year, r.month);
+          if (next[k] == null) next[k] = String(r.rate_dkk);
+        }
+        return next;
+      });
+    } catch (e: any) {
+      setCurrencyError(e?.message || 'Failed to load currency rates');
+    } finally {
+      setLoadingCurrencyRates(false);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    if (!currenciesOpen) return;
+    if (activeCurrency !== 'USD') return;
+    if (usdMonths.length === 0) return;
+    fetchUsdRatesForMonths(usdMonths);
+  }, [currenciesOpen, activeCurrency, usdMonths, fetchUsdRatesForMonths]);
+
+  const saveUsdRate = React.useCallback(
+    async (k: string) => {
+      const m = k.match(/^(\d{4})-(\d{2})$/);
+      if (!m) return;
+      const year = parseInt(m[1]!, 10);
+      const month = parseInt(m[2]!, 10);
+      const rate = parseDkkRateInput(currencyInputs[k] || '');
+      if (!rate) {
+        setCurrencyError(`Invalid rate for ${k}. Example: 7.123`);
+        return;
+      }
+
+      setCurrencyError(null);
+      setSavingCurrencyKey(k);
+      try {
+        const res = await fetch('/api/finance/customs-currency-rates', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            currencyCode: 'USD',
+            year,
+            month,
+            rateDkk: rate,
+          }),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.error || 'Failed to save rate');
+        }
+        const data = await res.json();
+        const saved = data.rate as CustomsCurrencyRate;
+        setCurrencyRates((prev) => ({ ...prev, [k]: saved }));
+        setCurrencyInputs((prev) => ({ ...prev, [k]: String(saved.rate_dkk) }));
+      } catch (e: any) {
+        setCurrencyError(e?.message || 'Failed to save rate');
+      } finally {
+        setSavingCurrencyKey(null);
+      }
+    },
+    [currencyInputs]
+  );
 
   async function onFilesSelected(files: File[]) {
     setError(null);
@@ -805,6 +949,16 @@ export default function CorrectionPage() {
                 <Button variant="outline" onClick={resetState} disabled={busy}>
                   Upload New File
                 </Button>
+                {activeCurrency === 'USD' && (
+                  <Button
+                    variant={missingUsdMonths.length > 0 ? 'default' : 'outline'}
+                    onClick={() => setCurrenciesOpen((v) => !v)}
+                    disabled={busy}
+                  >
+                    Currencies
+                    {missingUsdMonths.length > 0 ? ` (${missingUsdMonths.length})` : ''}
+                  </Button>
+                )}
                 {runId && (
                   <span className="text-xs text-slate-500 ml-auto">
                     Run: <code className="bg-slate-100 px-1.5 py-0.5 rounded">{runId.slice(0, 8)}...</code>
@@ -813,6 +967,96 @@ export default function CorrectionPage() {
               </div>
             </CardContent>
           </Card>
+
+          {/* Currencies panel (USD for now) */}
+          {activeCurrency === 'USD' && currenciesOpen && (
+            <Card className="border-slate-200 shadow-sm">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base font-semibold">Currencies</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <p className="text-sm text-slate-600">
+                  Monthly customs conversion rates. Format: <span className="font-medium">1 $ = X.XXX DKK</span>
+                </p>
+
+                {currencyError && (
+                  <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-800">
+                    {currencyError}
+                  </div>
+                )}
+
+                <Tabs defaultValue="USD">
+                  <TabsList>
+                    <TabsTrigger value="USD">USD</TabsTrigger>
+                  </TabsList>
+                  <TabsContent value="USD" className="space-y-3">
+                    {loadingCurrencyRates ? (
+                      <div className="text-sm text-slate-500">Loading rates...</div>
+                    ) : usdMonths.length === 0 ? (
+                      <div className="text-sm text-slate-500">No months detected in this run.</div>
+                    ) : (
+                      <div className="space-y-2">
+                        {usdMonths.map((k) => {
+                          const saved = currencyRates[k];
+                          const missing = !saved;
+                          return (
+                            <div
+                              key={k}
+                              className={[
+                                'rounded-lg border px-4 py-3 flex flex-col gap-2',
+                                missing ? 'border-amber-300 bg-amber-50/40' : 'border-slate-200 bg-white',
+                              ].join(' ')}
+                            >
+                              <div className="flex items-center justify-between gap-3">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-sm font-semibold text-slate-900">{k}</span>
+                                  {missing ? (
+                                    <Badge className="bg-amber-100 text-amber-800 border-amber-200">Missing</Badge>
+                                  ) : (
+                                    <Badge className="bg-slate-100 text-slate-700 border-slate-200">Saved</Badge>
+                                  )}
+                                </div>
+                                <Button
+                                  size="sm"
+                                  onClick={() => saveUsdRate(k)}
+                                  disabled={!!savingCurrencyKey || busy || !parseDkkRateInput(currencyInputs[k] || '')}
+                                >
+                                  {savingCurrencyKey === k ? 'Saving...' : 'Save'}
+                                </Button>
+                              </div>
+
+                              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+                                <div className="md:col-span-2">
+                                  <div className="text-xs text-slate-600 mb-1">1 $ =</div>
+                                  <Input
+                                    inputMode="decimal"
+                                    placeholder="7.123"
+                                    value={currencyInputs[k] ?? ''}
+                                    onChange={(e) =>
+                                      setCurrencyInputs((prev) => ({ ...prev, [k]: e.currentTarget.value }))
+                                    }
+                                    className="max-w-[220px]"
+                                  />
+                                </div>
+                                <div className="text-sm text-slate-600">
+                                  DKK
+                                  {saved ? (
+                                    <div className="text-xs text-slate-500 mt-1">
+                                      Saved: {Number(saved.rate_dkk).toLocaleString('da-DK', { minimumFractionDigits: 3, maximumFractionDigits: 4 })}
+                                    </div>
+                                  ) : null}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </TabsContent>
+                </Tabs>
+              </CardContent>
+            </Card>
+          )}
         </>
       )}
 
