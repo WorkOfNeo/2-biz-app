@@ -427,13 +427,20 @@ export async function GET(req: Request) {
   try {
     const supabase = createRouteHandlerClient({ cookies });
     const url = new URL(req.url);
-    const limit = parseInt(url.searchParams.get('limit') || '20', 10);
+    const limit = Math.min(parseInt(url.searchParams.get('limit') || '200', 10), 500);
+    const offset = Math.max(parseInt(url.searchParams.get('offset') || '0', 10), 0);
 
-    const { data, error } = await supabase
+    const from = offset;
+    const to = offset + limit - 1;
+
+    const { data, error, count } = await supabase
       .from('finance_correction_runs')
-      .select('id, created_at, file_name, style_no, style_name, row_count, toldref, first_date, last_date, export_no_count, export_no_sumup_id')
+      .select(
+        'id, created_at, file_name, style_no, style_name, row_count, toldref, first_date, last_date, export_no_count, export_no_sumup_id',
+        { count: 'exact' }
+      )
       .order('created_at', { ascending: false })
-      .limit(limit);
+      .range(from, to);
 
     if (error) {
       console.error('[Correction API] List error:', error);
@@ -442,7 +449,17 @@ export async function GET(req: Request) {
 
     console.log('[Correction API] GET runs:', JSON.stringify(data, null, 2));
 
-    return NextResponse.json({ runs: data ?? [] });
+    const total = count ?? null;
+    const nextOffset =
+      total != null && offset + (data?.length ?? 0) < total ? offset + (data?.length ?? 0) : null;
+
+    return NextResponse.json({
+      runs: data ?? [],
+      total,
+      offset,
+      limit,
+      nextOffset,
+    });
   } catch (error: any) {
     console.error('[Correction API] Error:', error);
     return NextResponse.json({ error: error.message || 'Internal server error' }, { status: 500 });

@@ -5,7 +5,7 @@ import { Button } from '../../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
 import { Dropzone } from '../../../components/ui/dropzone';
 import { Badge } from '../../../components/ui/badge';
-import { ChevronDown, ChevronRight } from 'lucide-react';
+import { ChevronDown, ChevronRight, X } from 'lucide-react';
 import { Input } from '../../../components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../components/ui/tabs';
 import {
@@ -89,6 +89,14 @@ type UploadJob = {
   progress: number; // 0..100
   message?: string;
   runId?: string;
+};
+
+type RunsPageResponse = {
+  runs: Run[];
+  total: number | null;
+  offset: number;
+  limit: number;
+  nextOffset: number | null;
 };
 
 const OUTPUT_COLUMNS = [
@@ -273,6 +281,8 @@ export default function CorrectionPage() {
   const [recentRuns, setRecentRuns] = React.useState<Run[]>([]);
   const [loadingRuns, setLoadingRuns] = React.useState(false);
   const [uploadJobs, setUploadJobs] = React.useState<UploadJob[]>([]);
+  const [selectedRunIds, setSelectedRunIds] = React.useState<Set<string>>(() => new Set());
+  const [downloadingCollected, setDownloadingCollected] = React.useState(false);
 
   // Export No. Sum Up (inside the CORRECTION flow)
   const [exportNos, setExportNos] = React.useState<string[]>([]);
@@ -315,11 +325,19 @@ export default function CorrectionPage() {
   async function fetchRecentRuns() {
     try {
       setLoadingRuns(true);
-      const res = await fetch('/api/finance/correction-runs?limit=10');
-      if (res.ok) {
-        const data = await res.json();
-        setRecentRuns(data.runs ?? []);
+      const all: Run[] = [];
+      let offset = 0;
+      const pageSize = 200;
+      // Fetch all pages (Diary should show all entries)
+      for (let guard = 0; guard < 200; guard++) {
+        const res = await fetch(`/api/finance/correction-runs?limit=${pageSize}&offset=${offset}`);
+        if (!res.ok) break;
+        const data = (await res.json()) as RunsPageResponse;
+        all.push(...(data.runs ?? []));
+        if (data.nextOffset == null) break;
+        offset = data.nextOffset;
       }
+      setRecentRuns(all);
     } catch {
       // Ignore errors for recent runs
     } finally {
@@ -521,6 +539,20 @@ export default function CorrectionPage() {
       fetchUsdRatesForMonths(usdRequiredMonths);
     }
   }, [settingsOpen, usdRequiredMonths, fetchUsdLog, fetchUsdRatesForMonths, fetchCountries]);
+
+  React.useEffect(() => {
+    if (!settingsOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setSettingsOpen(false);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [settingsOpen]);
 
   const saveUsdRate = React.useCallback(
     async (k: string) => {
@@ -934,6 +966,74 @@ export default function CorrectionPage() {
     }
   }
 
+  const toggleRunSelected = (runId: string, checked: boolean) => {
+    setSelectedRunIds((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(runId);
+      else next.delete(runId);
+      return next;
+    });
+  };
+
+  const allSelected = recentRuns.length > 0 && selectedRunIds.size === recentRuns.length;
+
+  const toggleSelectAll = (checked: boolean) => {
+    setSelectedRunIds(() => {
+      if (!checked) return new Set();
+      return new Set(recentRuns.map((r) => r.id));
+    });
+  };
+
+  async function downloadCollectedXlsx() {
+    if (selectedRunIds.size === 0) return;
+
+    try {
+      setDownloadingCollected(true);
+      const [XLSX, { default: saveAs }] = await Promise.all([import('xlsx'), import('file-saver')]);
+      const wb = XLSX.utils.book_new();
+
+      const selectedRuns = recentRuns.filter((r) => selectedRunIds.has(r.id));
+
+      const usedNames = new Set<string>();
+      const makeSheetName = (base: string) => {
+        let name = base.replace(/[\\/?*[\]:]/g, '').trim() || 'Run';
+        name = name.slice(0, 31);
+        let candidate = name;
+        let i = 2;
+        while (usedNames.has(candidate)) {
+          const suffix = `_${i++}`;
+          candidate = (name.slice(0, 31 - suffix.length) + suffix).slice(0, 31);
+        }
+        usedNames.add(candidate);
+        return candidate;
+      };
+
+      for (const run of selectedRuns) {
+        const res = await fetch(`/api/finance/correction-runs/${run.id}`);
+        if (!res.ok) continue;
+        const data = await res.json();
+        const rows = (data.rows ?? []) as OutputRow[];
+
+        const sheetData = [
+          [...OUTPUT_COLUMNS],
+          ...rows.map((r) => rowToArray(r).map((cell) => (cell == null ? '' : cell))),
+        ];
+        const ws = XLSX.utils.aoa_to_sheet(sheetData);
+
+        const base = `${run.style_no || 'Run'}_${String(run.first_date || run.created_at || '').slice(0, 10)}`;
+        XLSX.utils.book_append_sheet(wb, ws, makeSheetName(base));
+      }
+
+      const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+      const blob = new Blob([wbout], {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      });
+      saveAs(blob, `Correction_Collected_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    } finally {
+      setDownloadingCollected(false);
+    }
+  }
+
   async function loadRun(run: Run) {
     setError(null);
     setBusy(true);
@@ -1100,272 +1200,7 @@ export default function CorrectionPage() {
         </CardContent>
       </Card>
 
-      {/* Settings panel (Currencies for now) */}
-      {settingsOpen && (
-        <Card className="border-slate-200 shadow-sm">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base font-semibold">Settings</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <p className="text-sm text-slate-600">Customs-related settings for CORRECTION.</p>
-
-            {currencyError && (
-              <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-800">
-                {currencyError}
-              </div>
-            )}
-
-            <Tabs defaultValue="USD">
-              <TabsList>
-                <TabsTrigger value="USD">USD</TabsTrigger>
-                <TabsTrigger value="countries">Countries</TabsTrigger>
-              </TabsList>
-              <TabsContent value="USD" className="space-y-3">
-                <div className="rounded-lg border border-slate-200 bg-white p-4 space-y-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <div className="text-sm font-semibold text-slate-900">Currencies (Log)</div>
-                      <div className="text-xs text-slate-600">
-                        Store monthly rates as <span className="font-medium">DKK/USD = X,XXXXXX</span>
-                      </div>
-                    </div>
-                    <Button variant="ghost" size="sm" onClick={fetchUsdLog} disabled={loadingCurrencyRates || busy}>
-                      Refresh
-                    </Button>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
-                    <div>
-                      <div className="text-xs text-slate-600 mb-1">Month (YYYY-MM)</div>
-                      <Input
-                        placeholder="2026-01"
-                        value={manualUsdMonth}
-                        onChange={(e) => setManualUsdMonth(e.currentTarget.value)}
-                        className="max-w-[220px]"
-                      />
-                    </div>
-                    <div>
-                          <div className="text-xs text-slate-600 mb-1">DKK/USD =</div>
-                      <Input
-                        inputMode="decimal"
-                            placeholder="6,446400"
-                        value={manualUsdRate}
-                        onChange={(e) => setManualUsdRate(e.currentTarget.value)}
-                        className="max-w-[220px]"
-                      />
-                    </div>
-                    <div className="flex items-end gap-2">
-                          <div className="text-sm text-slate-600 pb-2">per 1 USD</div>
-                      <Button
-                        onClick={saveManualUsd}
-                        disabled={
-                          busy ||
-                          loadingCurrencyRates ||
-                          !String(manualUsdMonth || '').trim().match(/^(\d{4})-(\d{2})$/) ||
-                          !parseDkkRateInput(manualUsdRate)
-                        }
-                      >
-                        Add month
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Saved rates list (always visible) */}
-                {usdLog.length === 0 ? (
-                  <div className="text-sm text-slate-500">No saved USD rates yet.</div>
-                ) : (
-                  <div className="rounded-lg border border-slate-200 bg-white">
-                    <div className="px-4 py-3 border-b flex items-center justify-between">
-                      <div className="text-sm font-semibold text-slate-900">Saved USD rates</div>
-                      <div className="text-xs text-slate-500">{usdLog.length} entries</div>
-                    </div>
-                    <div className="divide-y">
-                      {usdLog.slice(0, 36).map((r) => {
-                        const k = monthKey(r.year, r.month);
-                        return (
-                          <div key={r.id} className="px-4 py-3 flex items-center justify-between gap-3">
-                            <div className="min-w-0">
-                              <div className="text-sm font-medium text-slate-900">{k}</div>
-                              <div className="text-xs text-slate-500 font-mono">
-                                DKK/USD ={' '}
-                                {Number(r.rate_dkk).toLocaleString('da-DK', {
-                                  minimumFractionDigits: 6,
-                                  maximumFractionDigits: 6,
-                                })}
-                              </div>
-                            </div>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => deleteRate(r.id)}
-                              disabled={busy || deletingRateId === r.id}
-                              className="h-7 px-2 text-red-600 hover:text-red-700 hover:bg-red-50"
-                            >
-                              {deletingRateId === r.id ? 'Deleting…' : 'Delete'}
-                            </Button>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-
-                {loadingCurrencyRates ? (
-                  <div className="text-sm text-slate-500">Loading rates...</div>
-                ) : activeCurrency !== 'USD' ? (
-                  <div className="text-sm text-slate-500">
-                    No USD run loaded. (You can still add USD rates above.)
-                  </div>
-                ) : usdRequiredMonths.length === 0 ? (
-                  <div className="text-sm text-slate-500">No months detected in this run.</div>
-                ) : (
-                  <div className="space-y-2">
-                    <div className="text-xs text-slate-600">
-                      Required months{missingUsdMonths.length > 0 ? ` • ${missingUsdMonths.length} missing` : ''}
-                    </div>
-                    {usdRequiredMonths.map((k) => {
-                      const saved = currencyRates[k];
-                      const missing = !saved;
-                      return (
-                        <div
-                          key={k}
-                          className={[
-                            'rounded-lg border px-4 py-3 flex flex-col gap-2',
-                            missing ? 'border-amber-300 bg-amber-50/40' : 'border-slate-200 bg-white',
-                          ].join(' ')}
-                        >
-                          <div className="flex items-center justify-between gap-3">
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm font-semibold text-slate-900">{k}</span>
-                              {missing ? (
-                                <Badge className="bg-amber-100 text-amber-800 border-amber-200">Missing</Badge>
-                              ) : (
-                                <Badge className="bg-slate-100 text-slate-700 border-slate-200">Saved</Badge>
-                              )}
-                            </div>
-                            <Button
-                              size="sm"
-                              onClick={() => saveUsdRate(k)}
-                              disabled={!!savingCurrencyKey || busy || !parseDkkRateInput(currencyInputs[k] || '')}
-                            >
-                              {savingCurrencyKey === k ? 'Saving...' : 'Save'}
-                            </Button>
-                          </div>
-
-                          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
-                            <div className="md:col-span-2">
-                                  <div className="text-xs text-slate-600 mb-1">DKK/USD =</div>
-                              <Input
-                                inputMode="decimal"
-                                    placeholder="6,446400"
-                                value={currencyInputs[k] ?? ''}
-                                onChange={(e) => setCurrencyInputs((prev) => ({ ...prev, [k]: e.currentTarget.value }))}
-                                className="max-w-[220px]"
-                              />
-                            </div>
-                            <div className="text-sm text-slate-600">
-                                  per 1 USD
-                              {saved ? (
-                                <div className="text-xs text-slate-500 mt-1">
-                                  Saved:{' '}
-                                  {Number(saved.rate_dkk).toLocaleString('da-DK', {
-                                        minimumFractionDigits: 6,
-                                        maximumFractionDigits: 6,
-                                  })}
-                                </div>
-                              ) : null}
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </TabsContent>
-
-              <TabsContent value="countries" className="space-y-3">
-                {countriesError && (
-                  <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-800">
-                    {countriesError}
-                  </div>
-                )}
-
-                <div className="rounded-lg border border-slate-200 bg-white p-4 space-y-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <div className="text-sm font-semibold text-slate-900">Countries</div>
-                      <div className="text-xs text-slate-600">
-                        Add shorthand codes like <span className="font-medium">China → CN</span>.
-                      </div>
-                    </div>
-                    <Button variant="ghost" size="sm" onClick={fetchCountries} disabled={countriesLoading || busy}>
-                      Refresh
-                    </Button>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
-                    <div>
-                      <div className="text-xs text-slate-600 mb-1">Country name</div>
-                      <Input
-                        placeholder="China"
-                        value={countryName}
-                        onChange={(e) => setCountryName(e.currentTarget.value)}
-                      />
-                    </div>
-                    <div>
-                      <div className="text-xs text-slate-600 mb-1">Code</div>
-                      <Input
-                        placeholder="CN"
-                        value={countryCode}
-                        onChange={(e) => setCountryCode(e.currentTarget.value.toUpperCase())}
-                        className="max-w-[140px]"
-                      />
-                    </div>
-                    <div className="flex items-end gap-2">
-                      <Button onClick={addCountry} disabled={busy || countriesLoading}>
-                        Add / Update
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-
-                {countriesLoading ? (
-                  <div className="text-sm text-slate-500">Loading countries...</div>
-                ) : countries.length === 0 ? (
-                  <div className="text-sm text-slate-500">No countries configured.</div>
-                ) : (
-                  <div className="rounded-lg border border-slate-200 bg-white">
-                    <div className="px-4 py-3 border-b flex items-center justify-between">
-                      <div className="text-sm font-semibold text-slate-900">Saved countries</div>
-                      <div className="text-xs text-slate-500">{countries.length} entries</div>
-                    </div>
-                    <div className="divide-y">
-                      {countries.map((c) => (
-                        <div key={c.id} className="px-4 py-3 flex items-center justify-between gap-3">
-                          <div className="min-w-0">
-                            <div className="text-sm font-medium text-slate-900">{c.name}</div>
-                            <div className="text-xs text-slate-500 font-mono">{c.code}</div>
-                          </div>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => deleteCountry(c.id)}
-                            disabled={busy || deletingCountryId === c.id}
-                            className="h-7 px-2 text-red-600 hover:text-red-700 hover:bg-red-50"
-                          >
-                            {deletingCountryId === c.id ? 'Deleting…' : 'Delete'}
-                          </Button>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </TabsContent>
-            </Tabs>
-          </CardContent>
-        </Card>
-      )}
+      {/* Settings modal is rendered at the end of the page */}
 
       {/* Preview Section */}
       {step === 'preview' && outputRows.length > 0 && (
@@ -1548,6 +1383,19 @@ export default function CorrectionPage() {
       <Card className="border-slate-200 shadow-sm">
         <CardHeader className="pb-3">
           <CardTitle className="text-base font-semibold">Diary</CardTitle>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => downloadCollectedXlsx()}
+              disabled={busy || downloadingCollected || selectedRunIds.size === 0}
+            >
+              {downloadingCollected ? 'Preparing…' : `Collected XLSX (${selectedRunIds.size})`}
+            </Button>
+            <Button variant="ghost" size="sm" onClick={fetchRecentRuns} disabled={loadingRuns || busy}>
+              Refresh
+            </Button>
+          </div>
         </CardHeader>
         <CardContent className="p-0">
           {uploadJobs.some((j) => j.status === 'queued' || j.status === 'parsing' || j.status === 'uploading') && (
@@ -1597,6 +1445,14 @@ export default function CorrectionPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
+                    <TableHead className="w-[44px]">
+                      <input
+                        type="checkbox"
+                        checked={allSelected}
+                        onChange={(e) => toggleSelectAll(e.currentTarget.checked)}
+                        aria-label="Select all diary entries"
+                      />
+                    </TableHead>
                     <TableHead>Toldref</TableHead>
                     <TableHead>Varenavn</TableHead>
                     <TableHead>Date Range</TableHead>
@@ -1653,6 +1509,14 @@ export default function CorrectionPage() {
                     const rowsOut: React.ReactNode[] = [];
                     rowsOut.push(
                       <TableRow key={run.id} className={i % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'}>
+                        <TableCell className="w-[44px]">
+                          <input
+                            type="checkbox"
+                            checked={selectedRunIds.has(run.id)}
+                            onChange={(e) => toggleRunSelected(run.id, e.currentTarget.checked)}
+                            aria-label={`Select run ${run.id}`}
+                          />
+                        </TableCell>
                         <TableCell className="font-mono font-medium">{run.toldref || '—'}</TableCell>
                         <TableCell>{run.style_name || run.style_no || '—'}</TableCell>
                         <TableCell className="whitespace-nowrap text-slate-600">{dateRange}</TableCell>
@@ -1716,7 +1580,7 @@ export default function CorrectionPage() {
                     if (expanded && sumupId && exportCount > 0) {
                       rowsOut.push(
                         <TableRow key={`${run.id}-exportnos`} className={i % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'}>
-                          <TableCell colSpan={6}>
+                          <TableCell colSpan={7}>
                             {details?.loading ? (
                               <div className="py-2 text-sm text-slate-500">Loading Export No...</div>
                             ) : details?.error ? (
@@ -1745,6 +1609,284 @@ export default function CorrectionPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* Settings Modal */}
+      {settingsOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setSettingsOpen(false);
+          }}
+          aria-modal="true"
+          role="dialog"
+        >
+          <div className="w-full max-w-4xl rounded-xl bg-white shadow-xl ring-1 ring-black/5">
+            <div className="flex items-center justify-between border-b px-4 py-3">
+              <div className="text-sm font-semibold text-slate-900">Settings</div>
+              <Button variant="ghost" size="sm" onClick={() => setSettingsOpen(false)} className="h-8 px-2">
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+            <div className="max-h-[80vh] overflow-y-auto p-4 space-y-4">
+              <p className="text-sm text-slate-600">Customs-related settings for CORRECTION.</p>
+
+              {currencyError && (
+                <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-800">
+                  {currencyError}
+                </div>
+              )}
+
+              <Tabs defaultValue="USD">
+                <TabsList>
+                  <TabsTrigger value="USD">USD</TabsTrigger>
+                  <TabsTrigger value="countries">Countries</TabsTrigger>
+                </TabsList>
+
+                <TabsContent value="USD" className="space-y-3">
+                  <div className="rounded-lg border border-slate-200 bg-white p-4 space-y-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <div className="text-sm font-semibold text-slate-900">Currencies (Log)</div>
+                        <div className="text-xs text-slate-600">
+                          Store monthly rates as <span className="font-medium">DKK/USD = X,XXXXXX</span>
+                        </div>
+                      </div>
+                      <Button variant="ghost" size="sm" onClick={fetchUsdLog} disabled={loadingCurrencyRates || busy}>
+                        Refresh
+                      </Button>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+                      <div>
+                        <div className="text-xs text-slate-600 mb-1">Month (YYYY-MM)</div>
+                        <Input
+                          placeholder="2026-01"
+                          value={manualUsdMonth}
+                          onChange={(e) => setManualUsdMonth(e.currentTarget.value)}
+                          className="max-w-[220px]"
+                        />
+                      </div>
+                      <div>
+                        <div className="text-xs text-slate-600 mb-1">DKK/USD =</div>
+                        <Input
+                          inputMode="decimal"
+                          placeholder="6,446400"
+                          value={manualUsdRate}
+                          onChange={(e) => setManualUsdRate(e.currentTarget.value)}
+                          className="max-w-[220px]"
+                        />
+                      </div>
+                      <div className="flex items-end gap-2">
+                        <div className="text-sm text-slate-600 pb-2">per 1 USD</div>
+                        <Button
+                          onClick={saveManualUsd}
+                          disabled={
+                            busy ||
+                            loadingCurrencyRates ||
+                            !String(manualUsdMonth || '').trim().match(/^(\d{4})-(\d{2})$/) ||
+                            !parseDkkRateInput(manualUsdRate)
+                          }
+                        >
+                          Add month
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Saved rates list (always visible) */}
+                  {usdLog.length === 0 ? (
+                    <div className="text-sm text-slate-500">No saved USD rates yet.</div>
+                  ) : (
+                    <div className="rounded-lg border border-slate-200 bg-white">
+                      <div className="px-4 py-3 border-b flex items-center justify-between">
+                        <div className="text-sm font-semibold text-slate-900">Saved USD rates</div>
+                        <div className="text-xs text-slate-500">{usdLog.length} entries</div>
+                      </div>
+                      <div className="divide-y">
+                        {usdLog.slice(0, 36).map((r) => {
+                          const k = monthKey(r.year, r.month);
+                          return (
+                            <div key={r.id} className="px-4 py-3 flex items-center justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="text-sm font-medium text-slate-900">{k}</div>
+                                <div className="text-xs text-slate-500 font-mono">
+                                  DKK/USD ={' '}
+                                  {Number(r.rate_dkk).toLocaleString('da-DK', {
+                                    minimumFractionDigits: 6,
+                                    maximumFractionDigits: 6,
+                                  })}
+                                </div>
+                              </div>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => deleteRate(r.id)}
+                                disabled={busy || deletingRateId === r.id}
+                                className="h-7 px-2 text-red-600 hover:text-red-700 hover:bg-red-50"
+                              >
+                                {deletingRateId === r.id ? 'Deleting…' : 'Delete'}
+                              </Button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {loadingCurrencyRates ? (
+                    <div className="text-sm text-slate-500">Loading rates...</div>
+                  ) : usdRequiredMonths.length === 0 ? (
+                    <div className="text-sm text-slate-500">No months required right now.</div>
+                  ) : (
+                    <div className="space-y-2">
+                      <div className="text-xs text-slate-600">
+                        Required months{missingUsdMonths.length > 0 ? ` • ${missingUsdMonths.length} missing` : ''}
+                      </div>
+                      {usdRequiredMonths.map((k) => {
+                        const saved = currencyRates[k];
+                        const missing = !saved;
+                        return (
+                          <div
+                            key={k}
+                            className={[
+                              'rounded-lg border px-4 py-3 flex flex-col gap-2',
+                              missing ? 'border-amber-300 bg-amber-50/40' : 'border-slate-200 bg-white',
+                            ].join(' ')}
+                          >
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="flex items-center gap-2">
+                                <span className="text-sm font-semibold text-slate-900">{k}</span>
+                                {missing ? (
+                                  <Badge className="bg-amber-100 text-amber-800 border-amber-200">Missing</Badge>
+                                ) : (
+                                  <Badge className="bg-slate-100 text-slate-700 border-slate-200">Saved</Badge>
+                                )}
+                              </div>
+                              <Button
+                                size="sm"
+                                onClick={() => saveUsdRate(k)}
+                                disabled={!!savingCurrencyKey || busy || !parseDkkRateInput(currencyInputs[k] || '')}
+                              >
+                                {savingCurrencyKey === k ? 'Saving...' : 'Save'}
+                              </Button>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+                              <div className="md:col-span-2">
+                                <div className="text-xs text-slate-600 mb-1">DKK/USD =</div>
+                                <Input
+                                  inputMode="decimal"
+                                  placeholder="6,446400"
+                                  value={currencyInputs[k] ?? ''}
+                                  onChange={(e) =>
+                                    setCurrencyInputs((prev) => ({ ...prev, [k]: e.currentTarget.value }))
+                                  }
+                                  className="max-w-[220px]"
+                                />
+                              </div>
+                              <div className="text-sm text-slate-600">
+                                per 1 USD
+                                {saved ? (
+                                  <div className="text-xs text-slate-500 mt-1">
+                                    Saved:{' '}
+                                    {Number(saved.rate_dkk).toLocaleString('da-DK', {
+                                      minimumFractionDigits: 6,
+                                      maximumFractionDigits: 6,
+                                    })}
+                                  </div>
+                                ) : null}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </TabsContent>
+
+                <TabsContent value="countries" className="space-y-3">
+                  {countriesError && (
+                    <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-800">
+                      {countriesError}
+                    </div>
+                  )}
+
+                  <div className="rounded-lg border border-slate-200 bg-white p-4 space-y-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <div className="text-sm font-semibold text-slate-900">Countries</div>
+                        <div className="text-xs text-slate-600">
+                          Add shorthand codes like <span className="font-medium">China → CN</span>.
+                        </div>
+                      </div>
+                      <Button variant="ghost" size="sm" onClick={fetchCountries} disabled={countriesLoading || busy}>
+                        Refresh
+                      </Button>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+                      <div>
+                        <div className="text-xs text-slate-600 mb-1">Country name</div>
+                        <Input
+                          placeholder="China"
+                          value={countryName}
+                          onChange={(e) => setCountryName(e.currentTarget.value)}
+                        />
+                      </div>
+                      <div>
+                        <div className="text-xs text-slate-600 mb-1">Code</div>
+                        <Input
+                          placeholder="CN"
+                          value={countryCode}
+                          onChange={(e) => setCountryCode(e.currentTarget.value.toUpperCase())}
+                          className="max-w-[140px]"
+                        />
+                      </div>
+                      <div className="flex items-end gap-2">
+                        <Button onClick={addCountry} disabled={busy || countriesLoading}>
+                          Add / Update
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {countriesLoading ? (
+                    <div className="text-sm text-slate-500">Loading countries...</div>
+                  ) : countries.length === 0 ? (
+                    <div className="text-sm text-slate-500">No countries configured.</div>
+                  ) : (
+                    <div className="rounded-lg border border-slate-200 bg-white">
+                      <div className="px-4 py-3 border-b flex items-center justify-between">
+                        <div className="text-sm font-semibold text-slate-900">Saved countries</div>
+                        <div className="text-xs text-slate-500">{countries.length} entries</div>
+                      </div>
+                      <div className="divide-y">
+                        {countries.map((c) => (
+                          <div key={c.id} className="px-4 py-3 flex items-center justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="text-sm font-medium text-slate-900">{c.name}</div>
+                              <div className="text-xs text-slate-500 font-mono">{c.code}</div>
+                            </div>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => deleteCountry(c.id)}
+                              disabled={busy || deletingCountryId === c.id}
+                              className="h-7 px-2 text-red-600 hover:text-red-700 hover:bg-red-50"
+                            >
+                              {deletingCountryId === c.id ? 'Deleting…' : 'Delete'}
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </TabsContent>
+              </Tabs>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
