@@ -4,7 +4,7 @@ import { usePathname } from 'next/navigation';
 import { useRoles, useRoleAccess } from '../lib/supabaseClient';
 import { Button } from './ui/button';
 import { cn } from '../lib/cn';
-import { ChevronDown, ChevronRight } from 'lucide-react';
+import { ChevronDown, ChevronRight, MessageSquare } from 'lucide-react';
 
 // With Next.js `experimental.typedRoutes`, the `Route` type is a strict union.
 // Some valid routes can still fail typing during build; keep `href` as a string and cast at the Link boundary.
@@ -23,6 +23,44 @@ function NavLink({ href, label }: { href: string; label: string }) {
     >
       <span>{label}</span>
     </Link>
+  );
+}
+
+function CollapsibleNavGroup({
+  title,
+  links,
+  isOpen,
+  onToggle,
+  active,
+}: {
+  title: string;
+  links: any[];
+  isOpen: boolean;
+  onToggle: () => void;
+  active: boolean;
+}) {
+  if (links.length === 0) return null;
+
+  return (
+    <div className="space-y-1">
+      <button
+        onClick={onToggle}
+        className={cn(
+          'flex w-full items-center justify-between rounded-lg px-3 py-2 text-sm transition-colors',
+          active
+            ? 'bg-white/10 text-white ring-1 ring-white/10 shadow-sm'
+            : 'text-slate-200/90 hover:bg-white/5 hover:text-white'
+        )}
+      >
+        <span>{title}</span>
+        {isOpen ? (
+          <ChevronDown className="h-4 w-4" />
+        ) : (
+          <ChevronRight className="h-4 w-4" />
+        )}
+      </button>
+      {isOpen && <div className="ml-3 space-y-1">{links}</div>}
+    </div>
   );
 }
 
@@ -121,6 +159,37 @@ export function SidebarNav() {
       return next;
     });
   };
+
+  const [openGroups, setOpenGroups] = React.useState<Set<string>>(() => {
+    const initial = new Set<string>();
+    if (pathname.startsWith('/finance/customs') || pathname.startsWith('/finance/correction')) {
+      initial.add('finance-customs');
+    }
+    return initial;
+  });
+
+  React.useEffect(() => {
+    if (pathname.startsWith('/finance/customs') || pathname.startsWith('/finance/correction')) {
+      setOpenGroups(prev => {
+        const next = new Set(prev);
+        next.add('finance-customs');
+        return next;
+      });
+    }
+  }, [pathname]);
+
+  const toggleGroup = (groupKey: string) => {
+    setOpenGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(groupKey)) {
+        next.delete(groupKey);
+      } else {
+        next.add(groupKey);
+      }
+      return next;
+    });
+  };
+
   // Build per-section link lists based on access
   // Dashboard moved out of Statistics
   const dashboardLink = can('/statistics/dashboard') ? <NavLink key="dashboard" href="/statistics/dashboard" label="Dashboard" /> : null;
@@ -133,10 +202,24 @@ export function SidebarNav() {
     can('/statistics/vendors/top10') ? <NavLink key="sv" href="/statistics/vendors/top10" label="Top 10 leverandører" /> : null,
     can('/statistics/downloads') ? <NavLink key="sdw" href="/statistics/downloads" label="Downloads" /> : null,
   ].filter(Boolean) as any[];
+
+  const financeCustomsLinks = [
+    can('/finance/customs') ? <NavLink key="fin-customs-period" href="/finance/customs" label="CUSTOMS PERIOD" /> : null,
+    can('/finance/correction') ? <NavLink key="fin-customs-correction" href="/finance/correction" label="CORRECTION" /> : null,
+  ].filter(Boolean) as any[];
+
   const financeLinks = [
     can('/finance/csv-skat') ? <NavLink key="fin-skat" href="/finance/csv-skat" label="CSV - Skat" /> : null,
-    can('/finance/customs') ? <NavLink key="fin-customs" href="/finance/customs" label="CUSTOMS" /> : null,
-    can('/finance/correction') ? <NavLink key="fin-correction" href="/finance/correction" label="CORRECTION" /> : null,
+    financeCustomsLinks.length > 0 ? (
+      <CollapsibleNavGroup
+        key="fin-customs-group"
+        title="Customs"
+        links={financeCustomsLinks}
+        active={pathname.startsWith('/finance/customs') || pathname.startsWith('/finance/correction')}
+        isOpen={openGroups.has('finance-customs')}
+        onToggle={() => toggleGroup('finance-customs')}
+      />
+    ) : null,
   ].filter(Boolean) as any[];
   const stylesLinks = [
     can('/styles') ? <NavLink key="s" href="/styles" label="Styles" /> : null,
@@ -191,6 +274,19 @@ export function SidebarNav() {
         </div>
       )}
       <NavLink href="/" label="Home" />
+      {/* Chat/Assistant - available to all authenticated users */}
+      <Link
+        href="/assistant"
+        className={cn(
+          'flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors',
+          pathname === '/assistant' || pathname.startsWith('/assistant/')
+            ? 'bg-white/10 text-white ring-1 ring-white/10 shadow-sm'
+            : 'text-slate-200/90 hover:bg-white/5 hover:text-white'
+        )}
+      >
+        <MessageSquare className="h-4 w-4" />
+        <span>Chat</span>
+      </Link>
       {dashboardLink}
       <CollapsibleSection
         title="Statistics"
