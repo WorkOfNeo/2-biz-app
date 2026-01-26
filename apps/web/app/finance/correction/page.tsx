@@ -192,6 +192,13 @@ type CustomsCurrencyRate = {
   rate_dkk: number;
 };
 
+type CountryAlias = {
+  id: string;
+  created_at: string;
+  name: string;
+  code: string;
+};
+
 function findExportNoColumnIndex(headerRow: any[] | undefined): number {
   if (!headerRow || headerRow.length === 0) return 3; // default column D
   const normalized = headerRow.map((v) => String(v ?? '').trim().toLowerCase());
@@ -291,6 +298,14 @@ export default function CorrectionPage() {
   const [manualUsdMonth, setManualUsdMonth] = React.useState<string>('');
   const [manualUsdRate, setManualUsdRate] = React.useState<string>('');
   const [requiredUsdMonths, setRequiredUsdMonths] = React.useState<Set<string>>(() => new Set());
+
+  const [countries, setCountries] = React.useState<CountryAlias[]>([]);
+  const [countriesLoading, setCountriesLoading] = React.useState(false);
+  const [countriesError, setCountriesError] = React.useState<string | null>(null);
+  const [countryName, setCountryName] = React.useState('');
+  const [countryCode, setCountryCode] = React.useState('');
+  const [deletingRateId, setDeletingRateId] = React.useState<string | null>(null);
+  const [deletingCountryId, setDeletingCountryId] = React.useState<string | null>(null);
 
   // Fetch recent runs on mount
   React.useEffect(() => {
@@ -441,6 +456,24 @@ export default function CorrectionPage() {
     }
   }, []);
 
+  const fetchCountries = React.useCallback(async () => {
+    setCountriesError(null);
+    setCountriesLoading(true);
+    try {
+      const res = await fetch('/api/finance/customs-countries');
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Failed to load countries');
+      }
+      const data = await res.json();
+      setCountries((data.countries || []) as CountryAlias[]);
+    } catch (e: any) {
+      setCountriesError(e?.message || 'Failed to load countries');
+    } finally {
+      setCountriesLoading(false);
+    }
+  }, []);
+
   const fetchUsdRatesForMonths = React.useCallback(async (months: string[]) => {
     if (!months || months.length === 0) return;
     setCurrencyError(null);
@@ -482,11 +515,12 @@ export default function CorrectionPage() {
     if (!settingsOpen) return;
     // Always load the log so months can be added/edited manually
     fetchUsdLog();
+    fetchCountries();
     // Also load any required months for the current run (if USD)
     if (usdRequiredMonths.length > 0) {
       fetchUsdRatesForMonths(usdRequiredMonths);
     }
-  }, [settingsOpen, usdRequiredMonths, fetchUsdLog, fetchUsdRatesForMonths]);
+  }, [settingsOpen, usdRequiredMonths, fetchUsdLog, fetchUsdRatesForMonths, fetchCountries]);
 
   const saveUsdRate = React.useCallback(
     async (k: string) => {
@@ -548,6 +582,82 @@ export default function CorrectionPage() {
     setManualUsdMonth('');
     setManualUsdRate('');
   }, [manualUsdMonth, manualUsdRate, saveUsdRate]);
+
+  const deleteRate = React.useCallback(
+    async (id: string) => {
+      setCurrencyError(null);
+      setDeletingRateId(id);
+      try {
+        const res = await fetch(`/api/finance/customs-currency-rates/${id}`, { method: 'DELETE' });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.error || 'Failed to delete rate');
+        }
+        setUsdLog((prev) => prev.filter((r) => r.id !== id));
+      } catch (e: any) {
+        setCurrencyError(e?.message || 'Failed to delete rate');
+      } finally {
+        setDeletingRateId(null);
+      }
+    },
+    []
+  );
+
+  const addCountry = React.useCallback(async () => {
+    setCountriesError(null);
+    const n = String(countryName || '').trim();
+    const c = String(countryCode || '').trim().toUpperCase();
+    if (!n) {
+      setCountriesError('Name is required');
+      return;
+    }
+    if (!c || c.length < 2 || c.length > 3) {
+      setCountriesError('Code must be 2-3 letters (e.g. CN)');
+      return;
+    }
+    setCountriesLoading(true);
+    try {
+      const res = await fetch('/api/finance/customs-countries', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: n, code: c }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Failed to save country');
+      }
+      const data = await res.json();
+      const saved = data.country as CountryAlias;
+      setCountries((prev) => {
+        const next = [saved, ...prev.filter((x) => x.id !== saved.id)];
+        next.sort((a, b) => a.name.localeCompare(b.name));
+        return next;
+      });
+      setCountryName('');
+      setCountryCode('');
+    } catch (e: any) {
+      setCountriesError(e?.message || 'Failed to save country');
+    } finally {
+      setCountriesLoading(false);
+    }
+  }, [countryName, countryCode]);
+
+  const deleteCountry = React.useCallback(async (id: string) => {
+    setCountriesError(null);
+    setDeletingCountryId(id);
+    try {
+      const res = await fetch(`/api/finance/customs-countries/${id}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Failed to delete country');
+      }
+      setCountries((prev) => prev.filter((c) => c.id !== id));
+    } catch (e: any) {
+      setCountriesError(e?.message || 'Failed to delete country');
+    } finally {
+      setDeletingCountryId(null);
+    }
+  }, []);
 
   const updateJob = React.useCallback((id: string, patch: Partial<UploadJob>) => {
     setUploadJobs((prev) => prev.map((j) => (j.id === id ? { ...j, ...patch } : j)));
@@ -1008,6 +1118,7 @@ export default function CorrectionPage() {
             <Tabs defaultValue="USD">
               <TabsList>
                 <TabsTrigger value="USD">USD</TabsTrigger>
+                <TabsTrigger value="countries">Countries</TabsTrigger>
               </TabsList>
               <TabsContent value="USD" className="space-y-3">
                 <div className="rounded-lg border border-slate-200 bg-white p-4 space-y-3">
@@ -1059,6 +1170,46 @@ export default function CorrectionPage() {
                     </div>
                   </div>
                 </div>
+
+                {/* Saved rates list (always visible) */}
+                {usdLog.length === 0 ? (
+                  <div className="text-sm text-slate-500">No saved USD rates yet.</div>
+                ) : (
+                  <div className="rounded-lg border border-slate-200 bg-white">
+                    <div className="px-4 py-3 border-b flex items-center justify-between">
+                      <div className="text-sm font-semibold text-slate-900">Saved USD rates</div>
+                      <div className="text-xs text-slate-500">{usdLog.length} entries</div>
+                    </div>
+                    <div className="divide-y">
+                      {usdLog.slice(0, 36).map((r) => {
+                        const k = monthKey(r.year, r.month);
+                        return (
+                          <div key={r.id} className="px-4 py-3 flex items-center justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="text-sm font-medium text-slate-900">{k}</div>
+                              <div className="text-xs text-slate-500 font-mono">
+                                DKK/USD ={' '}
+                                {Number(r.rate_dkk).toLocaleString('da-DK', {
+                                  minimumFractionDigits: 6,
+                                  maximumFractionDigits: 6,
+                                })}
+                              </div>
+                            </div>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => deleteRate(r.id)}
+                              disabled={busy || deletingRateId === r.id}
+                              className="h-7 px-2 text-red-600 hover:text-red-700 hover:bg-red-50"
+                            >
+                              {deletingRateId === r.id ? 'Deleting…' : 'Delete'}
+                            </Button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
 
                 {loadingCurrencyRates ? (
                   <div className="text-sm text-slate-500">Loading rates...</div>
@@ -1129,31 +1280,85 @@ export default function CorrectionPage() {
                         </div>
                       );
                     })}
+                  </div>
+                )}
+              </TabsContent>
 
-                    {usdLog.length > 0 && (
-                      <div className="pt-2">
-                        <div className="text-xs text-slate-600 mb-2">Recent saved USD rates</div>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                          {usdLog.slice(0, 12).map((r) => {
-                            const k = monthKey(r.year, r.month);
-                            return (
-                              <div
-                                key={r.id}
-                                className="rounded-lg border border-slate-200 bg-white px-3 py-2 flex items-center justify-between"
-                              >
-                                <span className="text-sm font-medium text-slate-900">{k}</span>
-                                <span className="text-sm text-slate-700 font-mono">
-                                  {Number(r.rate_dkk).toLocaleString('da-DK', {
-                                    minimumFractionDigits: 6,
-                                    maximumFractionDigits: 6,
-                                  })}
-                                </span>
-                              </div>
-                            );
-                          })}
-                        </div>
+              <TabsContent value="countries" className="space-y-3">
+                {countriesError && (
+                  <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-800">
+                    {countriesError}
+                  </div>
+                )}
+
+                <div className="rounded-lg border border-slate-200 bg-white p-4 space-y-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-semibold text-slate-900">Countries</div>
+                      <div className="text-xs text-slate-600">
+                        Add shorthand codes like <span className="font-medium">China → CN</span>.
                       </div>
-                    )}
+                    </div>
+                    <Button variant="ghost" size="sm" onClick={fetchCountries} disabled={countriesLoading || busy}>
+                      Refresh
+                    </Button>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+                    <div>
+                      <div className="text-xs text-slate-600 mb-1">Country name</div>
+                      <Input
+                        placeholder="China"
+                        value={countryName}
+                        onChange={(e) => setCountryName(e.currentTarget.value)}
+                      />
+                    </div>
+                    <div>
+                      <div className="text-xs text-slate-600 mb-1">Code</div>
+                      <Input
+                        placeholder="CN"
+                        value={countryCode}
+                        onChange={(e) => setCountryCode(e.currentTarget.value.toUpperCase())}
+                        className="max-w-[140px]"
+                      />
+                    </div>
+                    <div className="flex items-end gap-2">
+                      <Button onClick={addCountry} disabled={busy || countriesLoading}>
+                        Add / Update
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+
+                {countriesLoading ? (
+                  <div className="text-sm text-slate-500">Loading countries...</div>
+                ) : countries.length === 0 ? (
+                  <div className="text-sm text-slate-500">No countries configured.</div>
+                ) : (
+                  <div className="rounded-lg border border-slate-200 bg-white">
+                    <div className="px-4 py-3 border-b flex items-center justify-between">
+                      <div className="text-sm font-semibold text-slate-900">Saved countries</div>
+                      <div className="text-xs text-slate-500">{countries.length} entries</div>
+                    </div>
+                    <div className="divide-y">
+                      {countries.map((c) => (
+                        <div key={c.id} className="px-4 py-3 flex items-center justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="text-sm font-medium text-slate-900">{c.name}</div>
+                            <div className="text-xs text-slate-500 font-mono">{c.code}</div>
+                          </div>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => deleteCountry(c.id)}
+                            disabled={busy || deletingCountryId === c.id}
+                            className="h-7 px-2 text-red-600 hover:text-red-700 hover:bg-red-50"
+                          >
+                            {deletingCountryId === c.id ? 'Deleting…' : 'Delete'}
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 )}
               </TabsContent>
