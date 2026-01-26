@@ -265,6 +265,7 @@ export default function CorrectionPage() {
   const [usdLog, setUsdLog] = React.useState<CustomsCurrencyRate[]>([]);
   const [manualUsdMonth, setManualUsdMonth] = React.useState<string>('');
   const [manualUsdRate, setManualUsdRate] = React.useState<string>('');
+  const [requiredUsdMonths, setRequiredUsdMonths] = React.useState<Set<string>>(() => new Set());
 
   // Fetch recent runs on mount
   React.useEffect(() => {
@@ -355,16 +356,31 @@ export default function CorrectionPage() {
   }, [step, activeCurrency, outputRows]);
 
   const missingUsdMonths = React.useMemo(() => {
-    if (activeCurrency !== 'USD') return [];
-    return usdMonths.filter((k) => !currencyRates[k]);
-  }, [activeCurrency, usdMonths, currencyRates]);
+    const months = new Set<string>();
+    for (const m of requiredUsdMonths) months.add(m);
+    if (activeCurrency === 'USD') {
+      for (const m of usdMonths) months.add(m);
+    }
+    return Array.from(months)
+      .sort()
+      .filter((k) => !currencyRates[k]);
+  }, [activeCurrency, usdMonths, currencyRates, requiredUsdMonths]);
+
+  const usdRequiredMonths = React.useMemo(() => {
+    const months = new Set<string>();
+    for (const m of requiredUsdMonths) months.add(m);
+    if (activeCurrency === 'USD') {
+      for (const m of usdMonths) months.add(m);
+    }
+    return Array.from(months).sort();
+  }, [activeCurrency, usdMonths, requiredUsdMonths]);
 
   React.useEffect(() => {
     // If we detect USD and any month is missing, auto-open the currencies panel
-    if (step === 'preview' && activeCurrency === 'USD' && usdMonths.length > 0 && missingUsdMonths.length > 0) {
+    if (missingUsdMonths.length > 0) {
       setSettingsOpen(true);
     }
-  }, [step, activeCurrency, usdMonths.length, missingUsdMonths.length]);
+  }, [missingUsdMonths.length]);
 
   const fetchUsdLog = React.useCallback(async () => {
     setCurrencyError(null);
@@ -442,10 +458,10 @@ export default function CorrectionPage() {
     // Always load the log so months can be added/edited manually
     fetchUsdLog();
     // Also load any required months for the current run (if USD)
-    if (activeCurrency === 'USD' && usdMonths.length > 0) {
-      fetchUsdRatesForMonths(usdMonths);
+    if (usdRequiredMonths.length > 0) {
+      fetchUsdRatesForMonths(usdRequiredMonths);
     }
-  }, [settingsOpen, activeCurrency, usdMonths, fetchUsdLog, fetchUsdRatesForMonths]);
+  }, [settingsOpen, usdRequiredMonths, fetchUsdLog, fetchUsdRatesForMonths]);
 
   const saveUsdRate = React.useCallback(
     async (k: string) => {
@@ -621,6 +637,9 @@ export default function CorrectionPage() {
 
     setBusy(true);
     try {
+      // New upload batch: clear the detected USD requirements
+      setRequiredUsdMonths(new Set());
+
       for (let idx = 0; idx < files.length; idx++) {
         const file = files[idx]!;
         const jobId = queuedJobs[idx]!.id;
@@ -628,42 +647,34 @@ export default function CorrectionPage() {
         updateJob(jobId, { status: 'parsing', progress: 1, message: 'Parsing…' });
         const parsed = await parseCorrectionFile(file, jobId);
 
-        // Update preview state as we go (last file ends up displayed)
-        setUploadedFile(file);
-        setStyleNo(parsed.styleNo);
-        setFileTariff(parsed.fileTariff);
-        setInputRows(parsed.rows);
-        setExportNos(parsed.uniqueExportNos);
-        setExportNosOpen(false);
-        setExportNoSumUpStatus(parsed.uniqueExportNos.length ? 'saving' : 'idle');
-        setExportNoSumUpProgress(parsed.uniqueExportNos.length ? 25 : 0);
-        setExportNoSumUpMessage(parsed.uniqueExportNos.length ? 'Saving with run...' : '');
-        setExportNoSumUpId(null);
-
         updateJob(jobId, { status: 'uploading', progress: 80, message: 'Saving run…' });
         const data = await processRowsData(file.name, parsed.styleNo, parsed.fileTariff, parsed.rows);
 
         updateJob(jobId, { status: 'done', progress: 100, message: 'Saved', runId: data.runId });
 
-        // If this is the currently displayed (last processed) run, populate preview
-        setRunId(data.runId);
-        setStyleMeta(data.styleMeta);
-        setOutputRows(data.outputRows ?? []);
-        setStep('preview');
-        if (data.exportNoSumUpId) {
-          setExportNoSumUpId(data.exportNoSumUpId);
-          setExportNoSumUpStatus('done');
-          setExportNoSumUpProgress(100);
-          setExportNoSumUpMessage('Saved');
-        } else if (data.exportNoCount > 0) {
-          setExportNoSumUpStatus('error');
-          setExportNoSumUpProgress(100);
-          setExportNoSumUpMessage('Could not save (migration missing?)');
-        } else {
-          setExportNoSumUpStatus('idle');
-          setExportNoSumUpProgress(0);
-          setExportNoSumUpMessage('');
-          setExportNoSumUpId(null);
+        // Do NOT show the output while uploading. Stay in Diary; user can Load when needed.
+        setStep('upload');
+
+        // Detect if USD was used for this run and collect required months across all uploaded files.
+        const currency = String(
+          data?.styleMeta?.cost_price_currency || data?.outputRows?.[0]?.valuta_original || ''
+        )
+          .trim()
+          .toUpperCase();
+
+        if (currency === 'USD') {
+          const months = new Set<string>();
+          for (const r of (data.outputRows ?? []) as OutputRow[]) {
+            if (r.year && r.month) months.add(monthKey(r.year, r.month));
+          }
+          setRequiredUsdMonths((prev) => {
+            const next = new Set(prev);
+            for (const m of months) next.add(m);
+            return next;
+          });
+          updateJob(jobId, {
+            message: `Saved • USD months: ${Array.from(months).sort().slice(0, 6).join(',')}${months.size > 6 ? '…' : ''}`,
+          });
         }
 
         // Refresh diary list after each successful run
@@ -718,6 +729,7 @@ export default function CorrectionPage() {
     setExportNoSumUpProgress(0);
     setExportNoSumUpMessage('');
     setExportNoSumUpId(null);
+    setRequiredUsdMonths(new Set());
   }
 
   async function downloadRowsXlsx(rows: OutputRow[], options?: { styleNo?: string; originalFileName?: string }) {
@@ -881,7 +893,7 @@ export default function CorrectionPage() {
             disabled={busy}
           >
             Settings
-            {activeCurrency === 'USD' && missingUsdMonths.length > 0 ? ` (${missingUsdMonths.length})` : ''}
+            {missingUsdMonths.length > 0 ? ` (${missingUsdMonths.length})` : ''}
           </Button>
           {step === 'preview' && (
             <Badge className="text-sm bg-slate-100 text-slate-700">
@@ -1029,14 +1041,14 @@ export default function CorrectionPage() {
                   <div className="text-sm text-slate-500">
                     No USD run loaded. (You can still add USD rates above.)
                   </div>
-                ) : usdMonths.length === 0 ? (
+                ) : usdRequiredMonths.length === 0 ? (
                   <div className="text-sm text-slate-500">No months detected in this run.</div>
                 ) : (
                   <div className="space-y-2">
                     <div className="text-xs text-slate-600">
-                      Required for this run{missingUsdMonths.length > 0 ? ` • ${missingUsdMonths.length} missing` : ''}
+                      Required months{missingUsdMonths.length > 0 ? ` • ${missingUsdMonths.length} missing` : ''}
                     </div>
-                    {usdMonths.map((k) => {
+                    {usdRequiredMonths.map((k) => {
                       const saved = currencyRates[k];
                       const missing = !saved;
                       return (
