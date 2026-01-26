@@ -4,7 +4,7 @@ import { usePathname } from 'next/navigation';
 import { useRoles, useRoleAccess } from '../lib/supabaseClient';
 import { Button } from './ui/button';
 import { cn } from '../lib/cn';
-import { ChevronDown, ChevronRight, MessageSquare } from 'lucide-react';
+import { ChevronDown, ChevronRight } from 'lucide-react';
 
 // With Next.js `experimental.typedRoutes`, the `Route` type is a strict union.
 // Some valid routes can still fail typing during build; keep `href` as a string and cast at the Link boundary.
@@ -274,19 +274,6 @@ export function SidebarNav() {
         </div>
       )}
       <NavLink href="/" label="Home" />
-      {/* Chat/Assistant - available to all authenticated users */}
-      <Link
-        href="/assistant"
-        className={cn(
-          'flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors',
-          pathname === '/assistant' || pathname.startsWith('/assistant/')
-            ? 'bg-white/10 text-white ring-1 ring-white/10 shadow-sm'
-            : 'text-slate-200/90 hover:bg-white/5 hover:text-white'
-        )}
-      >
-        <MessageSquare className="h-4 w-4" />
-        <span>Chat</span>
-      </Link>
       {dashboardLink}
       <CollapsibleSection
         title="Statistics"
