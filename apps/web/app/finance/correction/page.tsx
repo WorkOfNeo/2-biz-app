@@ -251,21 +251,22 @@ function computeKurs({
 }
 
 function computeTotalDkkVaerdi({
-  vaerdi,
+  pris,
   antal,
   kurs,
 }: {
-  vaerdi: number | null;
+  pris: number | null;
   antal: number;
   kurs: number | null;
 }): number | null {
-  if (vaerdi == null) return null;
+  if (pris == null) return null;
   if (kurs == null) return null;
-  const v = Number(vaerdi);
+  const p = Number(pris);
   const a = Number(antal);
   const k = Number(kurs);
-  if (!isFinite(v) || !isFinite(a) || !isFinite(k)) return null;
-  return v * a * k;
+  if (!isFinite(p) || !isFinite(a) || !isFinite(k)) return null;
+  // Correct formula: Antal * Pris * Currency Conversion
+  return p * a * k;
 }
 
 function applySettingsToRows({
@@ -286,7 +287,7 @@ function applySettingsToRows({
       ...r,
       oprindelsesland: normalizeCountryShort(r.oprindelsesland, countries),
       kurs,
-      total_dkk_vaerdi: computeTotalDkkVaerdi({ vaerdi: r.vaerdi, antal: r.antal, kurs }),
+      total_dkk_vaerdi: computeTotalDkkVaerdi({ pris: r.pris, antal: r.antal, kurs }),
     };
   });
 }
