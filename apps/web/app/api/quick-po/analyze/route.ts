@@ -402,6 +402,7 @@ interface SmartBreakdownParams {
   historicalRatioBySize?: Record<string, number>; // 0-1 ratio from historical sales
   feedbackAdjustment?: Record<string, number>; // Past corrections
   sizeAdjustments?: Record<string, 'extra' | 'less'>; // User-specified adjustments like "add extra in 42, 44"
+  applyStockFix?: boolean; // If true: run a final smoothing pass on Net Need 2
 }
 
 interface SmartBreakdownResult {
@@ -416,8 +417,96 @@ interface SmartBreakdownResult {
   sizeSource: 'smart_hybrid' | 'historical_only' | 'default_only';
 }
 
+function smoothStep(arr: number[]): number[] {
+  const n = arr.length;
+  if (n <= 2) return [...arr];
+  const out = [...arr];
+  for (let i = 1; i < n - 1; i++) {
+    out[i] = 0.25 * (arr[i - 1] ?? 0) + 0.5 * (arr[i] ?? 0) + 0.25 * (arr[i + 1] ?? 0);
+  }
+  return out;
+}
+
+function sum(arr: number[]): number {
+  return arr.reduce((a, b) => a + (Number(b) || 0), 0);
+}
+
+/**
+ * Second-pass adjustment for "stock fixed":
+ * 1) Compute Net Need 2 = base + buy
+ * 2) Smooth Net Need 2 (moving average) a few passes
+ * 3) Recompute buy so the final Net Need 2 is smoother, while preserving total buy.
+ */
+function smoothBuyForFinalCurve(base: number[], buy: number[], smoothPasses = 2): number[] {
+  const n = buy.length;
+  if (n === 0 || base.length !== n) return buy;
+
+  const totalBuy = sum(buy);
+  if (totalBuy <= 0) return buy;
+
+  const final1 = base.map((b, i) => (Number(b) || 0) + (Number(buy[i]) || 0));
+  let target = [...final1];
+  for (let p = 0; p < smoothPasses; p++) {
+    target = smoothStep(target);
+  }
+
+  // Preserve final total (so we don't change overall stock position)
+  const totalFinal1 = sum(final1);
+  const totalTarget = sum(target);
+  if (totalTarget !== 0) {
+    const scale = totalFinal1 / totalTarget;
+    target = target.map((v) => v * scale);
+  }
+
+  // Convert smoothed final target -> buy target (cannot be negative)
+  const desired = target.map((t, i) => Math.max(0, t - (Number(base[i]) || 0)));
+  let floored = desired.map((v) => Math.floor(v));
+
+  // Ensure total buy is preserved exactly
+  let diff = totalBuy - sum(floored);
+
+  if (diff > 0) {
+    // Add units to sizes with biggest remaining deficit vs target final
+    const scores = floored.map((_, i) => {
+      const finalNow = (Number(base[i]) || 0) + (floored[i] || 0);
+      const deficit = (target[i] ?? 0) - finalNow; // higher = needs more
+      const frac = (desired[i] ?? 0) - Math.floor(desired[i] ?? 0);
+      return { i, score: deficit + frac };
+    }).sort((a, b) => b.score - a.score);
+
+    let k = 0;
+    while (diff > 0 && scores.length > 0) {
+      const idx = scores[k % scores.length]?.i;
+      if (idx === undefined) break;
+      floored[idx] = (floored[idx] || 0) + 1;
+      diff--;
+      k++;
+    }
+  } else if (diff < 0) {
+    // Remove units from sizes with the smallest deficit (or surplus)
+    const scores = floored.map((v, i) => {
+      const finalNow = (Number(base[i]) || 0) + (v || 0);
+      const deficit = (target[i] ?? 0) - finalNow; // lower = more surplus
+      return { i, deficit, v };
+    }).filter(x => x.v > 0).sort((a, b) => a.deficit - b.deficit);
+
+    let k = 0;
+    while (diff < 0 && scores.length > 0) {
+      const idx = scores[k % scores.length]?.i;
+      if (idx === undefined) break;
+      if ((floored[idx] || 0) > 0) {
+        floored[idx] = (floored[idx] || 0) - 1;
+        diff++;
+      }
+      k++;
+    }
+  }
+
+  return floored;
+}
+
 function calculateSmartSizeBreakdown(params: SmartBreakdownParams): SmartBreakdownResult {
-  const { total, sizes, netNeedBySize, historicalRatioBySize, feedbackAdjustment, sizeAdjustments } = params;
+  const { total, sizes, netNeedBySize, historicalRatioBySize, feedbackAdjustment, sizeAdjustments, applyStockFix } = params;
   
   // Determine if we have historical data
   const hasHistorical =
@@ -480,10 +569,13 @@ function calculateSmartSizeBreakdown(params: SmartBreakdownParams): SmartBreakdo
     targetBuy: total
   });
 
+  // Optional second-pass smoothing (requested by "Make sure stock is fixed")
+  const buyBySize = applyStockFix ? smoothBuyForFinalCurve(base, [...gf.buyBySize], 2) : gf.buyBySize;
+
   const breakdown: Record<string, number> = {};
   for (let i = 0; i < sizes.length; i++) {
     const size = sizes[i] as string;
-    breakdown[size] = gf.buyBySize[i] ?? 0;
+    breakdown[size] = buyBySize[i] ?? 0;
   }
   
   // Update factors with final quantities
@@ -538,10 +630,20 @@ export async function POST(req: Request) {
     console.log('[Quick PO] Parsing commands with AI...');
     const parsedCommands = await parseCommandsWithAI(commandText, stylesForAI);
     console.log('[Quick PO] Parsed', parsedCommands.length, 'commands');
+
+    // Detect "stock fix" modifiers that appear on the same line as an ORDER.
+    // (The parser may emit a second synthetic command_type=stock_fix for the same original_text.)
+    const orderOriginalTexts = new Set(parsedCommands.filter(c => c.command_type === 'order').map(c => c.original_text));
+    const stockFixOriginalTexts = new Set(parsedCommands.filter(c => c.command_type === 'stock_fix').map(c => c.original_text));
+    const stockFixForOrderText = new Set<string>();
+    for (const t of stockFixOriginalTexts) {
+      if (orderOriginalTexts.has(t)) stockFixForOrderText.add(t);
+    }
+    const parsedCommandsForOutput = parsedCommands.filter(c => !(c.command_type === 'stock_fix' && stockFixForOrderText.has(c.original_text)));
     
     // 3. Extract unique style names for detailed lookup
     const styleNames = [...new Set(
-      parsedCommands
+      parsedCommandsForOutput
         .filter(c => c.style_name)
         .map(c => c.style_name!.toLowerCase())
     )];
@@ -572,7 +674,7 @@ export async function POST(req: Request) {
     }
     
     // Match style_no to parsed commands
-    for (const cmd of parsedCommands) {
+    for (const cmd of parsedCommandsForOutput) {
       if (cmd.style_name) {
         const normalizedName = cmd.style_name.toLowerCase().trim();
         const match = styleByName.get(normalizedName);
@@ -594,7 +696,7 @@ export async function POST(req: Request) {
     
     // 4. Get style_nos for stock lookup
     const styleNos = [...new Set(
-      parsedCommands.filter(c => c.style_no).map(c => c.style_no!)
+      parsedCommandsForOutput.filter(c => c.style_no).map(c => c.style_no!)
     )];
     
     // 5. Fetch stock data
@@ -704,7 +806,7 @@ export async function POST(req: Request) {
     const stockFixSuggestions: StockFixSuggestion[] = [];
     const warnings: string[] = [];
     
-    for (const cmd of parsedCommands) {
+    for (const cmd of parsedCommandsForOutput) {
       if (!cmd.parsed_successfully) continue;
       
       const styleNo = cmd.style_no;
@@ -756,7 +858,8 @@ export async function POST(req: Request) {
             netNeedBySize: orderStockTable?.netNeed || Array(sizes.length).fill(0),
             historicalRatioBySize: ratio?.ratioBySize,
             feedbackAdjustment: feedbackByStyle[styleNo],
-            sizeAdjustments: cmd.size_adjustments
+            sizeAdjustments: cmd.size_adjustments,
+            applyStockFix: stockFixForOrderText.has(cmd.original_text)
           });
           
           const sizeBreakdown = smartResult.breakdown;
@@ -774,7 +877,8 @@ export async function POST(req: Request) {
             action = 'skip_overstocked';
           } else if (cmd.quantity > netNeedBefore * 1.5) {
             warning = `Ordering ${cmd.quantity} but net need is only ${netNeedBefore}`;
-            action = 'review_needed';
+            // User explicitly asked for this quantity; warn but still allow creating the PO.
+            action = 'create_po';
           }
           
           orderPlans.push({
@@ -1145,7 +1249,7 @@ export async function POST(req: Request) {
     };
     
     // Add warnings for unparsed commands
-    for (const cmd of parsedCommands) {
+    for (const cmd of parsedCommandsForOutput) {
       if (!cmd.parsed_successfully) {
         summary.warnings.push(`Line ${cmd.line_number}: ${cmd.parse_error}`);
       } else if (!cmd.style_no) {
@@ -1161,7 +1265,7 @@ export async function POST(req: Request) {
     } catch {}
     
     const response = {
-      parsed_commands: parsedCommands,
+      parsed_commands: parsedCommandsForOutput,
       order_plans: orderPlans,
       color_breakdown_plans: colorBreakdownPlans,
       wait_reminders: waitReminders,
