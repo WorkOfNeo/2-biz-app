@@ -2136,9 +2136,11 @@ export default function CorrectionPage() {
                                   inputMode="decimal"
                                   placeholder="6,446400"
                                   value={currencyInputs[k] ?? ''}
-                                  onChange={(e) =>
-                                    setCurrencyInputs((prev) => ({ ...prev, [k]: e.currentTarget.value }))
-                                  }
+                                  onChange={(e) => {
+                                    // Don't reference the event inside the state updater (it may be null by then).
+                                    const v = e.currentTarget.value;
+                                    setCurrencyInputs((prev) => ({ ...prev, [k]: v }));
+                                  }}
                                   className="max-w-[220px]"
                                 />
                               </div>
