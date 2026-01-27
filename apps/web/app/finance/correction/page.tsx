@@ -470,19 +470,6 @@ export default function CorrectionPage() {
     []
   );
 
-  // When we are previewing (including loaded runs), derive export nos from output rows for display
-  React.useEffect(() => {
-    if (step !== 'preview' || outputRows.length === 0) return;
-    const unique = Array.from(
-      new Set(
-        outputRows
-          .map((r) => String(r.eksport_ref || '').trim())
-          .filter(Boolean)
-      )
-    ).sort((a, b) => a.localeCompare(b));
-    setExportNos(unique);
-  }, [step, outputRows]);
-
   const settingsCurrency = React.useMemo(() => {
     const c = (styleMeta?.cost_price_currency || serverRows[0]?.valuta_original || '').toString().trim().toUpperCase();
     return c;
@@ -501,6 +488,19 @@ export default function CorrectionPage() {
       countries,
     });
   }, [serverRows, settingsCurrency, currencyRates, countries]);
+
+  // When we are previewing (including loaded runs), derive export nos from output rows for display
+  React.useEffect(() => {
+    if (step !== 'preview' || outputRows.length === 0) return;
+    const unique = Array.from(
+      new Set(
+        outputRows
+          .map((r) => String(r.eksport_ref || '').trim())
+          .filter(Boolean)
+      )
+    ).sort((a, b) => a.localeCompare(b));
+    setExportNos(unique);
+  }, [step, outputRows]);
 
   const usdMonths = React.useMemo(() => {
     if (step !== 'preview' || activeCurrency !== 'USD' || serverRows.length === 0) return [];
