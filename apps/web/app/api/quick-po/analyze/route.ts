@@ -9,6 +9,7 @@ import {
   isWhiteWeft,
   type StockRow
 } from '../../../../lib/stock-aggregation';
+import { gapFillSizing } from '../../../../lib/purchase/gapFillSizing';
 
 export const runtime = 'nodejs';
 export const maxDuration = 120;
@@ -419,45 +420,36 @@ function calculateSmartSizeBreakdown(params: SmartBreakdownParams): SmartBreakdo
   const { total, sizes, netNeedBySize, historicalRatioBySize, feedbackAdjustment, sizeAdjustments } = params;
   
   // Determine if we have historical data
-  const hasHistorical = historicalRatioBySize && Object.keys(historicalRatioBySize).length > 0;
+  const hasHistorical =
+    !!historicalRatioBySize &&
+    Object.keys(historicalRatioBySize).length > 0 &&
+    Object.values(historicalRatioBySize).reduce((a, b) => a + (Number(b) || 0), 0) > 0;
   
   // Determine size type for default assortment
   const isNumeric = sizes.some(s => /^\d+$/.test(s));
   const defaultAssortment = isNumeric ? DEFAULT_ASSORTMENT_NUMERIC : DEFAULT_ASSORTMENT_LETTER;
-  
-  // Calculate total positive net need (sizes that actually need stock)
-  const positiveNetNeed = netNeedBySize.reduce((sum, n) => sum + Math.max(0, n), 0);
-  
-  // Build weight factors for each size
+
+  // Build weights for each size:
+  // - Weights come ONLY from sales history (when available), otherwise default assortment curve.
+  // - Net Need is NEVER used to create weights; it is used only as the base for "gap-fill" smoothing.
   const factors: SmartBreakdownResult['factors'] = {};
-  const weights: Array<{ size: string; weight: number }> = [];
+  const rawWeightsByIndex: number[] = [];
   
   for (let i = 0; i < sizes.length; i++) {
     const size = sizes[i] as string;
-    const currentNetNeed = netNeedBySize[i] ?? 0;
     
     // 1. Base weight from default assortment (normalized to 0-1)
     const baseWeight = defaultAssortment[size] ?? (1 / sizes.length);
     
-    // 2. Historical weight (if available, otherwise use base)
-    const historicalWeight = hasHistorical 
+    // 2. Historical weight (if available). If a specific size is missing in history, fall back to base.
+    const historicalWeight = hasHistorical
       ? (historicalRatioBySize![size] ?? baseWeight)
-      : baseWeight;
+      : 0;
     
-    // 3. Net need weight: prioritize sizes that actually need replenishment
-    // Positive net need = needs stock, negative = surplus
-    let netNeedWeight = 0;
-    if (positiveNetNeed > 0) {
-      netNeedWeight = Math.max(0, currentNetNeed) / positiveNetNeed;
-    } else {
-      // If all sizes are in surplus, use equal weight
-      netNeedWeight = 1 / sizes.length;
-    }
-    
-    // 4. Apply feedback adjustment if available
+    // 3. Apply feedback adjustment if available
     const feedbackMult = feedbackAdjustment?.[size] ?? 1.0;
     
-    // 5. Apply user-specified size adjustments ("add extra in 42, 44, 46")
+    // 4. Apply user-specified size adjustments ("add extra in 42, 44, 46")
     let userAdjMult = 1.0;
     if (sizeAdjustments) {
       const adj = sizeAdjustments[size];
@@ -465,74 +457,47 @@ function calculateSmartSizeBreakdown(params: SmartBreakdownParams): SmartBreakdo
       else if (adj === 'less') userAdjMult = 0.75; // -25% for "less"
     }
     
-    // Combined weight formula:
-    // - 25% base assortment (keeps the "shape" of the curve)
-    // - 45% historical sales (what actually sells)
-    // - 30% net need (fill the gaps first)
-    // Then multiply by feedback adjustment and user size adjustment
-    const combinedWeight = (
-      0.25 * baseWeight +
-      0.45 * historicalWeight +
-      0.30 * netNeedWeight
-    ) * feedbackMult * userAdjMult;
+    // Weight source (for the curve): historical if available, otherwise default curve.
+    // IMPORTANT: We NEVER create weights from Net Need; we only use Net Need as the base for gap-fill.
+    const curveWeight = (hasHistorical ? historicalWeight : baseWeight) * feedbackMult * userAdjMult;
     
     factors[size] = {
       baseWeight,
-      historicalWeight,
-      netNeedWeight,
-      combinedWeight,
+      historicalWeight: hasHistorical ? historicalWeight : baseWeight,
+      netNeedWeight: 0,
+      combinedWeight: 0, // filled after normalization
       quantity: 0 // Will be filled after distribution
     };
     
-    weights.push({ size, weight: combinedWeight });
+    rawWeightsByIndex.push(curveWeight);
   }
-  
-  // Normalize weights to sum to 1
-  const totalWeight = weights.reduce((sum, w) => sum + w.weight, 0);
-  if (totalWeight > 0) {
-    for (const w of weights) {
-      w.weight = w.weight / totalWeight;
-    }
-  }
-  
-  // Distribute quantity using largest remainder method
+
+  // Gap-fill: allocate buys so the *final* stock position matches the curve as closely as possible.
+  const base = Array.from({ length: sizes.length }, (_, i) => netNeedBySize[i] ?? 0);
+  const gf = gapFillSizing({
+    weights: rawWeightsByIndex,
+    base,
+    targetBuy: total
+  });
+
   const breakdown: Record<string, number> = {};
-  let assigned = 0;
-  const remainders: Array<{ size: string; rem: number }> = [];
-  
-  for (const { size, weight } of weights) {
-    const exact = total * weight;
-    const floor = Math.floor(exact);
-    breakdown[size] = floor;
-    assigned += floor;
-    remainders.push({ size, rem: exact - floor });
-  }
-  
-  // Distribute remainder to sizes with largest remainders
-  remainders.sort((a, b) => b.rem - a.rem);
-  let remaining = total - assigned;
-  for (const item of remainders) {
-    if (remaining <= 0) break;
-    breakdown[item.size] = (breakdown[item.size] || 0) + 1;
-    remaining--;
+  for (let i = 0; i < sizes.length; i++) {
+    const size = sizes[i] as string;
+    breakdown[size] = gf.buyBySize[i] ?? 0;
   }
   
   // Update factors with final quantities
-  for (const size of sizes) {
-    if (factors[size]) {
-      factors[size].quantity = breakdown[size] ?? 0;
-    }
+  for (let i = 0; i < sizes.length; i++) {
+    const size = sizes[i] as string;
+    const f = factors[size];
+    if (!f) continue;
+    f.quantity = breakdown[size] ?? 0;
+    f.combinedWeight = gf.normalizedWeights[i] ?? 0;
   }
   
   // Determine source type
   let sizeSource: SmartBreakdownResult['sizeSource'];
-  if (hasHistorical && positiveNetNeed > 0) {
-    sizeSource = 'smart_hybrid';
-  } else if (hasHistorical) {
-    sizeSource = 'historical_only';
-  } else {
-    sizeSource = 'default_only';
-  }
+  sizeSource = hasHistorical ? 'historical_only' : 'default_only';
   
   console.log('[Smart Breakdown] Total:', total, 'Source:', sizeSource);
   console.log('[Smart Breakdown] Factors:', JSON.stringify(factors, null, 2));
@@ -796,10 +761,10 @@ export async function POST(req: Request) {
           
           const sizeBreakdown = smartResult.breakdown;
           const sizeSource = smartResult.sizeSource;
-          const sizeFactors = smartResult.factors;
+          const sizeFactors = sizeSource === 'historical_only' ? smartResult.factors : undefined;
           
           const netNeedBefore = orderStockTable?.netNeedTotal ?? stockInfo.net_need;
-          const netNeedAfter = netNeedBefore - cmd.quantity;
+          const netNeedAfter = netNeedBefore + cmd.quantity;
           
           let warning: string | null = null;
           let action: 'create_po' | 'skip_overstocked' | 'review_needed' = 'create_po';
@@ -1023,13 +988,13 @@ export async function POST(req: Request) {
             }
             
             // Calculate new net need by size
-            const newNetNeedBySize = cn.netNeed.map((need, i) => need - (newOrderBySize[i] || 0));
+            const newNetNeedBySize = cn.netNeed.map((need, i) => need + (newOrderBySize[i] || 0));
             
             colorDistribution[cn.color] = {
               qty,
               pct: 100,
               stockData: cn,
-              newNetNeed: cn.netNeedTotal - qty,
+              newNetNeed: cn.netNeedTotal + qty,
               isTarget: true,
               newOrderBySize,
               newNetNeedBySize

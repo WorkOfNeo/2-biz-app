@@ -572,8 +572,7 @@ KAXY NAVY - Make sure stock is fixed`}
                           <div className="font-medium">{plan.style_name} - {plan.color}</div>
                           <div className="text-xs text-slate-500">
                             {plan.style_no} · Size source: {
-                              plan.size_source === 'smart_hybrid' ? '🎯 Smart (25% base, 45% hist, 30% need)' :
-                              plan.size_source === 'historical_only' ? '📊 Historical' :
+                              plan.size_source === 'historical_only' ? '📊 Historical (sales curve + gap-fill smoothing)' :
                               plan.size_source === 'historical' ? '📊 Historical' :
                               '📐 Default Assortment'
                             }
@@ -682,7 +681,7 @@ KAXY NAVY - Make sure stock is fixed`}
                               </td>
                             </tr>
                             {/* Weight Factors (only show if smart_hybrid) */}
-                            {plan.size_factors && plan.size_source === 'smart_hybrid' && (
+                            {plan.size_factors && plan.size_source === 'historical_only' && (
                               <tr className="bg-indigo-50/50">
                                 <td className="p-1.5 border-b text-indigo-600 text-[10px]">Weight %</td>
                                 {sizes.map((size, i) => {
@@ -744,7 +743,7 @@ KAXY NAVY - Make sure stock is fixed`}
                       )}
                       
                       {/* Calculation Details */}
-                      {plan.size_factors && plan.size_source === 'smart_hybrid' && (
+                      {plan.size_factors && plan.size_source === 'historical_only' && (
                         <details className="mt-2">
                           <summary className="text-xs text-indigo-600 cursor-pointer hover:text-indigo-800">
                             📊 Show calculation breakdown
@@ -769,7 +768,7 @@ KAXY NAVY - Make sure stock is fixed`}
                               );
                             })}
                             <div className="mt-1 pt-1 border-t border-indigo-200 text-indigo-700">
-                              Formula: 25% base + 45% historical + 30% net need
+                              Weights: historical sales only. Net Need is used only as the base for gap-fill smoothing.
                             </div>
                           </div>
                         </details>
