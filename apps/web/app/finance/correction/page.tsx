@@ -1152,6 +1152,26 @@ export default function CorrectionPage() {
     return downloadRowsXlsx(outputRows, { styleNo, originalFileName: uploadedFile?.name });
   }
 
+  async function fetchUsdRatesForExport(months: string[]): Promise<Record<string, CustomsCurrencyRate>> {
+    const unique = Array.from(new Set(months || []))
+      .map((m) => String(m || '').trim())
+      .filter((m) => /^\d{4}-\d{2}$/.test(m));
+    if (unique.length === 0) return {};
+
+    const res = await fetch(
+      `/api/finance/customs-currency-rates?currency=USD&months=${encodeURIComponent(unique.join(','))}`
+    );
+    if (!res.ok) return {};
+
+    const data = await res.json().catch(() => ({}));
+    const rates = (data.rates || []) as CustomsCurrencyRate[];
+    const map: Record<string, CustomsCurrencyRate> = {};
+    for (const r of rates) {
+      map[monthKey(r.year, r.month)] = r;
+    }
+    return map;
+  }
+
   async function downloadRunXlsx(run: Run) {
     try {
       setBusy(true);
@@ -1166,10 +1186,23 @@ export default function CorrectionPage() {
       const runCurrency = String(runData?.cost_price_currency || rows[0]?.valuta_original || '')
         .trim()
         .toUpperCase();
+
+      let usdRatesByMonth = currencyRates;
+      if (runCurrency === 'USD') {
+        const months = Array.from(
+          new Set(rows.filter((r) => r.year && r.month).map((r) => monthKey(r.year, r.month)))
+        );
+        const missing = months.filter((k) => !usdRatesByMonth[k]);
+        if (missing.length > 0) {
+          const fetched = await fetchUsdRatesForExport(missing);
+          usdRatesByMonth = { ...usdRatesByMonth, ...fetched };
+        }
+      }
+
       const computed = applySettingsToRows({
         rows,
         settingsCurrency: runCurrency,
-        usdRatesByMonth: currencyRates,
+        usdRatesByMonth,
         countries,
       });
       await downloadRowsXlsx(computed, {
@@ -1213,6 +1246,8 @@ export default function CorrectionPage() {
       const metaCols = ['Run ID', 'Run created_at', 'File name', 'Style No', 'Run Toldref', 'First date', 'Last date'];
       const sheetData: any[][] = [[...metaCols, ...OUTPUT_COLUMNS]];
 
+      let usdRatesCache: Record<string, CustomsCurrencyRate> = { ...currencyRates };
+
       for (const run of selectedRuns) {
         const res = await fetch(`/api/finance/correction-runs/${run.id}`);
         if (!res.ok) continue;
@@ -1222,10 +1257,22 @@ export default function CorrectionPage() {
         const runCurrency = String(runData?.cost_price_currency || rows[0]?.valuta_original || '')
           .trim()
           .toUpperCase();
+
+        if (runCurrency === 'USD') {
+          const months = Array.from(
+            new Set(rows.filter((r) => r.year && r.month).map((r) => monthKey(r.year, r.month)))
+          );
+          const missing = months.filter((k) => !usdRatesCache[k]);
+          if (missing.length > 0) {
+            const fetched = await fetchUsdRatesForExport(missing);
+            usdRatesCache = { ...usdRatesCache, ...fetched };
+          }
+        }
+
         const computed = applySettingsToRows({
           rows,
           settingsCurrency: runCurrency,
-          usdRatesByMonth: currencyRates,
+          usdRatesByMonth: usdRatesCache,
           countries,
         });
 
