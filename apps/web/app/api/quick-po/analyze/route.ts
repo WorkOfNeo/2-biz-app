@@ -71,6 +71,8 @@ interface OrderPlan {
   size_breakdown: Record<string, number>;
   size_source: 'smart_hybrid' | 'historical_only' | 'default_only' | 'historical' | 'default_assortment';
   size_factors?: Record<string, SizeFactors>;
+  explanation: string;
+  stock_fix_applied?: boolean;
   current_stock: number;
   current_on_order: number;
   net_need_before: number;
@@ -429,6 +431,43 @@ function smoothStep(arr: number[]): number[] {
 
 function sum(arr: number[]): number {
   return arr.reduce((a, b) => a + (Number(b) || 0), 0);
+}
+
+function toTwoSentences(a: string, b: string): string {
+  const s1 = String(a || '').trim().replace(/\s+/g, ' ');
+  const s2 = String(b || '').trim().replace(/\s+/g, ' ');
+  const end = (s: string) => (s.endsWith('.') ? s : `${s}.`);
+  return `${end(s1)} ${end(s2)}`;
+}
+
+function buildOrderExplanation(args: {
+  totalQty: number;
+  sizeSource: 'historical_only' | 'default_only' | 'smart_hybrid' | 'historical' | 'default_assortment';
+  applyStockFix: boolean;
+  hadFeedbackLearning: boolean;
+  hadUserSizeAdjustments: boolean;
+}): string {
+  const { totalQty, sizeSource, applyStockFix, hadFeedbackLearning, hadUserSizeAdjustments } = args;
+
+  const basis =
+    sizeSource === 'historical_only' || sizeSource === 'historical'
+      ? 'historical sales size ratios'
+      : 'the default assortment curve';
+
+  const s1Parts = [
+    `You requested ${totalQty} pcs`,
+    `the sizes are distributed using ${basis}`,
+    hadFeedbackLearning ? '(plus learned corrections from past feedback)' : null,
+    applyStockFix ? 'and a final smoothing pass to make Net Need 2 more even' : null,
+  ].filter(Boolean);
+
+  const s2Parts = [
+    `Some sizes differ from a “full” assortment because the sizing is gap-filled against the current stock position per size`,
+    `(sizes that are already covered get fewer units, while under-covered sizes get more)`,
+    hadUserSizeAdjustments ? 'and your “extra/less” size instructions also shift the curve' : null,
+  ].filter(Boolean);
+
+  return toTwoSentences(s1Parts.join(' '), s2Parts.join(' '));
 }
 
 /**
@@ -865,6 +904,16 @@ export async function POST(req: Request) {
           const sizeBreakdown = smartResult.breakdown;
           const sizeSource = smartResult.sizeSource;
           const sizeFactors = sizeSource === 'historical_only' ? smartResult.factors : undefined;
+          const applyStockFix = stockFixForOrderText.has(cmd.original_text);
+          const hadFeedbackLearning = !!feedbackByStyle[styleNo] && Object.keys(feedbackByStyle[styleNo] || {}).length > 0;
+          const hadUserSizeAdjustments = !!cmd.size_adjustments && Object.keys(cmd.size_adjustments || {}).length > 0;
+          const explanation = buildOrderExplanation({
+            totalQty: cmd.quantity,
+            sizeSource,
+            applyStockFix,
+            hadFeedbackLearning,
+            hadUserSizeAdjustments
+          });
           
           const netNeedBefore = orderStockTable?.netNeedTotal ?? stockInfo.net_need;
           const netNeedAfter = netNeedBefore + cmd.quantity;
@@ -889,6 +938,8 @@ export async function POST(req: Request) {
             size_breakdown: sizeBreakdown,
             size_source: sizeSource,
             size_factors: sizeFactors,
+            explanation,
+            stock_fix_applied: applyStockFix || undefined,
             current_stock: orderStockTable?.stockTotal ?? stockInfo.stock,
             current_on_order: orderStockTable?.purchaseTotal ?? stockInfo.on_order,
             net_need_before: netNeedBefore,

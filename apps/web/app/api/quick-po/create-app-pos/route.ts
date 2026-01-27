@@ -12,7 +12,7 @@ interface OrderPlan {
   color: string;
   total_qty: number;
   size_breakdown: Record<string, number>;
-  size_source: 'historical' | 'default_assortment';
+  size_source: 'historical' | 'default_assortment' | 'historical_only' | 'default_only' | 'smart_hybrid';
   current_stock: number;
   current_on_order: number;
   net_need_before: number;
