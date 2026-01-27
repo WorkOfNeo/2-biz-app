@@ -251,22 +251,19 @@ function computeKurs({
 }
 
 function computeTotalDkkVaerdi({
-  pris,
-  antal,
+  vaerdi,
   kurs,
 }: {
-  pris: number | null;
-  antal: number;
+  vaerdi: number | null;
   kurs: number | null;
 }): number | null {
-  if (pris == null) return null;
+  if (vaerdi == null) return null;
   if (kurs == null) return null;
-  const p = Number(pris);
-  const a = Number(antal);
+  const v = Number(vaerdi);
   const k = Number(kurs);
-  if (!isFinite(p) || !isFinite(a) || !isFinite(k)) return null;
-  // Correct formula: Antal * Pris * Currency Conversion
-  return p * a * k;
+  if (!isFinite(v) || !isFinite(k)) return null;
+  // Business rule: Total DKK Værdi = KURS * VÆRDI
+  return v * k;
 }
 
 function applySettingsToRows({
@@ -287,7 +284,7 @@ function applySettingsToRows({
       ...r,
       oprindelsesland: normalizeCountryShort(r.oprindelsesland, countries),
       kurs,
-      total_dkk_vaerdi: computeTotalDkkVaerdi({ pris: r.pris, antal: r.antal, kurs }),
+      total_dkk_vaerdi: computeTotalDkkVaerdi({ vaerdi: r.vaerdi, kurs }),
     };
   });
 }
