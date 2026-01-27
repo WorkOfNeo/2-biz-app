@@ -760,12 +760,12 @@ export default function CorrectionPage() {
   }, [settingsOpen]);
 
   const saveUsdRate = React.useCallback(
-    async (k: string) => {
+    async (k: string, opts?: { rawInput?: string }) => {
       const m = k.match(/^(\d{4})-(\d{2})$/);
       if (!m) return;
       const year = parseInt(m[1]!, 10);
       const month = parseInt(m[2]!, 10);
-      const rate = parseDkkRateInput(currencyInputs[k] || '');
+      const rate = parseDkkRateInput(opts?.rawInput ?? currencyInputs[k] ?? '');
       if (!rate) {
         setCurrencyError(`Invalid DKK/USD rate for ${k}. Example: 6,446400`);
         return;
@@ -815,7 +815,7 @@ export default function CorrectionPage() {
       return;
     }
     setCurrencyInputs((prev) => ({ ...prev, [k]: manualUsdRate }));
-    await saveUsdRate(k);
+    await saveUsdRate(k, { rawInput: manualUsdRate });
     setManualUsdMonth('');
     setManualUsdRate('');
   }, [manualUsdMonth, manualUsdRate, saveUsdRate]);
