@@ -49,8 +49,8 @@ type OutputRow = {
   antal: number;
   vaerdi: number | null;
   valuta: string;
-  kurs: string;
-  total_dkk_vaerdi: string;
+  kurs: number | null;
+  total_dkk_vaerdi: number | null;
   frafoerselsref: string;
   non_eu: string;
 };
@@ -171,6 +171,12 @@ function formatCell(cell: string | number | null, colIndex: number): string {
       return formatDanishNumber(cell, 2);
     } else if (colIndex === 16) {
       return formatDanishNumber(cell, 0);
+    } else if (colIndex === 19) {
+      // Kurs (DKK per currency unit) - 6 decimals
+      return formatDanishNumber(cell, 6);
+    } else if (colIndex === 20) {
+      // Total DKK Værdi - 2 decimals
+      return formatDanishNumber(cell, 2);
     } else if (colIndex === 9 || colIndex === 10 || colIndex === 11) {
       // Day, Month, Year - integers
       return String(cell);
@@ -206,6 +212,84 @@ type CountryAlias = {
   name: string;
   code: string;
 };
+
+function normalizeCountryShort(origin: string, countries: CountryAlias[]): string {
+  const raw = String(origin ?? '').trim();
+  if (!raw) return '';
+
+  // If it's already a short code, keep it (uppercased).
+  const maybeCode = raw.toUpperCase();
+  if (/^[A-Z]{2,3}$/.test(maybeCode)) return maybeCode;
+
+  const needle = raw.toLowerCase();
+  const match = countries.find((c) => String(c.name || '').trim().toLowerCase() === needle);
+  return match ? String(match.code || '').trim().toUpperCase() : raw;
+}
+
+function computeKurs({
+  currency,
+  row,
+  usdRatesByMonth,
+}: {
+  currency: string;
+  row: OutputRow;
+  usdRatesByMonth: Record<string, CustomsCurrencyRate>;
+}): number | null {
+  const c = String(currency || '').trim().toUpperCase();
+  if (c === 'DKK') return 1;
+
+  if (c === 'USD') {
+    if (row.year && row.month) {
+      const r = usdRatesByMonth[monthKey(row.year, row.month)];
+      if (r?.rate_dkk != null && isFinite(Number(r.rate_dkk))) return Number(r.rate_dkk);
+    }
+    return row.kurs ?? null;
+  }
+
+  // Unknown currency (no settings panel for it) -> keep whatever the row already has.
+  return row.kurs ?? null;
+}
+
+function computeTotalDkkVaerdi({
+  vaerdi,
+  antal,
+  kurs,
+}: {
+  vaerdi: number | null;
+  antal: number;
+  kurs: number | null;
+}): number | null {
+  if (vaerdi == null) return null;
+  if (kurs == null) return null;
+  const v = Number(vaerdi);
+  const a = Number(antal);
+  const k = Number(kurs);
+  if (!isFinite(v) || !isFinite(a) || !isFinite(k)) return null;
+  return v * a * k;
+}
+
+function applySettingsToRows({
+  rows,
+  settingsCurrency,
+  usdRatesByMonth,
+  countries,
+}: {
+  rows: OutputRow[];
+  settingsCurrency: string;
+  usdRatesByMonth: Record<string, CustomsCurrencyRate>;
+  countries: CountryAlias[];
+}): OutputRow[] {
+  if (!rows || rows.length === 0) return [];
+  return rows.map((r) => {
+    const kurs = computeKurs({ currency: settingsCurrency, row: r, usdRatesByMonth });
+    return {
+      ...r,
+      oprindelsesland: normalizeCountryShort(r.oprindelsesland, countries),
+      kurs,
+      total_dkk_vaerdi: computeTotalDkkVaerdi({ vaerdi: r.vaerdi, antal: r.antal, kurs }),
+    };
+  });
+}
 
 function findExportNoColumnIndex(headerRow: any[] | undefined): number {
   if (!headerRow || headerRow.length === 0) return 3; // default column D
@@ -275,7 +359,7 @@ export default function CorrectionPage() {
   // API response state
   const [runId, setRunId] = React.useState<string | null>(null);
   const [styleMeta, setStyleMeta] = React.useState<StyleMeta | null>(null);
-  const [outputRows, setOutputRows] = React.useState<OutputRow[]>([]);
+  const [serverRows, setServerRows] = React.useState<OutputRow[]>([]);
 
   // Recent runs
   const [recentRuns, setRecentRuns] = React.useState<Run[]>([]);
@@ -399,19 +483,33 @@ export default function CorrectionPage() {
     setExportNos(unique);
   }, [step, outputRows]);
 
-  const activeCurrency = React.useMemo(() => {
-    const c = (styleMeta?.cost_price_currency || outputRows[0]?.valuta_original || '').toString().trim().toUpperCase();
+  const settingsCurrency = React.useMemo(() => {
+    const c = (styleMeta?.cost_price_currency || serverRows[0]?.valuta_original || '').toString().trim().toUpperCase();
     return c;
-  }, [styleMeta, outputRows]);
+  }, [styleMeta, serverRows]);
+
+  const activeCurrency = React.useMemo(() => {
+    const c = (styleMeta?.cost_price_currency || serverRows[0]?.valuta_original || '').toString().trim().toUpperCase();
+    return c;
+  }, [styleMeta, serverRows]);
+
+  const outputRows = React.useMemo(() => {
+    return applySettingsToRows({
+      rows: serverRows,
+      settingsCurrency,
+      usdRatesByMonth: currencyRates,
+      countries,
+    });
+  }, [serverRows, settingsCurrency, currencyRates, countries]);
 
   const usdMonths = React.useMemo(() => {
-    if (step !== 'preview' || activeCurrency !== 'USD' || outputRows.length === 0) return [];
+    if (step !== 'preview' || activeCurrency !== 'USD' || serverRows.length === 0) return [];
     const keys = new Set<string>();
-    for (const r of outputRows) {
+    for (const r of serverRows) {
       if (r.year && r.month) keys.add(monthKey(r.year, r.month));
     }
     return Array.from(keys).sort();
-  }, [step, activeCurrency, outputRows]);
+  }, [step, activeCurrency, serverRows]);
 
   const missingUsdMonths = React.useMemo(() => {
     const months = new Set<string>();
@@ -491,6 +589,11 @@ export default function CorrectionPage() {
       setCountriesLoading(false);
     }
   }, []);
+
+  // Fetch country short-code settings on mount (so Load can apply them even with Settings closed).
+  React.useEffect(() => {
+    fetchCountries();
+  }, [fetchCountries]);
 
   const fetchUsdRatesForMonths = React.useCallback(async (months: string[]) => {
     if (!months || months.length === 0) return;
@@ -859,7 +962,7 @@ export default function CorrectionPage() {
     const data = await processRowsData(fileName, sNo, fTariff, rows);
     setRunId(data.runId);
     setStyleMeta(data.styleMeta);
-    setOutputRows(data.outputRows ?? []);
+    setServerRows(data.outputRows ?? []);
     setStep('preview');
     if (data.exportNoSumUpId) {
       setExportNoSumUpId(data.exportNoSumUpId);
@@ -889,7 +992,7 @@ export default function CorrectionPage() {
     setInputRows([]);
     setRunId(null);
     setStyleMeta(null);
-    setOutputRows([]);
+    setServerRows([]);
     setExportNos([]);
     setExportNosOpen(false);
     setExportNoSumUpStatus('idle');
@@ -958,7 +1061,19 @@ export default function CorrectionPage() {
       const data = await res.json();
       const rows = (data.rows ?? []) as OutputRow[];
       const runData = data.run;
-      await downloadRowsXlsx(rows, { styleNo: runData?.style_no || run.style_no, originalFileName: run.file_name || undefined });
+      const runCurrency = String(runData?.cost_price_currency || rows[0]?.valuta_original || '')
+        .trim()
+        .toUpperCase();
+      const computed = applySettingsToRows({
+        rows,
+        settingsCurrency: runCurrency,
+        usdRatesByMonth: currencyRates,
+        countries,
+      });
+      await downloadRowsXlsx(computed, {
+        styleNo: runData?.style_no || run.style_no,
+        originalFileName: run.file_name || undefined,
+      });
     } catch (e: any) {
       alert(e?.message || 'Failed to export XLSX');
     } finally {
@@ -1002,6 +1117,15 @@ export default function CorrectionPage() {
         const data = await res.json();
         const rows = (data.rows ?? []) as OutputRow[];
         const runData = data.run as any;
+        const runCurrency = String(runData?.cost_price_currency || rows[0]?.valuta_original || '')
+          .trim()
+          .toUpperCase();
+        const computed = applySettingsToRows({
+          rows,
+          settingsCurrency: runCurrency,
+          usdRatesByMonth: currencyRates,
+          countries,
+        });
 
         const runMeta = {
           id: runData?.id ?? run.id,
@@ -1013,7 +1137,7 @@ export default function CorrectionPage() {
           last_date: runData?.last_date ?? run.last_date,
         };
 
-        for (const r of rows) {
+        for (const r of computed) {
           sheetData.push([
             runMeta.id ?? '',
             runMeta.created_at ?? '',
@@ -1072,7 +1196,7 @@ export default function CorrectionPage() {
         customs_tariff_no: runData.customs_tariff_no,
         country_of_origin: runData.country_of_origin,
       });
-      setOutputRows(rows);
+      setServerRows(rows);
       setUploadedFile(null);
       setInputRows([]);
       setStep('preview');
