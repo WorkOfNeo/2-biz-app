@@ -346,6 +346,8 @@ export default function QuickPoFlow({
   const [createResult, setCreateResult] = React.useState<{ success: number; failed: number } | null>(null);
   const [feedbackSent, setFeedbackSent] = React.useState<Record<string, 'correct' | 'incorrect'>>({});
   const [sendingFeedback, setSendingFeedback] = React.useState<string | null>(null);
+  const [smoothingKey, setSmoothingKey] = React.useState<string | null>(null);
+  const [smoothNoteByKey, setSmoothNoteByKey] = React.useState<Record<string, string>>({});
   const [correctionModal, setCorrectionModal] = React.useState<{
     plan: OrderPlan;
     corrections: Record<string, number>;
@@ -473,6 +475,7 @@ export default function QuickPoFlow({
   // Create POs from approved plans
   const handleCreatePos = async () => {
     if (!result?.order_plans?.length) return;
+    if (smoothingKey) return;
     
     setCreatingPos(true);
     setError(null);
@@ -502,48 +505,69 @@ export default function QuickPoFlow({
   };
 
   const handleSmoothCurve = (planIndex: number) => {
-    if (!result) return;
-    const plan = result.order_plans?.[planIndex];
-    const st = plan?.stock_table;
-    if (!plan || !st || !Array.isArray(st.sizes) || !Array.isArray(st.netNeed)) return;
+    setError(null);
+    setResult((prev) => {
+      if (!prev) return prev;
+      const plan = prev.order_plans?.[planIndex];
+      const st = plan?.stock_table;
+      if (!plan || !st || !Array.isArray(st.sizes) || !Array.isArray(st.netNeed)) {
+        setSmoothNoteByKey((m) => ({ ...m, [`${plan?.style_no}|${plan?.color}`]: 'No stock table to smooth' }));
+        return prev;
+      }
 
-    const sizes = st.sizes;
-    const base = st.netNeed.map((v) => Number(v) || 0);
-    const total = Number(plan.total_qty) || 0;
-    if (total <= 0) return;
+      const key = `${plan.style_no}|${plan.color}`;
+      setSmoothingKey(key);
 
-    // Smooth curve based on DEFAULT assortment weights (not net need, not historical).
-    const weights = sizes.map((s) => DEFAULT_ASSORTMENT_NUMERIC_WEIGHTS[String(s)] ?? 1);
-    const gf = gapFillSizing({ weights, base, targetBuy: total });
-    const smoothedBuy = smoothBuyForFinalCurve(base, [...gf.buyBySize], 2);
+      try {
+        const sizes = st.sizes;
+        const base = st.netNeed.map((v) => Number(v) || 0);
+        const total = Number(plan.total_qty) || 0;
+        if (total <= 0) {
+          setSmoothNoteByKey((m) => ({ ...m, [key]: 'Nothing to smooth (0 pcs)' }));
+          return prev;
+        }
 
-    const newBreakdown: Record<string, number> = {};
-    sizes.forEach((size, i) => {
-      newBreakdown[String(size)] = Math.max(0, Math.floor(smoothedBuy[i] ?? 0));
-    });
+        // Smooth curve based on DEFAULT assortment weights (not net need, not historical).
+        const weights = sizes.map((s) => DEFAULT_ASSORTMENT_NUMERIC_WEIGHTS[String(s)] ?? 1);
+        const gf = gapFillSizing({ weights, base, targetBuy: total });
+        const smoothedBuy = smoothBuyForFinalCurve(base, [...gf.buyBySize], 2);
 
-    // Preserve total exactly (safety)
-    let diff = total - Object.values(newBreakdown).reduce((a, b) => a + (Number(b) || 0), 0);
-    if (diff !== 0 && sizes.length > 0) {
-      // Adjust on the "middle" size first
-      const mid = Math.floor(sizes.length / 2);
-      const k = String(sizes[mid] ?? sizes[0]);
-      newBreakdown[k] = Math.max(0, (newBreakdown[k] || 0) + diff);
-    }
+        const newBreakdown: Record<string, number> = {};
+        sizes.forEach((size, i) => {
+          newBreakdown[String(size)] = Math.max(0, Math.floor(smoothedBuy[i] ?? 0));
+        });
 
-    const updatedPlans = [...result.order_plans];
-    updatedPlans[planIndex] = {
-      ...plan,
-      size_breakdown: newBreakdown,
-      stock_fix_applied: true,
-      explanation: plan.explanation
-        ? plan.explanation
-        : 'You requested this total quantity; the size curve has been smoothed against current stock to make Net Need 2 more even. Some sizes differ from a full assortment because we reduce jumps in the final stock position across sizes.'
-    };
+        // Preserve total exactly (safety)
+        let diff = total - Object.values(newBreakdown).reduce((a, b) => a + (Number(b) || 0), 0);
+        if (diff !== 0 && sizes.length > 0) {
+          const mid = Math.floor(sizes.length / 2);
+          const k = String(sizes[mid] ?? sizes[0]);
+          newBreakdown[k] = Math.max(0, (newBreakdown[k] || 0) + diff);
+        }
 
-    setResult({
-      ...result,
-      order_plans: updatedPlans
+        const oldBreakdown = plan.size_breakdown || {};
+        const changed = sizes.some((s) => (oldBreakdown[String(s)] ?? 0) !== (newBreakdown[String(s)] ?? 0));
+
+        const updatedPlans = [...prev.order_plans];
+        updatedPlans[planIndex] = {
+          ...plan,
+          size_breakdown: newBreakdown,
+          stock_fix_applied: true,
+          explanation: plan.explanation
+            ? plan.explanation
+            : 'You requested this total quantity; the size curve has been smoothed against current stock to make Net Need 2 more even. Some sizes differ from a full assortment because we reduce jumps in the final stock position across sizes.'
+        };
+
+        setSmoothNoteByKey((m) => ({ ...m, [key]: changed ? 'Smoothed' : 'Already smooth (no change)' }));
+        return { ...prev, order_plans: updatedPlans };
+      } catch (e: any) {
+        setError(e?.message || 'Failed to smooth curve');
+        setSmoothNoteByKey((m) => ({ ...m, [key]: 'Error' }));
+        return prev;
+      } finally {
+        // Allow UI to re-enable button after render
+        setTimeout(() => setSmoothingKey(null), 0);
+      }
     });
   };
 
@@ -725,13 +749,32 @@ KAXY NAVY - Make sure stock is fixed`}
                             <Button
                               size="sm"
                               variant="outline"
+                              type="button"
                               onClick={() => handleSmoothCurve(idx)}
+                              disabled={!!smoothingKey}
                               className="text-[11px] h-7 px-2 border-slate-300"
                               title="Recalculate sizes to make Net Need 2 smoother (based on default assortment curve)"
                             >
-                              Smooth curve
+                              {smoothingKey === `${plan.style_no}|${plan.color}` ? (
+                                <>
+                                  <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                                  Smoothing...
+                                </>
+                              ) : (
+                                'Smooth curve'
+                              )}
                             </Button>
                           )}
+                          {(() => {
+                            const k = `${plan.style_no}|${plan.color}`;
+                            const note = smoothNoteByKey[k];
+                            if (!note) return null;
+                            return (
+                              <span className="text-[10px] text-slate-500">
+                                {note}
+                              </span>
+                            );
+                          })()}
                           {/* Feedback buttons */}
                           {(() => {
                             const key = `${plan.style_no}|${plan.color}`;
