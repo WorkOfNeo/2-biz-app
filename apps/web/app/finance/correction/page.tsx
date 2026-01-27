@@ -475,6 +475,13 @@ export default function CorrectionPage() {
   async function reloadAllDiaryEntries() {
     if (busy || reloadAllState.status === 'loading') return;
 
+    // If we already know some required USD months are missing, block and show Settings.
+    if (missingUsdMonths.length > 0) {
+      setSettingsOpen(true);
+      setCurrencyError(`Missing USD rates for: ${missingUsdMonths.join(', ')}`);
+      return;
+    }
+
     if (reloadAllDoneTimerRef.current != null) {
       window.clearTimeout(reloadAllDoneTimerRef.current);
       reloadAllDoneTimerRef.current = null;
@@ -1172,6 +1179,38 @@ export default function CorrectionPage() {
     return map;
   }
 
+  async function ensureUsdRatesAvailable(months: string[]): Promise<{
+    usdRatesByMonth: Record<string, CustomsCurrencyRate>;
+    missingMonths: string[];
+  }> {
+    const unique = Array.from(new Set(months || []))
+      .map((m) => String(m || '').trim())
+      .filter((m) => /^\d{4}-\d{2}$/.test(m));
+
+    const missingBefore = unique.filter((k) => !currencyRates[k]);
+    if (missingBefore.length === 0) {
+      return { usdRatesByMonth: currencyRates, missingMonths: [] };
+    }
+
+    const fetched = await fetchUsdRatesForExport(missingBefore);
+
+    // Persist fetched rates to state so preview calculations also benefit.
+    if (Object.keys(fetched).length > 0) {
+      setCurrencyRates((prev) => ({ ...prev, ...fetched }));
+      setCurrencyInputs((prev) => {
+        const next = { ...prev };
+        for (const [k, r] of Object.entries(fetched)) {
+          if (next[k] == null) next[k] = String(r.rate_dkk);
+        }
+        return next;
+      });
+    }
+
+    const merged = { ...currencyRates, ...fetched };
+    const missingAfter = unique.filter((k) => !merged[k]);
+    return { usdRatesByMonth: merged, missingMonths: missingAfter };
+  }
+
   async function downloadRunXlsx(run: Run) {
     try {
       setBusy(true);
@@ -1192,10 +1231,13 @@ export default function CorrectionPage() {
         const months = Array.from(
           new Set(rows.filter((r) => r.year && r.month).map((r) => monthKey(r.year, r.month)))
         );
-        const missing = months.filter((k) => !usdRatesByMonth[k]);
-        if (missing.length > 0) {
-          const fetched = await fetchUsdRatesForExport(missing);
-          usdRatesByMonth = { ...usdRatesByMonth, ...fetched };
+        const ensured = await ensureUsdRatesAvailable(months);
+        usdRatesByMonth = ensured.usdRatesByMonth;
+        if (ensured.missingMonths.length > 0) {
+          setRequiredUsdMonths(new Set(months));
+          setSettingsOpen(true);
+          setCurrencyError(`Missing USD rates for: ${ensured.missingMonths.join(', ')}`);
+          return;
         }
       }
 
@@ -1247,6 +1289,7 @@ export default function CorrectionPage() {
       const sheetData: any[][] = [[...metaCols, ...OUTPUT_COLUMNS]];
 
       let usdRatesCache: Record<string, CustomsCurrencyRate> = { ...currencyRates };
+      const allUsdMonths = new Set<string>();
 
       for (const run of selectedRuns) {
         const res = await fetch(`/api/finance/correction-runs/${run.id}`);
@@ -1262,10 +1305,18 @@ export default function CorrectionPage() {
           const months = Array.from(
             new Set(rows.filter((r) => r.year && r.month).map((r) => monthKey(r.year, r.month)))
           );
+          for (const m of months) allUsdMonths.add(m);
           const missing = months.filter((k) => !usdRatesCache[k]);
           if (missing.length > 0) {
             const fetched = await fetchUsdRatesForExport(missing);
             usdRatesCache = { ...usdRatesCache, ...fetched };
+          }
+          const stillMissing = months.filter((k) => !usdRatesCache[k]);
+          if (stillMissing.length > 0) {
+            setRequiredUsdMonths(new Set(Array.from(allUsdMonths)));
+            setSettingsOpen(true);
+            setCurrencyError(`Missing USD rates for: ${stillMissing.join(', ')}`);
+            return;
           }
         }
 
@@ -1328,6 +1379,26 @@ export default function CorrectionPage() {
       const rows = data.rows ?? [];
       // Use fresh styleMeta from API (re-looked up from styles table)
       const freshStyleMeta = data.styleMeta;
+
+      // Preflight USD conversion months so preview/export won't silently miss totals.
+      const runCurrency = String(
+        freshStyleMeta?.cost_price_currency || runData?.cost_price_currency || rows[0]?.valuta_original || ''
+      )
+        .trim()
+        .toUpperCase();
+      if (runCurrency === 'USD') {
+        const months = Array.from(
+          new Set((rows as OutputRow[]).filter((r) => r.year && r.month).map((r) => monthKey(r.year, r.month)))
+        );
+        if (months.length > 0) {
+          const ensured = await ensureUsdRatesAvailable(months);
+          setRequiredUsdMonths(new Set(months));
+          if (ensured.missingMonths.length > 0) {
+            setSettingsOpen(true);
+            setCurrencyError(`Missing USD rates for: ${ensured.missingMonths.join(', ')}`);
+          }
+        }
+      }
 
       setRunId(runData.id);
       setStyleNo(runData.style_no);
