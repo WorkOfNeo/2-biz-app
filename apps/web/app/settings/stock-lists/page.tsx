@@ -5,7 +5,7 @@ import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
 import { Button } from '../../../components/ui/button';
 import Link from 'next/link';
-import { ChevronRight, List, Wrench } from 'lucide-react';
+import { ChevronRight, List, Wrench, Loader2 } from 'lucide-react';
 
 type StockList = {
   id: string;
@@ -19,6 +19,11 @@ export default function StockListsPage() {
   const supabase = createClientComponentClient();
   const [fixingLists, setFixingLists] = React.useState(false);
   const [fixMessage, setFixMessage] = React.useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
+  
+  // Auto-sync state
+  const [syncProgress, setSyncProgress] = React.useState<{ current: number; total: number; step: string } | null>(null);
+  const [syncMessage, setSyncMessage] = React.useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
+  const syncRanRef = React.useRef(false);
   
   const { data: lists, mutate } = useSWR('stock-lists:all', async () => {
     const { data, error } = await supabase
@@ -127,6 +132,124 @@ export default function StockListsPage() {
     }
   }
 
+  // AUTO-SYNC: Find styles/colors not in any list and add them to "Nye styles"
+  async function syncNewStylesToList() {
+    setSyncMessage(null);
+    setSyncProgress({ current: 0, total: 100, step: 'Checking for unlisted styles...' });
+    
+    try {
+      // Find "Nye styles" list
+      const nyeList = lists?.find(l => l.name === 'Nye styles');
+      if (!nyeList) {
+        setSyncProgress(null);
+        setSyncMessage({ type: 'error', text: 'Could not find "Nye styles" list.' });
+        return;
+      }
+
+      // Step 1: Get all style IDs
+      setSyncProgress({ current: 5, total: 100, step: 'Fetching all styles...' });
+      const { data: allStyles, error: stylesError } = await supabase
+        .from('styles')
+        .select('id');
+      if (stylesError) throw stylesError;
+      
+      const allStyleIds = new Set((allStyles ?? []).map(s => s.id));
+      
+      // Step 2: Get all style IDs that are already in any list
+      setSyncProgress({ current: 15, total: 100, step: 'Checking existing list memberships...' });
+      const { data: listedStyles, error: listedError } = await supabase
+        .from('stock_list_styles')
+        .select('style_id');
+      if (listedError) throw listedError;
+      
+      const listedStyleIds = new Set((listedStyles ?? []).map(s => s.style_id));
+      
+      // Step 3: Find styles not in any list
+      const unlistedStyleIds = Array.from(allStyleIds).filter(id => !listedStyleIds.has(id));
+      
+      if (unlistedStyleIds.length === 0) {
+        setSyncProgress(null);
+        setSyncMessage({ type: 'info', text: 'All styles are already in a list.' });
+        return;
+      }
+
+      setSyncProgress({ current: 20, total: 100, step: `Found ${unlistedStyleIds.length} unlisted style(s). Adding to Nye styles...` });
+
+      // Step 4: Add unlisted styles to "Nye styles" in chunks
+      const chunkSize = 200;
+      let stylesAdded = 0;
+      for (let i = 0; i < unlistedStyleIds.length; i += chunkSize) {
+        const chunk = unlistedStyleIds.slice(i, i + chunkSize);
+        const styleInserts = chunk.map(styleId => ({ list_id: nyeList.id, style_id: styleId }));
+        
+        const { error: insertError } = await supabase
+          .from('stock_list_styles')
+          .upsert(styleInserts, { onConflict: 'list_id,style_id', ignoreDuplicates: true });
+        if (insertError) throw insertError;
+        
+        stylesAdded += chunk.length;
+        const progress = 20 + Math.round((stylesAdded / unlistedStyleIds.length) * 30);
+        setSyncProgress({ current: progress, total: 100, step: `Added ${stylesAdded}/${unlistedStyleIds.length} styles...` });
+      }
+
+      // Step 5: Get all colors for unlisted styles
+      setSyncProgress({ current: 55, total: 100, step: 'Fetching colors for new styles...' });
+      const { data: colors, error: colorsError } = await supabase
+        .from('style_colors')
+        .select('id, style_id')
+        .in('style_id', unlistedStyleIds);
+      if (colorsError) throw colorsError;
+      
+      if (!colors || colors.length === 0) {
+        setSyncProgress(null);
+        setSyncMessage({ type: 'success', text: `Added ${unlistedStyleIds.length} style(s) to Nye styles (no colors to add).` });
+        return;
+      }
+
+      // Step 6: Add colors to "Nye styles" in chunks
+      setSyncProgress({ current: 60, total: 100, step: `Adding ${colors.length} color(s)...` });
+      let colorsAdded = 0;
+      for (let i = 0; i < colors.length; i += chunkSize) {
+        const chunk = colors.slice(i, i + chunkSize);
+        const colorInserts = chunk.map(c => ({
+          list_id: nyeList.id,
+          style_id: c.style_id,
+          style_color_id: c.id,
+          include: true
+        }));
+        
+        const { error: colorInsertError } = await supabase
+          .from('stock_list_colors')
+          .upsert(colorInserts, { onConflict: 'list_id,style_color_id', ignoreDuplicates: true });
+        if (colorInsertError) throw colorInsertError;
+        
+        colorsAdded += chunk.length;
+        const progress = 60 + Math.round((colorsAdded / colors.length) * 35);
+        setSyncProgress({ current: progress, total: 100, step: `Added ${colorsAdded}/${colors.length} colors...` });
+      }
+
+      setSyncProgress({ current: 100, total: 100, step: 'Done!' });
+      
+      // Clear progress after a short delay
+      setTimeout(() => {
+        setSyncProgress(null);
+        setSyncMessage({ type: 'success', text: `Added ${unlistedStyleIds.length} style(s) and ${colors.length} color(s) to Nye styles.` });
+      }, 500);
+      
+    } catch (e: any) {
+      setSyncProgress(null);
+      setSyncMessage({ type: 'error', text: e.message || 'Failed to sync new styles' });
+    }
+  }
+
+  // Run auto-sync once when lists are loaded
+  React.useEffect(() => {
+    if (!lists || lists.length === 0) return;
+    if (syncRanRef.current) return;
+    syncRanRef.current = true;
+    syncNewStylesToList();
+  }, [lists]);
+
   return (
     <div className="space-y-4">
       <div>
@@ -136,6 +259,38 @@ export default function StockListsPage() {
           Manage your stock lists for exports and organization
         </p>
       </div>
+
+      {/* Auto-sync progress bar */}
+      {syncProgress && (
+        <Card>
+          <CardContent className="py-4">
+            <div className="flex items-center gap-3">
+              <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
+              <div className="flex-1">
+                <div className="text-sm font-medium text-gray-700 mb-1">{syncProgress.step}</div>
+                <div className="w-full bg-gray-200 rounded-full h-2">
+                  <div 
+                    className="bg-blue-600 h-2 rounded-full transition-all duration-300" 
+                    style={{ width: `${Math.round((syncProgress.current / syncProgress.total) * 100)}%` }}
+                  />
+                </div>
+              </div>
+              <span className="text-sm text-gray-500">{Math.round((syncProgress.current / syncProgress.total) * 100)}%</span>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Auto-sync message */}
+      {syncMessage && !syncProgress && (
+        <div className={`p-3 rounded text-sm ${
+          syncMessage.type === 'success' ? 'bg-green-50 text-green-700 border border-green-200' :
+          syncMessage.type === 'error' ? 'bg-red-50 text-red-700 border border-red-200' :
+          'bg-blue-50 text-blue-700 border border-blue-200'
+        }`}>
+          {syncMessage.text}
+        </div>
+      )}
 
       {/* Fixed Lists */}
       <Card>
