@@ -7,7 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../..
 import { Button } from '../../../components/ui/button';
 import { Badge } from '../../../components/ui/badge';
 import { Info, Loader2, AlertTriangle, Check, Clock, Zap, Package, Palette, ThumbsUp, ThumbsDown } from 'lucide-react';
-import { gapFillSizing } from '../../../../lib/purchase/gapFillSizing';
+import { gapFillSizing } from '../../../lib/purchase/gapFillSizing';
 
 // ==================== Types ====================
 
