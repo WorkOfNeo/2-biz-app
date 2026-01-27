@@ -348,6 +348,7 @@ export default function QuickPoFlow({
   const [sendingFeedback, setSendingFeedback] = React.useState<string | null>(null);
   const [smoothingKey, setSmoothingKey] = React.useState<string | null>(null);
   const [smoothNoteByKey, setSmoothNoteByKey] = React.useState<Record<string, string>>({});
+  const [smoothLearnedByKey, setSmoothLearnedByKey] = React.useState<Record<string, boolean>>({});
   const [correctionModal, setCorrectionModal] = React.useState<{
     plan: OrderPlan;
     corrections: Record<string, number>;
@@ -357,7 +358,8 @@ export default function QuickPoFlow({
   const handleSendFeedback = async (
     plan: OrderPlan, 
     verdict: 'correct' | 'incorrect',
-    actualOrder?: Record<string, number>
+    actualOrder?: Record<string, number>,
+    options?: { notes?: string; reason_codes?: string[]; context_snapshot?: any }
   ) => {
     const key = `${plan.style_no}|${plan.color}`;
     setSendingFeedback(key);
@@ -385,13 +387,17 @@ export default function QuickPoFlow({
           verdict,
           suggested_order: plan.size_breakdown,
           actual_order: actualOrder || null,
-          notes: verdict === 'incorrect' 
-            ? `Size distribution was wrong. Source: ${plan.size_source}${actualOrder ? '. Corrected by user.' : ''}` 
-            : `Size distribution was correct. Source: ${plan.size_source}`,
+          notes:
+            options?.notes ||
+            (verdict === 'incorrect'
+              ? `Size distribution was wrong. Source: ${plan.size_source}${actualOrder ? '. Corrected by user.' : ''}`
+              : `Size distribution was correct. Source: ${plan.size_source}`),
           // Attribution for learning
           flow: 'quick_po',
           prompt_key: promptKey,
-          prompt_version: promptVersion
+          prompt_version: promptVersion,
+          reason_codes: options?.reason_codes || [],
+          context_snapshot: options?.context_snapshot || null
         })
       });
       
@@ -505,70 +511,87 @@ export default function QuickPoFlow({
   };
 
   const handleSmoothCurve = (planIndex: number) => {
+    if (!result) return;
+    const plan = result.order_plans?.[planIndex];
+    const st = plan?.stock_table;
+    if (!plan || !st || !Array.isArray(st.sizes) || !Array.isArray(st.netNeed)) {
+      setSmoothNoteByKey((m) => ({ ...m, [`${plan?.style_no}|${plan?.color}`]: 'No stock table to smooth' }));
+      return;
+    }
+
+    const key = `${plan.style_no}|${plan.color}`;
     setError(null);
-    setResult((prev) => {
-      if (!prev) return prev;
-      const plan = prev.order_plans?.[planIndex];
-      const st = plan?.stock_table;
-      if (!plan || !st || !Array.isArray(st.sizes) || !Array.isArray(st.netNeed)) {
-        setSmoothNoteByKey((m) => ({ ...m, [`${plan?.style_no}|${plan?.color}`]: 'No stock table to smooth' }));
-        return prev;
+    setSmoothingKey(key);
+
+    try {
+      const sizes = st.sizes.map((s) => String(s));
+      const base = st.netNeed.map((v) => Number(v) || 0);
+      const total = Number(plan.total_qty) || 0;
+      if (total <= 0) {
+        setSmoothNoteByKey((m) => ({ ...m, [key]: 'Nothing to smooth (0 pcs)' }));
+        return;
       }
 
-      const key = `${plan.style_no}|${plan.color}`;
-      setSmoothingKey(key);
+      // IMPORTANT: smooth based on the CURRENT Final Net Need (Net Need 2),
+      // i.e., base + current buy. This is a minimal-change adjustment.
+      const currentBuy = sizes.map((s) => Number(plan.size_breakdown?.[s] ?? 0) || 0);
+      const smoothedBuy = smoothBuyForFinalCurve(base, [...currentBuy], 2);
 
-      try {
-        const sizes = st.sizes;
-        const base = st.netNeed.map((v) => Number(v) || 0);
-        const total = Number(plan.total_qty) || 0;
-        if (total <= 0) {
-          setSmoothNoteByKey((m) => ({ ...m, [key]: 'Nothing to smooth (0 pcs)' }));
-          return prev;
-        }
+      const newBreakdown: Record<string, number> = {};
+      sizes.forEach((size, i) => {
+        newBreakdown[size] = Math.max(0, Math.floor(smoothedBuy[i] ?? 0));
+      });
 
-        // Smooth curve based on DEFAULT assortment weights (not net need, not historical).
-        const weights = sizes.map((s) => DEFAULT_ASSORTMENT_NUMERIC_WEIGHTS[String(s)] ?? 1);
-        const gf = gapFillSizing({ weights, base, targetBuy: total });
-        const smoothedBuy = smoothBuyForFinalCurve(base, [...gf.buyBySize], 2);
+      // Preserve total exactly (safety)
+      let diff = total - Object.values(newBreakdown).reduce((a, b) => a + (Number(b) || 0), 0);
+      if (diff !== 0 && sizes.length > 0) {
+        const mid = Math.floor(sizes.length / 2);
+        const k = String(sizes[mid] ?? sizes[0]);
+        newBreakdown[k] = Math.max(0, (newBreakdown[k] || 0) + diff);
+      }
 
-        const newBreakdown: Record<string, number> = {};
-        sizes.forEach((size, i) => {
-          newBreakdown[String(size)] = Math.max(0, Math.floor(smoothedBuy[i] ?? 0));
+      const oldBreakdown = plan.size_breakdown || {};
+      const changed = sizes.some((s) => (oldBreakdown[s] ?? 0) !== (newBreakdown[s] ?? 0));
+
+      const updatedPlans = [...result.order_plans];
+      updatedPlans[planIndex] = {
+        ...plan,
+        size_breakdown: newBreakdown,
+        stock_fix_applied: true,
+      };
+
+      setResult({ ...result, order_plans: updatedPlans });
+
+      if (!changed) {
+        setSmoothNoteByKey((m) => ({ ...m, [key]: 'Already smooth (no change)' }));
+        return;
+      }
+
+      // Save as learning automatically (so next runs improve)
+      if (!smoothLearnedByKey[key]) {
+        setSmoothLearnedByKey((m) => ({ ...m, [key]: true }));
+        void handleSendFeedback(plan, 'incorrect', newBreakdown, {
+          notes: 'Smoothed via “Smooth curve” button (target: smoother Final Net Need / Net Need 2).',
+          reason_codes: ['smooth_curve'],
+          context_snapshot: {
+            sizes,
+            base_net_need_1: base,
+            original_order: oldBreakdown,
+            smoothed_order: newBreakdown,
+            original_net_need_2: base.map((b, i) => b + (currentBuy[i] || 0)),
+            smoothed_net_need_2: base.map((b, i) => b + (Number(newBreakdown[sizes[i]!] || 0))),
+          }
         });
-
-        // Preserve total exactly (safety)
-        let diff = total - Object.values(newBreakdown).reduce((a, b) => a + (Number(b) || 0), 0);
-        if (diff !== 0 && sizes.length > 0) {
-          const mid = Math.floor(sizes.length / 2);
-          const k = String(sizes[mid] ?? sizes[0]);
-          newBreakdown[k] = Math.max(0, (newBreakdown[k] || 0) + diff);
-        }
-
-        const oldBreakdown = plan.size_breakdown || {};
-        const changed = sizes.some((s) => (oldBreakdown[String(s)] ?? 0) !== (newBreakdown[String(s)] ?? 0));
-
-        const updatedPlans = [...prev.order_plans];
-        updatedPlans[planIndex] = {
-          ...plan,
-          size_breakdown: newBreakdown,
-          stock_fix_applied: true,
-          explanation: plan.explanation
-            ? plan.explanation
-            : 'You requested this total quantity; the size curve has been smoothed against current stock to make Net Need 2 more even. Some sizes differ from a full assortment because we reduce jumps in the final stock position across sizes.'
-        };
-
-        setSmoothNoteByKey((m) => ({ ...m, [key]: changed ? 'Smoothed' : 'Already smooth (no change)' }));
-        return { ...prev, order_plans: updatedPlans };
-      } catch (e: any) {
-        setError(e?.message || 'Failed to smooth curve');
-        setSmoothNoteByKey((m) => ({ ...m, [key]: 'Error' }));
-        return prev;
-      } finally {
-        // Allow UI to re-enable button after render
-        setTimeout(() => setSmoothingKey(null), 0);
+        setSmoothNoteByKey((m) => ({ ...m, [key]: 'Smoothed + saved for learning' }));
+      } else {
+        setSmoothNoteByKey((m) => ({ ...m, [key]: 'Smoothed' }));
       }
-    });
+    } catch (e: any) {
+      setError(e?.message || 'Failed to smooth curve');
+      setSmoothNoteByKey((m) => ({ ...m, [key]: 'Error' }));
+    } finally {
+      setSmoothingKey(null);
+    }
   };
 
   return (
