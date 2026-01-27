@@ -381,6 +381,14 @@ export default function CorrectionPage() {
     Record<string, { loading: boolean; error?: string; exportNos?: string[]; count?: number }>
   >({});
 
+  const [reloadAllState, setReloadAllState] = React.useState<{
+    status: 'idle' | 'loading' | 'done' | 'error';
+    total: number;
+    completed: number;
+    failed: number;
+  }>({ status: 'idle', total: 0, completed: 0, failed: 0 });
+  const reloadAllDoneTimerRef = React.useRef<number | null>(null);
+
   // Currencies (customs/global rates, NOT season-based)
   const [settingsOpen, setSettingsOpen] = React.useState(false);
   const [currencyRates, setCurrencyRates] = React.useState<Record<string, CustomsCurrencyRate>>({});
@@ -406,6 +414,15 @@ export default function CorrectionPage() {
     fetchRecentRuns();
   }, []);
 
+  React.useEffect(() => {
+    return () => {
+      if (reloadAllDoneTimerRef.current != null) {
+        window.clearTimeout(reloadAllDoneTimerRef.current);
+        reloadAllDoneTimerRef.current = null;
+      }
+    };
+  }, []);
+
   async function fetchRecentRuns() {
     try {
       setLoadingRuns(true);
@@ -427,6 +444,90 @@ export default function CorrectionPage() {
     } finally {
       setLoadingRuns(false);
     }
+  }
+
+  const fetchRunExportNos = React.useCallback(async (sumupId: string, key: string): Promise<boolean> => {
+    if (!sumupId) return false;
+    setRunExportNos((prev) => ({ ...prev, [key]: { ...(prev[key] || {}), loading: true, error: undefined } }));
+    try {
+      const res = await fetch(`/api/finance/correction-export-no-sumups/${sumupId}`);
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Failed to load Export No.');
+      }
+      const data = await res.json();
+      const nos = (data.sumup?.export_nos || []) as string[];
+      setRunExportNos((prev) => ({
+        ...prev,
+        [key]: { loading: false, exportNos: nos, count: nos.length },
+      }));
+      return true;
+    } catch (e: any) {
+      setRunExportNos((prev) => ({
+        ...prev,
+        [key]: { loading: false, error: e?.message || 'Failed' },
+      }));
+      return false;
+    }
+  }, []);
+
+  async function reloadAllDiaryEntries() {
+    if (busy || reloadAllState.status === 'loading') return;
+
+    if (reloadAllDoneTimerRef.current != null) {
+      window.clearTimeout(reloadAllDoneTimerRef.current);
+      reloadAllDoneTimerRef.current = null;
+    }
+
+    const targets = recentRuns
+      .filter((r) => !!r.export_no_sumup_id && (r.export_no_count || 0) > 0)
+      .map((r) => {
+        const sumupId = r.export_no_sumup_id!;
+        const key = sumupId || r.id;
+        return { sumupId, key };
+      });
+
+    const total = targets.length;
+    if (total === 0) {
+      setReloadAllState({ status: 'done', total: 0, completed: 0, failed: 0 });
+      reloadAllDoneTimerRef.current = window.setTimeout(() => {
+        setReloadAllState({ status: 'idle', total: 0, completed: 0, failed: 0 });
+        reloadAllDoneTimerRef.current = null;
+      }, 2500);
+      return;
+    }
+
+    setReloadAllState({ status: 'loading', total, completed: 0, failed: 0 });
+
+    // Simple concurrency limiting (avoid firing hundreds of requests at once).
+    const concurrency = 6;
+    let cursor = 0;
+    const workers = new Array(Math.min(concurrency, total)).fill(null).map(async () => {
+      while (true) {
+        const idx = cursor++;
+        if (idx >= total) return;
+        const t = targets[idx]!;
+        // eslint-disable-next-line no-await-in-loop
+        const ok = await fetchRunExportNos(t.sumupId, t.key);
+        setReloadAllState((prev) => ({
+          ...prev,
+          completed: prev.completed + 1,
+          failed: prev.failed + (ok ? 0 : 1),
+        }));
+      }
+    });
+
+    await Promise.all(workers);
+
+    setReloadAllState((prev) => ({
+      ...prev,
+      status: prev.failed > 0 ? 'error' : 'done',
+    }));
+
+    reloadAllDoneTimerRef.current = window.setTimeout(() => {
+      setReloadAllState({ status: 'idle', total: 0, completed: 0, failed: 0 });
+      reloadAllDoneTimerRef.current = null;
+    }, 2500);
   }
 
   const saveExportNoSumUp = React.useCallback(
@@ -1522,9 +1623,35 @@ export default function CorrectionPage() {
             >
               {downloadingCollected ? 'Preparing…' : `Collected XLSX (${selectedRunIds.size})`}
             </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={reloadAllDiaryEntries}
+              disabled={busy || loadingRuns || reloadAllState.status === 'loading'}
+            >
+              {reloadAllState.status === 'loading' ? 'Reloading…' : 'Reload All'}
+            </Button>
             <Button variant="ghost" size="sm" onClick={fetchRecentRuns} disabled={loadingRuns || busy}>
               Refresh
             </Button>
+            {reloadAllState.status !== 'idle' && (
+              <Badge
+                className={[
+                  'text-xs',
+                  reloadAllState.status === 'loading'
+                    ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                    : reloadAllState.status === 'error'
+                      ? 'bg-amber-50 text-amber-800 border border-amber-200'
+                      : 'bg-emerald-50 text-emerald-700 border border-emerald-200',
+                ].join(' ')}
+              >
+                {reloadAllState.status === 'loading'
+                  ? `${reloadAllState.completed}/${reloadAllState.total}`
+                  : reloadAllState.failed > 0
+                    ? `Done (${reloadAllState.failed} failed)`
+                    : 'Done'}
+              </Badge>
+            )}
           </div>
         </CardHeader>
         <CardContent className="p-0">
@@ -1614,25 +1741,7 @@ export default function CorrectionPage() {
                         return next;
                       });
                       if (!details || (!details.loading && !details.exportNos && !details.error)) {
-                        setRunExportNos((prev) => ({ ...prev, [key]: { loading: true } }));
-                        try {
-                          const res = await fetch(`/api/finance/correction-export-no-sumups/${sumupId}`);
-                          if (!res.ok) {
-                            const data = await res.json().catch(() => ({}));
-                            throw new Error(data.error || 'Failed to load Export No.');
-                          }
-                          const data = await res.json();
-                          const nos = (data.sumup?.export_nos || []) as string[];
-                          setRunExportNos((prev) => ({
-                            ...prev,
-                            [key]: { loading: false, exportNos: nos, count: nos.length },
-                          }));
-                        } catch (e: any) {
-                          setRunExportNos((prev) => ({
-                            ...prev,
-                            [key]: { loading: false, error: e?.message || 'Failed' },
-                          }));
-                        }
+                        await fetchRunExportNos(sumupId, key);
                       }
                     };
 
