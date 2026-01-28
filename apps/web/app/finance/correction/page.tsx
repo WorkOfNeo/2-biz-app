@@ -213,6 +213,14 @@ type CountryAlias = {
   code: string;
 };
 
+type MonthlyFrafoersel = {
+  id: string;
+  created_at: string;
+  year: number;
+  month: number;
+  toldref: string;
+};
+
 function normalizeCountryShort(origin: string, countries: CountryAlias[]): string {
   const raw = String(origin ?? '').trim();
   if (!raw) return '';
@@ -271,18 +279,24 @@ function applySettingsToRows({
   settingsCurrency,
   usdRatesByMonth,
   countries,
+  monthlyToldrefByMonth,
 }: {
   rows: OutputRow[];
   settingsCurrency: string;
   usdRatesByMonth: Record<string, CustomsCurrencyRate>;
   countries: CountryAlias[];
+  monthlyToldrefByMonth: Record<string, string>;
 }): OutputRow[] {
   if (!rows || rows.length === 0) return [];
   return rows.map((r) => {
     const kurs = computeKurs({ currency: settingsCurrency, row: r, usdRatesByMonth });
+    const isEU = String(r.eksport_til || '').trim().toUpperCase() === 'EU';
+    const month = r.year && r.month ? monthKey(r.year, r.month) : '';
+    const monthlyToldref = month ? String(monthlyToldrefByMonth[month] || '').trim() : '';
     return {
       ...r,
       oprindelsesland: normalizeCountryShort(r.oprindelsesland, countries),
+      eksport_ref: isEU && monthlyToldref ? monthlyToldref : r.eksport_ref,
       kurs,
       total_dkk_vaerdi: computeTotalDkkVaerdi({ vaerdi: r.vaerdi, kurs }),
     };
@@ -406,6 +420,15 @@ export default function CorrectionPage() {
   const [countryCode, setCountryCode] = React.useState('');
   const [deletingRateId, setDeletingRateId] = React.useState<string | null>(null);
   const [deletingCountryId, setDeletingCountryId] = React.useState<string | null>(null);
+
+  // Månedsfraførsler (month -> Toldref mapping used for EU exports)
+  const [monthlyFrafoersler, setMonthlyFrafoersler] = React.useState<MonthlyFrafoersel[]>([]);
+  const [monthlyLoading, setMonthlyLoading] = React.useState(false);
+  const [monthlyError, setMonthlyError] = React.useState<string | null>(null);
+  const [monthlyMonth, setMonthlyMonth] = React.useState<string>(''); // YYYY-MM
+  const [monthlyToldref, setMonthlyToldref] = React.useState<string>('');
+  const [savingMonthlyKey, setSavingMonthlyKey] = React.useState<string | null>(null);
+  const [deletingMonthlyId, setDeletingMonthlyId] = React.useState<string | null>(null);
 
   // Fetch recent runs on mount
   React.useEffect(() => {
@@ -586,14 +609,23 @@ export default function CorrectionPage() {
     return c;
   }, [styleMeta, serverRows]);
 
+  const monthlyToldrefByMonth = React.useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const it of monthlyFrafoersler) {
+      if (it?.year && it?.month) map[monthKey(it.year, it.month)] = String(it.toldref || '').trim();
+    }
+    return map;
+  }, [monthlyFrafoersler]);
+
   const outputRows = React.useMemo(() => {
     return applySettingsToRows({
       rows: serverRows,
       settingsCurrency,
       usdRatesByMonth: currencyRates,
       countries,
+      monthlyToldrefByMonth,
     });
-  }, [serverRows, settingsCurrency, currencyRates, countries]);
+  }, [serverRows, settingsCurrency, currencyRates, countries, monthlyToldrefByMonth]);
 
   // When we are previewing (including loaded runs), derive export nos from output rows for display
   React.useEffect(() => {
@@ -696,10 +728,33 @@ export default function CorrectionPage() {
     }
   }, []);
 
+  const fetchMonthlyFrafoersler = React.useCallback(async () => {
+    setMonthlyError(null);
+    setMonthlyLoading(true);
+    try {
+      const res = await fetch('/api/finance/customs-monthly-frafoersler');
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Failed to load Månedsfraførsler');
+      }
+      const data = await res.json();
+      setMonthlyFrafoersler((data.items || []) as MonthlyFrafoersel[]);
+    } catch (e: any) {
+      setMonthlyError(e?.message || 'Failed to load Månedsfraførsler');
+    } finally {
+      setMonthlyLoading(false);
+    }
+  }, []);
+
   // Fetch country short-code settings on mount (so Load can apply them even with Settings closed).
   React.useEffect(() => {
     fetchCountries();
   }, [fetchCountries]);
+
+  // Fetch month mappings on mount (so Load/Export can apply them even with Settings closed).
+  React.useEffect(() => {
+    fetchMonthlyFrafoersler();
+  }, [fetchMonthlyFrafoersler]);
 
   const fetchUsdRatesForMonths = React.useCallback(async (months: string[]) => {
     if (!months || months.length === 0) return;
@@ -743,11 +798,12 @@ export default function CorrectionPage() {
     // Always load the log so months can be added/edited manually
     fetchUsdLog();
     fetchCountries();
+    fetchMonthlyFrafoersler();
     // Also load any required months for the current run (if USD)
     if (usdRequiredMonths.length > 0) {
       fetchUsdRatesForMonths(usdRequiredMonths);
     }
-  }, [settingsOpen, usdRequiredMonths, fetchUsdLog, fetchUsdRatesForMonths, fetchCountries]);
+  }, [settingsOpen, usdRequiredMonths, fetchUsdLog, fetchUsdRatesForMonths, fetchCountries, fetchMonthlyFrafoersler]);
 
   React.useEffect(() => {
     if (!settingsOpen) return;
@@ -897,6 +953,64 @@ export default function CorrectionPage() {
       setCountriesError(e?.message || 'Failed to delete country');
     } finally {
       setDeletingCountryId(null);
+    }
+  }, []);
+
+  const saveMonthlyFrafoersel = React.useCallback(async () => {
+    setMonthlyError(null);
+    const mk = String(monthlyMonth || '').trim();
+    const m = mk.match(/^(\d{4})-(\d{2})$/);
+    if (!m) {
+      setMonthlyError('Month must be in format YYYY-MM');
+      return;
+    }
+    const toldref = String(monthlyToldref || '').trim();
+    if (!toldref) {
+      setMonthlyError('Toldref is required');
+      return;
+    }
+
+    setSavingMonthlyKey(mk);
+    try {
+      const res = await fetch('/api/finance/customs-monthly-frafoersler', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ monthKey: mk, toldref }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Failed to save Månedsfraførsler');
+      }
+      const data = await res.json();
+      const saved = data.item as MonthlyFrafoersel;
+      setMonthlyFrafoersler((prev) => {
+        const next = [saved, ...prev.filter((x) => x.id !== saved.id)];
+        next.sort((a, b) => (b.year - a.year) || (b.month - a.month));
+        return next;
+      });
+      setMonthlyMonth('');
+      setMonthlyToldref('');
+    } catch (e: any) {
+      setMonthlyError(e?.message || 'Failed to save Månedsfraførsler');
+    } finally {
+      setSavingMonthlyKey(null);
+    }
+  }, [monthlyMonth, monthlyToldref]);
+
+  const deleteMonthlyFrafoersel = React.useCallback(async (id: string) => {
+    setMonthlyError(null);
+    setDeletingMonthlyId(id);
+    try {
+      const res = await fetch(`/api/finance/customs-monthly-frafoersler/${id}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Failed to delete');
+      }
+      setMonthlyFrafoersler((prev) => prev.filter((x) => x.id !== id));
+    } catch (e: any) {
+      setMonthlyError(e?.message || 'Failed to delete');
+    } finally {
+      setDeletingMonthlyId(null);
     }
   }, []);
 
@@ -1243,6 +1357,7 @@ export default function CorrectionPage() {
         settingsCurrency: runCurrency,
         usdRatesByMonth,
         countries,
+        monthlyToldrefByMonth,
       });
       await downloadRowsXlsx(computed, {
         styleNo: runData?.style_no || run.style_no,
@@ -1322,6 +1437,7 @@ export default function CorrectionPage() {
           settingsCurrency: runCurrency,
           usdRatesByMonth: usdRatesCache,
           countries,
+          monthlyToldrefByMonth,
         });
 
         const runMeta = {
@@ -1994,6 +2110,7 @@ export default function CorrectionPage() {
               <Tabs defaultValue="USD">
                 <TabsList>
                   <TabsTrigger value="USD">USD</TabsTrigger>
+                  <TabsTrigger value="monthly">Månedsfraførsler</TabsTrigger>
                   <TabsTrigger value="countries">Countries</TabsTrigger>
                 </TabsList>
 
@@ -2157,6 +2274,103 @@ export default function CorrectionPage() {
                           </div>
                         );
                       })}
+                    </div>
+                  )}
+                </TabsContent>
+
+                <TabsContent value="monthly" className="space-y-3">
+                  {monthlyError && (
+                    <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-800">
+                      {monthlyError}
+                    </div>
+                  )}
+
+                  <div className="rounded-lg border border-slate-200 bg-white p-4 space-y-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <div className="text-sm font-semibold text-slate-900">Månedsfraførsler</div>
+                        <div className="text-xs text-slate-600">
+                          For rows where <span className="font-medium">Eksport til = EU</span>, set{' '}
+                          <span className="font-medium">Eksport ref</span> (column V) to the month’s Toldref.
+                        </div>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={fetchMonthlyFrafoersler}
+                        disabled={monthlyLoading || busy}
+                      >
+                        Refresh
+                      </Button>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+                      <div>
+                        <div className="text-xs text-slate-600 mb-1">Month</div>
+                        <Input
+                          type="month"
+                          value={monthlyMonth}
+                          onChange={(e) => setMonthlyMonth(e.currentTarget.value)}
+                          className="max-w-[220px]"
+                        />
+                      </div>
+                      <div>
+                        <div className="text-xs text-slate-600 mb-1">Toldref</div>
+                        <Input
+                          placeholder="e.g. 25DKWKDI2FO0LNSZA6"
+                          value={monthlyToldref}
+                          onChange={(e) => setMonthlyToldref(e.currentTarget.value)}
+                        />
+                      </div>
+                      <div className="flex items-end gap-2">
+                        <Button
+                          onClick={saveMonthlyFrafoersel}
+                          disabled={
+                            busy ||
+                            monthlyLoading ||
+                            !!savingMonthlyKey ||
+                            !String(monthlyMonth || '').trim().match(/^(\d{4})-(\d{2})$/) ||
+                            !String(monthlyToldref || '').trim()
+                          }
+                        >
+                          {savingMonthlyKey ? 'Saving…' : 'Save'}
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {monthlyLoading ? (
+                    <div className="text-sm text-slate-500">Loading…</div>
+                  ) : monthlyFrafoersler.length === 0 ? (
+                    <div className="text-sm text-slate-500">No month mappings configured.</div>
+                  ) : (
+                    <div className="rounded-lg border border-slate-200 bg-white">
+                      <div className="px-4 py-3 border-b flex items-center justify-between">
+                        <div className="text-sm font-semibold text-slate-900">Saved months</div>
+                        <div className="text-xs text-slate-500">{monthlyFrafoersler.length} entries</div>
+                      </div>
+                      <div className="divide-y">
+                        {monthlyFrafoersler.map((it) => {
+                          const mk = monthKey(it.year, it.month);
+                          return (
+                            <div key={it.id} className="px-4 py-3 flex items-center justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="text-sm font-medium text-slate-900">{mk}</div>
+                                <div className="text-xs text-slate-500 font-mono break-all">{it.toldref}</div>
+                              </div>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => deleteMonthlyFrafoersel(it.id)}
+                                disabled={busy || deletingMonthlyId === it.id}
+                                className="h-7 px-2 text-red-600 hover:text-red-700 hover:bg-red-50"
+                              >
+                                {deletingMonthlyId === it.id ? 'Deleting…' : 'Delete'}
+                              </Button>
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
                   )}
                 </TabsContent>
