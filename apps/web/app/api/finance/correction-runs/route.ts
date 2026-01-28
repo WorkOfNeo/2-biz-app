@@ -118,8 +118,23 @@ function buildIndUd(type: string): string {
   return 'Ud';
 }
 
+function isCorrectionType(type: string): boolean {
+  const t = String(type || '').trim().toLowerCase();
+  return (
+    t === 'correction' ||
+    t === 'korrektion' ||
+    t === 'rettelse' ||
+    t.startsWith('corr') ||
+    t.startsWith('korr') ||
+    t.startsWith('rett')
+  );
+}
+
 function buildAntal(type: string, qty: number): number {
   const t = String(type || '').trim().toLowerCase();
+  // Keep sign for Correction rows so exports show surplus/negative.
+  if (isCorrectionType(t)) return qty;
+
   // For non-purchase, if qty is negative, take absolute value
   if (t !== 'purchase' && qty < 0) {
     return Math.abs(qty);
