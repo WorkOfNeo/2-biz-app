@@ -720,8 +720,9 @@ export default function SuppliersPage() {
       setSaveProgress({ step: 'Færdig!', current: 100, total: 100 });
       await new Promise(resolve => setTimeout(resolve, 200));
 
-      const message = monthsToSave.length === 1
-        ? `Data gemt for ${formatMonthName(monthsToSave[0])}. ${totalInserted} rækker indsat${totalSkipped > 0 ? `, ${totalSkipped} duplikater sprunget over` : ''}.`
+      const singleMonth = monthsToSave[0];
+      const message = monthsToSave.length === 1 && singleMonth
+        ? `Data gemt for ${formatMonthName(singleMonth)}. ${totalInserted} rækker indsat${totalSkipped > 0 ? `, ${totalSkipped} duplikater sprunget over` : ''}.`
         : `Data gemt for ${monthsToSave.length} måneder. I alt ${totalInserted} nye rækker${totalSkipped > 0 ? `, ${totalSkipped} duplikater sprunget over` : ''}.`;
       setSaveResult({ type: 'success', message });
 
