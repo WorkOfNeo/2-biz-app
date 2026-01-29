@@ -1629,8 +1629,8 @@ type TopStyle = {
 };
 
 function AnalyticsTab({ styles }: { styles: StyleRow[] }) {
-  // Style selector
-  const [selectedStyleNo, setSelectedStyleNo] = useState<string>('');
+  // Multi-style selector
+  const [selectedStyleNos, setSelectedStyleNos] = useState<string[]>([]);
   const [styleSearch, setStyleSearch] = useState('');
   
   // Date range
@@ -1643,9 +1643,15 @@ function AnalyticsTab({ styles }: { styles: StyleRow[] }) {
     return new Date().toISOString().split('T')[0];
   });
   
+  // Available colors (loaded for selected styles + date range)
+  const [availableColors, setAvailableColors] = useState<string[]>([]);
+  const [byStyleColors, setByStyleColors] = useState<Record<string, string[]>>({});
+  const [selectedColors, setSelectedColors] = useState<Set<string>>(new Set());
+  const [colorsLoading, setColorsLoading] = useState(false);
+  
   // Data states
   const [timeseriesData, setTimeseriesData] = useState<TimeseriesPoint[]>([]);
-  const [matrixData, setMatrixData] = useState<MatrixData | null>(null);
+  const [matrixDataByStyle, setMatrixDataByStyle] = useState<Record<string, MatrixData>>({});
   const [topStyles, setTopStyles] = useState<TopStyle[]>([]);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [kpis, setKpis] = useState<{ totalUnits: number; avgPerDay: number; colors: string[]; daysInPeriod: number } | null>(null);
@@ -1657,11 +1663,14 @@ function AnalyticsTab({ styles }: { styles: StyleRow[] }) {
   const filteredStyles = useMemo(() => {
     if (!styleSearch.trim()) return styles.slice(0, 50);
     const search = styleSearch.toLowerCase();
-    return styles.filter(s => 
-      s.style_no.toLowerCase().includes(search) ||
-      (s.style_name && s.style_name.toLowerCase().includes(search))
-    ).slice(0, 50);
-  }, [styles, styleSearch]);
+    return styles
+      .filter(s => !selectedStyleNos.includes(s.style_no))
+      .filter(s => 
+        s.style_no.toLowerCase().includes(search) ||
+        (s.style_name && s.style_name.toLowerCase().includes(search))
+      )
+      .slice(0, 50);
+  }, [styles, styleSearch, selectedStyleNos]);
 
   // Load top styles on mount
   React.useEffect(() => {
@@ -1691,49 +1700,124 @@ function AnalyticsTab({ styles }: { styles: StyleRow[] }) {
     }
   }
 
-  // Load analytics data for selected style
+  // Load available colors for selected styles
+  async function loadAvailableColors() {
+    if (selectedStyleNos.length === 0) return;
+    setColorsLoading(true);
+    try {
+      const res = await fetch('/api/historical-sales/available-colors', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          style_nos: selectedStyleNos,
+          startDate: analyticsDateFrom,
+          endDate: analyticsDateTo
+        })
+      });
+      const json = await res.json();
+      if (res.ok) {
+        setAvailableColors(json.colors || []);
+        setByStyleColors(json.byStyle || {});
+        setSelectedColors(new Set(json.colors || []));
+      }
+    } catch (err) {
+      console.error('Failed to load available colors:', err);
+    } finally {
+      setColorsLoading(false);
+    }
+  }
+
+  function toggleColor(color: string) {
+    setSelectedColors(prev => {
+      const next = new Set(prev);
+      if (next.has(color)) next.delete(color);
+      else next.add(color);
+      return next;
+    });
+  }
+
+  function selectAllColors() {
+    setSelectedColors(new Set(availableColors));
+  }
+
+  function deselectAllColors() {
+    setSelectedColors(new Set());
+  }
+
+  // Load analytics data for selected style(s) and colors
   async function loadAnalytics() {
-    if (!selectedStyleNo) return;
+    if (selectedStyleNos.length === 0) return;
+    
+    const colorsFilter = selectedColors.size > 0 ? Array.from(selectedColors) : undefined;
     
     setAnalyticsLoading(true);
     try {
-      // Fetch timeseries
-      const tsRes = await fetch('/api/historical-sales/timeseries', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          style_no: selectedStyleNo,
-          startDate: analyticsDateFrom,
-          endDate: analyticsDateTo
-        })
-      });
-      const tsJson = await tsRes.json();
-      
-      if (tsRes.ok) {
-        setTimeseriesData(tsJson.points || []);
-        setKpis({
-          totalUnits: tsJson.totalUnits || 0,
-          avgPerDay: tsJson.avgPerDay || 0,
-          colors: tsJson.colors || [],
-          daysInPeriod: tsJson.daysInPeriod || 0
+      const allPointsByDate = new Map<string, { total: number; byColor: Record<string, number> }>();
+      let totalUnits = 0;
+      let daysInPeriod = 0;
+      const allColorsSet = new Set<string>();
+      const matrices: Record<string, MatrixData> = {};
+
+      for (const style_no of selectedStyleNos) {
+        // Timeseries
+        const tsRes = await fetch('/api/historical-sales/timeseries', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            style_no,
+            startDate: analyticsDateFrom,
+            endDate: analyticsDateTo,
+            colors: colorsFilter
+          })
         });
+        const tsJson = await tsRes.json();
+        
+        if (tsRes.ok && tsJson.points) {
+          totalUnits += tsJson.totalUnits || 0;
+          daysInPeriod = Math.max(daysInPeriod, tsJson.daysInPeriod || 0);
+          (tsJson.colors || []).forEach((c: string) => allColorsSet.add(c));
+          
+          for (const p of tsJson.points) {
+            if (!allPointsByDate.has(p.date)) {
+              allPointsByDate.set(p.date, { total: 0, byColor: {} });
+            }
+            const entry = allPointsByDate.get(p.date)!;
+            entry.total += p.total;
+            for (const [color, qty] of Object.entries(p.byColor || {})) {
+              entry.byColor[color] = (entry.byColor[color] || 0) + (qty as number);
+            }
+          }
+        }
+
+        // Matrix per style
+        const matrixRes = await fetch('/api/historical-sales/matrix', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            style_no,
+            startDate: analyticsDateFrom,
+            endDate: analyticsDateTo,
+            colors: colorsFilter
+          })
+        });
+        const matrixJson = await matrixRes.json();
+        if (matrixRes.ok && matrixJson) {
+          matrices[style_no] = matrixJson;
+        }
       }
 
-      // Fetch matrix
-      const matrixRes = await fetch('/api/historical-sales/matrix', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          style_no: selectedStyleNo,
-          startDate: analyticsDateFrom,
-          endDate: analyticsDateTo
-        })
+      const mergedPoints = Array.from(allPointsByDate.entries())
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([date, entry]) => ({ date, ...entry }));
+
+      setTimeseriesData(mergedPoints);
+      setMatrixDataByStyle(matrices);
+      setKpis({
+        totalUnits,
+        avgPerDay: daysInPeriod > 0 ? Math.round((totalUnits / daysInPeriod) * 100) / 100 : 0,
+        colors: Array.from(allColorsSet).sort(),
+        daysInPeriod
       });
-      const matrixJson = await matrixRes.json();
-      
-      if (matrixRes.ok) {
-        setMatrixData(matrixJson);
-      }
     } catch (err) {
       console.error('Failed to load analytics:', err);
     } finally {
@@ -1749,7 +1833,10 @@ function AnalyticsTab({ styles }: { styles: StyleRow[] }) {
     return timeseriesData.reduce((max, p) => p.total > max.total ? p : max, first);
   }, [timeseriesData]);
 
-  const selectedStyle = styles.find(s => s.style_no === selectedStyleNo);
+  const selectedStyles = useMemo(
+    () => selectedStyleNos.map(no => styles.find(s => s.style_no === no)).filter(Boolean) as StyleRow[],
+    [selectedStyleNos, styles]
+  );
 
   return (
     <div className="space-y-4">
@@ -1758,18 +1845,18 @@ function AnalyticsTab({ styles }: { styles: StyleRow[] }) {
         <CardHeader className="pb-3">
           <CardTitle className="text-lg">Sales Analytics</CardTitle>
           <CardDescription>
-            Select a style and date range to visualize sales trends
+            Select one or more styles, load available colors, then load analytics
           </CardDescription>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            {/* Style selector */}
+            {/* Multi-style selector */}
             <div className="md:col-span-2 space-y-1">
-              <label className="text-xs font-medium text-slate-700">Style</label>
+              <label className="text-xs font-medium text-slate-700">Styles</label>
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
                 <Input
-                  placeholder="Search by style no or name..."
+                  placeholder="Search and add style(s)..."
                   value={styleSearch}
                   onChange={(e) => setStyleSearch(e.target.value)}
                   className="pl-9"
@@ -1781,7 +1868,9 @@ function AnalyticsTab({ styles }: { styles: StyleRow[] }) {
                     <button
                       key={s.id}
                       onClick={() => {
-                        setSelectedStyleNo(s.style_no);
+                        if (!selectedStyleNos.includes(s.style_no)) {
+                          setSelectedStyleNos(prev => [...prev, s.style_no]);
+                        }
                         setStyleSearch('');
                       }}
                       className="w-full text-left px-3 py-2 hover:bg-slate-50 text-sm"
@@ -1792,9 +1881,25 @@ function AnalyticsTab({ styles }: { styles: StyleRow[] }) {
                   ))}
                 </div>
               )}
-              {selectedStyleNo && (
-                <div className="text-sm text-[#8FA894] font-medium">
-                  Selected: {selectedStyleNo} {selectedStyle?.style_name && `- ${selectedStyle.style_name}`}
+              {selectedStyleNos.length > 0 && (
+                <div className="flex flex-wrap gap-2 mt-2">
+                  {selectedStyleNos.map(no => {
+                    const s = styles.find(x => x.style_no === no);
+                    return (
+                      <Badge
+                        key={no}
+                        className="bg-[#8FA894]/20 text-[#4A6B52] font-mono pr-1"
+                      >
+                        {no}
+                        <button
+                          onClick={() => setSelectedStyleNos(prev => prev.filter(n => n !== no))}
+                          className="ml-1.5 rounded hover:bg-[#8FA894]/30 p-0.5"
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                      </Badge>
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -1818,10 +1923,77 @@ function AnalyticsTab({ styles }: { styles: StyleRow[] }) {
             </div>
           </div>
           
+          {/* Load available colors */}
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <Button
+              variant="outline"
+              onClick={loadAvailableColors}
+              disabled={selectedStyleNos.length === 0 || colorsLoading}
+            >
+              {colorsLoading ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Loading...
+                </>
+              ) : (
+                'Load available colors'
+              )}
+            </Button>
+            {availableColors.length > 0 && (
+              <span className="text-sm text-slate-500">
+                {availableColors.length} color(s) with data in period
+              </span>
+            )}
+          </div>
+
+          {/* Color checkboxes */}
+          {availableColors.length > 0 && (
+            <div className="mt-4 p-3 bg-slate-50 rounded-lg border">
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-xs font-medium text-slate-700">Colors to include in analytics</label>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={selectAllColors}
+                    className="text-xs text-[#8FA894] hover:underline"
+                  >
+                    Select all
+                  </button>
+                  <span className="text-slate-300">|</span>
+                  <button
+                    type="button"
+                    onClick={deselectAllColors}
+                    className="text-xs text-slate-500 hover:underline"
+                  >
+                    Deselect all
+                  </button>
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-x-4 gap-y-1 max-h-32 overflow-y-auto">
+                {availableColors.map(color => (
+                  <label key={color} className="flex items-center gap-1.5 text-sm cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={selectedColors.has(color)}
+                      onChange={() => toggleColor(color)}
+                      className="rounded border-slate-300 text-[#8FA894] focus:ring-[#8FA894]"
+                    />
+                    <span>{color}</span>
+                  </label>
+                ))}
+              </div>
+              {byStyleColors && Object.keys(byStyleColors).length > 1 && (
+                <p className="text-xs text-slate-500 mt-2">
+                  By style: {Object.entries(byStyleColors).map(([no, cols]) => `${no} (${cols.length})`).join(', ')}
+                </p>
+              )}
+            </div>
+          )}
+          
           <div className="mt-4">
             <Button 
               onClick={loadAnalytics}
-              disabled={!selectedStyleNo || analyticsLoading}
+              disabled={selectedStyleNos.length === 0 || analyticsLoading}
               className="bg-[#8FA894] hover:bg-[#8FA894]/90"
             >
               {analyticsLoading ? (
@@ -1838,7 +2010,7 @@ function AnalyticsTab({ styles }: { styles: StyleRow[] }) {
       </Card>
 
       {/* Top Styles Quick Pick */}
-      {!selectedStyleNo && (
+      {selectedStyleNos.length === 0 && (
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-base flex items-center gap-2">
@@ -1859,8 +2031,9 @@ function AnalyticsTab({ styles }: { styles: StyleRow[] }) {
                   <button
                     key={style.style_no}
                     onClick={() => {
-                      setSelectedStyleNo(style.style_no);
-                      setTimeout(loadAnalytics, 100);
+                      if (!selectedStyleNos.includes(style.style_no)) {
+                        setSelectedStyleNos(prev => [...prev, style.style_no]);
+                      }
                     }}
                     className="p-3 border rounded-lg hover:border-[#8FA894] hover:bg-[#8FA894]/5 text-left transition-colors"
                   >
@@ -1882,7 +2055,7 @@ function AnalyticsTab({ styles }: { styles: StyleRow[] }) {
       )}
 
       {/* KPI Tiles */}
-      {kpis && selectedStyleNo && (
+      {kpis && selectedStyleNos.length > 0 && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <Card>
             <CardContent className="pt-4">
@@ -1948,31 +2121,35 @@ function AnalyticsTab({ styles }: { styles: StyleRow[] }) {
       )}
 
       {/* Charts */}
-      {timeseriesData.length > 0 && selectedStyleNo && (
+      {timeseriesData.length > 0 && selectedStyleNos.length > 0 && (
         <>
           {/* Daily Trend */}
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-base">Daily Sales Trend</CardTitle>
-              <CardDescription>Units sold per day for {selectedStyleNo}</CardDescription>
+              <CardDescription>
+                Units sold per day {selectedStyleNos.length > 1 ? `(${selectedStyleNos.length} styles combined)` : `for ${selectedStyleNos[0]}`}
+              </CardDescription>
             </CardHeader>
             <CardContent>
               <DailyLineChart data={timeseriesData} height={300} />
             </CardContent>
           </Card>
 
-          {/* Color Mix */}
+          {/* Color Mix - show all colors (no limit) */}
           {kpis && kpis.colors.length > 1 && (
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="text-base">Sales by Color Over Time</CardTitle>
-                <CardDescription>Stacked view showing contribution of each color</CardDescription>
+                <CardDescription>
+                  Stacked view — all {kpis.colors.length} colors
+                </CardDescription>
               </CardHeader>
               <CardContent>
                 <StackedAreaByColor 
                   data={timeseriesData} 
                   colors={kpis.colors}
-                  maxColors={8}
+                  maxColors={50}
                   height={300} 
                 />
               </CardContent>
@@ -1981,91 +2158,99 @@ function AnalyticsTab({ styles }: { styles: StyleRow[] }) {
         </>
       )}
 
-      {/* Size Matrix */}
-      {matrixData && selectedStyleNo && (
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base">Size/Color Matrix</CardTitle>
-            <CardDescription>Total units sold by color and size</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="overflow-x-auto">
-              <table className="min-w-full text-sm">
-                <thead>
-                  <tr className="bg-slate-50">
-                    <th className="p-2 text-left border font-medium">Color</th>
-                    {matrixData.sizes.map(size => (
-                      <th key={size} className="p-2 text-center border font-medium">{size}</th>
-                    ))}
-                    <th className="p-2 text-right border font-medium bg-slate-100">Total</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {matrixData.colors.map(color => (
-                    <tr key={color} className="hover:bg-slate-50">
-                      <td className="p-2 border font-medium">{color}</td>
-                      {matrixData.sizes.map(size => {
-                        const value = matrixData.cells[color]?.[size] || 0;
-                        const maxValue = Math.max(...Object.values(matrixData.totals.bySize));
-                        const intensity = maxValue > 0 ? value / maxValue : 0;
-                        return (
-                          <td 
-                            key={size} 
-                            className="p-2 text-center border tabular-nums"
-                            style={{
-                              backgroundColor: value > 0 ? `rgba(143, 168, 148, ${0.1 + intensity * 0.5})` : undefined
-                            }}
-                          >
-                            {value > 0 ? value.toLocaleString('da-DK') : '—'}
+      {/* Size Matrix - one per style when multiple */}
+      {Object.keys(matrixDataByStyle).length > 0 && selectedStyleNos.length > 0 && (
+        <>
+          {Object.entries(matrixDataByStyle).map(([styleNo, matrixData]) => (
+            <Card key={styleNo}>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base">Size/Color Matrix — {styleNo}</CardTitle>
+                <CardDescription>Total units sold by color and size</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="overflow-x-auto">
+                  <table className="min-w-full text-sm">
+                    <thead>
+                      <tr className="bg-slate-50">
+                        <th className="p-2 text-left border font-medium">Color</th>
+                        {matrixData.sizes.map(size => (
+                          <th key={size} className="p-2 text-center border font-medium">{size}</th>
+                        ))}
+                        <th className="p-2 text-right border font-medium bg-slate-100">Total</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {matrixData.colors.map(color => (
+                        <tr key={color} className="hover:bg-slate-50">
+                          <td className="p-2 border font-medium">{color}</td>
+                          {matrixData.sizes.map(size => {
+                            const value = matrixData.cells[color]?.[size] || 0;
+                            const maxValue = Math.max(...Object.values(matrixData.totals.bySize), 1);
+                            const intensity = maxValue > 0 ? value / maxValue : 0;
+                            return (
+                              <td 
+                                key={size} 
+                                className="p-2 text-center border tabular-nums"
+                                style={{
+                                  backgroundColor: value > 0 ? `rgba(143, 168, 148, ${0.1 + intensity * 0.5})` : undefined
+                                }}
+                              >
+                                {value > 0 ? value.toLocaleString('da-DK') : '—'}
+                              </td>
+                            );
+                          })}
+                          <td className="p-2 text-right border font-medium bg-slate-50 tabular-nums">
+                            {(matrixData.totals.byColor[color] || 0).toLocaleString('da-DK')}
                           </td>
-                        );
-                      })}
-                      <td className="p-2 text-right border font-medium bg-slate-50 tabular-nums">
-                        {(matrixData.totals.byColor[color] || 0).toLocaleString('da-DK')}
-                      </td>
-                    </tr>
-                  ))}
-                  <tr className="bg-slate-100 font-medium">
-                    <td className="p-2 border">Total</td>
-                    {matrixData.sizes.map(size => (
-                      <td key={size} className="p-2 text-center border tabular-nums">
-                        {(matrixData.totals.bySize[size] || 0).toLocaleString('da-DK')}
-                      </td>
-                    ))}
-                    <td className="p-2 text-right border font-bold tabular-nums text-[#8FA894]">
-                      {matrixData.totals.grand.toLocaleString('da-DK')}
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </CardContent>
-        </Card>
+                        </tr>
+                      ))}
+                      <tr className="bg-slate-100 font-medium">
+                        <td className="p-2 border">Total</td>
+                        {matrixData.sizes.map(size => (
+                          <td key={size} className="p-2 text-center border tabular-nums">
+                            {(matrixData.totals.bySize[size] || 0).toLocaleString('da-DK')}
+                          </td>
+                        ))}
+                        <td className="p-2 text-right border font-bold tabular-nums text-[#8FA894]">
+                          {matrixData.totals.grand.toLocaleString('da-DK')}
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </>
       )}
 
-      {/* Size Distribution Bar */}
-      {matrixData && selectedStyleNo && (
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base">Size Distribution</CardTitle>
-            <CardDescription>Total units by size (all colors combined)</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <SizeDistributionBar 
-              sizes={matrixData.sizes}
-              totals={matrixData.totals.bySize}
-              height={250}
-            />
-          </CardContent>
-        </Card>
+      {/* Size Distribution Bar - one per style when multiple */}
+      {Object.keys(matrixDataByStyle).length > 0 && selectedStyleNos.length > 0 && (
+        <>
+          {Object.entries(matrixDataByStyle).map(([styleNo, matrixData]) => (
+            <Card key={styleNo}>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base">Size Distribution — {styleNo}</CardTitle>
+                <CardDescription>Total units by size (all colors combined)</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <SizeDistributionBar 
+                  sizes={matrixData.sizes}
+                  totals={matrixData.totals.bySize}
+                  height={250}
+                />
+              </CardContent>
+            </Card>
+          ))}
+        </>
       )}
 
       {/* No data message */}
-      {selectedStyleNo && !analyticsLoading && timeseriesData.length === 0 && (
+      {selectedStyleNos.length > 0 && !analyticsLoading && timeseriesData.length === 0 && (
         <Card>
           <CardContent className="py-12 text-center text-slate-500">
-            <p>No sales data found for {selectedStyleNo} in the selected date range.</p>
-            <p className="text-sm mt-2">Try adjusting the date range or selecting a different style.</p>
+            <p>No sales data found for {selectedStyleNos.join(', ')} in the selected date range.</p>
+            <p className="text-sm mt-2">Try adjusting the date range, loading available colors, or selecting different styles.</p>
           </CardContent>
         </Card>
       )}

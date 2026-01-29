@@ -25,19 +25,12 @@ type Props = {
   height?: number;
 };
 
-// Color palette for stacked areas
+// Color palette for stacked areas (cycles for many colors)
 const COLOR_PALETTE = [
-  '#8FA894',
-  '#6B8E7B',
-  '#C5D5CA',
-  '#4A6B52',
-  '#A8C4AF',
-  '#7B9B85',
-  '#5C8465',
-  '#9DB8A5',
-  '#8CA395',
-  '#6E9078',
-  '#94a3b8', // slate for "Other"
+  '#8FA894', '#6B8E7B', '#C5D5CA', '#4A6B52', '#A8C4AF',
+  '#7B9B85', '#5C8465', '#9DB8A5', '#8CA395', '#6E9078',
+  '#647b6e', '#3d5c4a', '#7a9a7e', '#5a7a5e', '#8fb896',
+  '#94a3b8', '#64748b', '#475569', '#334155', '#1e293b',
 ];
 
 export function StackedAreaByColor({ data, colors, maxColors = 8, height = 300 }: Props) {
