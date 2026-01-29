@@ -593,6 +593,7 @@ export default function SuppliersPage() {
 
       for (let m = 0; m < monthsToSave.length; m++) {
         const yearMonth = monthsToSave[m];
+        if (!yearMonth) continue;
         const progressBase = Math.round((m / monthsToSave.length) * 90);
         setSaveProgress({ step: `Behandler ${formatMonthName(yearMonth)}...`, current: progressBase, total: 100 });
 
