@@ -1704,7 +1704,9 @@ function AnalyticsTab({ styles }: { styles: StyleRow[] }) {
       const maxW = pageW * margin;
       const maxH = pageH * margin;
       for (let i = 0; i < sections.length; i++) {
-        const canvas = await html2canvas(sections[i], { scale: 2, useCORS: true, logging: false });
+        const el = sections[i];
+        if (!el) continue;
+        const canvas = await html2canvas(el, { scale: 2, useCORS: true, logging: false });
         const img = canvas.toDataURL('image/png');
         if (i > 0) pdf.addPage();
         const imgW = canvas.width;
