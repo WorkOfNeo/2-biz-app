@@ -68,27 +68,38 @@ export async function POST(req: Request) {
     const startDateStr = allStarts[0] || '';
     const endDateStr = allEnds[allEnds.length - 1] || '';
 
-    // Fetch data
-    let query = supabase
-      .from('historical_sales')
-      .select('date, color, quantity')
-      .eq('style_no', style_no)
-      .gte('date', startDateStr)
-      .lte('date', endDateStr)
-      .limit(50000);
+    // Fetch data with pagination (Supabase default limit is 1000)
+    const PAGE_SIZE = 1000;
+    let rawData: any[] = [];
+    let from = 0;
+    let hasMore = true;
 
-    if (Array.isArray(colors) && colors.length > 0) {
-      query = query.in('color', colors);
-    }
+    while (hasMore) {
+      let query = supabase
+        .from('historical_sales')
+        .select('date, color, quantity')
+        .eq('style_no', style_no)
+        .gte('date', startDateStr)
+        .lte('date', endDateStr)
+        .order('date', { ascending: true })
+        .range(from, from + PAGE_SIZE - 1);
 
-    const { data: rawData, error } = await query;
+      if (Array.isArray(colors) && colors.length > 0) {
+        query = query.in('color', colors);
+      }
 
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
+      const { data: chunk, error } = await query;
+
+      if (error) {
+        return NextResponse.json({ error: error.message }, { status: 500 });
+      }
+      rawData = rawData.concat(chunk || []);
+      hasMore = (chunk?.length ?? 0) === PAGE_SIZE;
+      from += PAGE_SIZE;
     }
 
     // Filter to only include rows within specified month ranges (if months[] provided)
-    let historicalData = rawData || [];
+    let historicalData = rawData;
     if (Array.isArray(months) && months.length > 0) {
       const monthSet = new Set(months);
       historicalData = historicalData.filter((row: any) => {

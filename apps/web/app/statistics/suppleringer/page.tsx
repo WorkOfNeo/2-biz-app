@@ -312,12 +312,27 @@ export default function SuppliersPage() {
 
       setProgress({ step: 'Aggregating sales data...', current: 95, total: 100 });
       await new Promise(resolve => setTimeout(resolve, 50));
+
+      // Detect months from row dates so user sees what will be saved
+      const monthsFound = new Set<string>();
+      for (const row of rows) {
+        const m = extractYearMonth(row.date);
+        if (m) monthsFound.add(m);
+      }
+      const sortedMonths = Array.from(monthsFound).sort();
+      const monthList = sortedMonths.map((m) => formatMonthName(m)).join(', ');
+      const monthText = monthList
+        ? `Måneder i fil: ${monthList}.`
+        : 'Ingen datoer fundet – tjek kolonne BO (dato). Data kan ikke gemmes per måned.';
       
       setParsedRows(rows);
       setFile(selectedFile);
       setSelectedSalesperson(null);
       setSelectedSalespersonId(null);
-      setUploadResult({ type: 'success', message: `Fil indlæst: ${rows.length} rækker fra ${selectedFile.name}` });
+      setUploadResult({
+        type: 'success',
+        message: `Fil indlæst: ${rows.length} rækker fra ${selectedFile.name}\n\n${monthText}`,
+      });
       
       // Allow time for aggregation to complete
       await new Promise(resolve => setTimeout(resolve, 100));
@@ -590,6 +605,7 @@ export default function SuppliersPage() {
     try {
       let totalInserted = 0;
       let totalSkipped = 0;
+      const monthResults: { yearMonth: string; inserted: number; skipped: number }[] = [];
 
       for (let m = 0; m < monthsToSave.length; m++) {
         const yearMonth = monthsToSave[m];
@@ -630,7 +646,9 @@ export default function SuppliersPage() {
           existingKeys.add(key);
           toInsert.push(row);
         }
-        totalSkipped += monthRows.length - toInsert.length;
+        const skippedThisMonth = monthRows.length - toInsert.length;
+        totalSkipped += skippedThisMonth;
+        monthResults.push({ yearMonth, inserted: toInsert.length, skipped: skippedThisMonth });
 
         if (toInsert.length > 0) {
           const rowsToSave = toInsert.map((row) => ({
@@ -720,10 +738,18 @@ export default function SuppliersPage() {
       setSaveProgress({ step: 'Færdig!', current: 100, total: 100 });
       await new Promise(resolve => setTimeout(resolve, 200));
 
-      const singleMonth = monthsToSave[0];
-      const message = monthsToSave.length === 1 && singleMonth
-        ? `Data gemt for ${formatMonthName(singleMonth)}. ${totalInserted} rækker indsat${totalSkipped > 0 ? `, ${totalSkipped} duplikater sprunget over` : ''}.`
-        : `Data gemt for ${monthsToSave.length} måneder. I alt ${totalInserted} nye rækker${totalSkipped > 0 ? `, ${totalSkipped} duplikater sprunget over` : ''}.`;
+      // Build message with per-month breakdown (month/year: X rows added, Y duplicates skipped)
+      const lines = monthResults.map(({ yearMonth, inserted, skipped }) => {
+        const parts = [`${formatMonthName(yearMonth)}: ${inserted} rækker tilføjet`];
+        if (skipped > 0) parts.push(`${skipped} duplikater sprunget over`);
+        return parts.join(', ');
+      });
+      const summary = totalInserted > 0
+        ? `I alt ${totalInserted} nye rækker${totalSkipped > 0 ? `, ${totalSkipped} duplikater sprunget over` : ''}.`
+        : totalSkipped > 0
+          ? 'Ingen nye rækker (alle var duplikater).'
+          : 'Ingen rækker at gemme for de valgte måneder.';
+      const message = lines.length > 0 ? lines.join('\n') + '\n\n' + summary : summary;
       setSaveResult({ type: 'success', message });
 
       const { data: monthsData } = await supabase
@@ -1284,42 +1310,42 @@ export default function SuppliersPage() {
         )}
       </div>
 
-      {/* Upload result: confirmed / error */}
+      {/* Upload result: confirmed / error + months detected */}
       {uploadResult && (
         <div
-          className={`rounded-md border p-4 ${
+          className={`rounded-md border-2 p-4 ${
             uploadResult.type === 'success'
               ? 'bg-green-50 border-green-200 text-green-900'
               : 'bg-red-50 border-red-200 text-red-900'
           }`}
         >
-          <div className="flex items-center gap-2">
+          <div className="flex items-start gap-2">
             {uploadResult.type === 'success' ? (
-              <span className="text-green-600 font-medium">✓ Bekræftet</span>
+              <span className="text-green-600 font-medium shrink-0">✓ Bekræftet</span>
             ) : (
-              <span className="text-red-600 font-medium">Fejl</span>
+              <span className="text-red-600 font-medium shrink-0">Fejl</span>
             )}
-            <span className="text-sm">{uploadResult.message}</span>
+            <p className="text-sm font-medium whitespace-pre-wrap">{uploadResult.message}</p>
           </div>
         </div>
       )}
 
-      {/* Save result: confirmed / error */}
+      {/* Save result: confirmed / error – shows rows added per month/year */}
       {saveResult && (
         <div
-          className={`rounded-md border p-4 ${
+          className={`rounded-md border-2 p-4 ${
             saveResult.type === 'success'
-              ? 'bg-green-50 border-green-200 text-green-900'
-              : 'bg-red-50 border-red-200 text-red-900'
+              ? 'bg-green-50 border-green-300 text-green-900'
+              : 'bg-red-50 border-red-300 text-red-900'
           }`}
         >
-          <div className="flex items-center gap-2">
+          <div className="flex items-start gap-2">
             {saveResult.type === 'success' ? (
-              <span className="text-green-600 font-medium">✓ Bekræftet</span>
+              <span className="text-green-600 font-semibold shrink-0">✓ Bekræftet</span>
             ) : (
-              <span className="text-red-600 font-medium">Fejl</span>
+              <span className="text-red-600 font-semibold shrink-0">Fejl</span>
             )}
-            <span className="text-sm">{saveResult.message}</span>
+            <p className="text-sm font-medium whitespace-pre-wrap">{saveResult.message}</p>
           </div>
         </div>
       )}

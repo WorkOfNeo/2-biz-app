@@ -33,20 +33,33 @@ export async function POST(req: Request) {
 
     const byStyle: Record<string, string[]> = {};
     const allColors = new Set<string>();
+    const PAGE_SIZE = 1000;
 
     for (const style_no of style_nos) {
-      const { data, error } = await supabase
-        .from('historical_sales')
-        .select('color')
-        .eq('style_no', style_no)
-        .gte('date', startDate)
-        .lte('date', endDate);
+      const colorRows: string[] = [];
+      let from = 0;
+      let hasMore = true;
 
-      if (error) {
-        return NextResponse.json({ error: error.message }, { status: 500 });
+      while (hasMore) {
+        const { data, error } = await supabase
+          .from('historical_sales')
+          .select('color')
+          .eq('style_no', style_no)
+          .gte('date', startDate)
+          .lte('date', endDate)
+          .range(from, from + PAGE_SIZE - 1);
+
+        if (error) {
+          return NextResponse.json({ error: error.message }, { status: 500 });
+        }
+
+        const chunk = (data || []).map((r: { color: string }) => r.color).filter(Boolean);
+        colorRows.push(...chunk);
+        hasMore = chunk.length === PAGE_SIZE;
+        from += PAGE_SIZE;
       }
 
-      const colors = Array.from(new Set((data || []).map((r: { color: string }) => r.color).filter(Boolean))).sort();
+      const colors = Array.from(new Set(colorRows)).sort();
       byStyle[style_no] = colors;
       colors.forEach((c) => allColors.add(c));
     }

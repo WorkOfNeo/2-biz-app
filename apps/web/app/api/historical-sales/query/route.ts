@@ -19,16 +19,29 @@ export async function POST(req: Request) {
     const styleNos = Array.from(new Set(selections.map((s: any) => s.style_no)));
     const colors = Array.from(new Set(selections.map((s: any) => s.color)));
 
-    // Fetch data for last N days
-    const { data: historicalData, error } = await supabase
-      .from('historical_sales')
-      .select('style_no, color, size, quantity, date')
-      .in('style_no', styleNos)
-      .in('color', colors)
-      .gte('date', `now() - interval '${days} days'`);
+    // Fetch data for last N days (paginate; Supabase default limit is 1000)
+    const PAGE_SIZE = 1000;
+    let historicalData: any[] = [];
+    let from = 0;
+    let hasMore = true;
 
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
+    while (hasMore) {
+      let query = supabase
+        .from('historical_sales')
+        .select('style_no, color, size, quantity, date')
+        .in('style_no', styleNos)
+        .in('color', colors)
+        .gte('date', `now() - interval '${days} days'`)
+        .range(from, from + PAGE_SIZE - 1);
+
+      const { data: chunk, error } = await query;
+
+      if (error) {
+        return NextResponse.json({ error: error.message }, { status: 500 });
+      }
+      historicalData = historicalData.concat(chunk || []);
+      hasMore = (chunk?.length ?? 0) === PAGE_SIZE;
+      from += PAGE_SIZE;
     }
 
     // Group by style_no|color and aggregate by size

@@ -50,32 +50,47 @@ export async function POST(req: Request) {
       limit
     });
 
-    let query = supabase
-      .from('historical_sales')
-      .select('style_no, color, size, date, quantity', { count: 'exact' })
-      .in('style_no', style_nos)
-      .order('date', { ascending: false })
-      .limit(limit);
+    const PAGE_SIZE = 1000;
+    const allData: any[] = [];
+    let from = 0;
+    let totalCount: number | null = null;
 
-    if (colors.length > 0) {
-      query = query.in('color', colors);
-    }
-    if (startDate) {
-      query = query.gte('date', startDate);
-    }
-    if (endDate) {
-      query = query.lte('date', endDate);
+    while (true) {
+      let query = supabase
+        .from('historical_sales')
+        .select('style_no, color, size, date, quantity', { count: from === 0 ? 'exact' : undefined })
+        .in('style_no', style_nos)
+        .order('date', { ascending: false })
+        .range(from, from + PAGE_SIZE - 1);
+
+      if (colors.length > 0) {
+        query = query.in('color', colors);
+      }
+      if (startDate) {
+        query = query.gte('date', startDate);
+      }
+      if (endDate) {
+        query = query.lte('date', endDate);
+      }
+
+      const { data, error, count } = await query;
+
+      if (error) {
+        console.error('🔍 [DEBUG] Query error:', error);
+        return NextResponse.json({ error: error.message }, { status: 500 });
+      }
+
+      if (from === 0 && count !== null) totalCount = count;
+      const chunk = data || [];
+      allData.push(...chunk);
+      if (chunk.length < PAGE_SIZE) break;
+      from += PAGE_SIZE;
+      if (allData.length >= limit) break;
     }
 
-    const { data, error, count } = await query;
-
-    if (error) {
-      console.error('🔍 [DEBUG] Query error:', error);
-      return NextResponse.json({ error: error.message }, { status: 500 });
-    }
-
-    // Calculate total quantity
-    const totalQty = (data || []).reduce((sum: number, row: any) => sum + (row.quantity || 0), 0);
+    const data = allData.slice(0, limit);
+    const count = totalCount;
+    const totalQty = data.reduce((sum: number, row: any) => sum + (row.quantity || 0), 0);
     
     console.log('🔍 [DEBUG] historical-sales/list result:', {
       rowsReturned: data?.length || 0,

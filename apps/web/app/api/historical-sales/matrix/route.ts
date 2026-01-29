@@ -85,49 +85,35 @@ export async function POST(req: Request) {
     const startDateStr = allStarts[0] || '';
     const endDateStr = allEnds[allEnds.length - 1] || '';
 
-    // Fetch data
-    let query = supabase
-      .from('historical_sales')
-      .select('color, size, quantity')
-      .eq('style_no', style_no)
-      .gte('date', startDateStr)
-      .lte('date', endDateStr)
-      .limit(100000);
+    // Fetch data with pagination (Supabase default limit is 1000)
+    const PAGE_SIZE = 1000;
+    let historicalData: any[] = [];
+    let from = 0;
+    let hasMore = true;
 
-    if (Array.isArray(colors) && colors.length > 0) {
-      query = query.in('color', colors);
+    while (hasMore) {
+      let query = supabase
+        .from('historical_sales')
+        .select('color, size, quantity, date')
+        .eq('style_no', style_no)
+        .gte('date', startDateStr)
+        .lte('date', endDateStr)
+        .order('date', { ascending: true })
+        .range(from, from + PAGE_SIZE - 1);
+
+      if (Array.isArray(colors) && colors.length > 0) {
+        query = query.in('color', colors);
+      }
+
+      const { data: chunk, error } = await query;
+
+      if (error) {
+        return NextResponse.json({ error: error.message }, { status: 500 });
+      }
+      historicalData = historicalData.concat(chunk || []);
+      hasMore = (chunk?.length ?? 0) === PAGE_SIZE;
+      from += PAGE_SIZE;
     }
-
-    const { data: rawData, error } = await query;
-
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
-    }
-
-    // Filter for specific months if provided
-    // Note: We already filtered by date range, but for months[] we need to be more specific
-    // Actually, since we're aggregating, we don't have date in the result here. We need to fetch with date.
-    // Let me refetch with date included for filtering
-    
-    let query2 = supabase
-      .from('historical_sales')
-      .select('color, size, quantity, date')
-      .eq('style_no', style_no)
-      .gte('date', startDateStr)
-      .lte('date', endDateStr)
-      .limit(100000);
-
-    if (Array.isArray(colors) && colors.length > 0) {
-      query2 = query2.in('color', colors);
-    }
-
-    const { data: rawData2, error: error2 } = await query2;
-
-    if (error2) {
-      return NextResponse.json({ error: error2.message }, { status: 500 });
-    }
-
-    let historicalData = rawData2 || [];
     
     // Filter to only include rows within specified month ranges (if months[] provided)
     if (Array.isArray(months) && months.length > 0) {

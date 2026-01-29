@@ -255,22 +255,42 @@ export default function HistoricalSalesPage() {
   const [newColorName, setNewColorName] = useState('');
   const [addingColor, setAddingColor] = useState(false);
 
-  // Fetch styles for matching
+  // Fetch all styles (paginate; Supabase default limit is 1000)
   const { data: styles } = useSWR('historical-sales:styles', async () => {
-    const { data } = await supabase
-      .from('styles')
-      .select('id, style_no, style_name')
-      .order('style_no');
-    return (data ?? []) as StyleRow[];
+    const PAGE = 1000;
+    const all: StyleRow[] = [];
+    let from = 0;
+    while (true) {
+      const { data } = await supabase
+        .from('styles')
+        .select('id, style_no, style_name')
+        .order('style_no')
+        .range(from, from + PAGE - 1);
+      const chunk = (data ?? []) as StyleRow[];
+      all.push(...chunk);
+      if (chunk.length < PAGE) break;
+      from += PAGE;
+    }
+    return all;
   });
 
-  // Fetch style colors for matching
+  // Fetch all style colors (paginate; Supabase default limit is 1000)
   const { data: styleColors, mutate: mutateStyleColors } = useSWR('historical-sales:style-colors', async () => {
-    const { data } = await supabase
-      .from('style_colors')
-      .select('id, style_id, color')
-      .order('color');
-    return (data ?? []) as StyleColorRow[];
+    const PAGE = 1000;
+    const all: StyleColorRow[] = [];
+    let from = 0;
+    while (true) {
+      const { data } = await supabase
+        .from('style_colors')
+        .select('id, style_id, color')
+        .order('color')
+        .range(from, from + PAGE - 1);
+      const chunk = (data ?? []) as StyleColorRow[];
+      all.push(...chunk);
+      if (chunk.length < PAGE) break;
+      from += PAGE;
+    }
+    return all;
   });
 
   // Parsed style numbers for browse

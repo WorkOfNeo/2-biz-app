@@ -68,20 +68,30 @@ export async function POST(req: Request) {
     const startDateStr = allStarts[0] || '';
     const endDateStr = allEnds[allEnds.length - 1] || '';
 
-    // Fetch all historical sales data for the period
-    const { data: rawData, error } = await supabase
-      .from('historical_sales')
-      .select('style_no, color, quantity, date')
-      .gte('date', startDateStr)
-      .lte('date', endDateStr)
-      .limit(200000);
+    // Fetch all historical sales data for the period (paginate; Supabase default limit is 1000)
+    const PAGE_SIZE = 1000;
+    let historicalData: any[] = [];
+    let from = 0;
+    let hasMore = true;
 
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
+    while (hasMore) {
+      const { data: chunk, error } = await supabase
+        .from('historical_sales')
+        .select('style_no, color, quantity, date')
+        .gte('date', startDateStr)
+        .lte('date', endDateStr)
+        .order('date', { ascending: true })
+        .range(from, from + PAGE_SIZE - 1);
+
+      if (error) {
+        return NextResponse.json({ error: error.message }, { status: 500 });
+      }
+      historicalData = historicalData.concat(chunk || []);
+      hasMore = (chunk?.length ?? 0) === PAGE_SIZE;
+      from += PAGE_SIZE;
     }
 
     // Filter for specific months if provided
-    let historicalData = rawData || [];
     if (Array.isArray(months) && months.length > 0) {
       const monthSet = new Set(months);
       historicalData = historicalData.filter((row: any) => {
