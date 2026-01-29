@@ -11,11 +11,14 @@ import {
   ResponsiveContainer,
   Legend,
 } from 'recharts';
+import { getColorForName } from '../../../lib/chartColors';
 
 type DataPoint = {
   date: string;
   total: number;
   byColor?: Record<string, number>;
+  /** When set (e.g. aggregated view), used for x-axis instead of formatting date */
+  label?: string;
 };
 
 type Props = {
@@ -25,26 +28,12 @@ type Props = {
   height?: number;
 };
 
-// Color palette for multiple lines
-const COLOR_PALETTE = [
-  '#8FA894', // Brand green
-  '#6B8E7B',
-  '#C5D5CA',
-  '#4A6B52',
-  '#A8C4AF',
-  '#7B9B85',
-  '#5C8465',
-  '#9DB8A5',
-  '#8CA395',
-  '#6E9078',
-];
-
 export function DailyLineChart({ data, colors = [], showByColor = false, height = 300 }: Props) {
-  // Format date for display
   const formatDate = (date: string) => {
     const d = new Date(date);
     return d.toLocaleDateString('da-DK', { day: '2-digit', month: '2-digit' });
   };
+  const formatX = (point: DataPoint) => point.label ?? formatDate(point.date);
 
   // Custom tooltip
   const CustomTooltip = ({ active, payload, label }: any) => {
@@ -63,9 +52,8 @@ export function DailyLineChart({ data, colors = [], showByColor = false, height 
   };
 
   if (showByColor && colors.length > 0) {
-    // Multi-line chart by color
     const chartData = data.map(point => ({
-      date: formatDate(point.date),
+      date: formatX(point),
       ...point.byColor,
     }));
 
@@ -93,7 +81,7 @@ export function DailyLineChart({ data, colors = [], showByColor = false, height 
               type="monotone"
               dataKey={color}
               name={color}
-              stroke={COLOR_PALETTE[index % COLOR_PALETTE.length]}
+              stroke={getColorForName(color, index)}
               strokeWidth={2}
               dot={false}
               activeDot={{ r: 4 }}
@@ -104,9 +92,8 @@ export function DailyLineChart({ data, colors = [], showByColor = false, height 
     );
   }
 
-  // Single line chart for total
   const chartData = data.map(point => ({
-    date: formatDate(point.date),
+    date: formatX(point),
     total: point.total,
   }));
 

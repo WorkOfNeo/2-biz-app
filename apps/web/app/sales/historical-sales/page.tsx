@@ -1,5 +1,5 @@
 'use client';
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import useSWR from 'swr';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
@@ -9,7 +9,7 @@ import { Input } from '../../../components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../components/ui/table';
 import { Badge } from '../../../components/ui/badge';
 import { Dropzone } from '../../../components/ui/dropzone';
-import { AlertCircle, CheckCircle, Loader2, Download, TrendingUp, Calendar, BarChart3, Search, Plus, X } from 'lucide-react';
+import { AlertCircle, CheckCircle, Loader2, Download, TrendingUp, Calendar, BarChart3, Search, Plus, X, FileDown } from 'lucide-react';
 import { DailyLineChart, StackedAreaByColor, SizeDistributionBar } from '../../../components/charts';
 
 // Types
@@ -1627,6 +1627,8 @@ type TimeseriesPoint = {
   date: string;
   total: number;
   byColor?: Record<string, number>;
+  /** Display label for x-axis when aggregated (e.g. "Jan 24", "U1 '24") */
+  label?: string;
 };
 
 type MatrixData = {
@@ -1678,6 +1680,92 @@ function AnalyticsTab({ styles }: { styles: StyleRow[] }) {
   
   // Top styles loading
   const [topStylesLoading, setTopStylesLoading] = useState(false);
+
+  // Aggregate by Month | Week | Day (default Month)
+  type AggregationLevel = 'month' | 'week' | 'day';
+  const [aggregationLevel, setAggregationLevel] = useState<AggregationLevel>('month');
+
+  // Refs for PDF export (one page per chart)
+  const chartSectionRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const chartSectionIndexRef = useRef(0);
+  const [exportingPdf, setExportingPdf] = useState(false);
+
+  async function exportChartsToPdf() {
+    const sections = chartSectionRefs.current.filter(Boolean) as HTMLDivElement[];
+    if (sections.length === 0) return;
+    setExportingPdf(true);
+    try {
+      const html2canvas = (await import('html2canvas')).default;
+      const { jsPDF } = await import('jspdf');
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const pageW = pdf.getPageWidth();
+      const pageH = pdf.getPageHeight();
+      const margin = 0.95;
+      const maxW = pageW * margin;
+      const maxH = pageH * margin;
+      for (let i = 0; i < sections.length; i++) {
+        const canvas = await html2canvas(sections[i], { scale: 2, useCORS: true, logging: false });
+        const img = canvas.toDataURL('image/png');
+        if (i > 0) pdf.addPage();
+        const imgW = canvas.width;
+        const imgH = canvas.height;
+        let widthMM = maxW;
+        let heightMM = maxW * (imgH / imgW);
+        if (heightMM > maxH) {
+          heightMM = maxH;
+          widthMM = maxH * (imgW / imgH);
+        }
+        pdf.addImage(img, 'PNG', (pageW - widthMM) / 2, (pageH - heightMM) / 2, widthMM, heightMM);
+      }
+      pdf.save(`historical-sales-analytics-${analyticsDateFrom}-${analyticsDateTo}.pdf`);
+    } catch (err) {
+      console.error('PDF export failed:', err);
+    } finally {
+      setExportingPdf(false);
+    }
+  }
+
+  // Aggregate timeseries by selected level
+  const aggregatedTimeseriesData = useMemo(() => {
+    if (timeseriesData.length === 0) return [];
+    if (aggregationLevel === 'day') {
+      return timeseriesData.map(p => ({ ...p, label: undefined }));
+    }
+    const getPeriodKey = (dateStr: string): string => {
+      if (aggregationLevel === 'month') return dateStr.slice(0, 7);
+      const d = new Date(dateStr);
+      const jan1 = new Date(d.getFullYear(), 0, 1);
+      const weekNo = Math.ceil((((d.getTime() - jan1.getTime()) / 86400000) + jan1.getDay() + 1) / 7);
+      return `${d.getFullYear()}-W${String(weekNo).padStart(2, '0')}`;
+    };
+    const getDisplayLabel = (periodKey: string): string => {
+      if (aggregationLevel === 'month') {
+        const [y, m] = periodKey.split('-');
+        const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        return `${monthNames[parseInt(m || '1', 10) - 1]} ${(y || '').slice(2)}`;
+      }
+      const [y, w] = periodKey.split('-W');
+      return `U${parseInt(w || '0', 10)} '${(y || '').slice(2)}`;
+    };
+    const buckets = new Map<string, { total: number; byColor: Record<string, number> }>();
+    for (const p of timeseriesData) {
+      const key = getPeriodKey(p.date);
+      if (!buckets.has(key)) buckets.set(key, { total: 0, byColor: {} });
+      const b = buckets.get(key)!;
+      b.total += p.total;
+      for (const [color, qty] of Object.entries(p.byColor || {})) {
+        b.byColor[color] = (b.byColor[color] || 0) + qty;
+      }
+    }
+    return Array.from(buckets.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([periodKey, { total, byColor }]) => ({
+        date: periodKey,
+        total,
+        byColor,
+        label: getDisplayLabel(periodKey)
+      }));
+  }, [timeseriesData, aggregationLevel]);
 
   // Filtered styles for dropdown
   const filteredStyles = useMemo(() => {
@@ -1845,13 +1933,13 @@ function AnalyticsTab({ styles }: { styles: StyleRow[] }) {
     }
   }
 
-  // Find best day
-  const bestDay = useMemo(() => {
-    if (timeseriesData.length === 0) return null;
-    const first = timeseriesData[0];
+  // Best period (day/week/month depending on aggregation)
+  const bestPeriod = useMemo(() => {
+    if (aggregatedTimeseriesData.length === 0) return null;
+    const first = aggregatedTimeseriesData[0];
     if (!first) return null;
-    return timeseriesData.reduce((max, p) => p.total > max.total ? p : max, first);
-  }, [timeseriesData]);
+    return aggregatedTimeseriesData.reduce((max, p) => p.total > max.total ? p : max, first);
+  }, [aggregatedTimeseriesData]);
 
   const selectedStyles = useMemo(
     () => selectedStyleNos.map(no => styles.find(s => s.style_no === no)).filter(Boolean) as StyleRow[],
@@ -2010,7 +2098,7 @@ function AnalyticsTab({ styles }: { styles: StyleRow[] }) {
             </div>
           )}
           
-          <div className="mt-4">
+          <div className="mt-4 flex flex-wrap items-center gap-4">
             <Button 
               onClick={loadAnalytics}
               disabled={selectedStyleNos.length === 0 || analyticsLoading}
@@ -2025,6 +2113,18 @@ function AnalyticsTab({ styles }: { styles: StyleRow[] }) {
                 'Load Analytics'
               )}
             </Button>
+            <div className="flex items-center gap-2">
+              <label className="text-xs font-medium text-slate-700">Aggregate by</label>
+              <select
+                value={aggregationLevel}
+                onChange={(e) => setAggregationLevel(e.target.value as AggregationLevel)}
+                className="text-sm border border-slate-300 rounded px-2 py-1.5 bg-white"
+              >
+                <option value="month">Month</option>
+                <option value="week">Week</option>
+                <option value="day">Day</option>
+              </select>
+            </div>
           </div>
         </CardContent>
       </Card>
@@ -2105,12 +2205,12 @@ function AnalyticsTab({ styles }: { styles: StyleRow[] }) {
             <CardContent className="pt-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-slate-500">Best Day</p>
+                  <p className="text-sm text-slate-500">Best {aggregationLevel === 'month' ? 'Month' : aggregationLevel === 'week' ? 'Week' : 'Day'}</p>
                   <p className="text-2xl font-bold">
-                    {bestDay ? bestDay.total.toLocaleString('da-DK') : '—'}
+                    {bestPeriod ? bestPeriod.total.toLocaleString('da-DK') : '—'}
                   </p>
-                  {bestDay && (
-                    <p className="text-xs text-slate-400">{bestDay.date}</p>
+                  {bestPeriod && (
+                    <p className="text-xs text-slate-400">{bestPeriod.label ?? bestPeriod.date}</p>
                   )}
                 </div>
                 <TrendingUp className="h-8 w-8 text-green-300" />
@@ -2141,48 +2241,75 @@ function AnalyticsTab({ styles }: { styles: StyleRow[] }) {
       )}
 
       {/* Charts */}
-      {timeseriesData.length > 0 && selectedStyleNos.length > 0 && (
+      {aggregatedTimeseriesData.length > 0 && selectedStyleNos.length > 0 && (() => {
+        chartSectionRefs.current = [];
+        chartSectionIndexRef.current = 0;
+        const captureRef = (el: HTMLDivElement | null) => {
+          if (el) chartSectionRefs.current[chartSectionIndexRef.current++] = el;
+        };
+        return (
         <>
-          {/* Daily Trend */}
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-base">Daily Sales Trend</CardTitle>
-              <CardDescription>
-                Units sold per day {selectedStyleNos.length > 1 ? `(${selectedStyleNos.length} styles combined)` : `for ${selectedStyleNos[0]}`}
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <DailyLineChart data={timeseriesData} height={300} />
-            </CardContent>
-          </Card>
-
-          {/* Color Mix - show all colors (no limit) */}
-          {kpis && kpis.colors.length > 1 && (
+          <div className="flex justify-end mb-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={exportChartsToPdf}
+              disabled={exportingPdf}
+              className="gap-2"
+            >
+              {exportingPdf ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileDown className="h-4 w-4" />}
+              {exportingPdf ? 'Exporting...' : 'Export to PDF'}
+            </Button>
+          </div>
+          <div ref={captureRef}>
             <Card>
               <CardHeader className="pb-2">
-                <CardTitle className="text-base">Sales by Color Over Time</CardTitle>
+                <CardTitle className="text-base">Sales Trend by {aggregationLevel === 'month' ? 'Month' : aggregationLevel === 'week' ? 'Week' : 'Day'}</CardTitle>
                 <CardDescription>
-                  Stacked view — all {kpis.colors.length} colors
+                  Units sold {selectedStyleNos.length > 1 ? `(${selectedStyleNos.length} styles combined)` : `for ${selectedStyleNos[0]}`}
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <StackedAreaByColor 
-                  data={timeseriesData} 
-                  colors={kpis.colors}
-                  maxColors={50}
-                  height={300} 
-                />
+                <DailyLineChart data={aggregatedTimeseriesData} height={300} />
               </CardContent>
             </Card>
+          </div>
+
+          {/* Color Mix */}
+          {kpis && kpis.colors.length > 1 && (
+            <div ref={captureRef}>
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-base">Sales by Color Over Time</CardTitle>
+                  <CardDescription>
+                    Stacked view — all {kpis.colors.length} colors
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <StackedAreaByColor 
+                    data={aggregatedTimeseriesData} 
+                    colors={kpis.colors}
+                    maxColors={50}
+                    height={300} 
+                  />
+                </CardContent>
+              </Card>
+            </div>
           )}
         </>
-      )}
+      );
+      })()}
 
       {/* Size Matrix - one per style when multiple */}
-      {Object.keys(matrixDataByStyle).length > 0 && selectedStyleNos.length > 0 && (
+      {Object.keys(matrixDataByStyle).length > 0 && selectedStyleNos.length > 0 && (() => {
+        const captureRefMatrix = (el: HTMLDivElement | null) => {
+          if (el) chartSectionRefs.current[chartSectionIndexRef.current++] = el;
+        };
+        return (
         <>
           {Object.entries(matrixDataByStyle).map(([styleNo, matrixData]) => (
-            <Card key={styleNo}>
+            <div key={styleNo} ref={captureRefMatrix}>
+            <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="text-base">Size/Color Matrix — {styleNo}</CardTitle>
                 <CardDescription>Total units sold by color and size</CardDescription>
@@ -2240,15 +2367,21 @@ function AnalyticsTab({ styles }: { styles: StyleRow[] }) {
                 </div>
               </CardContent>
             </Card>
+            </div>
           ))}
         </>
-      )}
+      );})()}
 
       {/* Size Distribution Bar - one per style when multiple */}
-      {Object.keys(matrixDataByStyle).length > 0 && selectedStyleNos.length > 0 && (
+      {Object.keys(matrixDataByStyle).length > 0 && selectedStyleNos.length > 0 && (() => {
+        const captureRefDist = (el: HTMLDivElement | null) => {
+          if (el) chartSectionRefs.current[chartSectionIndexRef.current++] = el;
+        };
+        return (
         <>
           {Object.entries(matrixDataByStyle).map(([styleNo, matrixData]) => (
-            <Card key={styleNo}>
+            <div key={styleNo} ref={captureRefDist}>
+            <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="text-base">Size Distribution — {styleNo}</CardTitle>
                 <CardDescription>Total units by size (all colors combined)</CardDescription>
@@ -2261,12 +2394,13 @@ function AnalyticsTab({ styles }: { styles: StyleRow[] }) {
                 />
               </CardContent>
             </Card>
+            </div>
           ))}
         </>
-      )}
+      );})()}
 
       {/* No data message */}
-      {selectedStyleNos.length > 0 && !analyticsLoading && timeseriesData.length === 0 && (
+      {selectedStyleNos.length > 0 && !analyticsLoading && aggregatedTimeseriesData.length === 0 && (
         <Card>
           <CardContent className="py-12 text-center text-slate-500">
             <p>No sales data found for {selectedStyleNos.join(', ')} in the selected date range.</p>

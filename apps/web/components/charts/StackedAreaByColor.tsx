@@ -11,11 +11,13 @@ import {
   ResponsiveContainer,
   Legend,
 } from 'recharts';
+import { getColorForName } from '../../../lib/chartColors';
 
 type DataPoint = {
   date: string;
   total: number;
   byColor?: Record<string, number>;
+  label?: string;
 };
 
 type Props = {
@@ -25,30 +27,20 @@ type Props = {
   height?: number;
 };
 
-// Color palette for stacked areas (cycles for many colors)
-const COLOR_PALETTE = [
-  '#8FA894', '#6B8E7B', '#C5D5CA', '#4A6B52', '#A8C4AF',
-  '#7B9B85', '#5C8465', '#9DB8A5', '#8CA395', '#6E9078',
-  '#647b6e', '#3d5c4a', '#7a9a7e', '#5a7a5e', '#8fb896',
-  '#94a3b8', '#64748b', '#475569', '#334155', '#1e293b',
-];
-
 export function StackedAreaByColor({ data, colors, maxColors = 8, height = 300 }: Props) {
-  // Determine which colors to show and aggregate the rest as "Other"
   const topColors = colors.slice(0, maxColors);
   const hasOther = colors.length > maxColors;
   const otherColors = hasOther ? colors.slice(maxColors) : [];
 
-  // Format date for display
   const formatDate = (date: string) => {
     const d = new Date(date);
     return d.toLocaleDateString('da-DK', { day: '2-digit', month: '2-digit' });
   };
+  const formatX = (point: DataPoint) => point.label ?? formatDate(point.date);
 
-  // Transform data
   const chartData = data.map(point => {
     const result: Record<string, any> = {
-      date: formatDate(point.date),
+      date: formatX(point),
     };
     
     // Add top colors
@@ -117,9 +109,9 @@ export function StackedAreaByColor({ data, colors, maxColors = 8, height = 300 }
             dataKey={color}
             name={color}
             stackId="1"
-            stroke={COLOR_PALETTE[index % COLOR_PALETTE.length]}
-            fill={COLOR_PALETTE[index % COLOR_PALETTE.length]}
-            fillOpacity={0.6}
+            stroke={getColorForName(color, index)}
+            fill={getColorForName(color, index)}
+            fillOpacity={0.7}
           />
         ))}
       </AreaChart>
