@@ -347,7 +347,7 @@ export function SidebarNav() {
     const firstHref = getFirstHref(section);
     if (firstHref) {
       setActivePanel(section.key);
-      router.push(firstHref);
+      router.push(firstHref as any);
     }
   };
 
