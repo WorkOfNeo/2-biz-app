@@ -1447,7 +1447,9 @@ function AnalyticsTab({ styles }: { styles: StyleRow[] }) {
   // Find best day
   const bestDay = useMemo(() => {
     if (timeseriesData.length === 0) return null;
-    return timeseriesData.reduce((max, p) => p.total > max.total ? p : max, timeseriesData[0]);
+    const first = timeseriesData[0];
+    if (!first) return null;
+    return timeseriesData.reduce((max, p) => p.total > max.total ? p : max, first);
   }, [timeseriesData]);
 
   const selectedStyle = styles.find(s => s.style_no === selectedStyleNo);
