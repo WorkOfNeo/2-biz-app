@@ -58,8 +58,8 @@ export function useRoleAccess() {
         // Fallback defaults if not configured in DB
         const defaults: Record<string, string[]> = {
           admin: ['/'],
-          purchase: ['/statistics', '/styles', '/settings/seasons', '/settings/salespersons', '/settings/customers', '/settings/misc', '/purchase/packinglists-pdf'],
-          finance: ['/finance'],
+          purchase: ['/statistics', '/styles', '/settings/seasons', '/settings/salespersons', '/settings/customers', '/settings/misc', '/purchase/packinglists-pdf', '/sales/historical-sales'],
+          finance: ['/finance', '/sales/historical-sales'],
           sales: ['/sales']
         };
         const raw = ((data?.value as any) || {}) as Record<string, string[]>;

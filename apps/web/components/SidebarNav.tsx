@@ -246,13 +246,13 @@ export function SidebarNav() {
     can('/sales/nielsens') ? <NavLink key="sn" href="/sales/nielsens" label="Nielsens" /> : null,
     can('/sales/make-purchase-order') ? <NavLink key="smpo" href="/sales/make-purchase-order" label="Make Purchase Order" /> : null,
     can('/sales/sales-orders') ? <NavLink key="sso" href="/sales/sales-orders" label="Sales Orders" /> : null,
+    <NavLink key="shist" href="/sales/historical-sales" label="Historical Sales" />,
   ].filter(Boolean) as any[];
   // PDF'er and Exports moved to Settings
   const settingsLinks = [
     can('/settings/seasons') ? <NavLink key="set-seasons" href="/settings/seasons" label="SEASONS" /> : null,
     can('/settings/salespersons') ? <NavLink key="set-sp" href="/settings/salespersons" label="SALESPERSONS" /> : null,
     can('/settings/customers') ? <NavLink key="set-cust" href="/settings/customers" label="CUSTOMERS" /> : null,
-    can('/settings/historical-sales') ? <NavLink key="set-hist" href="/settings/historical-sales" label="HISTORICAL SALES" /> : null,
     can('/settings/integrations') ? <NavLink key="set-int" href="/settings/integrations" label="INTEGRATIONS" /> : null,
     can('/settings/misc') ? <NavLink key="set-misc" href="/settings/misc" label="MISC" /> : null,
     can('/settings/jobs') ? <NavLink key="set-jobs" href="/settings/jobs" label="JOBS" /> : null,
