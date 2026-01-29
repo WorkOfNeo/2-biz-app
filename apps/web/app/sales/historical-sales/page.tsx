@@ -421,13 +421,8 @@ export default function HistoricalSalesPage() {
   async function addNewColorToStyle() {
     if (!addColorModal || !newColorName.trim()) return;
     
-    const { styleId, styleNo, rowIndex, originalColor } = addColorModal;
-    
-    // Create color name with 2BIZ prefix if it doesn't match the original exactly
-    const colorName = newColorName.trim();
-    const finalColorName = colorName.toUpperCase().startsWith('2BIZ-') 
-      ? colorName 
-      : `2BIZ-${colorName}`;
+    const { styleId, styleNo, rowIndex } = addColorModal;
+    const finalColorName = newColorName.trim();
     
     setAddingColor(true);
     
@@ -455,7 +450,7 @@ export default function HistoricalSalesPage() {
           ...row,
           matchedColor: finalColorName,
           colorScore: 1.0,
-          matchNote: `New color: ${finalColorName}`,
+          matchNote: `New color added`,
           status: 'matched'
         };
       }));
@@ -1342,10 +1337,6 @@ export default function HistoricalSalesPage() {
             </div>
             <p className="text-sm text-slate-600 mb-4">
               Add a new color to style <strong>{addColorModal.styleNo}</strong>.
-              <br />
-              <span className="text-amber-600">
-                The color will be prefixed with "2BIZ-" to avoid conflicts with future imports.
-              </span>
             </p>
             <div className="space-y-3">
               <div>
@@ -1361,9 +1352,6 @@ export default function HistoricalSalesPage() {
                   onChange={(e) => setNewColorName(e.target.value)}
                   placeholder="e.g., Black, Navy Blue"
                 />
-                <p className="text-xs text-slate-500 mt-1">
-                  Will be saved as: <strong>2BIZ-{newColorName || '...'}</strong>
-                </p>
               </div>
             </div>
             <div className="flex gap-3 justify-end mt-4">
