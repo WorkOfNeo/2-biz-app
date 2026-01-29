@@ -375,7 +375,7 @@ export function SidebarNav() {
       <div
         className="flex transition-transform duration-200 ease-out"
         style={{
-          transform: activePanel === 'main' ? 'translateX(0)' : 'translateX(-100%)',
+          transform: activePanel === 'main' ? 'translateX(0)' : 'translateX(-50%)',
           width: '200%',
         }}
       >
