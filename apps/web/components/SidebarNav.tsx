@@ -1,13 +1,125 @@
 'use client';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
-import { useRoles, useRoleAccess } from '../lib/supabaseClient';
+import { usePathname, useRouter } from 'next/navigation';
+import { useRoles, useRoleAccess, type UserRole } from '../lib/supabaseClient';
 import { Button } from './ui/button';
 import { cn } from '../lib/cn';
-import { ChevronDown, ChevronRight } from 'lucide-react';
+import { ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
 
-// With Next.js `experimental.typedRoutes`, the `Route` type is a strict union.
-// Some valid routes can still fail typing during build; keep `href` as a string and cast at the Link boundary.
+// Link definition types
+type LinkDef = { href: string; label: string; alwaysVisible?: boolean };
+type GroupDef = { title: string; groupKey: string; links: LinkDef[] };
+type SectionItem = LinkDef | GroupDef;
+
+function isGroup(item: SectionItem): item is GroupDef {
+  return 'groupKey' in item;
+}
+
+// Section configuration
+type SectionConfig = {
+  key: string;
+  title: string;
+  items: SectionItem[];
+  requiresRole?: UserRole;
+};
+
+const SECTIONS: SectionConfig[] = [
+  {
+    key: 'statistics',
+    title: 'Statistics',
+    items: [
+      { href: '/statistics/general', label: 'Sælgere' },
+      { href: '/statistics/overview', label: 'Overblik' },
+      { href: '/statistics/countries', label: 'Lande' },
+      { href: '/statistics/suppleringer', label: 'Suppleringer' },
+      { href: '/statistics/styles/top10', label: 'Top 15 Styles' },
+      { href: '/statistics/vendors/top10', label: 'Top 10 leverandører' },
+      { href: '/statistics/downloads', label: 'Downloads' },
+    ],
+  },
+  {
+    key: 'finance',
+    title: 'Finance',
+    items: [
+      { href: '/finance/csv-skat', label: 'CSV - Skat' },
+      {
+        title: 'Customs',
+        groupKey: 'finance-customs',
+        links: [
+          { href: '/finance/customs', label: 'CUSTOMS PERIOD' },
+          { href: '/finance/correction', label: 'CORRECTION' },
+        ],
+      },
+    ],
+  },
+  {
+    key: 'styles',
+    title: 'Styles',
+    items: [
+      { href: '/styles', label: 'Styles' },
+      { href: '/styles/settings', label: 'Settings' },
+      { href: '/styles/stock-list', label: 'Stock List' },
+      { href: '/styles/statistics', label: 'Statistics' },
+      { href: '/styles/scraper', label: 'Stock Scraper' },
+      { href: '/styles/movements', label: 'Movements' },
+    ],
+  },
+  {
+    key: 'purchase',
+    title: 'Purchase',
+    items: [
+      { href: '/purchase/dashboard', label: 'Dashboard' },
+      { href: '/ai-analysis', label: 'AI Analysis', alwaysVisible: true },
+      { href: '/purchase/orders', label: 'Purchase Orders' },
+      { href: '/purchase/call-off', label: 'NOOS Call-Off' },
+      { href: '/purchase/call-off-learning', label: 'Learning Studio' },
+      { href: '/purchase/noos', label: 'NOOS Checker' },
+      { href: '/purchase/smart-draft', label: 'Smart Draft' },
+      { href: '/purchase/conversations', label: 'Conversations' },
+      { href: '/purchase/suppliers', label: 'Suppliers' },
+      { href: '/purchase/feedback', label: 'AI Feedback' },
+      { href: '/purchase/packinglists-pdf', label: 'Packinglists (PDF)' },
+    ],
+  },
+  {
+    key: 'sales',
+    title: 'Sales',
+    items: [
+      { href: '/sales/nielsens', label: 'Nielsens' },
+      { href: '/sales/make-purchase-order', label: 'Make Purchase Order' },
+      { href: '/sales/sales-orders', label: 'Sales Orders' },
+      { href: '/sales/historical-sales', label: 'Historical Sales', alwaysVisible: true },
+    ],
+  },
+  {
+    key: 'settings',
+    title: 'Settings',
+    items: [
+      { href: '/settings/seasons', label: 'SEASONS' },
+      { href: '/settings/salespersons', label: 'SALESPERSONS' },
+      { href: '/settings/customers', label: 'CUSTOMERS' },
+      { href: '/settings/integrations', label: 'INTEGRATIONS' },
+      { href: '/settings/misc', label: 'MISC' },
+      { href: '/settings/jobs', label: 'JOBS' },
+      { href: '/settings/runs', label: 'RUNS' },
+      { href: '/statistics/exports', label: "PDF'er" },
+      { href: '/statistics/downloads', label: 'Exports' },
+    ],
+  },
+  {
+    key: 'admin',
+    title: 'Admin',
+    items: [
+      { href: '/admin', label: 'Dashboard' },
+      { href: '/admin/users', label: 'Users' },
+      { href: '/admin/roles', label: 'Roles' },
+    ],
+    requiresRole: 'admin',
+  },
+];
+
+// NavLink component
 function NavLink({ href, label }: { href: string; label: string }) {
   const pathname = usePathname();
   const active = pathname === href || pathname.startsWith(href + '/');
@@ -26,6 +138,7 @@ function NavLink({ href, label }: { href: string; label: string }) {
   );
 }
 
+// Collapsible group for nested links (e.g., Finance > Customs)
 function CollapsibleNavGroup({
   title,
   links,
@@ -34,7 +147,7 @@ function CollapsibleNavGroup({
   active,
 }: {
   title: string;
-  links: any[];
+  links: React.ReactNode[];
   isOpen: boolean;
   onToggle: () => void;
   active: boolean;
@@ -64,38 +177,45 @@ function CollapsibleNavGroup({
   );
 }
 
-function CollapsibleSection({ 
-  title, 
-  links, 
-  sectionKey, 
-  isOpen, 
-  onToggle 
-}: { 
-  title: string; 
-  links: any[]; 
-  sectionKey: string; 
-  isOpen: boolean; 
-  onToggle: () => void;
+// Section button in main panel
+function SectionButton({
+  title,
+  onClick,
+  hasLinks,
+}: {
+  title: string;
+  onClick: () => void;
+  hasLinks: boolean;
 }) {
-  if (links.length === 0) return null;
-  
+  if (!hasLinks) return null;
+
   return (
-    <div className="mt-4">
-      <button
-        onClick={onToggle}
-        className="w-full flex items-center justify-between text-xs uppercase tracking-wider px-3 py-2 hover:bg-white/5 rounded-lg transition-colors text-slate-200/80"
-      >
-        <span>{title}</span>
-        {isOpen ? (
-          <ChevronDown className="h-4 w-4" />
-        ) : (
-          <ChevronRight className="h-4 w-4" />
-        )}
-      </button>
-      {isOpen && (
-        <div className="ml-2 space-y-1 mt-1">{links}</div>
-      )}
-    </div>
+    <button
+      onClick={onClick}
+      className="w-full flex items-center justify-between text-xs uppercase tracking-wider px-3 py-2 hover:bg-white/5 rounded-lg transition-colors text-slate-200/80 mt-4"
+    >
+      <span>{title}</span>
+      <ChevronRight className="h-4 w-4" />
+    </button>
+  );
+}
+
+// Back header in section panel
+function BackHeader({
+  title,
+  onClick,
+}: {
+  title: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className="w-full flex items-center gap-2 text-xs uppercase tracking-wider px-3 py-2 hover:bg-white/5 rounded-lg transition-colors text-slate-200/80 mb-2"
+    >
+      <ChevronLeft className="h-4 w-4" />
+      <span>{title}</span>
+    </button>
   );
 }
 
@@ -103,21 +223,22 @@ export function SidebarNav() {
   const { has } = useRoles();
   const { can } = useRoleAccess();
   const pathname = usePathname();
-  const React = require('react') as typeof import('react');
+  const router = useRouter();
   const { createClientComponentClient } = require('@supabase/auth-helpers-nextjs');
   const supabase = createClientComponentClient();
-  const [userName, setUserName] = React.useState<string>('');
-  React.useEffect(() => {
+  const [userName, setUserName] = useState<string>('');
+
+  useEffect(() => {
     (async () => {
       try {
         const { data: { user } } = await supabase.auth.getUser();
         setUserName(((user?.user_metadata as any)?.name as string) || (user?.email as string) || '');
       } catch {}
     })();
-  }, []);
-  
+  }, [supabase.auth]);
+
   // Determine which section contains the active page
-  const getActiveSection = React.useMemo(() => {
+  const getActiveSection = useMemo(() => {
     if (pathname.startsWith('/statistics/') && pathname !== '/statistics/dashboard') return 'statistics';
     if (pathname.startsWith('/finance/')) return 'finance';
     if (pathname.startsWith('/styles/')) return 'styles';
@@ -127,40 +248,17 @@ export function SidebarNav() {
     if (pathname.startsWith('/admin/')) return 'admin';
     return null;
   }, [pathname]);
-  
-  // Track which sections are open (only active section open by default)
-  const [openSections, setOpenSections] = React.useState<Set<string>>(() => {
-    const initial = new Set<string>();
-    if (getActiveSection) {
-      initial.add(getActiveSection);
-    }
-    return initial;
-  });
-  
-  // Update open sections when pathname changes (expand active section)
-  React.useEffect(() => {
-    if (getActiveSection) {
-      setOpenSections(prev => {
-        const next = new Set(prev);
-        next.add(getActiveSection!);
-        return next;
-      });
-    }
-  }, [getActiveSection]);
-  
-  const toggleSection = (sectionKey: string) => {
-    setOpenSections(prev => {
-      const next = new Set(prev);
-      if (next.has(sectionKey)) {
-        next.delete(sectionKey);
-      } else {
-        next.add(sectionKey);
-      }
-      return next;
-    });
-  };
 
-  const [openGroups, setOpenGroups] = React.useState<Set<string>>(() => {
+  // Active panel state: 'main' or a section key
+  const [activePanel, setActivePanel] = useState<string>(() => getActiveSection || 'main');
+
+  // Sync panel with pathname on navigation (e.g., direct link, browser back)
+  useEffect(() => {
+    setActivePanel(getActiveSection || 'main');
+  }, [getActiveSection]);
+
+  // Track open groups within sections (e.g., Finance > Customs)
+  const [openGroups, setOpenGroups] = useState<Set<string>>(() => {
     const initial = new Set<string>();
     if (pathname.startsWith('/finance/customs') || pathname.startsWith('/finance/correction')) {
       initial.add('finance-customs');
@@ -168,7 +266,7 @@ export function SidebarNav() {
     return initial;
   });
 
-  React.useEffect(() => {
+  useEffect(() => {
     if (pathname.startsWith('/finance/customs') || pathname.startsWith('/finance/correction')) {
       setOpenGroups(prev => {
         const next = new Set(prev);
@@ -190,154 +288,140 @@ export function SidebarNav() {
     });
   };
 
-  // Build per-section link lists based on access
-  // Dashboard moved out of Statistics
-  const dashboardLink = can('/statistics/dashboard') ? <NavLink key="dashboard" href="/statistics/dashboard" label="Dashboard" /> : null;
-  const statLinks = [
-    can('/statistics/general') ? <NavLink key="sg" href="/statistics/general" label="Sælgere" /> : null,
-    can('/statistics/overview') ? <NavLink key="so" href="/statistics/overview" label="Overblik" /> : null,
-    can('/statistics/countries') ? <NavLink key="sc" href="/statistics/countries" label="Lande" /> : null,
-    can('/statistics/suppleringer') ? <NavLink key="ssu" href="/statistics/suppleringer" label="Suppleringer" /> : null,
-    can('/statistics/styles/top10') ? <NavLink key="st" href="/statistics/styles/top10" label="Top 15 Styles" /> : null,
-    can('/statistics/vendors/top10') ? <NavLink key="sv" href="/statistics/vendors/top10" label="Top 10 leverandører" /> : null,
-    can('/statistics/downloads') ? <NavLink key="sdw" href="/statistics/downloads" label="Downloads" /> : null,
-  ].filter(Boolean) as any[];
+  // Helper: get all accessible links for a section (flattened)
+  const getAccessibleLinks = (section: SectionConfig): LinkDef[] => {
+    const links: LinkDef[] = [];
+    for (const item of section.items) {
+      if (isGroup(item)) {
+        for (const link of item.links) {
+          if (link.alwaysVisible || can(link.href)) {
+            links.push(link);
+          }
+        }
+      } else {
+        if (item.alwaysVisible || can(item.href)) {
+          links.push(item);
+        }
+      }
+    }
+    return links;
+  };
 
-  const financeCustomsLinks = [
-    can('/finance/customs') ? <NavLink key="fin-customs-period" href="/finance/customs" label="CUSTOMS PERIOD" /> : null,
-    can('/finance/correction') ? <NavLink key="fin-customs-correction" href="/finance/correction" label="CORRECTION" /> : null,
-  ].filter(Boolean) as any[];
+  // Get first accessible href for a section
+  const getFirstHref = (section: SectionConfig): string | null => {
+    const links = getAccessibleLinks(section);
+    return links[0]?.href ?? null;
+  };
 
-  const financeLinks = [
-    can('/finance/csv-skat') ? <NavLink key="fin-skat" href="/finance/csv-skat" label="CSV - Skat" /> : null,
-    financeCustomsLinks.length > 0 ? (
-      <CollapsibleNavGroup
-        key="fin-customs-group"
-        title="Customs"
-        links={financeCustomsLinks}
-        active={pathname.startsWith('/finance/customs') || pathname.startsWith('/finance/correction')}
-        isOpen={openGroups.has('finance-customs')}
-        onToggle={() => toggleGroup('finance-customs')}
-      />
-    ) : null,
-  ].filter(Boolean) as any[];
-  const stylesLinks = [
-    can('/styles') ? <NavLink key="s" href="/styles" label="Styles" /> : null,
-    can('/styles/settings') ? <NavLink key="ss" href="/styles/settings" label="Settings" /> : null,
-    can('/styles/stock-list') ? <NavLink key="ssl" href="/styles/stock-list" label="Stock List" /> : null,
-    can('/styles/statistics') ? <NavLink key="sst" href="/styles/statistics" label="Statistics" /> : null,
-    can('/styles/scraper') ? <NavLink key="sscr" href="/styles/scraper" label="Stock Scraper" /> : null,
-    can('/styles/movements') ? <NavLink key="sm" href="/styles/movements" label="Movements" /> : null,
-  ].filter(Boolean) as any[];
-  const purchaseLinks = [
-    can('/purchase/dashboard') ? <NavLink key="pd" href="/purchase/dashboard" label="Dashboard" /> : null,
-    <NavLink key="pai" href="/ai-analysis" label="AI Analysis" />, // Always visible - purchase round suggestions
-    can('/purchase/orders') ? <NavLink key="po" href="/purchase/orders" label="Purchase Orders" /> : null,
-    can('/purchase/call-off') ? <NavLink key="pcalloff" href="/purchase/call-off" label="NOOS Call-Off" /> : null,
-    can('/purchase/call-off-learning') ? <NavLink key="pcallofflearn" href="/purchase/call-off-learning" label="Learning Studio" /> : null,
-    can('/purchase/noos') ? <NavLink key="pnoos" href="/purchase/noos" label="NOOS Checker" /> : null,
-    can('/purchase/smart-draft') ? <NavLink key="psd" href="/purchase/smart-draft" label="Smart Draft" /> : null,
-    can('/purchase/conversations') ? <NavLink key="pconv" href="/purchase/conversations" label="Conversations" /> : null,
-    can('/purchase/suppliers') ? <NavLink key="psup" href="/purchase/suppliers" label="Suppliers" /> : null,
-    can('/purchase/feedback') ? <NavLink key="pfb" href="/purchase/feedback" label="AI Feedback" /> : null,
-    can('/purchase/packinglists-pdf') ? <NavLink key="ppdf" href="/purchase/packinglists-pdf" label="Packinglists (PDF)" /> : null,
-  ].filter(Boolean) as any[];
-  const salesLinks = [
-    can('/sales/nielsens') ? <NavLink key="sn" href="/sales/nielsens" label="Nielsens" /> : null,
-    can('/sales/make-purchase-order') ? <NavLink key="smpo" href="/sales/make-purchase-order" label="Make Purchase Order" /> : null,
-    can('/sales/sales-orders') ? <NavLink key="sso" href="/sales/sales-orders" label="Sales Orders" /> : null,
-    <NavLink key="shist" href="/sales/historical-sales" label="Historical Sales" />,
-  ].filter(Boolean) as any[];
-  // PDF'er and Exports moved to Settings
-  const settingsLinks = [
-    can('/settings/seasons') ? <NavLink key="set-seasons" href="/settings/seasons" label="SEASONS" /> : null,
-    can('/settings/salespersons') ? <NavLink key="set-sp" href="/settings/salespersons" label="SALESPERSONS" /> : null,
-    can('/settings/customers') ? <NavLink key="set-cust" href="/settings/customers" label="CUSTOMERS" /> : null,
-    can('/settings/integrations') ? <NavLink key="set-int" href="/settings/integrations" label="INTEGRATIONS" /> : null,
-    can('/settings/misc') ? <NavLink key="set-misc" href="/settings/misc" label="MISC" /> : null,
-    can('/settings/jobs') ? <NavLink key="set-jobs" href="/settings/jobs" label="JOBS" /> : null,
-    can('/settings/runs') ? <NavLink key="set-runs" href="/settings/runs" label="RUNS" /> : null,
-    can('/statistics/exports') ? <NavLink key="set-exports" href="/statistics/exports" label="PDF'er" /> : null,
-    can('/statistics/downloads') ? <NavLink key="set-downloads" href="/statistics/downloads" label="Exports" /> : null,
-  ].filter(Boolean) as any[];
-  const adminLinks = [
-    can('/admin') ? <NavLink key="ad" href="/admin" label="Dashboard" /> : null,
-    can('/admin/users') ? <NavLink key="ad-users" href="/admin/users" label="Users" /> : null,
-    can('/admin/roles') ? <NavLink key="ad-roles" href="/admin/roles" label="Roles" /> : null,
-  ].filter(Boolean) as any[];
+  // Build link elements for a section
+  const buildSectionLinks = (section: SectionConfig): React.ReactNode[] => {
+    const elements: React.ReactNode[] = [];
+    for (const item of section.items) {
+      if (isGroup(item)) {
+        const groupLinks = item.links
+          .filter(link => link.alwaysVisible || can(link.href))
+          .map(link => <NavLink key={link.href} href={link.href} label={link.label} />);
+        if (groupLinks.length > 0) {
+          elements.push(
+            <CollapsibleNavGroup
+              key={item.groupKey}
+              title={item.title}
+              links={groupLinks}
+              active={item.links.some(l => pathname.startsWith(l.href))}
+              isOpen={openGroups.has(item.groupKey)}
+              onToggle={() => toggleGroup(item.groupKey)}
+            />
+          );
+        }
+      } else {
+        if (item.alwaysVisible || can(item.href)) {
+          elements.push(<NavLink key={item.href} href={item.href} label={item.label} />);
+        }
+      }
+    }
+    return elements;
+  };
+
+  // Handle section click: switch panel and navigate to first link
+  const handleSectionClick = (section: SectionConfig) => {
+    const firstHref = getFirstHref(section);
+    if (firstHref) {
+      setActivePanel(section.key);
+      router.push(firstHref);
+    }
+  };
+
+  // Handle back click: return to main panel
+  const handleBackClick = () => {
+    setActivePanel('main');
+  };
+
+  // Filter sections by role requirement and check if they have accessible links
+  const visibleSections = SECTIONS.filter(section => {
+    if (section.requiresRole && !has(section.requiresRole)) return false;
+    return getAccessibleLinks(section).length > 0;
+  });
+
+  // Get current section for the section panel
+  const currentSection = SECTIONS.find(s => s.key === activePanel);
+
+  // Dashboard link (outside of sections)
+  const dashboardLink = can('/statistics/dashboard') ? (
+    <NavLink key="dashboard" href="/statistics/dashboard" label="Dashboard" />
+  ) : null;
+
   return (
-    <nav className="space-y-2">
-      {userName && (
-        <div className="px-3 py-2 text-xs text-slate-300/90">
-          Signed in as<br/>
-          <span className="text-white font-medium">{userName}</span>
+    <nav className="overflow-hidden">
+      <div
+        className="flex transition-transform duration-200 ease-out"
+        style={{
+          transform: activePanel === 'main' ? 'translateX(0)' : 'translateX(-100%)',
+          width: '200%',
+        }}
+      >
+        {/* Main Panel */}
+        <div className="w-1/2 flex-shrink-0 space-y-2">
+          {userName && (
+            <div className="px-3 py-2 text-xs text-slate-300/90">
+              Signed in as<br />
+              <span className="text-white font-medium">{userName}</span>
+            </div>
+          )}
+          <NavLink href="/" label="Home" />
+          {dashboardLink}
+          {visibleSections.map(section => (
+            <SectionButton
+              key={section.key}
+              title={section.title}
+              onClick={() => handleSectionClick(section)}
+              hasLinks={getAccessibleLinks(section).length > 0}
+            />
+          ))}
+          <div className="mt-6 px-3">
+            <SignOutButton />
+          </div>
         </div>
-      )}
-      <NavLink href="/" label="Home" />
-      {dashboardLink}
-      <CollapsibleSection
-        title="Statistics"
-        links={statLinks}
-        sectionKey="statistics"
-        isOpen={openSections.has('statistics')}
-        onToggle={() => toggleSection('statistics')}
-      />
-      <CollapsibleSection
-        title="Finance"
-        links={financeLinks}
-        sectionKey="finance"
-        isOpen={openSections.has('finance')}
-        onToggle={() => toggleSection('finance')}
-      />
-      <CollapsibleSection
-        title="Styles"
-        links={stylesLinks}
-        sectionKey="styles"
-        isOpen={openSections.has('styles')}
-        onToggle={() => toggleSection('styles')}
-      />
-      <CollapsibleSection
-        title="Purchase"
-        links={purchaseLinks}
-        sectionKey="purchase"
-        isOpen={openSections.has('purchase')}
-        onToggle={() => toggleSection('purchase')}
-      />
-      <CollapsibleSection
-        title="Sales"
-        links={salesLinks}
-        sectionKey="sales"
-        isOpen={openSections.has('sales')}
-        onToggle={() => toggleSection('sales')}
-      />
-      <CollapsibleSection
-        title="Settings"
-        links={settingsLinks}
-        sectionKey="settings"
-        isOpen={openSections.has('settings')}
-        onToggle={() => toggleSection('settings')}
-      />
-      {has('admin') && (
-        <CollapsibleSection
-          title="Admin"
-          links={adminLinks}
-          sectionKey="admin"
-          isOpen={openSections.has('admin')}
-          onToggle={() => toggleSection('admin')}
-        />
-      )}
-      <div className="mt-6 px-3">
-        <SignOutButton />
+
+        {/* Section Panel */}
+        <div className="w-1/2 flex-shrink-0 space-y-1">
+          {currentSection && (
+            <>
+              <BackHeader title={currentSection.title} onClick={handleBackClick} />
+              <div className="space-y-1">
+                {buildSectionLinks(currentSection)}
+              </div>
+            </>
+          )}
+        </div>
       </div>
     </nav>
   );
 }
 
 function SignOutButton() {
-  const React = require('react') as typeof import('react');
   const { createClientComponentClient } = require('@supabase/auth-helpers-nextjs');
   const supabase = createClientComponentClient();
-  const [busy, setBusy] = React.useState(false);
+  const [busy, setBusy] = useState(false);
   return (
     <Button
       variant="outline"
