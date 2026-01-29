@@ -59,7 +59,7 @@ export default function HistoricalDataPage() {
 
       const newInputs = new Map<string, StatisticInput>();
       
-      // Initialize with salespersons
+      // Initialize with salespersons; amounts from DB are in cents, we store in state as DKK for display
       for (const sp of salespersons) {
         const existing = (data ?? []).find((d: any) => d.salesperson_name === sp.name);
         newInputs.set(sp.id, {
@@ -67,13 +67,13 @@ export default function HistoricalDataPage() {
           salesperson_name: sp.name,
           total_leveret: existing?.total_leveret ?? 0,
           telefon_stk: existing?.telefon_stk ?? 0,
-          telefon_beløb: existing?.telefon_beløb ?? 0,
+          telefon_beløb: centsToDkk(existing?.telefon_beløb ?? 0),
           b2b_stk: existing?.b2b_stk ?? 0,
-          b2b_beløb: existing?.b2b_beløb ?? 0,
+          b2b_beløb: centsToDkk(existing?.b2b_beløb ?? 0),
           krediteret_stk: existing?.krediteret_stk ?? 0,
-          krediteret_beløb: existing?.krediteret_beløb ?? 0,
+          krediteret_beløb: centsToDkk(existing?.krediteret_beløb ?? 0),
           samlet_stk: existing?.samlet_stk ?? 0,
-          samlet_beløb: existing?.samlet_beløb ?? 0,
+          samlet_beløb: centsToDkk(existing?.samlet_beløb ?? 0),
         });
       }
 
@@ -104,13 +104,13 @@ export default function HistoricalDataPage() {
         salesperson_name: input.salesperson_name,
         total_leveret: input.total_leveret || 0,
         telefon_stk: input.telefon_stk || 0,
-        telefon_beløb: input.telefon_beløb || 0,
+        telefon_beløb: dkkToCents(input.telefon_beløb || 0),
         b2b_stk: input.b2b_stk || 0,
-        b2b_beløb: input.b2b_beløb || 0,
+        b2b_beløb: dkkToCents(input.b2b_beløb || 0),
         krediteret_stk: input.krediteret_stk || 0,
-        krediteret_beløb: input.krediteret_beløb || 0,
+        krediteret_beløb: dkkToCents(input.krediteret_beløb || 0),
         samlet_stk: input.samlet_stk || 0,
-        samlet_beløb: input.samlet_beløb || 0,
+        samlet_beløb: dkkToCents(input.samlet_beløb || 0),
       }));
 
       const { error } = await supabase
@@ -142,8 +142,13 @@ export default function HistoricalDataPage() {
     return `${monthName} ${year}`;
   }
 
-  function formatPrice(cents: number): string {
-    return (cents / 100).toLocaleString('da-DK', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  // DB stores amounts in cents; we display and edit in DKK
+  function centsToDkk(cents: number): number {
+    return Math.round(cents) / 100;
+  }
+
+  function dkkToCents(dkk: number): number {
+    return Math.round(dkk * 100);
   }
 
   const monthOptions = Array.from({ length: 12 }, (_, i) => {
@@ -211,13 +216,13 @@ export default function HistoricalDataPage() {
                 <th className="px-4 py-2 text-left border-r">Sælger</th>
                 <th className="px-4 py-2 text-left border-r">Total leveret</th>
                 <th className="px-4 py-2 text-left border-r">Telefon stk</th>
-                <th className="px-4 py-2 text-right border-r">Telefon beløb</th>
+                <th className="px-4 py-2 text-right border-r">Telefon beløb (DKK)</th>
                 <th className="px-4 py-2 text-left border-r">B2B stk</th>
-                <th className="px-4 py-2 text-right border-r">B2B beløb</th>
+                <th className="px-4 py-2 text-right border-r">B2B beløb (DKK)</th>
                 <th className="px-4 py-2 text-left border-r">Krediteret stk</th>
-                <th className="px-4 py-2 text-right border-r">Krediteret beløb</th>
+                <th className="px-4 py-2 text-right border-r">Krediteret beløb (DKK)</th>
                 <th className="px-4 py-2 text-left border-r">Samlet stk</th>
-                <th className="px-4 py-2 text-right">Samlet beløb</th>
+                <th className="px-4 py-2 text-right">Samlet beløb (DKK)</th>
               </tr>
             </thead>
             <tbody>
@@ -246,10 +251,11 @@ export default function HistoricalDataPage() {
                     <td className="px-4 py-2 border-r">
                       <input
                         type="number"
-                        value={input.telefon_beløb || ''}
+                        step="0.01"
+                        value={input.telefon_beløb ?? ''}
                         onChange={(e) => updateInput(sp.id, 'telefon_beløb', parseFloat(e.target.value) || 0)}
                         className="w-full px-2 py-1 border rounded"
-                        placeholder="i cents"
+                        placeholder="0,00"
                       />
                     </td>
                     <td className="px-4 py-2 border-r">
@@ -263,10 +269,11 @@ export default function HistoricalDataPage() {
                     <td className="px-4 py-2 border-r">
                       <input
                         type="number"
-                        value={input.b2b_beløb || ''}
+                        step="0.01"
+                        value={input.b2b_beløb ?? ''}
                         onChange={(e) => updateInput(sp.id, 'b2b_beløb', parseFloat(e.target.value) || 0)}
                         className="w-full px-2 py-1 border rounded"
-                        placeholder="i cents"
+                        placeholder="0,00"
                       />
                     </td>
                     <td className="px-4 py-2 border-r">
@@ -280,10 +287,11 @@ export default function HistoricalDataPage() {
                     <td className="px-4 py-2 border-r">
                       <input
                         type="number"
-                        value={input.krediteret_beløb || ''}
+                        step="0.01"
+                        value={input.krediteret_beløb ?? ''}
                         onChange={(e) => updateInput(sp.id, 'krediteret_beløb', parseFloat(e.target.value) || 0)}
                         className="w-full px-2 py-1 border rounded"
-                        placeholder="i cents"
+                        placeholder="0,00"
                       />
                     </td>
                     <td className="px-4 py-2 border-r">
@@ -297,10 +305,11 @@ export default function HistoricalDataPage() {
                     <td className="px-4 py-2">
                       <input
                         type="number"
-                        value={input.samlet_beløb || ''}
+                        step="0.01"
+                        value={input.samlet_beløb ?? ''}
                         onChange={(e) => updateInput(sp.id, 'samlet_beløb', parseFloat(e.target.value) || 0)}
                         className="w-full px-2 py-1 border rounded"
-                        placeholder="i cents"
+                        placeholder="0,00"
                       />
                     </td>
                   </tr>

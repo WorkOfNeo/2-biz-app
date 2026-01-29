@@ -7,6 +7,7 @@ import { supabase } from '../../../lib/supabaseClient';
 import Link from 'next/link';
 
 type ParsedRow = {
+  orderNo: string; // Column A = order number (can repeat for multiple lines per order)
   orderType: string;
   channel: string; // Channel from column C: "Telefon" or "B2B Shop"
   customerName: string;
@@ -102,6 +103,8 @@ export default function SuppliersPage() {
   const [viewMode, setViewMode] = useState<'upload' | 'saved'>('upload');
   const [exporting, setExporting] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [uploadResult, setUploadResult] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [saveResult, setSaveResult] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   // Fetch salespersons with sort_index to maintain consistent ordering
   const { data: salespersons } = useSWR('suppleringer:salespersons', async () => {
@@ -213,6 +216,7 @@ export default function SuppliersPage() {
   }
 
   async function parseFile(selectedFile: File) {
+    setUploadResult(null);
     try {
       setProcessing(true);
       setProgress({ step: 'Reading file...', current: 0, total: 100 });
@@ -239,6 +243,7 @@ export default function SuppliersPage() {
       const totalRows = data.length - 1; // Exclude header
       
       // Calculate column indices using Excel column letters
+      const colA = excelColToIndex('A'); // Order number (Column A)
       const colB = excelColToIndex('B'); // Order type
       const colC = excelColToIndex('C'); // Channel
       const colE = excelColToIndex('E'); // Customer Name
@@ -267,6 +272,7 @@ export default function SuppliersPage() {
         
         const row = data[i] || [];
         
+        const orderNo = String(row[colA] ?? '').trim(); // Column A = order number
         const orderType = String(row[colB] || '').trim(); // Column B
         let channel = String(row[colC] || '').trim(); // Column C
         // Translate "Sales Staff" to "Telefon"
@@ -288,6 +294,7 @@ export default function SuppliersPage() {
         if (!customerName || !salesPerson || !accountNo) continue;
 
         rows.push({
+          orderNo,
           orderType,
           channel: channel || 'B2B Shop', // Default to B2B Shop if empty
           customerName,
@@ -310,6 +317,7 @@ export default function SuppliersPage() {
       setFile(selectedFile);
       setSelectedSalesperson(null);
       setSelectedSalespersonId(null);
+      setUploadResult({ type: 'success', message: `Fil indlæst: ${rows.length} rækker fra ${selectedFile.name}` });
       
       // Allow time for aggregation to complete
       await new Promise(resolve => setTimeout(resolve, 100));
@@ -324,7 +332,7 @@ export default function SuppliersPage() {
     } catch (err: any) {
       setProcessing(false);
       setProgress(null);
-      alert(`Error parsing file: ${err.message}`);
+      setUploadResult({ type: 'error', message: `Fejl ved indlæsning: ${err.message}` });
       console.error('Parse error:', err);
     }
   }
@@ -504,7 +512,7 @@ export default function SuppliersPage() {
     return match[1];
   }
 
-  // Get the most common month from parsed rows, or use current month as fallback
+  // Get the most common month from parsed rows (for display/fallback), or use current month
   function getMonthFromRows(): string {
     const monthCounts = new Map<string, number>();
     for (const row of parsedRows) {
@@ -514,11 +522,9 @@ export default function SuppliersPage() {
       }
     }
     if (monthCounts.size === 0) {
-      // Fallback to current month
       const now = new Date();
       return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
     }
-    // Get the month with the most entries
     let maxCount = 0;
     let mostCommonMonth = '';
     for (const [month, count] of monthCounts.entries()) {
@@ -528,6 +534,21 @@ export default function SuppliersPage() {
       }
     }
     return mostCommonMonth;
+  }
+
+  // All distinct year_months present in parsed rows (from row.date)
+  const distinctMonthsFromRows = useMemo(() => {
+    const set = new Set<string>();
+    for (const row of parsedRows) {
+      const month = extractYearMonth(row.date);
+      if (month) set.add(month);
+    }
+    return Array.from(set).sort();
+  }, [parsedRows]);
+
+  // Line key for deduplication: same order line = same key (order_no + identifying fields)
+  function lineKey(row: ParsedRow): string {
+    return `${row.orderNo}|${row.date ?? ''}|${row.customerName}|${row.accountNo}|${row.qtyOrdered}|${row.price}`;
   }
 
   // Fetch available saved months
@@ -550,179 +571,169 @@ export default function SuppliersPage() {
     fetchSavedMonths();
   }, []);
 
-  // Aggregate data per month and save to Supabase
+  // Save all months from file to Supabase; dedupe by order_no + line key (no duplicate order lines)
   async function saveToSupabase() {
     if (parsedRows.length === 0) {
-      alert('Ingen data at gemme. Upload en fil først.');
+      setSaveResult({ type: 'error', message: 'Ingen data at gemme. Upload en fil først.' });
+      return;
+    }
+
+    const monthsToSave = distinctMonthsFromRows.length > 0 ? distinctMonthsFromRows : [getMonthFromRows()];
+    if (monthsToSave.length === 0) {
+      setSaveResult({ type: 'error', message: 'Ingen gyldige måneder i filen. Tjek kolonne BO (dato).' });
       return;
     }
 
     setSaving(true);
+    setSaveResult(null);
     setSaveProgress({ step: 'Forbereder data...', current: 0, total: 100 });
     try {
-      const yearMonth = getMonthFromRows();
-      
-      setSaveProgress({ step: 'Filtrerer rækker for måned...', current: 5, total: 100 });
-      await new Promise(resolve => setTimeout(resolve, 50));
-      
-      // Aggregate data per salesperson for this month
-      const monthRows = parsedRows.filter(row => extractYearMonth(row.date) === yearMonth);
-      
-      if (monthRows.length === 0) {
-        alert(`Ingen data fundet for måned ${yearMonth}. Tjek datoerne i filen.`);
-        setSaving(false);
-        setSaveProgress(null);
-        return;
-      }
+      let totalInserted = 0;
+      let totalSkipped = 0;
 
-      const bySalesperson = new Map<string, ParsedRow[]>();
-      for (const row of monthRows) {
-        const key = row.salesPerson;
-        if (!bySalesperson.has(key)) {
-          bySalesperson.set(key, []);
-        }
-        bySalesperson.get(key)!.push(row);
-      }
+      for (let m = 0; m < monthsToSave.length; m++) {
+        const yearMonth = monthsToSave[m];
+        const progressBase = Math.round((m / monthsToSave.length) * 90);
+        setSaveProgress({ step: `Behandler ${formatMonthName(yearMonth)}...`, current: progressBase, total: 100 });
 
-      const recordsToSave: any[] = [];
+        const monthRows = parsedRows.filter(row => extractYearMonth(row.date) === yearMonth);
+        if (monthRows.length === 0) continue;
 
-      for (const [salesPerson, rows] of bySalesperson.entries()) {
-        // Calculate aggregated values (same logic as salespersonSummaries)
-        const telefon = { stk: 0, beløb: 0 };
-        const b2bShop = { stk: 0, beløb: 0 };
-        let credittedStk = 0; // Will be negative
-        let credittedBeløb = 0; // Will be negative
-        let totalLeveret = 0;
-
-        for (const row of rows) {
-          const isTelefon = row.channel === 'Telefon';
-          const channelData = isTelefon ? telefon : b2bShop;
-          
-          if (row.qtyDelivered > 0) {
-            totalLeveret += row.qtyDelivered;
-          }
-          
-          if (row.qtyOrdered > 0) {
-            channelData.stk += row.qtyOrdered;
-          }
-          if (row.price > 0) {
-            channelData.beløb += row.price;
-          }
-          
-          if (row.qtyOrdered < 0) {
-            credittedStk += row.qtyOrdered; // Already negative
-          }
-          if (row.price < 0) {
-            credittedBeløb += row.price; // Already negative
+        // Fetch existing rows for this month to build line-key set (avoid duplicate order lines)
+        const existingKeys = new Set<string>();
+        const PAGE_SIZE = 1000;
+        let from = 0;
+        let hasMore = true;
+        while (hasMore) {
+          const { data: existing } = await supabase
+            .from('supp_statistic_rows')
+            .select('order_no, date, customer_name, account_no, qty_ordered, price')
+            .eq('year_month', yearMonth)
+            .range(from, from + PAGE_SIZE - 1);
+          if (existing && existing.length > 0) {
+            for (const r of existing) {
+              existingKeys.add(`${r.order_no ?? ''}|${r.date ?? ''}|${r.customer_name ?? ''}|${r.account_no ?? ''}|${Number(r.qty_ordered ?? 0)}|${Number(r.price ?? 0)}`);
+            }
+            hasMore = existing.length === PAGE_SIZE;
+            from += PAGE_SIZE;
+          } else {
+            hasMore = false;
           }
         }
 
-        // Calculate Samlet explicitly: Telefon + B2B - Krediteret (Krediteret is already negative)
-        const samletStk = telefon.stk + b2bShop.stk + credittedStk;
-        const samletBeløb = telefon.beløb + b2bShop.beløb + credittedBeløb;
-
-        recordsToSave.push({
-          year_month: yearMonth,
-          salesperson_name: salesPerson,
-          total_leveret: totalLeveret,
-          telefon_stk: telefon.stk,
-          telefon_beløb: telefon.beløb,
-          b2b_stk: b2bShop.stk,
-          b2b_beløb: b2bShop.beløb,
-          krediteret_stk: Math.abs(credittedStk), // Store as absolute value in DB
-          krediteret_beløb: Math.abs(credittedBeløb), // Store as absolute value in DB
-          samlet_stk: samletStk,
-          samlet_beløb: samletBeløb,
-        });
-      }
-
-      setSaveProgress({ step: 'Sletter eksisterende rækker...', current: 10, total: 100 });
-      
-      // Delete existing rows for this month first (to replace with new data)
-      const { error: deleteError } = await supabase
-        .from('supp_statistic_rows')
-        .delete()
-        .eq('year_month', yearMonth);
-
-      if (deleteError) console.warn('Warning: Could not delete existing rows:', deleteError);
-
-      setSaveProgress({ step: 'Forbereder rækker til gemning...', current: 15, total: 100 });
-      await new Promise(resolve => setTimeout(resolve, 50));
-
-      // Save individual rows
-      const rowsToSave = monthRows.map((row) => ({
-        year_month: yearMonth,
-        order_type: row.orderType,
-        channel: row.channel,
-        customer_name: row.customerName,
-        account_no: row.accountNo,
-        salesperson_name: row.salesPerson,
-        qty_ordered: row.qtyOrdered,
-        qty_delivered: row.qtyDelivered,
-        price: row.price,
-        date: row.date || null,
-      }));
-
-      // Insert rows in batches
-      setSaveProgress({ step: 'Gemmer individuelle rækker...', current: 20, total: 100 });
-      const batchSize = 500;
-      const totalBatches = Math.ceil(rowsToSave.length / batchSize);
-      for (let i = 0; i < rowsToSave.length; i += batchSize) {
-        const batchIndex = Math.floor(i / batchSize);
-        const progress = 20 + Math.round((batchIndex / totalBatches) * 60); // 20-80%
-        setSaveProgress({ 
-          step: `Gemmer rækker batch ${batchIndex + 1} af ${totalBatches}...`, 
-          current: progress, 
-          total: 100 
-        });
-        
-        const batch = rowsToSave.slice(i, i + batchSize);
-        const { error: rowsError } = await supabase
-          .from('supp_statistic_rows')
-          .insert(batch);
-        
-        if (rowsError) {
-          console.error('Error saving rows batch:', rowsError);
-          throw new Error(`Fejl ved gemning af rækker: ${rowsError.message}`);
+        // Only insert rows whose line key is not already in DB; dedupe within file
+        const toInsert: typeof monthRows = [];
+        for (const row of monthRows) {
+          const key = lineKey(row);
+          if (existingKeys.has(key)) continue;
+          existingKeys.add(key);
+          toInsert.push(row);
         }
-        
-        // Small delay to allow UI update
-        await new Promise(resolve => setTimeout(resolve, 10));
+        totalSkipped += monthRows.length - toInsert.length;
+
+        if (toInsert.length > 0) {
+          const rowsToSave = toInsert.map((row) => ({
+            year_month: yearMonth,
+            order_no: row.orderNo || null,
+            order_type: row.orderType,
+            channel: row.channel,
+            customer_name: row.customerName,
+            account_no: row.accountNo,
+            salesperson_name: row.salesPerson,
+            qty_ordered: row.qtyOrdered,
+            qty_delivered: row.qtyDelivered,
+            price: row.price,
+            date: row.date || null,
+          }));
+
+          const batchSize = 500;
+          for (let i = 0; i < rowsToSave.length; i += batchSize) {
+            const batch = rowsToSave.slice(i, i + batchSize);
+            const { error: rowsError } = await supabase
+              .from('supp_statistic_rows')
+              .insert(batch);
+            if (rowsError) throw new Error(`Fejl ved gemning af rækker (${yearMonth}): ${rowsError.message}`);
+            totalInserted += batch.length;
+          }
+        }
+        // Recalculate aggregates for this month from all rows in DB
+        let allRowsForMonth: any[] = [];
+        from = 0;
+        hasMore = true;
+        while (hasMore) {
+          const { data: page } = await supabase
+            .from('supp_statistic_rows')
+            .select('salesperson_name, qty_delivered, qty_ordered, price, channel')
+            .eq('year_month', yearMonth)
+            .range(from, from + PAGE_SIZE - 1);
+          if (page && page.length > 0) {
+            allRowsForMonth = allRowsForMonth.concat(page);
+            hasMore = page.length === PAGE_SIZE;
+            from += PAGE_SIZE;
+          } else {
+            hasMore = false;
+          }
+        }
+
+        const bySalesperson = new Map<string, { telefon: { stk: number; beløb: number }; b2bShop: { stk: number; beløb: number }; credittedStk: number; credittedBeløb: number; totalLeveret: number }>();
+        for (const r of allRowsForMonth) {
+          const name = r.salesperson_name ?? '';
+          if (!bySalesperson.has(name)) {
+            bySalesperson.set(name, { telefon: { stk: 0, beløb: 0 }, b2bShop: { stk: 0, beløb: 0 }, credittedStk: 0, credittedBeløb: 0, totalLeveret: 0 });
+          }
+          const agg = bySalesperson.get(name)!;
+          if (Number(r.qty_delivered ?? 0) > 0) agg.totalLeveret += Number(r.qty_delivered);
+          const isTelefon = (r.channel ?? '').toString().toLowerCase().includes('telefon') || (r.channel ?? '').toString() === 'Sales Staff';
+          const ch = isTelefon ? agg.telefon : agg.b2bShop;
+          if (Number(r.qty_ordered ?? 0) > 0) ch.stk += Number(r.qty_ordered);
+          if (Number(r.price ?? 0) > 0) ch.beløb += Number(r.price);
+          if (Number(r.qty_ordered ?? 0) < 0) agg.credittedStk += Number(r.qty_ordered);
+          if (Number(r.price ?? 0) < 0) agg.credittedBeløb += Number(r.price);
+        }
+
+        const recordsToSave: any[] = [];
+        for (const [salesPerson, agg] of bySalesperson.entries()) {
+          const samletStk = agg.telefon.stk + agg.b2bShop.stk + agg.credittedStk;
+          const samletBeløb = agg.telefon.beløb + agg.b2bShop.beløb + agg.credittedBeløb;
+          recordsToSave.push({
+            year_month: yearMonth,
+            salesperson_name: salesPerson,
+            total_leveret: agg.totalLeveret,
+            telefon_stk: agg.telefon.stk,
+            telefon_beløb: agg.telefon.beløb,
+            b2b_stk: agg.b2bShop.stk,
+            b2b_beløb: agg.b2bShop.beløb,
+            krediteret_stk: Math.abs(agg.credittedStk),
+            krediteret_beløb: Math.abs(agg.credittedBeløb),
+            samlet_stk: samletStk,
+            samlet_beløb: samletBeløb,
+          });
+        }
+
+        const { error: upsertError } = await supabase
+          .from('supp_statistic')
+          .upsert(recordsToSave, { onConflict: 'year_month,salesperson_name' });
+        if (upsertError) throw new Error(`Fejl ved aggregering (${yearMonth}): ${upsertError.message}`);
       }
-
-      setSaveProgress({ step: 'Gemmer aggregerede data...', current: 85, total: 100 });
-      await new Promise(resolve => setTimeout(resolve, 50));
-
-      // Upsert aggregated records (update if exists, insert if not)
-      const { error } = await supabase
-        .from('supp_statistic')
-        .upsert(recordsToSave, {
-          onConflict: 'year_month,salesperson_name',
-        });
-
-      if (error) throw error;
-
-      setSaveProgress({ step: 'Opdaterer månedliste...', current: 95, total: 100 });
 
       setSaveProgress({ step: 'Færdig!', current: 100, total: 100 });
       await new Promise(resolve => setTimeout(resolve, 200));
-      
-      alert(`Data gemt for ${formatMonthName(yearMonth)} (${recordsToSave.length} sælgere, ${monthRows.length} rækker)`);
-      
-      // Refresh saved months list
+
+      const message = monthsToSave.length === 1
+        ? `Data gemt for ${formatMonthName(monthsToSave[0])}. ${totalInserted} rækker indsat${totalSkipped > 0 ? `, ${totalSkipped} duplikater sprunget over` : ''}.`
+        : `Data gemt for ${monthsToSave.length} måneder. I alt ${totalInserted} nye rækker${totalSkipped > 0 ? `, ${totalSkipped} duplikater sprunget over` : ''}.`;
+      setSaveResult({ type: 'success', message });
+
       const { data: monthsData } = await supabase
         .from('supp_statistic')
         .select('year_month')
         .order('year_month', { ascending: false });
-      
       const uniqueMonths = Array.from(new Set((monthsData || []).map((r: any) => r.year_month))).sort().reverse();
       setSavedMonths(uniqueMonths as string[]);
-      
       setSaveProgress(null);
-      
     } catch (err: any) {
       setSaveProgress(null);
-      alert(`Fejl ved gemning: ${err.message}`);
+      setSaveResult({ type: 'error', message: `Fejl ved gemning: ${err.message}` });
       console.error('Save error:', err);
     } finally {
       setSaving(false);
@@ -784,9 +795,10 @@ export default function SuppliersPage() {
         }
       }
 
-      if (allRowsData.length > 0) {
-        // Convert saved rows to ParsedRow format (include salesperson_id)
+        if (allRowsData.length > 0) {
+        // Convert saved rows to ParsedRow format (include salesperson_id and order_no)
         const convertedRows: ParsedRow[] = allRowsData.map((row: any) => ({
+          orderNo: row.order_no ?? '',
           orderType: row.order_type,
           channel: row.channel,
           customerName: row.customer_name,
@@ -859,6 +871,7 @@ export default function SuppliersPage() {
       
       if (allPrevRowsData.length > 0) {
         const convertedPrevRows: ParsedRow[] = allPrevRowsData.map((row: any) => ({
+          orderNo: row.order_no ?? '',
           orderType: row.order_type,
           channel: row.channel,
           customerName: row.customer_name,
@@ -1199,7 +1212,11 @@ export default function SuppliersPage() {
               className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
             >
               <Save className="h-4 w-4" />
-              {saving ? 'Gemmer...' : `Gem (${formatMonthName(getMonthFromRows())})`}
+              {saving
+                ? 'Gemmer...'
+                : distinctMonthsFromRows.length > 1
+                  ? `Gem alle måneder (${distinctMonthsFromRows.length})`
+                  : `Gem (${formatMonthName(getMonthFromRows())})`}
             </button>
           )}
         </div>
@@ -1211,6 +1228,7 @@ export default function SuppliersPage() {
         <div className="text-xs text-blue-800 space-y-1">
           <p className="font-medium mb-1">Filen skal være en Excel fil (.xlsx, .xls) eller CSV fil med følgende kolonner:</p>
           <ul className="list-disc list-inside space-y-0.5 ml-2">
+            <li><strong>Kolonne A:</strong> Ordrenummer (bruges til at undgå duplikater ved gem)</li>
             <li><strong>Kolonne B:</strong> Ordre type (kun rækker med "STOCK" behandles)</li>
             <li><strong>Kolonne C:</strong> Kanal ("Telefon", "B2B Shop", eller "Sales Staff")</li>
             <li><strong>Kolonne E:</strong> Kundenavn (påkrævet)</li>
@@ -1263,6 +1281,46 @@ export default function SuppliersPage() {
           </div>
         )}
       </div>
+
+      {/* Upload result: confirmed / error */}
+      {uploadResult && (
+        <div
+          className={`rounded-md border p-4 ${
+            uploadResult.type === 'success'
+              ? 'bg-green-50 border-green-200 text-green-900'
+              : 'bg-red-50 border-red-200 text-red-900'
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            {uploadResult.type === 'success' ? (
+              <span className="text-green-600 font-medium">✓ Bekræftet</span>
+            ) : (
+              <span className="text-red-600 font-medium">Fejl</span>
+            )}
+            <span className="text-sm">{uploadResult.message}</span>
+          </div>
+        </div>
+      )}
+
+      {/* Save result: confirmed / error */}
+      {saveResult && (
+        <div
+          className={`rounded-md border p-4 ${
+            saveResult.type === 'success'
+              ? 'bg-green-50 border-green-200 text-green-900'
+              : 'bg-red-50 border-red-200 text-red-900'
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            {saveResult.type === 'success' ? (
+              <span className="text-green-600 font-medium">✓ Bekræftet</span>
+            ) : (
+              <span className="text-red-600 font-medium">Fejl</span>
+            )}
+            <span className="text-sm">{saveResult.message}</span>
+          </div>
+        </div>
+      )}
 
       {/* Progress Indicator for File Processing */}
       {processing && progress && (
