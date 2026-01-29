@@ -427,16 +427,20 @@ export default function HistoricalSalesPage() {
     setAddingColor(true);
     
     try {
-      // Insert the new color (let database auto-generate UUID)
-      const { error } = await supabase
-        .from('style_colors')
-        .insert({
+      // Use API route to add color (bypasses RLS)
+      const response = await fetch('/api/historical-sales/add-color', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
           style_id: styleId,
           color: finalColorName
-        });
+        })
+      });
       
-      if (error) {
-        setUploadResult({ success: false, message: `Failed to add color: ${error.message}` });
+      const result = await response.json();
+      
+      if (!response.ok) {
+        setUploadResult({ success: false, message: `Failed to add color: ${result.error}` });
         return;
       }
       
