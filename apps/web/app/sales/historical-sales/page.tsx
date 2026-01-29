@@ -9,7 +9,7 @@ import { Input } from '../../../components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../components/ui/table';
 import { Badge } from '../../../components/ui/badge';
 import { Dropzone } from '../../../components/ui/dropzone';
-import { AlertCircle, CheckCircle, Loader2, Download, TrendingUp, Calendar, BarChart3, Search } from 'lucide-react';
+import { AlertCircle, CheckCircle, Loader2, Download, TrendingUp, Calendar, BarChart3, Search, Plus, X } from 'lucide-react';
 import { DailyLineChart, StackedAreaByColor, SizeDistributionBar } from '../../../components/charts';
 
 // Types
@@ -236,6 +236,25 @@ export default function HistoricalSalesPage() {
   const [salesLoading, setSalesLoading] = useState(false);
   const [salesError, setSalesError] = useState<string | null>(null);
 
+  // Batch update modal state
+  const [batchUpdateModal, setBatchUpdateModal] = useState<{
+    show: boolean;
+    rowIndex: number;
+    newStyleNo: string;
+    similarRowIndexes: number[];
+  } | null>(null);
+
+  // Add color modal state
+  const [addColorModal, setAddColorModal] = useState<{
+    show: boolean;
+    rowIndex: number;
+    styleNo: string;
+    styleId: string;
+    originalColor: string;
+  } | null>(null);
+  const [newColorName, setNewColorName] = useState('');
+  const [addingColor, setAddingColor] = useState(false);
+
   // Fetch styles for matching
   const { data: styles } = useSWR('historical-sales:styles', async () => {
     const { data } = await supabase
@@ -246,7 +265,7 @@ export default function HistoricalSalesPage() {
   });
 
   // Fetch style colors for matching
-  const { data: styleColors } = useSWR('historical-sales:style-colors', async () => {
+  const { data: styleColors, mutate: mutateStyleColors } = useSWR('historical-sales:style-colors', async () => {
     const { data } = await supabase
       .from('style_colors')
       .select('id, style_id, color')
@@ -308,6 +327,169 @@ export default function HistoricalSalesPage() {
                 nowMatched ? 'matched' : 'unmatched_color'
       };
     }));
+  }
+
+  // Function to update a row's matched style number
+  function updateRowStyleNo(rowIndex: number, newStyleNo: string) {
+    const currentRow = parsedRows[rowIndex];
+    if (!currentRow) return;
+
+    // Find similar rows (same original styleName/styleNo AND same color input)
+    const similarIndexes = parsedRows
+      .map((row, idx) => {
+        if (idx === rowIndex) return -1;
+        const sameStyle = (row.styleName === currentRow.styleName && row.styleName) ||
+                         (row.styleNo === currentRow.styleNo && row.styleNo);
+        const sameColor = row.color.toLowerCase() === currentRow.color.toLowerCase();
+        return sameStyle && sameColor ? idx : -1;
+      })
+      .filter(idx => idx !== -1);
+
+    if (similarIndexes.length > 0) {
+      // Show modal to ask about batch update
+      setBatchUpdateModal({
+        show: true,
+        rowIndex,
+        newStyleNo,
+        similarRowIndexes: similarIndexes
+      });
+    } else {
+      // No similar rows, just update this one
+      applyStyleChange(rowIndex, newStyleNo);
+    }
+  }
+
+  // Apply style change to a single row
+  function applyStyleChange(rowIndex: number, newStyleNo: string) {
+    setParsedRows(prev => prev.map((row, idx) => {
+      if (idx !== rowIndex) return row;
+      
+      // Get available colors for the new style
+      const availableColors = colorsByStyleNo.get(newStyleNo) || [];
+      
+      // Try to match the original color to the new style's colors
+      let matchedColor: string | null = null;
+      let colorScore = 0;
+      
+      // Try exact match first
+      const exactMatch = availableColors.find(c => c.toLowerCase() === row.color.toLowerCase());
+      if (exactMatch) {
+        matchedColor = exactMatch;
+        colorScore = 1.0;
+      } else if (availableColors.length > 0) {
+        // Try fuzzy match
+        const fuzzyResult = bestColorMatch(row.color, availableColors);
+        if (fuzzyResult.match && fuzzyResult.score >= 0.5) {
+          matchedColor = fuzzyResult.match;
+          colorScore = fuzzyResult.score;
+        }
+      }
+      
+      return {
+        ...row,
+        matchedStyleNo: newStyleNo || null,
+        matchedColor,
+        styleScore: 1.0, // Manual selection
+        colorScore,
+        matchNote: 'Style manually selected',
+        status: !newStyleNo ? 'unmatched_style' : 
+                !matchedColor ? 'unmatched_color' : 'matched'
+      };
+    }));
+  }
+
+  // Confirm batch style update
+  function confirmBatchStyleUpdate(updateAll: boolean) {
+    if (!batchUpdateModal) return;
+    
+    const { rowIndex, newStyleNo, similarRowIndexes } = batchUpdateModal;
+    
+    // Always update the main row
+    applyStyleChange(rowIndex, newStyleNo);
+    
+    // If user said yes, update all similar rows
+    if (updateAll) {
+      for (const idx of similarRowIndexes) {
+        applyStyleChange(idx, newStyleNo);
+      }
+    }
+    
+    setBatchUpdateModal(null);
+  }
+
+  // Add a new color to a style
+  async function addNewColorToStyle() {
+    if (!addColorModal || !newColorName.trim()) return;
+    
+    const { styleId, styleNo, rowIndex, originalColor } = addColorModal;
+    
+    // Create color name with 2BIZ prefix if it doesn't match the original exactly
+    const colorName = newColorName.trim();
+    const finalColorName = colorName.toUpperCase().startsWith('2BIZ-') 
+      ? colorName 
+      : `2BIZ-${colorName}`;
+    
+    setAddingColor(true);
+    
+    try {
+      // Generate a unique ID with 2BIZ prefix
+      const colorId = `2biz-${crypto.randomUUID()}`;
+      
+      // Insert the new color
+      const { error } = await supabase
+        .from('style_colors')
+        .insert({
+          id: colorId,
+          style_id: styleId,
+          color: finalColorName
+        });
+      
+      if (error) {
+        setUploadResult({ success: false, message: `Failed to add color: ${error.message}` });
+        return;
+      }
+      
+      // Refresh style colors
+      await mutateStyleColors();
+      
+      // Update the row with the new color
+      setParsedRows(prev => prev.map((row, idx) => {
+        if (idx !== rowIndex) return row;
+        return {
+          ...row,
+          matchedColor: finalColorName,
+          colorScore: 1.0,
+          matchNote: `New color: ${finalColorName}`,
+          status: 'matched'
+        };
+      }));
+      
+      setUploadResult({ success: true, message: `Added color "${finalColorName}" to style ${styleNo}` });
+      setAddColorModal(null);
+      setNewColorName('');
+    } catch (err: any) {
+      setUploadResult({ success: false, message: `Failed to add color: ${err.message}` });
+    } finally {
+      setAddingColor(false);
+    }
+  }
+
+  // Open add color modal
+  function openAddColorModal(rowIndex: number) {
+    const row = parsedRows[rowIndex];
+    if (!row || !row.matchedStyleNo) return;
+    
+    const style = styles?.find(s => s.style_no === row.matchedStyleNo);
+    if (!style) return;
+    
+    setAddColorModal({
+      show: true,
+      rowIndex,
+      styleNo: row.matchedStyleNo,
+      styleId: style.id,
+      originalColor: row.color
+    });
+    setNewColorName(row.color); // Pre-fill with the original color name
   }
 
   // Parse Excel file (wide format)
@@ -1007,29 +1189,53 @@ export default function HistoricalSalesPage() {
                           </td>
                           <td className="p-2 border-b font-mono text-[10px]">{row.styleNo || '—'}</td>
                           <td className="p-2 border-b text-[10px] max-w-[120px] truncate" title={row.styleName}>{row.styleName || '—'}</td>
-                          <td className="p-2 border-b font-mono text-[10px]">
-                            {row.matchedStyleNo || '—'}
+                          <td className="p-2 border-b">
+                            <select
+                              value={row.matchedStyleNo || ''}
+                              onChange={(e) => updateRowStyleNo(idx, e.target.value)}
+                              className={`w-full text-xs px-1.5 py-1 rounded border font-mono ${
+                                row.matchedStyleNo 
+                                  ? 'border-green-300 bg-green-50' 
+                                  : 'border-red-300 bg-red-50'
+                              } focus:outline-none focus:ring-1 focus:ring-[#8FA894]`}
+                            >
+                              <option value="">— Select style —</option>
+                              {(styles || []).map(s => (
+                                <option key={s.id} value={s.style_no}>
+                                  {s.style_no}{s.style_name ? ` - ${s.style_name}` : ''}
+                                </option>
+                              ))}
+                            </select>
                             {row.styleScore < 1 && row.styleScore >= 0.7 && (
-                              <span className="text-slate-400 ml-1">({Math.round(row.styleScore * 100)}%)</span>
+                              <span className="text-[10px] text-slate-400 ml-1">({Math.round(row.styleScore * 100)}%)</span>
                             )}
                           </td>
                           <td className="p-2 border-b">{row.color}</td>
                           <td className="p-2 border-b">
                             {row.matchedStyleNo ? (
-                              <select
-                                value={row.matchedColor || ''}
-                                onChange={(e) => updateRowColor(idx, e.target.value)}
-                                className={`w-full text-xs px-1.5 py-1 rounded border ${
-                                  row.matchedColor 
-                                    ? 'border-green-300 bg-green-50' 
-                                    : 'border-red-300 bg-red-50'
-                                } focus:outline-none focus:ring-1 focus:ring-[#8FA894]`}
-                              >
-                                <option value="">— Select color —</option>
-                                {(colorsByStyleNo.get(row.matchedStyleNo) || []).map(c => (
-                                  <option key={c} value={c}>{c}</option>
-                                ))}
-                              </select>
+                              <div className="flex items-center gap-1">
+                                <select
+                                  value={row.matchedColor || ''}
+                                  onChange={(e) => updateRowColor(idx, e.target.value)}
+                                  className={`flex-1 text-xs px-1.5 py-1 rounded border ${
+                                    row.matchedColor 
+                                      ? 'border-green-300 bg-green-50' 
+                                      : 'border-red-300 bg-red-50'
+                                  } focus:outline-none focus:ring-1 focus:ring-[#8FA894]`}
+                                >
+                                  <option value="">— Select color —</option>
+                                  {(colorsByStyleNo.get(row.matchedStyleNo) || []).map(c => (
+                                    <option key={c} value={c}>{c}</option>
+                                  ))}
+                                </select>
+                                <button
+                                  onClick={() => openAddColorModal(idx)}
+                                  className="p-1 rounded hover:bg-slate-100 text-slate-500 hover:text-[#8FA894]"
+                                  title="Add new color to this style"
+                                >
+                                  <Plus className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
                             ) : (
                               <span className="text-slate-400">—</span>
                             )}
@@ -1088,6 +1294,109 @@ export default function HistoricalSalesPage() {
             )}
           </CardContent>
         </Card>
+      )}
+
+      {/* Batch Style Update Modal */}
+      {batchUpdateModal?.show && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-white rounded-lg shadow-xl p-6 max-w-md w-full mx-4">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold">Update Similar Rows?</h3>
+              <button 
+                onClick={() => setBatchUpdateModal(null)}
+                className="p-1 hover:bg-slate-100 rounded"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <p className="text-sm text-slate-600 mb-4">
+              Found <strong>{batchUpdateModal.similarRowIndexes.length}</strong> more rows with the same 
+              style/color combination. Do you want to update them all to use <strong>{batchUpdateModal.newStyleNo}</strong>?
+            </p>
+            <div className="flex gap-3 justify-end">
+              <Button
+                variant="outline"
+                onClick={() => confirmBatchStyleUpdate(false)}
+              >
+                No, just this one
+              </Button>
+              <Button
+                onClick={() => confirmBatchStyleUpdate(true)}
+                className="bg-[#8FA894] hover:bg-[#8FA894]/90"
+              >
+                Yes, update all {batchUpdateModal.similarRowIndexes.length + 1}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add Color Modal */}
+      {addColorModal?.show && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-white rounded-lg shadow-xl p-6 max-w-md w-full mx-4">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold">Add New Color</h3>
+              <button 
+                onClick={() => { setAddColorModal(null); setNewColorName(''); }}
+                className="p-1 hover:bg-slate-100 rounded"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <p className="text-sm text-slate-600 mb-4">
+              Add a new color to style <strong>{addColorModal.styleNo}</strong>.
+              <br />
+              <span className="text-amber-600">
+                The color will be prefixed with "2BIZ-" to avoid conflicts with future imports.
+              </span>
+            </p>
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs font-medium text-slate-700">Original color from file</label>
+                <div className="text-sm text-slate-500 bg-slate-50 px-3 py-2 rounded border">
+                  {addColorModal.originalColor}
+                </div>
+              </div>
+              <div>
+                <label className="text-xs font-medium text-slate-700">New color name</label>
+                <Input
+                  value={newColorName}
+                  onChange={(e) => setNewColorName(e.target.value)}
+                  placeholder="e.g., Black, Navy Blue"
+                />
+                <p className="text-xs text-slate-500 mt-1">
+                  Will be saved as: <strong>2BIZ-{newColorName || '...'}</strong>
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-3 justify-end mt-4">
+              <Button
+                variant="outline"
+                onClick={() => { setAddColorModal(null); setNewColorName(''); }}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={addNewColorToStyle}
+                disabled={!newColorName.trim() || addingColor}
+                className="bg-[#8FA894] hover:bg-[#8FA894]/90"
+              >
+                {addingColor ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Adding...
+                  </>
+                ) : (
+                  <>
+                    <Plus className="h-4 w-4 mr-2" />
+                    Add Color
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Browse Tab */}
