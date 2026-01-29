@@ -11,7 +11,7 @@ import {
   ResponsiveContainer,
   Legend,
 } from 'recharts';
-import { getColorForName } from '../../../lib/chartColors';
+import { getColorForName } from '../../lib/chartColors';
 
 type DataPoint = {
   date: string;
