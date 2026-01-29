@@ -432,14 +432,10 @@ export default function HistoricalSalesPage() {
     setAddingColor(true);
     
     try {
-      // Generate a unique ID with 2BIZ prefix
-      const colorId = `2biz-${crypto.randomUUID()}`;
-      
-      // Insert the new color
+      // Insert the new color (let database auto-generate UUID)
       const { error } = await supabase
         .from('style_colors')
         .insert({
-          id: colorId,
           style_id: styleId,
           color: finalColorName
         });
