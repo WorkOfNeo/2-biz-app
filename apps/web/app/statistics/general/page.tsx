@@ -363,6 +363,21 @@ export default function StatisticsGeneralPage() {
     setDetailsScrapeInfo(null);
     try {
       const hasAccount = !!row.account_no && !row.account_no.includes(':');
+      const debugDetails =
+        typeof window !== 'undefined' &&
+        window?.localStorage?.getItem('debug:general-details') === '1';
+      const debugPrefix = '[general/details]';
+      if (debugDetails) {
+        console.groupCollapsed(`${debugPrefix} openDetails()`, {
+          account_no: row.account_no,
+          customer: row.customer,
+          city: row.city,
+          salespersonId: row.salespersonId,
+          s1,
+          s2,
+          hasAccount,
+        });
+      }
           const buildQuery = (seasonId: string | undefined) => {
         // Fetch both aggregated stats (sales_stats) and raw invoice rows (sales_invoices)
         const stats = supabase
@@ -389,6 +404,56 @@ export default function StatisticsGeneralPage() {
       const [s2Stats, s2Invoices] = r2 as any[];
       if (s1Stats.error) throw new Error(s1Stats.error.message);
       if (s2Stats.error) throw new Error(s2Stats.error.message);
+      // Always log a short summary so we can see why a customer looks "unvisited".
+      console.log(`${debugPrefix} fetched season rows`, {
+        account_no: row.account_no,
+        customer: row.customer,
+        city: row.city,
+        salespersonId: row.salespersonId,
+        s1,
+        s2,
+        hasAccount,
+        s1StatsCount: (s1Stats.data ?? []).length,
+        s1InvoicesCount: (s1Invoices?.data ?? []).length,
+        s2StatsCount: (s2Stats.data ?? []).length,
+        s2InvoicesCount: (s2Invoices?.data ?? []).length,
+      });
+      if (debugDetails) {
+        console.log(`${debugPrefix} s1Stats rows`, s1Stats.data ?? []);
+        console.log(`${debugPrefix} s1Invoices rows`, s1Invoices?.data ?? []);
+        console.log(`${debugPrefix} s2Stats rows`, s2Stats.data ?? []);
+        console.log(`${debugPrefix} s2Invoices rows`, s2Invoices?.data ?? []);
+      }
+
+      // Optional deep debug: fetch ALL seasons for this account_no.
+      // Enable via: localStorage.setItem('debug:general-details','1')
+      if (debugDetails && hasAccount) {
+        try {
+          const [allStats, allInv] = await Promise.all([
+            supabase
+              .from('sales_stats')
+              .select('id, account_no, customer_name, city, qty, price, currency, season_id, salesperson_id, updated_at, frozen')
+              .eq('account_no', row.account_no)
+              .limit(10000),
+            supabase
+              .from('sales_invoices')
+              .select('id, account_no, customer_name, qty, amount, currency, invoice_no, invoice_date, created_at, manual_edited, season_id')
+              .eq('account_no', row.account_no)
+              .limit(10000),
+          ]);
+          console.log(`${debugPrefix} ALL-SEASONS by account_no`, {
+            account_no: row.account_no,
+            allStatsCount: (allStats.data ?? []).length,
+            allInvoicesCount: (allInv.data ?? []).length,
+            seasonsInStats: Array.from(new Set((allStats.data ?? []).map((r: any) => r?.season_id))).filter(Boolean),
+            seasonsInInvoices: Array.from(new Set((allInv.data ?? []).map((r: any) => r?.season_id))).filter(Boolean),
+          });
+          console.log(`${debugPrefix} allStats rows`, allStats.data ?? []);
+          console.log(`${debugPrefix} allInvoices rows`, allInv.data ?? []);
+        } catch (e: any) {
+          console.warn(`${debugPrefix} ALL-SEASONS debug fetch failed`, e?.message || e);
+        }
+      }
       // Combine: show stats row plus each invoice as its own line (with invoice_no)
       const s1Combined = [...(s1Stats.data ?? [])];
       for (const inv of (s1Invoices?.data ?? [])) {
@@ -483,6 +548,13 @@ export default function StatisticsGeneralPage() {
       alert(e?.message || 'Failed to load details');
     } finally {
       setDetailsLoading(false);
+      // Only end group if we started it
+      try {
+        const debugDetails =
+          typeof window !== 'undefined' &&
+          window?.localStorage?.getItem('debug:general-details') === '1';
+        if (debugDetails) console.groupEnd();
+      } catch {}
     }
   }
 
