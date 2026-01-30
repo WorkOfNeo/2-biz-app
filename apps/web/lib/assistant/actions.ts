@@ -69,12 +69,15 @@ async function getStyleStock(
     // Aggregate by color for a cleaner response
     const byColor: Record<string, { stock: number; colors: string[]; lastScraped: string }> = {};
     for (const row of data) {
-      if (!byColor[row.color]) {
-        byColor[row.color] = { stock: 0, colors: [], lastScraped: row.scraped_at };
+      const color = typeof row?.color === 'string' ? row.color : String(row?.color ?? '');
+      if (!color) continue;
+
+      if (!byColor[color]) {
+        byColor[color] = { stock: 0, colors: [], lastScraped: row.scraped_at };
       }
       if (row.section === 'Stock' && row.quantities) {
         const total = (row.quantities as number[]).reduce((a, b) => a + b, 0);
-        byColor[row.color].stock = total;
+        byColor[color]!.stock = total;
       }
     }
     
