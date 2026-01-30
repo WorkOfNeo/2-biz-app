@@ -41,17 +41,28 @@ export interface ActionResult {
 // ==================== Action Handlers ====================
 
 async function getStyleStock(
-  params: { styleNo: string; color?: string },
-  supabase: SupabaseClient
+  params: Record<string, any>,
+  supabase: SupabaseClient,
+  _userId: string
 ): Promise<ActionResult> {
   try {
+    const styleNo = typeof params?.styleNo === 'string' ? params.styleNo.trim() : '';
+    const color = typeof params?.color === 'string' ? params.color.trim() : '';
+    if (!styleNo) {
+      return {
+        success: false,
+        message: 'Missing required parameter: styleNo',
+        error: 'styleNo is required',
+      };
+    }
+
     let query = supabase
       .from('style_stock')
       .select('style_no, color, section, sizes, quantities, scraped_at')
-      .eq('style_no', params.styleNo);
+      .eq('style_no', styleNo);
     
-    if (params.color) {
-      query = query.eq('color', params.color);
+    if (color) {
+      query = query.eq('color', color);
     }
     
     const { data, error } = await query.order('scraped_at', { ascending: false }).limit(50);
@@ -62,7 +73,7 @@ async function getStyleStock(
       return {
         success: true,
         data: [],
-        message: `No stock data found for style ${params.styleNo}${params.color ? ` in color ${params.color}` : ''}.`,
+        message: `No stock data found for style ${styleNo}${color ? ` in color ${color}` : ''}.`,
       };
     }
     
@@ -90,7 +101,7 @@ async function getStyleStock(
     return {
       success: true,
       data: summary,
-      message: `Found stock data for ${summary.length} color(s) of style ${params.styleNo}.`,
+      message: `Found stock data for ${summary.length} color(s) of style ${styleNo}.`,
     };
   } catch (error: any) {
     return {
