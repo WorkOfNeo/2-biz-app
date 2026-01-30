@@ -10,7 +10,8 @@
 
 import OpenAI from 'openai';
 import { SupabaseClient } from '@supabase/supabase-js';
-import { ACTION_REGISTRY, getAction, canUserAccessAction, getActionsForLLM, ActionResult } from './actions';
+import { ACTION_REGISTRY, getAction, canUserAccessAction, getActionsForLLM } from './actions';
+import type { ActionResult } from './actions';
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
