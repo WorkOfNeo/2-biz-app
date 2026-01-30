@@ -39,6 +39,14 @@ function formatRelativeTime(isoString: string): string {
   return `Opdateret ${day}/${month} kl. ${hh}:${mm}`;
 }
 
+function flash(message: string, type: 'success' | 'error' | 'info' = 'success') {
+  try {
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('toast', { detail: { message, type } }));
+    }
+  } catch {}
+}
+
 type StockListPageProps = {
   /** When true, renders a simplified, share-friendly UI (used by /public/stock-list/[id]) */
   publicMode?: boolean;
@@ -103,7 +111,6 @@ export default function StockListPage({ publicMode = false, sharedListId = '' }:
   const [searchQuery, setSearchQuery] = React.useState<string>('');
   const [scrapeBusy, setScrapeBusy] = React.useState<string | null>(null);
   const [selectedSeasons, setSelectedSeasons] = React.useState<string[]>([]);
-  const [hideZeros, setHideZeros] = React.useState<boolean>(false);
   const [loadingProgress, setLoadingProgress] = React.useState<{ total: number; current: number } | null>(null);
   const [showCheckerModal, setShowCheckerModal] = React.useState<boolean>(false);
   const [checkerInput, setCheckerInput] = React.useState<string>('');
@@ -241,13 +248,13 @@ export default function StockListPage({ publicMode = false, sharedListId = '' }:
     
     return sorted as Array<{ id: string; name: string }>;
   });
-  const { data: listStyles } = useSWR(activeListId ? ['stock-list-styles:byList', activeListId] : null, async () => {
+  const { data: listStyles, mutate: mutateListStyles } = useSWR(activeListId ? ['stock-list-styles:byList', activeListId] : null, async () => {
     const { data, error } = await supabase.from('stock_list_styles').select('style_id').eq('list_id', activeListId);
     if (error) throw new Error(error.message);
     return (data ?? []) as Array<{ style_id: string }>;
   });
   const styleIdsInList = React.useMemo(() => new Set((listStyles ?? []).map(r => r.style_id)), [listStyles]);
-  const { data: listColorRules } = useSWR(activeListId ? ['stock_list_colors:byList', activeListId] : null, async () => {
+  const { data: listColorRules, mutate: mutateListColorRules } = useSWR(activeListId ? ['stock_list_colors:byList', activeListId] : null, async () => {
     const { data, error } = await supabase.from('stock_list_colors').select('style_id, style_color_id, include').eq('list_id', activeListId);
     if (error) throw new Error(error.message);
     // Prefer a whitelist model when possible: allowedIdsMap holds color IDs where include === true
@@ -511,11 +518,28 @@ export default function StockListPage({ publicMode = false, sharedListId = '' }:
   React.useEffect(() => {
     if (!publicMode) return;
     setSelectedSeasons([]);
-    setHideZeros(false);
     setShowStyleTotals(false);
   }, [publicMode]);
 
-  // Filter rows based on active Stock List, search, seasons, and hide zeros
+  const groupHasAnyNonZero = React.useCallback((c: Group) => {
+    const anyNonZero = (arr: any[] | null | undefined) => Array.isArray(arr) && arr.some((v) => (Number(v) || 0) !== 0);
+    const anyRowNonZero = (rows: Row[] | null | undefined) =>
+      Array.isArray(rows) && rows.some((r) => anyNonZero(Array.isArray((r as any)?.values) ? ((r as any).values as any[]) : []));
+
+    // If there are no size columns at all, treat as empty.
+    if (!Array.isArray(c.sizes) || c.sizes.length === 0) return false;
+
+    return (
+      anyNonZero(c.stock) ||
+      anyNonZero(c.soldSum) ||
+      anyNonZero(c.purchaseSum) ||
+      anyNonZero(c.available) ||
+      anyRowNonZero(c.soldRows) ||
+      anyRowNonZero(c.purchaseRows)
+    );
+  }, []);
+
+  // Filter rows based on active Stock List, search, seasons, and remove empty/zero-only colors
   const filteredForView = React.useMemo(() => {
     let base = groupedByStyle;
     console.log('[stock-list] Starting filter - base:', base.length, 'styles');
@@ -565,22 +589,16 @@ export default function StockListPage({ publicMode = false, sharedListId = '' }:
       }).filter(({ colors }) => colors.length > 0);
     }
     
-    // Filter out colors with all zeros
-    if (hideZeros) {
-      base = base.map(({ styleNo, colors }) => {
-        const filteredColors = colors.filter((c) => {
-          const hasNonZero = c.stock.some(v => v !== 0) || 
-                           c.soldSum.some(v => v !== 0) || 
-                           c.purchaseSum.some(v => v !== 0) || 
-                           c.available.some(v => v !== 0);
-          return hasNonZero;
-        });
+    // Always remove colors that are empty or all-zero across all rows
+    base = base
+      .map(({ styleNo, colors }) => {
+        const filteredColors = (colors ?? []).filter(groupHasAnyNonZero);
         return { styleNo, colors: filteredColors };
-      }).filter(({ colors }) => colors.length > 0);
-    }
+      })
+      .filter(({ colors }) => (colors ?? []).length > 0);
     
     return base;
-  }, [groupedByStyle, activeListId, styleIdsInList.size, searchQuery, styleMetaByNo, selectedSeasons, hideZeros, styleColors, colorSeasons]);
+  }, [groupedByStyle, activeListId, styleIdsInList.size, searchQuery, styleMetaByNo, selectedSeasons, styleColors, colorSeasons, groupHasAnyNonZero]);
 
   // Excel export function
   const exportToExcel = React.useCallback(() => {
@@ -725,10 +743,6 @@ export default function StockListPage({ publicMode = false, sharedListId = '' }:
             if (selectedSeasons.length > 0 && (reason === 'Unknown' || reason === 'Not in selected list')) {
               reason = 'Filtered out by season';
             }
-            
-            if (hideZeros && (reason === 'Unknown' || reason === 'Not in selected list')) {
-              reason = 'All zeros hidden';
-            }
           }
         }
         
@@ -745,7 +759,7 @@ export default function StockListPage({ publicMode = false, sharedListId = '' }:
       totalStyles,
       hiddenStyles: hidden
     };
-  }, [allStylesData, filteredForView, activeListId, styleIdsInList, groups, searchQuery, selectedSeasons, hideZeros]);
+  }, [allStylesData, filteredForView, activeListId, styleIdsInList, groups, searchQuery, selectedSeasons]);
 
   const emptyState: JSX.Element | null = React.useMemo(() => {
     if (activeListId && filteredForView.length === 0) {
@@ -1959,16 +1973,6 @@ export default function StockListPage({ publicMode = false, sharedListId = '' }:
                   <label className="flex items-center gap-2 text-sm cursor-pointer border rounded px-3 py-2 bg-white hover:bg-gray-50">
                     <input
                       type="checkbox"
-                      checked={hideZeros}
-                      onChange={(e) => setHideZeros(e.target.checked)}
-                      className="h-4 w-4 rounded accent-slate-900"
-                    />
-                    <span>Hide all zeros</span>
-                  </label>
-                  
-                  <label className="flex items-center gap-2 text-sm cursor-pointer border rounded px-3 py-2 bg-white hover:bg-gray-50">
-                    <input
-                      type="checkbox"
                       checked={showStyleTotals}
                       onChange={(e) => setShowStyleTotals(e.target.checked)}
                       className="h-4 w-4 rounded accent-slate-900"
@@ -1976,11 +1980,10 @@ export default function StockListPage({ publicMode = false, sharedListId = '' }:
                     <span>Display style totals</span>
                   </label>
                   
-                  {(selectedSeasons.length > 0 || hideZeros) && (
+                  {selectedSeasons.length > 0 && (
                     <button
                       onClick={() => {
                         setSelectedSeasons([]);
-                        setHideZeros(false);
                       }}
                       className="text-sm text-slate-600 hover:text-slate-900 underline"
                     >
@@ -2059,15 +2062,15 @@ export default function StockListPage({ publicMode = false, sharedListId = '' }:
                   const soldTotal = sum(g.soldSum);
                   const purchaseTotal = sum(g.purchaseSum);
                   const availableTotal = sum(g.available);
+                  const sid = styleMetaByNo[g.styleNo]?.id || null;
+                  const cmap = sid ? (styleColors?.idMap?.get(sid) || new Map<string, string>()) : new Map<string, string>();
+                  const scId = cmap.get((g.color || '').trim().toLowerCase()) || null;
                   return (
                   <div key={key} className="space-y-1 sl-color-block">
                       {/* Display seasons and scraped timestamp */}
                       <div className="mb-1 flex flex-wrap items-center gap-2">
                         <div className="text-[12px] text-gray-500">
                       {(() => {
-                        const sid = styleMetaByNo[g.styleNo]?.id || null;
-                        const cmap = sid ? (styleColors?.idMap?.get(sid) || new Map<string, string>()) : new Map<string, string>();
-                        const scId = cmap.get((g.color || '').trim().toLowerCase()) || null;
                         const set = (scId && colorSeasons) ? (colorSeasons.get(scId) || new Set<string>()) : new Set<string>();
                         const labels = (seasons || []).filter(s => set.has(s.id));
                         
@@ -2095,7 +2098,73 @@ export default function StockListPage({ publicMode = false, sharedListId = '' }:
                           </thead>
                           <tbody>
                           <tr className="sl-row sl-row-stock">
-                            <td className="p-2 border-b align-top sl-cell sl-cell-color" rowSpan={4} style={{ width: 140 }}>{g.color}</td>
+                            <td className="p-2 border-b align-top sl-cell sl-cell-color" rowSpan={4} style={{ width: 140 }}>
+                              <div className="space-y-2">
+                                <div className="font-medium text-slate-900">{g.color}</div>
+                                {!publicMode && activeListId && (stockLists?.length ?? 0) > 0 && (
+                                  <div className="space-y-1">
+                                    <div className="text-[10px] text-gray-500">List</div>
+                                    <select
+                                      className="w-full rounded border px-2 py-1 text-[11px] bg-white"
+                                      value={activeListId}
+                                      disabled={!sid || !scId}
+                                      onChange={async (e) => {
+                                        const destinationListId = e.target.value;
+                                        if (!destinationListId || destinationListId === activeListId) return;
+                                        if (!sid || !scId) return;
+                                        try {
+                                          const destName = stockLists?.find((l) => l.id === destinationListId)?.name || 'destination list';
+
+                                          // Ensure style exists in destination list
+                                          const { error: styleErr } = await supabase
+                                            .from('stock_list_styles')
+                                            .upsert({ list_id: destinationListId, style_id: sid } as any, { onConflict: 'list_id,style_id', ignoreDuplicates: true } as any);
+                                          if (styleErr) throw styleErr;
+
+                                          // Add (or reactivate) color in destination list
+                                          const { error: colorErr } = await supabase
+                                            .from('stock_list_colors')
+                                            .upsert({ list_id: destinationListId, style_id: sid, style_color_id: scId, include: true } as any, { onConflict: 'list_id,style_color_id' } as any);
+                                          if (colorErr) throw colorErr;
+
+                                          // Remove from current list by excluding it
+                                          const { error: excludeErr } = await supabase
+                                            .from('stock_list_colors')
+                                            .update({ include: false })
+                                            .eq('list_id', activeListId)
+                                            .eq('style_color_id', scId);
+                                          if (excludeErr) throw excludeErr;
+
+                                          // If that was the last included color for this style in the current list, remove the style from the list
+                                          const { count: remainingCount, error: remainingErr } = await supabase
+                                            .from('stock_list_colors')
+                                            .select('*', { count: 'exact', head: true })
+                                            .eq('list_id', activeListId)
+                                            .eq('style_id', sid)
+                                            .eq('include', true);
+                                          if (remainingErr) throw remainingErr;
+                                          if ((remainingCount ?? 0) === 0) {
+                                            await supabase.from('stock_list_styles').delete().eq('list_id', activeListId).eq('style_id', sid);
+                                          }
+
+                                          await mutateListColorRules?.();
+                                          await mutateListStyles?.();
+                                          flash(`Moved ${g.color} to "${destName}"`, 'success');
+                                        } catch (err: any) {
+                                          flash(err?.message || 'Failed to move color', 'error');
+                                        }
+                                      }}
+                                    >
+                                      {(stockLists ?? []).map((l) => (
+                                        <option key={l.id} value={l.id}>
+                                          {l.name}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                )}
+                              </div>
+                            </td>
                             <td className="p-2 border-b whitespace-nowrap sl-cell sl-cell-section" style={{ width: 160 }}>Stock</td>
                             {Array.from({ length: maxSizeCount }, (_, i) => i < g.sizes.length ? (g.stock[i] ?? 0) : null).map((v, i) => (
                               <td key={i} className="p-2 border-b text-right text-black sl-cell sl-cell-size" style={{ width: 64 }}>{i < g.sizes.length ? v : ''}</td>
