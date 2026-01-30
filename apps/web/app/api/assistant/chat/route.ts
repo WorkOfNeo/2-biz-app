@@ -1,7 +1,8 @@
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
-import { runAgentPipeline, ChatMessage } from '../../../../lib/assistant/agent';
+import { runAgentPipeline } from '../../../../lib/assistant/agent';
+import type { ChatMessage } from '../../../../lib/assistant/agent';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
