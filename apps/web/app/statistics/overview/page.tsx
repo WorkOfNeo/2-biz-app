@@ -213,6 +213,9 @@ export default function OverviewPage() {
           row.s1Qty += qty;
           row.s1Price += amount * rateS1;
         }
+        // Mark visited based on invoice activity too (fixes "invoice-only" visited customers showing as Missing)
+        row.visited.add(acc);
+        if (validTargetsBySp.get(spId)?.has(acc)) row.visitedValid.add(acc);
       } else if (inv.season_id === s2) {
         row.s2Qty += qty;
         row.s2Price += amount * rateS2;

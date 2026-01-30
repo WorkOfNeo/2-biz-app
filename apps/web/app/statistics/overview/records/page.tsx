@@ -53,12 +53,39 @@ function RecordsInner() {
 
     const nulledSet = new Set(arr.filter((c: Customer) => c.customer_id && isNulled(c.customer_id)).map((c: Customer) => c.customer_id));
     const validSet = new Set(arr.filter((c: Customer) => c.customer_id && !nulledSet.has(c.customer_id)).map((c: Customer) => c.customer_id));
-    // Only include visited customers that are VALID (not nulled)
-    const visitedSet = new Set(
+    // Only include visited customers that are VALID (not nulled).
+    // IMPORTANT: Treat S1 invoices as "visited" too, otherwise invoice-only customers look "missing".
+    const visitedFromStats = new Set(
       (stats ?? [])
         .filter((r: SalesStatRow) => r.salesperson_id === sp && r.season_id === s1 && r.account_no && validSet.has(r.account_no))
         .map((r: SalesStatRow) => r.account_no as string)
     );
+    const customersById = new Map<string, Customer>();
+    for (const c of arr) {
+      if (c.customer_id) customersById.set(c.customer_id, c);
+    }
+    const visitedFromInvoices = new Set(
+      ((invoices ?? []) as InvoiceRow[])
+        .filter((inv) => inv.season_id === s1 && inv.account_no && validSet.has(inv.account_no))
+        // Ensure invoice belongs to this salesperson's filtered customer set (country + hidden already applied via arr)
+        .filter((inv) => Boolean(inv.account_no && customersById.has(inv.account_no)))
+        .map((inv) => inv.account_no as string)
+    );
+    const visitedSet = new Set<string>([...Array.from(visitedFromStats), ...Array.from(visitedFromInvoices)]);
+    const invoiceOnlyVisited = Array.from(visitedFromInvoices).filter((id) => !visitedFromStats.has(id));
+    if (invoiceOnlyVisited.length > 0) {
+      console.log('[overview/records] invoice-only visited customers detected', {
+        sp,
+        mode,
+        country,
+        s1,
+        validCustomers: validSet.size,
+        visitedFromStats: visitedFromStats.size,
+        visitedFromInvoices: visitedFromInvoices.size,
+        invoiceOnlyCount: invoiceOnlyVisited.length,
+        sampleAccountNos: invoiceOnlyVisited.slice(0, 20),
+      });
+    }
     const notVisitedSet = new Set(Array.from(validSet).filter((id: string) => !visitedSet.has(id)));
     let targetIds: Set<string>;
     if (mode === 'nulled') targetIds = nulledSet;
