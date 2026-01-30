@@ -113,18 +113,26 @@ async function getStyleStock(
 }
 
 async function getPurchaseOrders(
-  params: { status?: string; limit?: number },
-  supabase: SupabaseClient
+  params: Record<string, any>,
+  supabase: SupabaseClient,
+  _userId: string
 ): Promise<ActionResult> {
   try {
+    const status = typeof params?.status === 'string' ? params.status : undefined;
+    const limitRaw = params?.limit;
+    const limit =
+      typeof limitRaw === 'number' && Number.isFinite(limitRaw)
+        ? Math.max(1, Math.min(200, Math.floor(limitRaw)))
+        : 20;
+
     let query = supabase
       .from('purchase_orders')
       .select('id, po_no, supplier, status, total_qty, created_at, expected_delivery')
       .order('created_at', { ascending: false })
-      .limit(params.limit || 20);
+      .limit(limit);
     
-    if (params.status) {
-      query = query.eq('status', params.status);
+    if (status) {
+      query = query.eq('status', status);
     }
     
     const { data, error } = await query;
@@ -134,7 +142,7 @@ async function getPurchaseOrders(
     return {
       success: true,
       data: data || [],
-      message: `Found ${data?.length || 0} purchase orders${params.status ? ` with status "${params.status}"` : ''}.`,
+      message: `Found ${data?.length || 0} purchase orders${status ? ` with status "${status}"` : ''}.`,
     };
   } catch (error: any) {
     return {
@@ -146,14 +154,20 @@ async function getPurchaseOrders(
 }
 
 async function getPurchaseOrderDetails(
-  params: { poNo: string },
-  supabase: SupabaseClient
+  params: Record<string, any>,
+  supabase: SupabaseClient,
+  _userId: string
 ): Promise<ActionResult> {
   try {
+    const poNo = typeof params?.poNo === 'string' ? params.poNo.trim() : '';
+    if (!poNo) {
+      return { success: false, message: 'Missing required parameter: poNo', error: 'poNo is required' };
+    }
+
     const { data: po, error: poError } = await supabase
       .from('purchase_orders')
       .select('*')
-      .eq('po_no', params.poNo)
+      .eq('po_no', poNo)
       .single();
     
     if (poError) throw poError;
@@ -161,14 +175,14 @@ async function getPurchaseOrderDetails(
     const { data: items, error: itemsError } = await supabase
       .from('purchase_order_items')
       .select('style_no, color, qty, size_qty')
-      .eq('po_no', params.poNo);
+      .eq('po_no', poNo);
     
     if (itemsError) throw itemsError;
     
     return {
       success: true,
       data: { ...po, items: items || [] },
-      message: `Purchase order ${params.poNo} has ${items?.length || 0} line items.`,
+      message: `Purchase order ${poNo} has ${items?.length || 0} line items.`,
     };
   } catch (error: any) {
     return {
@@ -180,18 +194,26 @@ async function getPurchaseOrderDetails(
 }
 
 async function getSalesOrders(
-  params: { customer?: string; limit?: number },
-  supabase: SupabaseClient
+  params: Record<string, any>,
+  supabase: SupabaseClient,
+  _userId: string
 ): Promise<ActionResult> {
   try {
+    const customer = typeof params?.customer === 'string' ? params.customer : undefined;
+    const limitRaw = params?.limit;
+    const limit =
+      typeof limitRaw === 'number' && Number.isFinite(limitRaw)
+        ? Math.max(1, Math.min(200, Math.floor(limitRaw)))
+        : 20;
+
     let query = supabase
       .from('sales_orders')
       .select('id, order_no, customer_name, total_qty, total_amount, order_date, status')
       .order('order_date', { ascending: false })
-      .limit(params.limit || 20);
+      .limit(limit);
     
-    if (params.customer) {
-      query = query.ilike('customer_name', `%${params.customer}%`);
+    if (customer) {
+      query = query.ilike('customer_name', `%${customer}%`);
     }
     
     const { data, error } = await query;
@@ -201,7 +223,7 @@ async function getSalesOrders(
     return {
       success: true,
       data: data || [],
-      message: `Found ${data?.length || 0} sales orders${params.customer ? ` for customer matching "${params.customer}"` : ''}.`,
+      message: `Found ${data?.length || 0} sales orders${customer ? ` for customer matching "${customer}"` : ''}.`,
     };
   } catch (error: any) {
     return {
@@ -214,7 +236,8 @@ async function getSalesOrders(
 
 async function getStatisticsSnapshot(
   params: Record<string, any>,
-  supabase: SupabaseClient
+  supabase: SupabaseClient,
+  _userId: string
 ): Promise<ActionResult> {
   try {
     // Get current season
@@ -259,24 +282,39 @@ async function getStatisticsSnapshot(
 }
 
 async function createDraftPurchaseOrder(
-  params: { supplierId: string; supplierName: string; lines: Array<{ styleNo: string; color: string; qty: number }> },
+  params: Record<string, any>,
   supabase: SupabaseClient,
   userId: string
 ): Promise<ActionResult> {
   try {
+    const supplierId = typeof params?.supplierId === 'string' ? params.supplierId.trim() : '';
+    const supplierName = typeof params?.supplierName === 'string' ? params.supplierName.trim() : '';
+    const linesRaw = Array.isArray(params?.lines) ? (params.lines as any[]) : [];
+    const lines = linesRaw
+      .map((l) => ({
+        styleNo: typeof l?.styleNo === 'string' ? l.styleNo.trim() : '',
+        color: typeof l?.color === 'string' ? l.color.trim() : '',
+        qty: Number(l?.qty ?? 0) || 0,
+      }))
+      .filter((l) => l.styleNo && l.color && l.qty > 0);
+
+    if (!supplierId) return { success: false, message: 'Missing required parameter: supplierId', error: 'supplierId is required' };
+    if (!supplierName) return { success: false, message: 'Missing required parameter: supplierName', error: 'supplierName is required' };
+    if (lines.length === 0) return { success: false, message: 'Missing required parameter: lines', error: 'lines must include at least 1 valid line' };
+
     // Generate a draft PO number
     const draftPoNo = `DRAFT-${Date.now()}`;
     
     // Calculate totals
-    const totalQty = params.lines.reduce((sum, line) => sum + line.qty, 0);
+    const totalQty = lines.reduce((sum, line) => sum + line.qty, 0);
     
     // Insert the PO
     const { data: po, error: poError } = await supabase
       .from('purchase_orders')
       .insert({
         po_no: draftPoNo,
-        supplier: params.supplierName,
-        supplier_id: params.supplierId,
+        supplier: supplierName,
+        supplier_id: supplierId,
         status: 'Draft',
         total_qty: totalQty,
         created_by: userId,
@@ -287,7 +325,7 @@ async function createDraftPurchaseOrder(
     if (poError) throw poError;
     
     // Insert line items
-    const lineItems = params.lines.map(line => ({
+    const lineItems = lines.map(line => ({
       po_no: draftPoNo,
       style_no: line.styleNo,
       color: line.color,
@@ -302,8 +340,8 @@ async function createDraftPurchaseOrder(
     
     return {
       success: true,
-      data: { poNo: draftPoNo, totalQty, lineCount: params.lines.length },
-      message: `Created draft purchase order ${draftPoNo} with ${params.lines.length} lines totaling ${totalQty} units.`,
+      data: { poNo: draftPoNo, totalQty, lineCount: lines.length },
+      message: `Created draft purchase order ${draftPoNo} with ${lines.length} lines totaling ${totalQty} units.`,
     };
   } catch (error: any) {
     return {
