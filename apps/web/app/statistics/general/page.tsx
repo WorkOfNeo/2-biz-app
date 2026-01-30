@@ -388,7 +388,11 @@ export default function StatisticsGeneralPage() {
               .from('sales_invoices')
               .select('id, account_no, customer_name, qty, amount, currency, invoice_no, invoice_date, created_at, manual_edited')
           .eq('season_id', seasonId ?? '');
-        if (row.salespersonId) { stats.eq('salesperson_id', row.salespersonId); }
+        // IMPORTANT:
+        // If we have a concrete account_no, do NOT filter by salesperson_id.
+        // Otherwise, customers that were serviced by another salesperson will "disappear" in Details,
+        // even though the table shows totals for the customer.
+        if (!hasAccount && row.salespersonId) { stats.eq('salesperson_id', row.salespersonId); }
         if (hasAccount) {
           stats.eq('account_no', row.account_no); invoices.eq('account_no', row.account_no);
         } else {
@@ -418,6 +422,24 @@ export default function StatisticsGeneralPage() {
         s2StatsCount: (s2Stats.data ?? []).length,
         s2InvoicesCount: (s2Invoices?.data ?? []).length,
       });
+      // If other salespeople have rows for this account, highlight it.
+      try {
+        const uniq = (arr: any[]) => Array.from(new Set((arr ?? []).map((r) => r?.salesperson_id).filter(Boolean)));
+        const s1Sp = uniq(s1Stats.data ?? []);
+        const s2Sp = uniq(s2Stats.data ?? []);
+        const expected = row.salespersonId;
+        const mismatch =
+          Boolean(expected) &&
+          (s1Sp.some((id) => id !== expected) || s2Sp.some((id) => id !== expected));
+        if (mismatch) {
+          console.warn(`${debugPrefix} salesperson mismatch in sales_stats rows`, {
+            account_no: row.account_no,
+            expectedSalespersonId: expected,
+            s1SalespersonIds: s1Sp,
+            s2SalespersonIds: s2Sp,
+          });
+        }
+      } catch {}
       if (debugDetails) {
         console.log(`${debugPrefix} s1Stats rows`, s1Stats.data ?? []);
         console.log(`${debugPrefix} s1Invoices rows`, s1Invoices?.data ?? []);
