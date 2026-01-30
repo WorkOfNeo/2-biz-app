@@ -112,7 +112,10 @@ export async function exportOverview(ctx: Ctx) {
       for (const sp of list) agg.set(sp.id, { s1Qty: 0, s1Price: 0, s2Qty: 0, s2Price: 0, visitedValid: new Set<string>() });
       
       for (const r of (stats ?? []) as any[]) {
-        const spId = r.salesperson_id ?? ''; const acc = r.account_no ?? ''; if (!spId || !acc) continue;
+        const acc = r.account_no ?? ''; if (!acc) continue;
+        // IMPORTANT: Attribute to assigned salesperson first (customer table), even if row is recorded under another salesperson.
+        const spId = (customerById.get(acc)?.salesperson_id ?? null) ?? (r.salesperson_id ?? '');
+        if (!spId) continue;
         const set = targetsBySp.get(spId); if (!set || !set.has(acc)) continue;
         if (isHidden(acc)) continue;
         const row = agg.get(spId)!;

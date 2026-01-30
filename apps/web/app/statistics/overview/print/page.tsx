@@ -80,6 +80,10 @@ function Inner() {
       arr.push(c);
       bySpCustomers.set(c.salesperson_id, arr);
     }
+    const customerById = new Map<string, Customer>();
+    for (const c of customers) {
+      if (c.customer_id) customerById.set(c.customer_id, c);
+    }
     const targetsBySp = new Map<string, Set<string>>();
     for (const [spId, arr] of bySpCustomers.entries()) {
       const set = new Set<string>();
@@ -89,10 +93,10 @@ function Inner() {
     const agg = new Map<string, { s1Qty: number; s1Price: number; s2Qty: number; s2Price: number }>();
     for (const sp of people) agg.set(sp.id, { s1Qty: 0, s1Price: 0, s2Qty: 0, s2Price: 0 });
     for (const r of stats) {
-      const spId = r.salesperson_id ?? '';
+      const acc = r.account_no ?? '';
+      const spId = (acc ? (customerById.get(acc)?.salesperson_id ?? null) : null) ?? (r.salesperson_id ?? '');
       const set = targetsBySp.get(spId);
       if (!set) continue;
-      const acc = r.account_no ?? '';
       if (!acc || !set.has(acc)) continue;
       const row = agg.get(spId)!;
       const currency = spCurrencyById[spId] ?? 'DKK';

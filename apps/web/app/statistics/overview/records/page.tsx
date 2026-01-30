@@ -55,9 +55,10 @@ function RecordsInner() {
     const validSet = new Set(arr.filter((c: Customer) => c.customer_id && !nulledSet.has(c.customer_id)).map((c: Customer) => c.customer_id));
     // Only include visited customers that are VALID (not nulled).
     // IMPORTANT: Treat S1 invoices as "visited" too, otherwise invoice-only customers look "missing".
+    // Credit "visited" based on the customer's S1 activity, regardless of which salesperson recorded the sale.
     const visitedFromStats = new Set(
       (stats ?? [])
-        .filter((r: SalesStatRow) => r.salesperson_id === sp && r.season_id === s1 && r.account_no && validSet.has(r.account_no))
+        .filter((r: SalesStatRow) => r.season_id === s1 && r.account_no && validSet.has(r.account_no))
         .map((r: SalesStatRow) => r.account_no as string)
     );
     const customersById = new Map<string, Customer>();
@@ -108,7 +109,6 @@ function RecordsInner() {
       byCustomer.set(id, { id, name: c?.company || id, city: c?.city || '-', s1: [], s2: [] });
     }
     for (const r of (stats ?? []) as SalesStatRow[]) {
-      if (r.salesperson_id !== sp) continue;
       const acc = r.account_no as string | null;
       if (!acc || !byCustomer.has(acc)) continue;
       if (r.season_id === s1) byCustomer.get(acc)!.s1.push(r);

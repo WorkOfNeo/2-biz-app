@@ -129,6 +129,10 @@ export default function OverviewPage() {
   const rows = useMemo(() => {
     if (!people || !customers || !stats) return [] as any[];
     const targetCountry = country === 'All' ? null : country.toUpperCase();
+    // Customer lookup used to attribute activity to the assigned salesperson
+    const customerById = new Map<string, Customer>();
+    for (const c of customers) { if (c.customer_id) customerById.set(c.customer_id, c); }
+
     const bySpCustomers = new Map<string, Customer[]>();
     for (const c of customers) {
       if (!c.salesperson_id) continue;
@@ -160,10 +164,12 @@ export default function OverviewPage() {
     for (const sp of people) agg.set(sp.id, { s1Qty: 0, s1Price: 0, s2Qty: 0, s2Price: 0, visited: new Set<string>(), visitedValid: new Set<string>() });
     const baseRates = { DKK: 1, ...(currencyRatesRow ?? {}) } as Record<string, number>;
     for (const r of stats) {
-      const spId = r.salesperson_id ?? '';
+      const acc = r.account_no ?? '';
+      // IMPORTANT: Attribute to assigned salesperson (customer table) if present.
+      // This ensures customers "count as visited" even if another salesperson recorded the sale.
+      const spId = (acc ? (customerById.get(acc)?.salesperson_id ?? null) : null) ?? (r.salesperson_id ?? '');
       const set = targetsBySp.get(spId);
       if (!set) continue; // salesperson may have no customers in this country
-      const acc = r.account_no ?? '';
       if (!acc || !set.has(acc)) continue;
       // Exclude hidden customers from aggregation (same as General page)
       if (isHidden(acc)) continue;
@@ -187,8 +193,6 @@ export default function OverviewPage() {
       }
     }
     // Aggregate invoices mapped to salesperson via customers
-    const customerById = new Map<string, Customer>();
-    for (const c of customers) { if (c.customer_id) customerById.set(c.customer_id, c); }
     for (const inv of (invoices ?? [])) {
       const acc = inv.account_no ?? '';
       if (!acc) continue;

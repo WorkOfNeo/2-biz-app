@@ -126,7 +126,8 @@ export default function CountriesPage() {
         if (seasonalHidden.has(acc)) continue;
         if (closedCustomers?.setExcluded.has(acc)) continue;
       }
-      const spId = ((r.salesperson_id as string | null) ?? (customerSpById.get(acc) ?? null)) || '__unknown__';
+      // Attribute to assigned salesperson first (customer table), even if the row is recorded under another salesperson.
+      const spId = ((customerSpById.get(acc) ?? null) ?? (r.salesperson_id as string | null)) || '__unknown__';
       const cur = (String(r.currency || 'DKK').toUpperCase());
       const rateS1 = { ...baseRates, ...(ratesS1 ?? {}) }[cur] ?? 1;
       const rateS2 = { ...baseRates, ...(ratesS2 ?? {}) }[cur] ?? 1;
