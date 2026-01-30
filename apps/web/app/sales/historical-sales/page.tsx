@@ -1643,6 +1643,19 @@ type MatrixData = {
   };
 };
 
+type PeriodMatrixRow = {
+  style_no: string;
+  color: string;
+  size: string;
+  byPeriod: Record<string, number>;
+  total: number;
+};
+
+type PeriodMatrixResponse = {
+  periods: string[];
+  rows: PeriodMatrixRow[];
+};
+
 type TopStyle = {
   style_no: string;
   style_name: string | null;
@@ -1700,6 +1713,7 @@ function AnalyticsTab({ styles }: { styles: StyleRow[] }) {
   // Data states
   const [timeseriesData, setTimeseriesData] = useState<TimeseriesPoint[]>([]);
   const [matrixDataByStyle, setMatrixDataByStyle] = useState<Record<string, MatrixData>>({});
+  const [periodMatrix, setPeriodMatrix] = useState<PeriodMatrixResponse | null>(null);
   const [topStyles, setTopStyles] = useState<TopStyle[]>([]);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [kpis, setKpis] = useState<{ totalUnits: number; avgPerDay: number; colors: string[]; daysInPeriod: number } | null>(null);
@@ -1962,6 +1976,31 @@ function AnalyticsTab({ styles }: { styles: StyleRow[] }) {
         if (matrixRes.ok && matrixJson) {
           matrices[style_no] = matrixJson;
         }
+      }
+
+      // Period bucketed size/color table across selected styles
+      try {
+        const periodRes = await fetch('/api/historical-sales/period-matrix', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            style_nos: selectedStyleNos,
+            startDate: analyticsDateFrom,
+            endDate: analyticsDateTo,
+            aggregation: aggregationLevel,
+            colors: colorsFilter
+          })
+        });
+        const periodJson = await periodRes.json();
+        if (periodRes.ok) {
+          setPeriodMatrix(periodJson as PeriodMatrixResponse);
+        } else {
+          setPeriodMatrix(null);
+          console.error('Failed to load period matrix:', periodJson?.error || periodJson);
+        }
+      } catch (err) {
+        setPeriodMatrix(null);
+        console.error('Failed to load period matrix:', err);
       }
 
       const mergedPoints = Array.from(allPointsByDate.entries())
@@ -2503,6 +2542,64 @@ function AnalyticsTab({ styles }: { styles: StyleRow[] }) {
         </>
       )}
 
+      {/* Period table: style/color/size by aggregation (month/week/day) */}
+      {periodMatrix && periodMatrix.periods.length > 0 && periodMatrix.rows.length > 0 && (
+        <div style={{ breakInside: 'avoid', pageBreakInside: 'avoid' } as any}>
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base">
+                Sales per {aggregationLevel === 'month' ? 'Month' : aggregationLevel === 'week' ? 'Week' : 'Day'} — Style/Color/Size
+              </CardTitle>
+              <CardDescription>
+                Same underlying data as the Size/Color Matrix, bucketed by the current aggregation.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="overflow-auto border rounded">
+                <table className="min-w-full text-xs">
+                  <thead className="bg-slate-50 sticky top-0 z-10">
+                    <tr>
+                      <th className="p-2 text-left border font-medium sticky left-0 bg-slate-50 z-20">Style</th>
+                      <th className="p-2 text-left border font-medium sticky left-[84px] bg-slate-50 z-20">Color</th>
+                      <th className="p-2 text-left border font-medium sticky left-[260px] bg-slate-50 z-20">Size</th>
+                      <th className="p-2 text-right border font-medium sticky left-[320px] bg-slate-50 z-20">Total</th>
+                      {periodMatrix.periods.map(p => (
+                        <th key={p} className="p-2 text-right border font-medium whitespace-nowrap">{p}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {periodMatrix.rows.map((row, idx) => (
+                      <tr key={`${row.style_no}|${row.color}|${row.size}|${idx}`} className="hover:bg-slate-50">
+                        <td className="p-2 border font-mono sticky left-0 bg-white z-10 whitespace-nowrap">{row.style_no}</td>
+                        <td className="p-2 border sticky left-[84px] bg-white z-10 whitespace-nowrap max-w-[180px] truncate" title={row.color}>
+                          {row.color}
+                        </td>
+                        <td className="p-2 border font-mono sticky left-[260px] bg-white z-10 whitespace-nowrap">{row.size}</td>
+                        <td className="p-2 border text-right font-medium sticky left-[320px] bg-white z-10 tabular-nums">
+                          {row.total.toLocaleString('da-DK')}
+                        </td>
+                        {periodMatrix.periods.map(p => {
+                          const v = row.byPeriod?.[p] || 0;
+                          return (
+                            <td key={p} className="p-2 border text-right tabular-nums">
+                              {v > 0 ? v.toLocaleString('da-DK') : '—'}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="text-xs text-slate-500 mt-2">
+                Rows: {periodMatrix.rows.length.toLocaleString('da-DK')} • Periods: {periodMatrix.periods.length}
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
       {/* Offscreen export pages (captured into PDF) */}
       {selectedStyleNos.length > 0 && exportTimeseriesMonthly.length > 0 && kpis && (
         <div className="fixed left-[-10000px] top-0">
@@ -2673,6 +2770,84 @@ function AnalyticsTab({ styles }: { styles: StyleRow[] }) {
                     </div>
                   </div>
                 ))}
+
+                {/* Period table pages (chunked so it isn't cut off) */}
+                {periodMatrix && periodMatrix.periods.length > 0 && periodMatrix.rows.length > 0 && (() => {
+                  const periodLabel =
+                    aggregationLevel === 'month' ? 'Month' : aggregationLevel === 'week' ? 'Week' : 'Day';
+                  const periods = periodMatrix.periods;
+                  const allRows = periodMatrix.rows;
+
+                  // Heuristic: more period columns => fewer rows per page
+                  const rowsPerPage =
+                    periods.length <= 6 ? 28 :
+                    periods.length <= 10 ? 22 :
+                    periods.length <= 16 ? 16 :
+                    12;
+
+                  const chunks: PeriodMatrixRow[][] = [];
+                  for (let i = 0; i < allRows.length; i += rowsPerPage) {
+                    chunks.push(allRows.slice(i, i + rowsPerPage));
+                  }
+
+                  return chunks.map((chunk, pageIndex) => (
+                    <div
+                      key={`period-matrix-${pageIndex}`}
+                      ref={capturePage}
+                      className="bg-white p-6"
+                      style={a4Px}
+                    >
+                      <div className="text-center mb-3">
+                        <div className="text-lg font-semibold">Sales per {periodLabel} — Style/Color/Size</div>
+                        <div className="text-sm text-slate-600 mt-1">
+                          {analyticsDateFrom} → {analyticsDateTo}
+                          {chunks.length > 1 ? ` • page ${pageIndex + 1}/${chunks.length}` : ''}
+                        </div>
+                      </div>
+
+                      <Card>
+                        <CardContent className="pt-4">
+                          <div className="overflow-hidden border rounded">
+                            <table className="min-w-full text-[10px]">
+                              <thead className="bg-slate-50">
+                                <tr>
+                                  <th className="p-1.5 text-left border font-medium">Style</th>
+                                  <th className="p-1.5 text-left border font-medium">Color</th>
+                                  <th className="p-1.5 text-left border font-medium">Size</th>
+                                  <th className="p-1.5 text-right border font-medium">Total</th>
+                                  {periods.map(p => (
+                                    <th key={p} className="p-1.5 text-right border font-medium whitespace-nowrap">{p}</th>
+                                  ))}
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {chunk.map((row, idx) => (
+                                  <tr key={`${row.style_no}|${row.color}|${row.size}|${pageIndex}|${idx}`}>
+                                    <td className="p-1.5 border font-mono whitespace-nowrap">{row.style_no}</td>
+                                    <td className="p-1.5 border whitespace-nowrap max-w-[240px] truncate" title={row.color}>{row.color}</td>
+                                    <td className="p-1.5 border font-mono whitespace-nowrap">{row.size}</td>
+                                    <td className="p-1.5 border text-right font-medium tabular-nums">{row.total.toLocaleString('da-DK')}</td>
+                                    {periods.map(p => {
+                                      const v = row.byPeriod?.[p] || 0;
+                                      return (
+                                        <td key={p} className="p-1.5 border text-right tabular-nums">
+                                          {v > 0 ? v.toLocaleString('da-DK') : '—'}
+                                        </td>
+                                      );
+                                    })}
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                          <div className="text-[10px] text-slate-500 mt-2">
+                            Rows shown: {chunk.length.toLocaleString('da-DK')} • Total rows: {allRows.length.toLocaleString('da-DK')}
+                          </div>
+                        </CardContent>
+                      </Card>
+                    </div>
+                  ));
+                })()}
               </>
             );
           })()}

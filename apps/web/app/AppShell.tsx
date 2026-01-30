@@ -7,7 +7,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const isAuth = pathname === '/signin';
   const { has } = useRoles();
-  const hideSidebar = isAuth || has('sales');
+  // All authenticated users can see the sidebar (including sales users for Chat access)
+  const hideSidebar = isAuth;
   
   if (hideSidebar) {
     return <main className="min-h-screen">{children}</main>;

@@ -7,7 +7,8 @@ export default function RolesAdminPage() {
   // Static page list (read from sidebar structure)
   const { data: pages } = useSWR('pages:list', async () => {
     return [
-      '/', '/statistics/general', '/statistics/overview', '/statistics/countries', '/statistics/countries/exports',
+      '/', '/assistant',
+      '/statistics/general', '/statistics/overview', '/statistics/countries', '/statistics/countries/exports',
       '/styles', '/styles/settings', '/styles/stock-list',
       '/settings/seasons', '/settings/salespersons', '/settings/customers', '/settings/misc', '/settings/runs',
       '/admin', '/admin/users', '/admin/roles'

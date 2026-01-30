@@ -452,7 +452,13 @@ function PromptStudioTab() {
     fetcher
   );
 
-  const promptKeys = ['quick_po_flow_v1', 'call_off_analysis_v2'];
+  const promptKeys = [
+    'quick_po_flow_v1', 
+    'call_off_analysis_v2',
+    'assistant_intent_v1',
+    'assistant_action_router_v1',
+    'assistant_response_v1',
+  ];
   const versions = data?.byKey?.[selectedKey] || [];
   const activeVersion = versions.find(v => v.active);
 
@@ -669,6 +675,9 @@ function ExamplesLibraryTab() {
           >
             <option value="quick_po_flow_v1">quick_po_flow_v1</option>
             <option value="call_off_analysis_v2">call_off_analysis_v2</option>
+            <option value="assistant_intent_v1">assistant_intent_v1</option>
+            <option value="assistant_action_router_v1">assistant_action_router_v1</option>
+            <option value="assistant_response_v1">assistant_response_v1</option>
           </select>
           <span className="text-sm text-slate-500">
             {data?.examples?.length || 0} examples

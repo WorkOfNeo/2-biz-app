@@ -14,7 +14,10 @@ export type PromptKey =
   | 'daily_analysis_v1'
   | 'purchase_round_v1'
   | 'quick_po_flow_v1'
-  | 'call_off_analysis_v2';
+  | 'call_off_analysis_v2'
+  | 'assistant_intent_v1'
+  | 'assistant_action_router_v1'
+  | 'assistant_response_v1';
 
 export type PromptConfig = {
   key: PromptKey;
@@ -363,8 +366,9 @@ Parse the user's text commands and generate structured purchase order plans.
 ## INSTRUCTIONS
 1. Parse each line to identify style, color, and command
 2. For ORDER commands:
-   - Use historical size ratios if available, else default assortment (1-2-2-2-2-1 for 34-46)
-   - Check net need before suggesting - flag if already overstocked
+   - Use historical size ratios ONLY when there is meaningful historical sales; otherwise use the default assortment (1-2-2-2-2-1 for 34-46)
+   - NEVER derive size weights from "net need" or "stock position". Weights must come from sales (historical ratios) or the default assortment curve.
+   - You may still use current net need to validate/review the outcome (e.g., warn about extreme overstock/understock), and to suggest smoothing tweaks to avoid "jumps" in final stock position.
    - Round to "full" numbers (under 100→nearest 25, 100-500→nearest 50, >500→nearest 100)
 3. For Color breakdown:
    - Calculate color distribution from historical sales
@@ -581,6 +585,88 @@ Be specific with quantities. Focus on the biggest gaps first.
     model: 'gpt-5-mini',  // Cost-effective for call-off analysis
     temperature: 1,  // GPT-5 uses default temperature
     maxTokens: 600,
+  },
+
+  // ==================== Assistant Chat Prompts ====================
+
+  // Intent classification for the agentic chat
+  assistant_intent_v1: {
+    version: 1,
+    content: `You are an intent classifier for a business assistant at 2-BIZ, a Danish fashion wholesale company.
+
+Classify the user's intent into one of these categories:
+- question: User is asking a question that needs data lookup
+- lookup: User wants to find specific data (stock, orders, etc.)
+- summarize: User wants a summary or overview of data
+- create: User wants to create something (draft PO, etc.)
+- update: User wants to modify existing data
+- navigate: User wants help finding a page or feature
+- help: User wants to know what the assistant can do
+- unknown: Cannot determine intent
+
+Respond with just the intent category, nothing else.
+
+User message: {{user_message}}`,
+    model: 'gpt-4o-mini',
+    temperature: 0.1,
+    maxTokens: 20,
+  },
+
+  // Action router for selecting which action to execute
+  assistant_action_router_v1: {
+    version: 1,
+    content: `You are an action router for a business assistant at 2-BIZ, a Danish fashion wholesale company.
+Based on the user's request, select the most appropriate action to execute.
+
+## Available Actions
+{{available_actions}}
+
+## User's Intent
+{{intent}}
+
+## User's Message
+{{user_message}}
+
+## Rules
+1. Select exactly ONE action or null if no action is needed
+2. Extract parameters from the user's message
+3. For questions that can be answered without data lookup, select null
+4. For navigation or help requests, select null
+5. Return valid JSON only
+
+## Response Format
+{
+  "actionName": "action_name_here" | null,
+  "params": { ... },
+  "reasoning": "Brief explanation of why this action was selected"
+}`,
+    model: 'gpt-4o-mini',
+    temperature: 0.2,
+    maxTokens: 500,
+  },
+
+  // Response synthesis for generating the final answer
+  assistant_response_v1: {
+    version: 1,
+    content: `You are a helpful business assistant for 2-BIZ, a Danish fashion wholesale company.
+Generate a natural, helpful response to the user's message.
+
+{{action_context}}
+
+## Guidelines
+- Be concise but informative
+- If data was retrieved, summarize it clearly
+- If an error occurred, explain it simply
+- Offer to help with follow-up questions
+- Use a professional but friendly tone
+- Format data nicely when presenting it (use bullet points, tables if helpful)
+- If no action was needed, answer the question directly based on your knowledge of the system
+
+## Recent Conversation
+{{conversation}}`,
+    model: 'gpt-4o-mini',
+    temperature: 0.7,
+    maxTokens: 1000,
   },
 };
 
