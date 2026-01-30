@@ -152,22 +152,22 @@ export const PROMPT_LIBRARY: PromptCategory[] = [
       {
         text: 'What can you help me with?',
         description: 'Get help on capabilities',
-        expectedAction: null,
+        expectedAction: undefined,
       },
       {
         text: 'How do I check stock levels?',
         description: 'Feature guidance',
-        expectedAction: null,
+        expectedAction: undefined,
       },
       {
         text: 'What actions can you perform?',
         description: 'List available actions',
-        expectedAction: null,
+        expectedAction: undefined,
       },
       {
         text: 'Where do I find purchase orders?',
         description: 'Navigation help',
-        expectedAction: null,
+        expectedAction: undefined,
       },
     ],
   },
