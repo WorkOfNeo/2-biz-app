@@ -123,6 +123,9 @@ export default function StockListPage({ publicMode = false, sharedListId = '' }:
   const [scrapeProgress, setScrapeProgress] = React.useState<{ current: number; total: number } | null>(null);
   const [scrapeMessage, setScrapeMessage] = React.useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
   const [autoScrapeEnabled, setAutoScrapeEnabled] = React.useState<boolean>(false);
+  // Per-color UI feedback when moving between lists (frontend only)
+  const [movingColorIds, setMovingColorIds] = React.useState<Record<string, 'fading' | 'hidden'>>({});
+  const movingTimersRef = React.useRef<Record<string, number>>({});
   const { data, mutate: mutateStockData } = useSWR('style_stock:list', async () => {
     // First, get the total count
     const { count, error: countError } = await supabase
@@ -513,6 +516,66 @@ export default function StockListPage({ publicMode = false, sharedListId = '' }:
   const [showStyleTotals, setShowStyleTotals] = React.useState(false);
 
   // (migrated to top of file to satisfy dependencies)
+
+  // Clear any local move/hide state when switching active list (or leaving the page)
+  React.useEffect(() => {
+    for (const t of Object.values(movingTimersRef.current)) {
+      try {
+        window.clearTimeout(t);
+      } catch {}
+    }
+    movingTimersRef.current = {};
+    setMovingColorIds({});
+  }, [activeListId]);
+
+  React.useEffect(() => {
+    return () => {
+      for (const t of Object.values(movingTimersRef.current)) {
+        try {
+          window.clearTimeout(t);
+        } catch {}
+      }
+      movingTimersRef.current = {};
+    };
+  }, []);
+
+  const startFadeOutColor = React.useCallback((styleColorId: string) => {
+    if (!styleColorId) return;
+    // If already hiding, keep it hidden.
+    setMovingColorIds((m) => {
+      if (m[styleColorId] === 'hidden') return m;
+      return { ...m, [styleColorId]: 'fading' };
+    });
+    // Collapse after fade finishes
+    const existing = movingTimersRef.current[styleColorId];
+    if (existing) {
+      try {
+        window.clearTimeout(existing);
+      } catch {}
+    }
+    const tid = window.setTimeout(() => {
+      setMovingColorIds((m) => ({ ...m, [styleColorId]: 'hidden' }));
+      delete movingTimersRef.current[styleColorId];
+    }, 260);
+    movingTimersRef.current[styleColorId] = tid;
+  }, []);
+
+  const cancelFadeOutColor = React.useCallback((styleColorId: string) => {
+    if (!styleColorId) return;
+    const existing = movingTimersRef.current[styleColorId];
+    if (existing) {
+      try {
+        window.clearTimeout(existing);
+      } catch {}
+      delete movingTimersRef.current[styleColorId];
+    }
+    setMovingColorIds((m) => {
+      if (!(styleColorId in m)) return m;
+      const next = { ...m };
+      delete next[styleColorId];
+      return next;
+    });
+  }, []);
 
   // Public view should never be affected by private-view filters/toggles
   React.useEffect(() => {
@@ -2065,8 +2128,18 @@ export default function StockListPage({ publicMode = false, sharedListId = '' }:
                   const sid = styleMetaByNo[g.styleNo]?.id || null;
                   const cmap = sid ? (styleColors?.idMap?.get(sid) || new Map<string, string>()) : new Map<string, string>();
                   const scId = cmap.get((g.color || '').trim().toLowerCase()) || null;
+                  const movePhase = scId ? movingColorIds[scId] : undefined;
+                  const isFadingOut = movePhase === 'fading';
+                  const isHidden = movePhase === 'hidden';
+                  if (isHidden) return null;
                   return (
-                  <div key={key} className="space-y-1 sl-color-block">
+                  <div
+                    key={key}
+                    className={
+                      "sl-color-block overflow-hidden transition-all duration-300 " +
+                      (isFadingOut ? "opacity-0 max-h-0 pointer-events-none" : "opacity-100 max-h-[1200px]")
+                    }
+                  >
                       {/* Display seasons and scraped timestamp */}
                       <div className="mb-1 flex flex-wrap items-center gap-2">
                         <div className="text-[12px] text-gray-500">
@@ -2107,13 +2180,15 @@ export default function StockListPage({ publicMode = false, sharedListId = '' }:
                                     <select
                                       className="w-full rounded border px-2 py-1 text-[11px] bg-white"
                                       value={activeListId}
-                                      disabled={!sid || !scId}
+                                      disabled={!sid || !scId || !!movePhase}
                                       onChange={async (e) => {
                                         const destinationListId = e.target.value;
                                         if (!destinationListId || destinationListId === activeListId) return;
                                         if (!sid || !scId) return;
                                         try {
                                           const destName = stockLists?.find((l) => l.id === destinationListId)?.name || 'destination list';
+                                          // Immediate UI feedback: fade out + collapse now (keep hidden through rerenders)
+                                          startFadeOutColor(scId);
 
                                           // Ensure style exists in destination list
                                           const { error: styleErr } = await supabase
@@ -2151,6 +2226,8 @@ export default function StockListPage({ publicMode = false, sharedListId = '' }:
                                           await mutateListStyles?.();
                                           flash(`Moved ${g.color} to "${destName}"`, 'success');
                                         } catch (err: any) {
+                                          // Revert local hide on failure
+                                          cancelFadeOutColor(scId);
                                           flash(err?.message || 'Failed to move color', 'error');
                                         }
                                       }}
