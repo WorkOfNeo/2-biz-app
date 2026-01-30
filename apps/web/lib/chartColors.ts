@@ -75,6 +75,7 @@ const FALLBACK_PALETTE = [
   '#4f46e5', '#ca8a04', '#059669', '#db2777', '#2563eb',
   '#65a30d', '#7c2d12', '#1e40af', '#9a3412', '#5b21b6',
 ];
+const DEFAULT_FALLBACK = '#0f766e';
 
 /**
  * Return a hex color for a product color name (e.g. "NAVY", "100 WHITE", "CAPTAINS BLUE").
@@ -82,7 +83,7 @@ const FALLBACK_PALETTE = [
  */
 export function getColorForName(colorName: string, index: number): string {
   if (!colorName || typeof colorName !== 'string') {
-    return FALLBACK_PALETTE[index % FALLBACK_PALETTE.length] ?? FALLBACK_PALETTE[0];
+    return FALLBACK_PALETTE[index % FALLBACK_PALETTE.length] ?? DEFAULT_FALLBACK;
   }
   const norm = normalizeName(colorName);
   // Strip leading numbers (e.g. "100 white" -> "white")
@@ -97,7 +98,7 @@ export function getColorForName(colorName: string, index: number): string {
   }
   // Stable color from name + index
   const hash = hashString(withoutNumber) + index * 31;
-  return FALLBACK_PALETTE[hash % FALLBACK_PALETTE.length] ?? FALLBACK_PALETTE[0];
+  return FALLBACK_PALETTE[hash % FALLBACK_PALETTE.length] ?? DEFAULT_FALLBACK;
 }
 
 /**
