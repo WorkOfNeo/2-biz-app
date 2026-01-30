@@ -11,6 +11,7 @@ import { Badge } from '../../../components/ui/badge';
 import { Dropzone } from '../../../components/ui/dropzone';
 import { AlertCircle, CheckCircle, Loader2, Download, TrendingUp, Calendar, BarChart3, Search, Plus, X, FileDown } from 'lucide-react';
 import { DailyLineChart, StackedAreaByColor, SizeDistributionBar } from '../../../components/charts';
+import { getColorForName } from '../../../lib/chartColors';
 
 // Types
 type SalesRow = {
@@ -1670,6 +1671,31 @@ function AnalyticsTab({ styles }: { styles: StyleRow[] }) {
   const [byStyleColors, setByStyleColors] = useState<Record<string, string[]>>({});
   const [selectedColors, setSelectedColors] = useState<Set<string>>(new Set());
   const [colorsLoading, setColorsLoading] = useState(false);
+
+  // Chart series color overrides (user-picked)
+  const COLOR_OVERRIDES_STORAGE_KEY = 'historical-sales:chart-color-overrides';
+  const [seriesColorOverrides, setSeriesColorOverrides] = useState<Record<string, string>>({});
+  React.useEffect(() => {
+    try {
+      const raw = localStorage.getItem(COLOR_OVERRIDES_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') {
+          setSeriesColorOverrides(parsed);
+        }
+      }
+    } catch {
+      // ignore
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  React.useEffect(() => {
+    try {
+      localStorage.setItem(COLOR_OVERRIDES_STORAGE_KEY, JSON.stringify(seriesColorOverrides));
+    } catch {
+      // ignore
+    }
+  }, [seriesColorOverrides]);
   
   // Data states
   const [timeseriesData, setTimeseriesData] = useState<TimeseriesPoint[]>([]);
@@ -1685,14 +1711,14 @@ function AnalyticsTab({ styles }: { styles: StyleRow[] }) {
   type AggregationLevel = 'month' | 'week' | 'day';
   const [aggregationLevel, setAggregationLevel] = useState<AggregationLevel>('month');
 
-  // Refs for PDF export (one page per chart)
-  const chartSectionRefs = useRef<(HTMLDivElement | null)[]>([]);
-  const chartSectionIndexRef = useRef(0);
+  // Refs for PDF export (page layout groupings)
+  const exportPageRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const exportPageIndexRef = useRef(0);
   const [exportingPdf, setExportingPdf] = useState(false);
 
   async function exportChartsToPdf() {
-    const sections = chartSectionRefs.current.filter(Boolean) as HTMLDivElement[];
-    if (sections.length === 0) return;
+    const pages = exportPageRefs.current.filter(Boolean) as HTMLDivElement[];
+    if (pages.length === 0) return;
     setExportingPdf(true);
     try {
       const html2canvas = (await import('html2canvas')).default;
@@ -1703,8 +1729,8 @@ function AnalyticsTab({ styles }: { styles: StyleRow[] }) {
       const margin = 0.95;
       const maxW = pageW * margin;
       const maxH = pageH * margin;
-      for (let i = 0; i < sections.length; i++) {
-        const el = sections[i];
+      for (let i = 0; i < pages.length; i++) {
+        const el = pages[i];
         if (!el) continue;
         const canvas = await html2canvas(el, { scale: 2, useCORS: true, logging: false });
         const img = canvas.toDataURL('image/png');
@@ -1727,21 +1753,20 @@ function AnalyticsTab({ styles }: { styles: StyleRow[] }) {
     }
   }
 
-  // Aggregate timeseries by selected level
-  const aggregatedTimeseriesData = useMemo(() => {
-    if (timeseriesData.length === 0) return [];
-    if (aggregationLevel === 'day') {
-      return timeseriesData.map(p => ({ ...p, label: undefined }));
+  const aggregateTimeseries = useCallback((points: TimeseriesPoint[], level: AggregationLevel): TimeseriesPoint[] => {
+    if (points.length === 0) return [];
+    if (level === 'day') {
+      return points.map(p => ({ ...p, label: undefined }));
     }
     const getPeriodKey = (dateStr: string): string => {
-      if (aggregationLevel === 'month') return dateStr.slice(0, 7);
+      if (level === 'month') return dateStr.slice(0, 7);
       const d = new Date(dateStr);
       const jan1 = new Date(d.getFullYear(), 0, 1);
       const weekNo = Math.ceil((((d.getTime() - jan1.getTime()) / 86400000) + jan1.getDay() + 1) / 7);
       return `${d.getFullYear()}-W${String(weekNo).padStart(2, '0')}`;
     };
     const getDisplayLabel = (periodKey: string): string => {
-      if (aggregationLevel === 'month') {
+      if (level === 'month') {
         const [y, m] = periodKey.split('-');
         const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
         return `${monthNames[parseInt(m || '1', 10) - 1]} ${(y || '').slice(2)}`;
@@ -1750,7 +1775,7 @@ function AnalyticsTab({ styles }: { styles: StyleRow[] }) {
       return `U${parseInt(w || '0', 10)} '${(y || '').slice(2)}`;
     };
     const buckets = new Map<string, { total: number; byColor: Record<string, number> }>();
-    for (const p of timeseriesData) {
+    for (const p of points) {
       const key = getPeriodKey(p.date);
       if (!buckets.has(key)) buckets.set(key, { total: 0, byColor: {} });
       const b = buckets.get(key)!;
@@ -1767,7 +1792,30 @@ function AnalyticsTab({ styles }: { styles: StyleRow[] }) {
         byColor,
         label: getDisplayLabel(periodKey)
       }));
-  }, [timeseriesData, aggregationLevel]);
+  }, []);
+
+  // Aggregate timeseries by selected level (UI)
+  const aggregatedTimeseriesData = useMemo(() => {
+    return aggregateTimeseries(timeseriesData, aggregationLevel);
+  }, [timeseriesData, aggregationLevel, aggregateTimeseries]);
+
+  // Export is always per month (per requirements)
+  const exportTimeseriesMonthly = useMemo(() => {
+    return aggregateTimeseries(timeseriesData, 'month');
+  }, [timeseriesData, aggregateTimeseries]);
+
+  const resolveSeriesColor = (seriesName: string, index: number) => {
+    return seriesColorOverrides?.[seriesName] ?? getColorForName(seriesName, index);
+  };
+
+  const clearSeriesOverride = (seriesName: string) => {
+    setSeriesColorOverrides(prev => {
+      if (!prev[seriesName]) return prev;
+      const next = { ...prev };
+      delete next[seriesName];
+      return next;
+    });
+  };
 
   // Filtered styles for dropdown
   const filteredStyles = useMemo(() => {
@@ -2099,6 +2147,58 @@ function AnalyticsTab({ styles }: { styles: StyleRow[] }) {
               )}
             </div>
           )}
+
+          {/* Series color overrides */}
+          {kpis && kpis.colors.length > 0 && (
+            <div className="mt-4 p-3 bg-white rounded-lg border">
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-xs font-medium text-slate-700">Chart colors (editable)</label>
+                <button
+                  type="button"
+                  onClick={() => setSeriesColorOverrides({})}
+                  className="text-xs text-slate-500 hover:underline"
+                >
+                  Reset all
+                </button>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-48 overflow-auto">
+                {kpis.colors.map((colorName, index) => {
+                  const value = resolveSeriesColor(colorName, index);
+                  const hasOverride = Boolean(seriesColorOverrides[colorName]);
+                  return (
+                    <div key={colorName} className="flex items-center gap-2">
+                      <input
+                        type="color"
+                        value={value}
+                        onChange={(e) => {
+                          const hex = e.target.value;
+                          setSeriesColorOverrides(prev => ({ ...prev, [colorName]: hex }));
+                        }}
+                        className="h-7 w-9 p-0 border border-slate-200 rounded"
+                        aria-label={`Pick color for ${colorName}`}
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm truncate" title={colorName}>{colorName}</div>
+                        <div className="text-[11px] text-slate-500 font-mono">{value}</div>
+                      </div>
+                      {hasOverride && (
+                        <button
+                          type="button"
+                          onClick={() => clearSeriesOverride(colorName)}
+                          className="text-xs text-slate-500 hover:underline"
+                        >
+                          clear
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              <p className="text-xs text-slate-500 mt-2">
+                These colors apply to “Sales by Color Over Time” (and any other color-series charts) and will be saved in this browser.
+              </p>
+            </div>
+          )}
           
           <div className="mt-4 flex flex-wrap items-center gap-4">
             <Button 
@@ -2232,7 +2332,7 @@ function AnalyticsTab({ styles }: { styles: StyleRow[] }) {
                     <div 
                       key={i}
                       className="w-6 h-6 rounded-full border-2 border-white"
-                      style={{ backgroundColor: ['#8FA894', '#6B8E7B', '#C5D5CA', '#4A6B52'][i] }}
+                      style={{ backgroundColor: resolveSeriesColor(kpis.colors[i]!, i) }}
                     />
                   ))}
                 </div>
@@ -2243,13 +2343,7 @@ function AnalyticsTab({ styles }: { styles: StyleRow[] }) {
       )}
 
       {/* Charts */}
-      {aggregatedTimeseriesData.length > 0 && selectedStyleNos.length > 0 && (() => {
-        chartSectionRefs.current = [];
-        chartSectionIndexRef.current = 0;
-        const captureRef = (el: HTMLDivElement | null) => {
-          if (el) chartSectionRefs.current[chartSectionIndexRef.current++] = el;
-        };
-        return (
+      {aggregatedTimeseriesData.length > 0 && selectedStyleNos.length > 0 && (
         <>
           <div className="flex justify-end mb-2">
             <Button
@@ -2263,7 +2357,8 @@ function AnalyticsTab({ styles }: { styles: StyleRow[] }) {
               {exportingPdf ? 'Exporting...' : 'Export to PDF'}
             </Button>
           </div>
-          <div ref={captureRef}>
+
+          <div style={{ breakInside: 'avoid', pageBreakInside: 'avoid' } as any}>
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="text-base">Sales Trend by {aggregationLevel === 'month' ? 'Month' : aggregationLevel === 'week' ? 'Week' : 'Day'}</CardTitle>
@@ -2278,8 +2373,8 @@ function AnalyticsTab({ styles }: { styles: StyleRow[] }) {
           </div>
 
           {/* Color Mix */}
-          {kpis && kpis.colors.length > 1 && (
-            <div ref={captureRef}>
+          {kpis && kpis.colors.length > 0 && (
+            <div style={{ breakInside: 'avoid', pageBreakInside: 'avoid' } as any}>
               <Card>
                 <CardHeader className="pb-2">
                   <CardTitle className="text-base">Sales by Color Over Time</CardTitle>
@@ -2288,118 +2383,301 @@ function AnalyticsTab({ styles }: { styles: StyleRow[] }) {
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <StackedAreaByColor 
-                    data={aggregatedTimeseriesData} 
+                  <StackedAreaByColor
+                    data={aggregatedTimeseriesData}
                     colors={kpis.colors}
                     maxColors={50}
-                    height={300} 
+                    height={300}
+                    colorOverrides={seriesColorOverrides}
                   />
                 </CardContent>
               </Card>
             </div>
           )}
         </>
-      );
-      })()}
+      )}
 
       {/* Size Matrix - one per style when multiple */}
-      {Object.keys(matrixDataByStyle).length > 0 && selectedStyleNos.length > 0 && (() => {
-        const captureRefMatrix = (el: HTMLDivElement | null) => {
-          if (el) chartSectionRefs.current[chartSectionIndexRef.current++] = el;
-        };
-        return (
+      {Object.keys(matrixDataByStyle).length > 0 && selectedStyleNos.length > 0 && (
         <>
           {Object.entries(matrixDataByStyle).map(([styleNo, matrixData]) => (
-            <div key={styleNo} ref={captureRefMatrix}>
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-base">Size/Color Matrix — {styleNo}</CardTitle>
-                <CardDescription>Total units sold by color and size</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="overflow-x-auto">
-                  <table className="min-w-full text-sm">
-                    <thead>
-                      <tr className="bg-slate-50">
-                        <th className="p-2 text-left border font-medium">Color</th>
-                        {matrixData.sizes.map(size => (
-                          <th key={size} className="p-2 text-center border font-medium">{size}</th>
-                        ))}
-                        <th className="p-2 text-right border font-medium bg-slate-100">Total</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {matrixData.colors.map(color => (
-                        <tr key={color} className="hover:bg-slate-50">
-                          <td className="p-2 border font-medium">{color}</td>
-                          {matrixData.sizes.map(size => {
-                            const value = matrixData.cells[color]?.[size] || 0;
-                            const maxValue = Math.max(...Object.values(matrixData.totals.bySize), 1);
-                            const intensity = maxValue > 0 ? value / maxValue : 0;
-                            return (
-                              <td 
-                                key={size} 
-                                className="p-2 text-center border tabular-nums"
-                                style={{
-                                  backgroundColor: value > 0 ? `rgba(143, 168, 148, ${0.1 + intensity * 0.5})` : undefined
-                                }}
-                              >
-                                {value > 0 ? value.toLocaleString('da-DK') : '—'}
+            <div key={styleNo} style={{ breakInside: 'avoid', pageBreakInside: 'avoid' } as any}>
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-base">Size/Color Matrix — {styleNo}</CardTitle>
+                  <CardDescription>Total units sold by color and size</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full text-sm">
+                      <thead>
+                        <tr className="bg-slate-50">
+                          <th className="p-2 text-left border font-medium">Color</th>
+                          {matrixData.sizes.map(size => (
+                            <th key={size} className="p-2 text-center border font-medium">{size}</th>
+                          ))}
+                          <th className="p-2 text-right border font-medium bg-slate-100">Total</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {matrixData.colors.map(color => {
+                          const rowTotal = matrixData.totals.byColor[color] || 0;
+                          const formatPct = (pct: number) => {
+                            const rounded = Math.round(pct * 10) / 10;
+                            return Number.isInteger(rounded) ? `${rounded.toFixed(0)}%` : `${rounded.toFixed(1)}%`;
+                          };
+                          return (
+                            <tr key={color} className="hover:bg-slate-50">
+                              <td className="p-2 border font-medium">{color}</td>
+                              {matrixData.sizes.map(size => {
+                                const value = matrixData.cells[color]?.[size] || 0;
+                                const maxValue = Math.max(...Object.values(matrixData.totals.bySize), 1);
+                                const intensity = maxValue > 0 ? value / maxValue : 0;
+                                const pct = rowTotal > 0 ? (value / rowTotal) * 100 : 0;
+                                return (
+                                  <td
+                                    key={size}
+                                    className="p-2 text-center border tabular-nums"
+                                    style={{
+                                      backgroundColor: value > 0 ? `rgba(143, 168, 148, ${0.1 + intensity * 0.5})` : undefined
+                                    }}
+                                  >
+                                    {value > 0 ? (
+                                      <div className="leading-tight">
+                                        <div>{value.toLocaleString('da-DK')}</div>
+                                        <div className="text-[10px] text-slate-600">{formatPct(pct)}</div>
+                                      </div>
+                                    ) : (
+                                      '—'
+                                    )}
+                                  </td>
+                                );
+                              })}
+                              <td className="p-2 text-right border font-medium bg-slate-50 tabular-nums">
+                                {rowTotal.toLocaleString('da-DK')}
                               </td>
-                            );
-                          })}
-                          <td className="p-2 text-right border font-medium bg-slate-50 tabular-nums">
-                            {(matrixData.totals.byColor[color] || 0).toLocaleString('da-DK')}
+                            </tr>
+                          );
+                        })}
+                        <tr className="bg-slate-100 font-medium">
+                          <td className="p-2 border">Total</td>
+                          {matrixData.sizes.map(size => (
+                            <td key={size} className="p-2 text-center border tabular-nums">
+                              {(matrixData.totals.bySize[size] || 0).toLocaleString('da-DK')}
+                            </td>
+                          ))}
+                          <td className="p-2 text-right border font-bold tabular-nums text-[#8FA894]">
+                            {matrixData.totals.grand.toLocaleString('da-DK')}
                           </td>
                         </tr>
-                      ))}
-                      <tr className="bg-slate-100 font-medium">
-                        <td className="p-2 border">Total</td>
-                        {matrixData.sizes.map(size => (
-                          <td key={size} className="p-2 text-center border tabular-nums">
-                            {(matrixData.totals.bySize[size] || 0).toLocaleString('da-DK')}
-                          </td>
-                        ))}
-                        <td className="p-2 text-right border font-bold tabular-nums text-[#8FA894]">
-                          {matrixData.totals.grand.toLocaleString('da-DK')}
-                        </td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-              </CardContent>
-            </Card>
+                      </tbody>
+                    </table>
+                  </div>
+                </CardContent>
+              </Card>
             </div>
           ))}
         </>
-      );})()}
+      )}
 
       {/* Size Distribution Bar - one per style when multiple */}
-      {Object.keys(matrixDataByStyle).length > 0 && selectedStyleNos.length > 0 && (() => {
-        const captureRefDist = (el: HTMLDivElement | null) => {
-          if (el) chartSectionRefs.current[chartSectionIndexRef.current++] = el;
-        };
-        return (
+      {Object.keys(matrixDataByStyle).length > 0 && selectedStyleNos.length > 0 && (
         <>
           {Object.entries(matrixDataByStyle).map(([styleNo, matrixData]) => (
-            <div key={styleNo} ref={captureRefDist}>
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-base">Size Distribution — {styleNo}</CardTitle>
-                <CardDescription>Total units by size (all colors combined)</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <SizeDistributionBar 
-                  sizes={matrixData.sizes}
-                  totals={matrixData.totals.bySize}
-                  height={250}
-                />
-              </CardContent>
-            </Card>
+            <div key={styleNo} style={{ breakInside: 'avoid', pageBreakInside: 'avoid' } as any}>
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-base">Size Distribution — {styleNo}</CardTitle>
+                  <CardDescription>Total units by size (all colors combined)</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <SizeDistributionBar 
+                    sizes={matrixData.sizes}
+                    totals={matrixData.totals.bySize}
+                    height={250}
+                  />
+                </CardContent>
+              </Card>
             </div>
           ))}
         </>
-      );})()}
+      )}
+
+      {/* Offscreen export pages (captured into PDF) */}
+      {selectedStyleNos.length > 0 && exportTimeseriesMonthly.length > 0 && kpis && (
+        <div className="fixed left-[-10000px] top-0">
+          {(() => {
+            exportPageRefs.current = [];
+            exportPageIndexRef.current = 0;
+            const capturePage = (el: HTMLDivElement | null) => {
+              if (el) exportPageRefs.current[exportPageIndexRef.current++] = el;
+            };
+            const a4Px = { width: 794, minHeight: 1123 };
+
+            return (
+              <>
+                {/* Page 1: Title + Colors + Trends */}
+                <div
+                  ref={capturePage}
+                  className="bg-white p-6"
+                  style={a4Px}
+                >
+                  <div className="text-center">
+                    <div className="text-xl font-semibold">Historical Sales Analytics</div>
+                    <div className="text-sm text-slate-600 mt-1">
+                      {analyticsDateFrom} → {analyticsDateTo}
+                      {selectedStyleNos.length > 0 ? ` • ${selectedStyleNos.join(', ')}` : ''}
+                    </div>
+                  </div>
+
+                  {/* Colors attached */}
+                  <div className="mt-4">
+                    <div className="text-sm font-medium text-slate-800 mb-2">Colors attached</div>
+                    <div className="flex flex-wrap gap-2">
+                      {kpis.colors.map((c, i) => (
+                        <div key={c} className="flex items-center gap-2 border rounded-full px-3 py-1">
+                          <span
+                            className="inline-block w-3 h-3 rounded-full border"
+                            style={{ backgroundColor: resolveSeriesColor(c, i) }}
+                          />
+                          <span className="text-xs text-slate-700">{c}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Sales Trend per Month */}
+                  <div className="mt-4" style={{ breakInside: 'avoid', pageBreakInside: 'avoid' } as any}>
+                    <Card>
+                      <CardHeader className="pb-2">
+                        <CardTitle className="text-base">Sales Trend per Month</CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <DailyLineChart data={exportTimeseriesMonthly} height={260} />
+                      </CardContent>
+                    </Card>
+                  </div>
+
+                  {/* Sales by Color Over Time */}
+                  <div className="mt-4" style={{ breakInside: 'avoid', pageBreakInside: 'avoid' } as any}>
+                    <Card>
+                      <CardHeader className="pb-2">
+                        <CardTitle className="text-base">Sales by Color Over Time</CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <StackedAreaByColor
+                          data={exportTimeseriesMonthly}
+                          colors={kpis.colors}
+                          maxColors={50}
+                          height={260}
+                          colorOverrides={seriesColorOverrides}
+                        />
+                      </CardContent>
+                    </Card>
+                  </div>
+                </div>
+
+                {/* Page 2+: Matrix + Size Distribution (per style) */}
+                {Object.entries(matrixDataByStyle).map(([styleNo, matrixData]) => (
+                  <div
+                    key={styleNo}
+                    ref={capturePage}
+                    className="bg-white p-6"
+                    style={a4Px}
+                  >
+                    <div className="text-center mb-3">
+                      <div className="text-lg font-semibold">Size/Color Matrix + Size Distribution</div>
+                      <div className="text-sm text-slate-600 mt-1">{styleNo}</div>
+                    </div>
+
+                    <div style={{ breakInside: 'avoid', pageBreakInside: 'avoid' } as any}>
+                      <Card>
+                        <CardHeader className="pb-2">
+                          <CardTitle className="text-base">Size/Color Matrix</CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          <div className="overflow-x-auto">
+                            <table className="min-w-full text-xs">
+                              <thead>
+                                <tr className="bg-slate-50">
+                                  <th className="p-2 text-left border font-medium">Color</th>
+                                  {matrixData.sizes.map(size => (
+                                    <th key={size} className="p-2 text-center border font-medium">{size}</th>
+                                  ))}
+                                  <th className="p-2 text-right border font-medium bg-slate-100">Total</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {matrixData.colors.map(color => {
+                                  const rowTotal = matrixData.totals.byColor[color] || 0;
+                                  const formatPct = (pct: number) => {
+                                    const rounded = Math.round(pct * 10) / 10;
+                                    return Number.isInteger(rounded) ? `${rounded.toFixed(0)}%` : `${rounded.toFixed(1)}%`;
+                                  };
+                                  return (
+                                    <tr key={color}>
+                                      <td className="p-2 border font-medium">{color}</td>
+                                      {matrixData.sizes.map(size => {
+                                        const value = matrixData.cells[color]?.[size] || 0;
+                                        const pct = rowTotal > 0 ? (value / rowTotal) * 100 : 0;
+                                        return (
+                                          <td key={size} className="p-2 text-center border tabular-nums">
+                                            {value > 0 ? (
+                                              <div className="leading-tight">
+                                                <div>{value.toLocaleString('da-DK')}</div>
+                                                <div className="text-[10px] text-slate-600">{formatPct(pct)}</div>
+                                              </div>
+                                            ) : (
+                                              '—'
+                                            )}
+                                          </td>
+                                        );
+                                      })}
+                                      <td className="p-2 text-right border font-medium bg-slate-50 tabular-nums">
+                                        {rowTotal.toLocaleString('da-DK')}
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                                <tr className="bg-slate-100 font-medium">
+                                  <td className="p-2 border">Total</td>
+                                  {matrixData.sizes.map(size => (
+                                    <td key={size} className="p-2 text-center border tabular-nums">
+                                      {(matrixData.totals.bySize[size] || 0).toLocaleString('da-DK')}
+                                    </td>
+                                  ))}
+                                  <td className="p-2 text-right border font-bold tabular-nums text-[#8FA894]">
+                                    {matrixData.totals.grand.toLocaleString('da-DK')}
+                                  </td>
+                                </tr>
+                              </tbody>
+                            </table>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    </div>
+
+                    <div className="mt-4" style={{ breakInside: 'avoid', pageBreakInside: 'avoid' } as any}>
+                      <Card>
+                        <CardHeader className="pb-2">
+                          <CardTitle className="text-base">Size Distribution</CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          <SizeDistributionBar
+                            sizes={matrixData.sizes}
+                            totals={matrixData.totals.bySize}
+                            height={260}
+                          />
+                        </CardContent>
+                      </Card>
+                    </div>
+                  </div>
+                ))}
+              </>
+            );
+          })()}
+        </div>
+      )}
 
       {/* No data message */}
       {selectedStyleNos.length > 0 && !analyticsLoading && aggregatedTimeseriesData.length === 0 && (

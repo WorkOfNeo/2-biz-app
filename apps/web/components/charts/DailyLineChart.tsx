@@ -26,14 +26,19 @@ type Props = {
   colors?: string[];
   showByColor?: boolean;
   height?: number;
+  /** Optional explicit overrides for series colors (keyed by series name). */
+  colorOverrides?: Record<string, string>;
 };
 
-export function DailyLineChart({ data, colors = [], showByColor = false, height = 300 }: Props) {
+export function DailyLineChart({ data, colors = [], showByColor = false, height = 300, colorOverrides }: Props) {
   const formatDate = (date: string) => {
     const d = new Date(date);
     return d.toLocaleDateString('da-DK', { day: '2-digit', month: '2-digit' });
   };
   const formatX = (point: DataPoint) => point.label ?? formatDate(point.date);
+  const resolveColor = (seriesName: string, index: number) => {
+    return colorOverrides?.[seriesName] ?? getColorForName(seriesName, index);
+  };
 
   // Custom tooltip
   const CustomTooltip = ({ active, payload, label }: any) => {
@@ -81,7 +86,7 @@ export function DailyLineChart({ data, colors = [], showByColor = false, height 
               type="monotone"
               dataKey={color}
               name={color}
-              stroke={getColorForName(color, index)}
+              stroke={resolveColor(color, index)}
               strokeWidth={2}
               dot={false}
               activeDot={{ r: 4 }}

@@ -25,9 +25,11 @@ type Props = {
   colors: string[];
   maxColors?: number;
   height?: number;
+  /** Optional explicit overrides for series colors (keyed by series name). */
+  colorOverrides?: Record<string, string>;
 };
 
-export function StackedAreaByColor({ data, colors, maxColors = 8, height = 300 }: Props) {
+export function StackedAreaByColor({ data, colors, maxColors = 8, height = 300, colorOverrides }: Props) {
   const topColors = colors.slice(0, maxColors);
   const hasOther = colors.length > maxColors;
   const otherColors = hasOther ? colors.slice(maxColors) : [];
@@ -61,6 +63,9 @@ export function StackedAreaByColor({ data, colors, maxColors = 8, height = 300 }
   });
 
   const displayColors = hasOther ? [...topColors, 'Other'] : topColors;
+  const resolveColor = (seriesName: string, index: number) => {
+    return colorOverrides?.[seriesName] ?? getColorForName(seriesName, index);
+  };
 
   // Custom tooltip
   const CustomTooltip = ({ active, payload, label }: any) => {
@@ -109,8 +114,8 @@ export function StackedAreaByColor({ data, colors, maxColors = 8, height = 300 }
             dataKey={color}
             name={color}
             stackId="1"
-            stroke={getColorForName(color, index)}
-            fill={getColorForName(color, index)}
+            stroke={resolveColor(color, index)}
+            fill={resolveColor(color, index)}
             fillOpacity={0.7}
           />
         ))}
