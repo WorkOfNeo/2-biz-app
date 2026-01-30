@@ -8,6 +8,10 @@ function formatDK(n: number): string {
   return new Intl.NumberFormat('da-DK', { maximumFractionDigits: 0 }).format(n);
 }
 
+function clamp(n: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, n));
+}
+
 // Size sorting order for letter sizes and combo sizes
 const SIZE_ORDER: Record<string, number> = {
   'XXS': 1, 'XS': 2, 'S': 3, 'M': 4, 'L': 5, 'XL': 6, 'XXL': 7, 'XXXL': 8, '3XL': 8, '4XL': 9, '5XL': 10,
@@ -55,6 +59,8 @@ interface PurchaseRoundPayload {
   purchaseRunId: string;
   ignoreOpenPOs?: boolean; // If true, don't subtract open PO quantities from suggestions
 }
+
+type SeasonOverridesValue = { nulled?: string[]; hidden?: string[] };
 
 interface SupplierMaster {
   id: string;
@@ -141,10 +147,91 @@ function roundToStep(value: number, step: number): number {
   return Math.round(value / step) * step;
 }
 
+function sumValuesArray(values: unknown): number {
+  const arr: any[] = Array.isArray(values)
+    ? (values as any[])
+    : (() => {
+        try {
+          return JSON.parse(String(values || '[]'));
+        } catch {
+          return [];
+        }
+      })();
+
+  return arr.reduce((sum, v) => sum + (Number(v) || 0), 0);
+}
+
+function roundLotUp(qty: number): { rounded: number; lotStep: number; rule: string } {
+  if (qty <= 0) return { rounded: 0, lotStep: 0, rule: 'none' };
+  // Bias toward "nice" lots: 200/300/400... (100-steps) for meaningful buys.
+  // For smaller tops-ups, keep 50-steps.
+  const lotStep = qty >= 150 ? 100 : 50;
+  const rounded = Math.ceil(qty / lotStep) * lotStep;
+  return { rounded, lotStep, rule: `ceil_to_${lotStep}` };
+}
+
+function rescaleBreakdownToTotal(
+  breakdown: number[],
+  targetTotal: number,
+  step: number
+): number[] {
+  const baseSum = breakdown.reduce((a, b) => a + (Number(b) || 0), 0);
+  if (targetTotal <= 0 || breakdown.length === 0) return breakdown.map(() => 0);
+  if (baseSum <= 0) {
+    // Even distribution fallback
+    const per = Math.floor(targetTotal / breakdown.length);
+    const out = breakdown.map((_, i) => (i === 0 ? targetTotal - per * (breakdown.length - 1) : per));
+    return out.map(v => roundToStep(v, step));
+  }
+
+  const scaled = breakdown.map(v => (Number(v) || 0) * (targetTotal / baseSum));
+  let rounded = scaled.map(v => roundToStep(Math.max(0, Math.round(v)), step));
+  let sum = rounded.reduce((a, b) => a + b, 0);
+
+  // Fix rounding drift by adjusting the largest bucket.
+  if (sum !== targetTotal) {
+    let idx = 0;
+    let maxVal = -1;
+    for (let i = 0; i < rounded.length; i++) {
+      if (rounded[i]! > maxVal) {
+        maxVal = rounded[i]!;
+        idx = i;
+      }
+    }
+    rounded[idx] = Math.max(0, (rounded[idx] || 0) + (targetTotal - sum));
+    sum = rounded.reduce((a, b) => a + b, 0);
+  }
+
+  // As a final guard, ensure exact sum.
+  if (sum !== targetTotal) {
+    const diff = targetTotal - sum;
+    rounded[0] = Math.max(0, (rounded[0] || 0) + diff);
+  }
+  return rounded;
+}
+
 // Validate and fix AI response for a supplier
 function validateAndFixAIDecision(
   aiDecision: AISupplierDecision,
-  inputStyles: Map<string, { sizes: string[]; sold_qty: number; open_po_qty: number; current_stock: number; style_name: string; active_salespeople: number }>,
+  inputStyles: Map<string, {
+    sizes: string[];
+    sold_qty: number;
+    open_po_qty: number; // from style_stock Purchase (Running + Shipped)
+    current_stock: number; // from style_stock Stock
+    style_name: string;
+    active_salespeople: number;
+    purchase_stage: 'early' | 'mid' | 'closing';
+    // Optional signals for deterministic explanation in UI
+    signals?: {
+      dominant_country?: string | null;
+      dominant_country_share_percent?: number | null;
+      dominant_country_visit_rate_percent?: number | null;
+      dominant_country_remaining_customers?: number | null;
+      lot_rule?: string | null;
+      target_demand_qty?: number | null;
+      remaining_to_order_cap?: number | null;
+    };
+  }>,
   moq: number,
   log: (msg: string, data?: any) => void
 ): { styles: StyleColorSuggestion[]; totalQty: number; corrections: string[] } {
@@ -163,10 +250,6 @@ function validateAndFixAIDecision(
 
     // Validate and fix quantity
     let qty = Math.max(0, Math.round(aiStyle.recommended_qty || 0));
-    
-    // Apply rounding
-    const step = qty >= 50 ? 10 : 5;
-    qty = roundToStep(qty, step);
 
     // Get sorted sizes from input
     const sizes = sortSizes(inputData.sizes);
@@ -178,7 +261,8 @@ function validateAndFixAIDecision(
       sizeBreakdown = sizes.map(size => {
         const val = aiStyle.size_breakdown[size] || aiStyle.size_breakdown[size.toUpperCase()] || 
                     aiStyle.size_breakdown[size.toLowerCase()] || 0;
-        return roundToStep(Math.max(0, Math.round(val)), step);
+        // Temporarily keep raw; we'll round and rescale after we apply caps + lot rounding
+        return Math.max(0, Math.round(val));
       });
       
       // Ensure sum matches qty
@@ -190,7 +274,6 @@ function validateAndFixAIDecision(
         if (sizeSum === 0 && qty > 0 && sizes.length > 0) {
           const perSize = Math.floor(qty / sizes.length);
           sizeBreakdown = sizes.map((_, i) => i === 0 ? qty - (perSize * (sizes.length - 1)) : perSize);
-          sizeBreakdown = sizeBreakdown.map(v => roundToStep(v, step));
           qty = sizeBreakdown.reduce((a, b) => a + b, 0);
         } else {
           // Adjust qty to match sum of rounded sizes
@@ -202,9 +285,51 @@ function validateAndFixAIDecision(
       corrections.push(`${aiStyle.style_no}/${aiStyle.color}: no size breakdown, distributing evenly`);
       const perSize = Math.floor(qty / sizes.length);
       sizeBreakdown = sizes.map((_, i) => i === 0 ? qty - (perSize * (sizes.length - 1)) : perSize);
-      sizeBreakdown = sizeBreakdown.map(v => roundToStep(v, step));
       qty = sizeBreakdown.reduce((a, b) => a + b, 0);
     }
+
+    // ---------- Deterministic caps + good-practice lot rounding ----------
+    const maxMultiplier =
+      inputData.purchase_stage === 'early' ? 1.5 :
+      inputData.purchase_stage === 'mid' ? 1.2 :
+      1.0;
+
+    const targetDemandQty = Math.round(inputData.sold_qty * maxMultiplier);
+    const coveredQty = (inputData.open_po_qty || 0) + (inputData.current_stock || 0);
+    const remainingToOrderCap = Math.max(0, targetDemandQty - coveredQty);
+
+    // If already covered, force 0 (prevents the “sold=905, PO=1625, still buy 1280” failure)
+    if (remainingToOrderCap === 0 && qty > 0) {
+      corrections.push(`${aiStyle.style_no}/${aiStyle.color}: already covered by stock+PO (cap=0), forcing qty=0`);
+      qty = 0;
+      sizeBreakdown = sizes.map(() => 0);
+    } else if (qty > remainingToOrderCap) {
+      corrections.push(`${aiStyle.style_no}/${aiStyle.color}: qty ${qty} > cap ${remainingToOrderCap}, capping`);
+      qty = remainingToOrderCap;
+    }
+
+    // Apply "nice lot" rounding (allow small surplus up to one lotStep)
+    let lotRule: string | null = null;
+    if (qty > 0) {
+      const lot = roundLotUp(qty);
+      lotRule = lot.rule;
+      const softMax = remainingToOrderCap + (lot.lotStep || 0);
+      const roundedQty = clamp(lot.rounded, 0, softMax);
+      if (roundedQty !== qty) {
+        corrections.push(`${aiStyle.style_no}/${aiStyle.color}: lot-rounded ${qty} -> ${roundedQty} (${lot.rule})`);
+        qty = roundedQty;
+      }
+    }
+
+    // Final per-size rounding: 5/10 steps and exact sum to qty
+    const step = qty >= 50 ? 10 : 5;
+    sizeBreakdown = rescaleBreakdownToTotal(sizeBreakdown.length ? sizeBreakdown : sizes.map(() => 0), qty, step);
+
+    // Attach signal fields for UI reasoning (even if prompt omits)
+    const sig = inputData.signals || {};
+    sig.lot_rule = lotRule;
+    sig.target_demand_qty = targetDemandQty;
+    sig.remaining_to_order_cap = remainingToOrderCap;
 
     resultStyles.push({
       style_no: aiStyle.style_no,
@@ -218,7 +343,22 @@ function validateAndFixAIDecision(
       size_breakdown: sizeBreakdown,
       active_salespeople_count: inputData.active_salespeople,
       rounding_step: step,
-      reasoning: aiStyle.reasoning || ''
+      reasoning: (() => {
+        const base = (aiStyle.reasoning || '').trim();
+        const parts: string[] = [];
+        parts.push(`Covered(stock+PO)=${formatDK(coveredQty)}`);
+        parts.push(`Target≈${formatDK(targetDemandQty)} (${inputData.purchase_stage})`);
+        parts.push(`Cap=${formatDK(remainingToOrderCap)}`);
+        if (sig.dominant_country) {
+          const share = sig.dominant_country_share_percent != null ? `${Math.round(sig.dominant_country_share_percent)}%` : '?%';
+          const vr = sig.dominant_country_visit_rate_percent != null ? `${Math.round(sig.dominant_country_visit_rate_percent)}%` : '?%';
+          const rem = sig.dominant_country_remaining_customers != null ? formatDK(sig.dominant_country_remaining_customers) : '?';
+          parts.push(`Dominant=${sig.dominant_country} (${share}, visit_rate~${vr}, rem=${rem})`);
+        }
+        if (sig.lot_rule) parts.push(`Lot=${sig.lot_rule}`);
+        const suffix = `Signals: ${parts.join(' | ')}`;
+        return base ? `${base}\n${suffix}` : suffix;
+      })()
     });
 
     totalQty += qty;
@@ -273,7 +413,7 @@ export async function runPurchaseRoundEngine(
 
     const { data: customers } = await supabase
       .from('customers')
-      .select('customer_id, salesperson_id')
+      .select('customer_id, salesperson_id, country, nulled, excluded, permanently_closed')
       .limit(10000);
 
     const totalCustomers = customers?.length || 0;
@@ -283,6 +423,34 @@ export async function runPurchaseRoundEngine(
     const totalSalespeople = allSalespersonIds.size;
     
     await log('info', 'SEASON_LOADED', { name: season.name, totalCustomers, totalSalespeople, seasonDates });
+
+    // Load season overrides (same semantics as statistics pages)
+    const overridesKey = `season_overrides:${seasonId}`;
+    const { data: overridesRow } = await supabase
+      .from('app_settings')
+      .select('value')
+      .eq('key', overridesKey)
+      .maybeSingle();
+    const overridesVal = ((overridesRow?.value as SeasonOverridesValue | undefined) ?? {}) as SeasonOverridesValue;
+    const seasonalHidden = new Set<string>(Array.isArray(overridesVal.hidden) ? overridesVal.hidden : []);
+    const seasonalNulled = new Set<string>(Array.isArray(overridesVal.nulled) ? overridesVal.nulled : []);
+
+    // Build quick customer index + "visitable" filter (exclude hidden/nulled/closed/excluded)
+    type CustomerMeta = { country: string | null; salesperson_id: string | null; visitable: boolean };
+    const customerMetaById = new Map<string, CustomerMeta>();
+    for (const c of (customers || []) as any[]) {
+      const id = String(c.customer_id || '');
+      if (!id) continue;
+      const excluded = Boolean(c.excluded);
+      const closed = Boolean(c.permanently_closed);
+      const nulled = Boolean(c.nulled);
+      const visitable = !excluded && !closed && !nulled && !seasonalHidden.has(id) && !seasonalNulled.has(id);
+      customerMetaById.set(id, {
+        country: c.country ? String(c.country) : null,
+        salesperson_id: c.salesperson_id ? String(c.salesperson_id) : null,
+        visitable
+      });
+    }
 
     // ========== STEP 2: Load Sales Stats + Style Details ==========
     await log('info', 'STEP_2_LOAD_SALES');
@@ -319,6 +487,33 @@ export async function runPurchaseRoundEngine(
     for (const row of salesStats || []) {
       if (row.account_no && row.salesperson_id) {
         accountSalesperson.set(row.account_no, row.salesperson_id);
+      }
+    }
+
+    // Visitable visited customers set (for salesperson/country finish signals)
+    const visitableVisitedCustomers = new Set<string>();
+    for (const row of (salesStats || []) as any[]) {
+      const acc = String(row.account_no || '');
+      if (!acc) continue;
+      const meta = customerMetaById.get(acc);
+      if (meta?.visitable) visitableVisitedCustomers.add(acc);
+    }
+
+    // Salesperson progress (visit-rate proxy) over visitable customers
+    const totalVisitableBySalesperson = new Map<string, number>();
+    const visitedVisitableBySalesperson = new Map<string, number>();
+    const totalVisitableByCountry = new Map<string, number>();
+    const visitedVisitableByCountry = new Map<string, number>();
+
+    for (const [custId, meta] of customerMetaById.entries()) {
+      if (!meta.visitable) continue;
+      const sp = meta.salesperson_id || '__unknown__';
+      const ctry = meta.country || 'Unknown';
+      totalVisitableBySalesperson.set(sp, (totalVisitableBySalesperson.get(sp) || 0) + 1);
+      totalVisitableByCountry.set(ctry, (totalVisitableByCountry.get(ctry) || 0) + 1);
+      if (visitableVisitedCustomers.has(custId)) {
+        visitedVisitableBySalesperson.set(sp, (visitedVisitableBySalesperson.get(sp) || 0) + 1);
+        visitedVisitableByCountry.set(ctry, (visitedVisitableByCountry.get(ctry) || 0) + 1);
       }
     }
 
@@ -370,81 +565,69 @@ export async function runPurchaseRoundEngine(
       suppliersMaster: suppliers?.length || 0 
     });
 
-    // ========== STEP 4: Load Open POs (SPY + APP) ==========
-    const openPoTotals = new Map<string, number>();
-    
-    // Check if we should ignore open POs
+    // ========== STEP 4: Load Stock + Purchased (Running + Shipped) from style_stock ==========
+    await log('info', 'STEP_4_LOAD_STYLE_STOCK');
     const ignoreOpenPOs = payload.ignoreOpenPOs === true;
-    
-    if (ignoreOpenPOs) {
-      await log('info', 'STEP_4_SKIP_OPEN_POS', { 
-        reason: 'ignoreOpenPOs flag is set - not subtracting open PO quantities' 
-      });
-    } else {
-      await log('info', 'STEP_4_LOAD_OPEN_POS');
 
-      const { data: openSpyPoItems } = await supabase
-        .from('purchase_order_items')
-        .select('style_no, color, qty, po_no');
-
-      const { data: openSpyPos } = await supabase
-        .from('purchase_orders')
-        .select('po_no, status')
-        .in('status', ['Running', 'Shipped']);
-
-      const openSpyPoNos = new Set((openSpyPos || []).map(p => p.po_no));
-      
-      for (const item of openSpyPoItems || []) {
-        if (!item.style_no || !openSpyPoNos.has(item.po_no)) continue;
-        const key = `${item.style_no}|${(item.color || '').toLowerCase()}`;
-        openPoTotals.set(key, (openPoTotals.get(key) || 0) + (item.qty || 0));
-      }
-
-      const { data: openAppPos } = await supabase
-        .from('app_pos')
-        .select('id, meta, status, confirmed')
-        .in('status', ['Running', 'Shipped']);
-
-      for (const appPo of openAppPos || []) {
-        const items = appPo.meta?.items as any[] || [];
-        for (const item of items) {
-          if (!item.style_no) continue;
-          const key = `${item.style_no}|${(item.color || '').toLowerCase()}`;
-          openPoTotals.set(key, (openPoTotals.get(key) || 0) + (item.total || 0));
-        }
-      }
-
-      await log('info', 'OPEN_POS_LOADED', { 
-        spyPoItems: openSpyPoItems?.length || 0, 
-        appPos: openAppPos?.length || 0,
-        uniqueStyleColors: openPoTotals.size
-      });
-    }
-
-    // ========== STEP 4.5: Load Current Stock Levels ==========
-    await log('info', 'STEP_4_5_LOAD_STOCK');
-
-    // Fetch stock levels from style_stock (section = 'Stock', row_label = 'Total sold' or null for current stock)
-    const { data: stockRows } = await supabase
-      .from('style_stock')
-      .select('style_no, color, section, row_label, values')
-      .in('style_no', styleNos.slice(0, 1000))
-      .eq('section', 'Stock');
-
-    // Build stock totals by style+color (sum of all stock values)
     const currentStockTotals = new Map<string, number>();
-    for (const row of stockRows || []) {
-      if (!row.style_no || !row.color) continue;
-      const key = `${row.style_no}|${(row.color || '').toLowerCase()}`;
-      // Values is an array of numbers per size, sum them for total stock
-      const values = Array.isArray(row.values) ? row.values : [];
-      const total = values.reduce((sum: number, v: any) => sum + (Number(v) || 0), 0);
-      currentStockTotals.set(key, (currentStockTotals.get(key) || 0) + total);
+    const purchasedRunningShippedTotals = new Map<string, number>();
+    let stockRowCount = 0;
+    let purchaseRowCount = 0;
+
+    const { data: styleStockRows } = await supabase
+      .from('style_stock')
+      .select('style_no, color, section, row_label, values, scraped_at')
+      .in('style_no', styleNos.slice(0, 1000))
+      .in('section', ['Stock', 'Purchase (Running + Shipped)']);
+
+    // Deduplicate like stock-list: latest per (section,row_label); blank row_label treated as unique
+    const grouped = new Map<string, any[]>();
+    for (const r of (styleStockRows || []) as any[]) {
+      if (!r.style_no || !r.color || !r.section) continue;
+      const k = `${r.style_no}|${String(r.color).toLowerCase()}`;
+      const arr = grouped.get(k) || [];
+      arr.push(r);
+      grouped.set(k, arr);
     }
 
-    await log('info', 'STOCK_LOADED', { 
-      stockRowsCount: stockRows?.length || 0,
-      uniqueStyleColorsWithStock: currentStockTotals.size
+    for (const [k, rows] of grouped.entries()) {
+      const latestMap = new Map<string, any>();
+      let unnamed = 0;
+      for (const r of rows) {
+        const lbl = String(r.row_label ?? '').trim();
+        const dedupeKey = lbl ? `${r.section}|${lbl}` : `${r.section}|__unnamed_${unnamed++}`;
+        const curr = latestMap.get(dedupeKey);
+        const t = new Date(r.scraped_at || 0).getTime();
+        const ct = curr ? new Date(curr.scraped_at || 0).getTime() : -1;
+        if (!curr || t > ct) latestMap.set(dedupeKey, r);
+      }
+      const latestRows = Array.from(latestMap.values());
+
+      const stockRows = latestRows.filter(r => r.section === 'Stock');
+      const purchaseRows = latestRows.filter(r => r.section === 'Purchase (Running + Shipped)');
+
+      if (stockRows.length > 0) {
+        // Match stock-list behavior: use a single Stock row for current stock totals
+        stockRowCount += stockRows.length;
+        const stockRow = stockRows[0];
+        const total = stockRow ? sumValuesArray(stockRow.values) : 0;
+        currentStockTotals.set(k, total);
+      }
+
+      if (!ignoreOpenPOs && purchaseRows.length > 0) {
+        purchaseRowCount += purchaseRows.length;
+        const total = purchaseRows.reduce((sum, r) => sum + sumValuesArray(r.values), 0);
+        purchasedRunningShippedTotals.set(k, total);
+      }
+    }
+
+    await log('info', 'STYLE_STOCK_LOADED', {
+      ignoreOpenPOs,
+      uniqueStyleColors: grouped.size,
+      stockRowCount,
+      purchaseRowCount,
+      uniqueWithStock: currentStockTotals.size,
+      uniqueWithPurchase: purchasedRunningShippedTotals.size
     });
 
     // ========== STEP 5: Aggregate Sales by Style+Color with Size Mix ==========
@@ -460,6 +643,8 @@ export async function runPurchaseRoundEngine(
     };
 
     const styleColorAgg = new Map<string, StyleColorData>();
+    const buyersByStyleColor = new Map<string, Set<string>>();
+    const countryQtyByStyleColor = new Map<string, Map<string, number>>();
     
     for (const row of styleDetails) {
       if (!row.style_no || !row.color) continue;
@@ -483,6 +668,29 @@ export async function runPurchaseRoundEngine(
       if (row.account_no) {
         const spId = accountSalesperson.get(row.account_no);
         if (spId) agg.salespeople.add(spId);
+      }
+
+      // Buyers set (visitable customers only) for hit-rate signals
+      if (row.account_no) {
+        const acc = String(row.account_no || '');
+        const meta = customerMetaById.get(acc);
+        if (meta?.visitable) {
+          const buyers = buyersByStyleColor.get(key) || new Set<string>();
+          buyers.add(acc);
+          buyersByStyleColor.set(key, buyers);
+        }
+      }
+
+      // Country sales mix (visitable customers only)
+      if (row.account_no) {
+        const acc = String(row.account_no || '');
+        const meta = customerMetaById.get(acc);
+        if (meta?.visitable) {
+          const ctry = meta.country || 'Unknown';
+          const m = countryQtyByStyleColor.get(key) || new Map<string, number>();
+          m.set(ctry, (m.get(ctry) || 0) + (Number(row.qty) || 0));
+          countryQtyByStyleColor.set(key, m);
+        }
       }
       
       if (row.size) {
@@ -515,7 +723,7 @@ export async function runPurchaseRoundEngine(
       const styleMeta = styleSupplierMap.get(data.style_no);
       const supplierName = styleMeta?.supplier || 'Unknown';
       
-      const openQty = openPoTotals.get(key) || 0;
+      const openQty = ignoreOpenPOs ? 0 : (purchasedRunningShippedTotals.get(key) || 0);
       const hasStockRow = currentStockTotals.has(key);
       const currentStock = currentStockTotals.get(key) || 0;
       
@@ -558,6 +766,45 @@ export async function runPurchaseRoundEngine(
       zeroStockCount,
       missingStockRowCount
     });
+
+    // Helper: dominant country and country finish proxy for a style/color
+    function dominantCountrySignals(styleColorKey: string): {
+      dominant_country: string | null;
+      dominant_country_share_percent: number | null;
+      dominant_country_visit_rate_percent: number | null;
+      dominant_country_remaining_customers: number | null;
+    } {
+      const m = countryQtyByStyleColor.get(styleColorKey);
+      if (!m || m.size === 0) {
+        return {
+          dominant_country: null,
+          dominant_country_share_percent: null,
+          dominant_country_visit_rate_percent: null,
+          dominant_country_remaining_customers: null
+        };
+      }
+      let domCountry: string | null = null;
+      let domQty = -1;
+      let total = 0;
+      for (const [ctry, qty] of m.entries()) {
+        total += qty;
+        if (qty > domQty) {
+          domQty = qty;
+          domCountry = ctry;
+        }
+      }
+      const share = total > 0 ? (domQty / total) * 100 : null;
+      const totalVis = domCountry ? (totalVisitableByCountry.get(domCountry) || 0) : 0;
+      const visitedVis = domCountry ? (visitedVisitableByCountry.get(domCountry) || 0) : 0;
+      const vr = totalVis > 0 ? (visitedVis / totalVis) * 100 : null;
+      const rem = totalVis > 0 ? Math.max(0, totalVis - visitedVis) : null;
+      return {
+        dominant_country: domCountry,
+        dominant_country_share_percent: share,
+        dominant_country_visit_rate_percent: vr,
+        dominant_country_remaining_customers: rem
+      };
+    }
 
     // ========== STEP 6.5: Load Historical Feedback for Learning ==========
     await log('info', 'STEP_6_5_LOAD_FEEDBACK');
@@ -662,16 +909,36 @@ export async function runPurchaseRoundEngine(
         const travelTime = supplierMaster?.travel_time_days || 0;
 
         // Build input styles map for validation
-        const inputStylesMap = new Map<string, { sizes: string[]; sold_qty: number; open_po_qty: number; current_stock: number; style_name: string; active_salespeople: number }>();
+        const inputStylesMap = new Map<string, {
+          sizes: string[];
+          sold_qty: number;
+          open_po_qty: number;
+          current_stock: number;
+          style_name: string;
+          active_salespeople: number;
+          purchase_stage: 'early' | 'mid' | 'closing';
+          signals?: {
+            dominant_country?: string | null;
+            dominant_country_share_percent?: number | null;
+            dominant_country_visit_rate_percent?: number | null;
+            dominant_country_remaining_customers?: number | null;
+            lot_rule?: string | null;
+            target_demand_qty?: number | null;
+            remaining_to_order_cap?: number | null;
+          };
+        }>();
         for (const s of supplierStyles) {
           const key = `${s.style_no}|${s.color.toLowerCase()}`;
+          const dom = dominantCountrySignals(key);
           inputStylesMap.set(key, { 
             sizes: s.sizes, 
             sold_qty: s.sold_qty, 
             open_po_qty: s.open_po_qty,
             current_stock: s.current_stock,
             style_name: s.style_name,
-            active_salespeople: s.active_salespeople
+            active_salespeople: s.active_salespeople,
+            purchase_stage: purchaseStage,
+            signals: { ...dom }
           });
         }
 
@@ -705,18 +972,64 @@ export async function runPurchaseRoundEngine(
         }, null, 2);
 
         // Prepare styles data
-        // net_need = max(0, sold_qty - open_po_qty - current_stock) per prompt definition
+        // IMPORTANT: remaining_to_order is based on target demand minus (stock + purchased running+shipped)
         const stylesData = JSON.stringify(supplierStyles.map(s => {
           const key = `${s.style_no}|${s.color.toLowerCase()}`;
           const prevFeedback = feedbackMap.get(key);
+          const dom = dominantCountrySignals(key);
+          const buyers = buyersByStyleColor.get(key) || new Set<string>();
+
+          // Build top salesperson signals for this style/color (hit-rate + remaining customers)
+          const buyersBySp = new Map<string, number>();
+          for (const custId of buyers) {
+            const meta = customerMetaById.get(custId);
+            const sp = meta?.salesperson_id || '__unknown__';
+            buyersBySp.set(sp, (buyersBySp.get(sp) || 0) + 1);
+          }
+          const topSp = Array.from(buyersBySp.entries())
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 3)
+            .map(([spId, buyerCount]) => {
+              const totalVis = totalVisitableBySalesperson.get(spId) || 0;
+              const visitedVis = visitedVisitableBySalesperson.get(spId) || 0;
+              const vr = totalVis > 0 ? Math.round((visitedVis / totalVis) * 1000) / 10 : null;
+              const remaining = totalVis > 0 ? Math.max(0, totalVis - visitedVis) : null;
+              const hit = visitedVis > 0 ? Math.round((buyerCount / visitedVis) * 1000) / 10 : null;
+              return {
+                salesperson_id: spId,
+                visit_rate_percent: vr,
+                remaining_customers: remaining,
+                style_hit_rate_percent: hit,
+                buyers_count: buyerCount,
+                visited_customers: visitedVis
+              };
+            });
+
+          // Target demand + remaining-to-order (used as guidance; engine enforces cap deterministically too)
+          const maxMultiplier =
+            purchaseStage === 'early' ? 1.5 :
+            purchaseStage === 'mid' ? 1.2 :
+            1.0;
+          const targetDemandQty = Math.round(s.sold_qty * maxMultiplier);
+          const coveredQty = (s.open_po_qty || 0) + (s.current_stock || 0);
+          const remainingToOrder = Math.max(0, targetDemandQty - coveredQty);
+
           return {
             style_no: s.style_no,
             style_name: s.style_name,
             color: s.color,
             sold_qty: s.sold_qty,
+            // Backwards-compatible fields (older prompts expect these)
             open_po_qty: s.open_po_qty,
             current_stock: s.current_stock,
-            net_need: Math.max(0, s.sold_qty - s.open_po_qty - s.current_stock),
+            net_need: Math.max(0, s.sold_qty - (s.open_po_qty || 0) - (s.current_stock || 0)),
+            // New fields (v4+ prompts)
+            purchased_running_shipped_qty: s.open_po_qty,
+            current_stock_qty: s.current_stock,
+            already_covered_qty: coveredQty,
+            purchase_stage: purchaseStage,
+            target_demand_qty: targetDemandQty,
+            remaining_to_order_qty: remainingToOrder,
             sizes: s.sizes,
             size_distribution_percent: s.size_distribution,
             active_salespeople_for_style: s.active_salespeople,
@@ -724,6 +1037,16 @@ export async function runPurchaseRoundEngine(
             salespeople_coverage_percent: totalSalespeople > 0 
               ? Math.round((s.active_salespeople / totalSalespeople) * 100) 
               : 0,
+            dominant_country: dom.dominant_country,
+            dominant_country_share_percent: dom.dominant_country_share_percent,
+            dominant_country_visit_rate_percent: dom.dominant_country_visit_rate_percent,
+            dominant_country_remaining_customers: dom.dominant_country_remaining_customers,
+            country_finish_risk: (dom.dominant_country && (dom.dominant_country_share_percent || 0) >= 50 && (dom.dominant_country_visit_rate_percent || 0) >= 80)
+              ? 'high'
+              : (dom.dominant_country && (dom.dominant_country_share_percent || 0) >= 50 && (dom.dominant_country_visit_rate_percent || 0) >= 65)
+                ? 'medium'
+                : 'low',
+            top_salesperson_signals: topSp,
             // Previous feedback for learning (if any)
             previous_ai_suggested: prevFeedback?.suggested || null,
             previous_user_adjusted: prevFeedback?.adjusted || null,
@@ -804,9 +1127,14 @@ export async function runPurchaseRoundEngine(
           const computedMoqStatus = moq === 0 ? 'not_applicable' : 
             (validation.totalQty >= moq ? 'met' : 'below');
 
+          const finalDecision: 'buy' | 'skip' | 'wait' =
+            validation.totalQty > 0
+              ? aiDecision.decision
+              : (aiDecision.decision === 'skip' ? 'skip' : 'wait');
+
           await log('info', 'AI_DECISION', { 
             supplier: supplierName, 
-            decision: aiDecision.decision,
+            decision: finalDecision,
             total_qty: validation.totalQty,
             moq_status: computedMoqStatus,
             moq,
@@ -827,7 +1155,7 @@ export async function runPurchaseRoundEngine(
             moq_topped_up: false,
             moq_topup_reason: aiDecision.moq_status === 'below' ? aiDecision.reasoning : undefined,
             sold_qty_total: soldQtyTotal,
-            decision: aiDecision.decision,
+            decision: finalDecision,
             days_until_must_order: aiDecision.days_until_must_order,
             priority: aiDecision.decision === 'buy' ? 
               (validation.totalQty > 500 ? 'high' : validation.totalQty > 100 ? 'medium' : 'low') : 
@@ -892,7 +1220,14 @@ export async function runPurchaseRoundEngine(
           total_customers: totalCustomers,
           visited_customers: visitedCustomers,
           season_dates: seasonDates,
-          open_po_totals_count: openPoTotals.size
+          ignoreOpenPOs,
+          style_stock_unique_with_stock: currentStockTotals.size,
+          style_stock_unique_with_purchase: purchasedRunningShippedTotals.size,
+          season_overrides: {
+            key: overridesKey,
+            hidden_count: seasonalHidden.size,
+            nulled_count: seasonalNulled.size
+          }
         }
       })
       .eq('id', purchaseRunId);

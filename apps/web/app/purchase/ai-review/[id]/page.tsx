@@ -1014,7 +1014,7 @@ export default function AIPurchaseReviewPage() {
                                             <span>{style.active_salespeople_count} sælgere</span>
                                           </div>
                                           {style.reasoning && (
-                                            <div className="text-xs text-slate-400 mt-1 flex items-center gap-1">
+                                            <div className="text-xs text-slate-400 mt-1 flex items-start gap-1 whitespace-pre-line">
                                               <Info className="h-3 w-3" /> {style.reasoning}
                                             </div>
                                           )}
