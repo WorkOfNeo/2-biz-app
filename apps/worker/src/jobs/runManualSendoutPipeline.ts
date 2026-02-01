@@ -540,24 +540,19 @@ export async function runManualSendoutPipeline(
 
     // ========== STOCK LIST EMAILS (separate) ==========
     if (stockListExports.length > 0) {
-      // Collect all recipient emails
-      const allRecipientEmails: string[] = [];
-      
-      // Add salesperson emails
-      for (const spId of payload.salespersonIds) {
-        const sp = spById.get(spId);
-        if (sp?.email) {
-          allRecipientEmails.push(sp.email.toLowerCase());
+      // Choose exactly one recipient group (attachments differ)
+      const recipientEmails: string[] = [];
+      if (payload.salespersonIds.length > 0) {
+        for (const spId of payload.salespersonIds) {
+          const sp = spById.get(spId);
+          if (sp?.email) recipientEmails.push(sp.email.toLowerCase());
+        }
+      } else {
+        for (const email of payload.emails) {
+          if (email) recipientEmails.push(email.toLowerCase());
         }
       }
-      
-      // Add extra emails
-      for (const email of payload.emails) {
-        allRecipientEmails.push(email.toLowerCase());
-      }
-      
-      // Dedupe
-      const uniqueRecipients = [...new Set(allRecipientEmails)];
+      const uniqueRecipients = [...new Set(recipientEmails)];
 
       // Build stock list template params
       const stockListParams: Record<string, string> = {};

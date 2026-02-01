@@ -804,7 +804,7 @@ export default function StatisticsDashboardPage() {
   // SEND OUT SECTION STATE
   // ============================================================================
   const [sendOutSalespersons, setSendOutSalespersons] = React.useState<Set<string>>(new Set());
-  const [sendOutExtraEmails, setSendOutExtraEmails] = React.useState('');
+  const [sendOutEmailList, setSendOutEmailList] = React.useState<string[]>([]);
   const [sendOutIncludeCountries, setSendOutIncludeCountries] = React.useState(true);
   const [sendOutIncludeTop15Salesmen, setSendOutIncludeTop15Salesmen] = React.useState(true);
   const [sendOutIncludeTop15Overall, setSendOutIncludeTop15Overall] = React.useState(false);
@@ -814,6 +814,34 @@ export default function StatisticsDashboardPage() {
   const [sendOutScrapeFirst, setSendOutScrapeFirst] = React.useState(false);
   const [sendOutSending, setSendOutSending] = React.useState(false);
   const [sendOutLastJobId, setSendOutLastJobId] = React.useState<string | null>(null);
+  const [sendOutJob, setSendOutJob] = React.useState<JobStatus | null>(null);
+  const [sendOutElapsed, setSendOutElapsed] = React.useState<string>('');
+
+  // Persisted "send-out email list" (separate recipient group from salespersons)
+  useSWR('dashboard:sendout_email_list', async () => {
+    const { data } = await supabase
+      .from('app_settings')
+      .select('id, value')
+      .eq('key', 'sendout_email_list')
+      .maybeSingle();
+    const val = ((data?.value as any) || {}) as { emails?: string[] };
+    if (Array.isArray(val.emails)) setSendOutEmailList(val.emails);
+    return data;
+  });
+
+  const saveSendOutEmailListTimer = React.useRef<any>(null);
+  async function saveSendOutEmailList(nextEmails: string[]) {
+    try {
+      const value = { emails: nextEmails };
+      const { data: existing } = await supabase
+        .from('app_settings')
+        .select('id')
+        .eq('key', 'sendout_email_list')
+        .maybeSingle();
+      if (existing?.id) await supabase.from('app_settings').update({ value }).eq('id', existing.id);
+      else await supabase.from('app_settings').insert({ key: 'sendout_email_list', value } as any);
+    } catch {}
+  }
 
   // Load statistic schedules from app_settings (check both old and new keys for migration)
   useSWR('dashboard:statistic_schedules', async () => {
@@ -1082,27 +1110,22 @@ export default function StatisticsDashboardPage() {
     if (sendOutSending) return;
 
     // Validate: must have at least one recipient
-    const salespersonEmails = Array.from(sendOutSalespersons)
-      .map(id => (salespersons ?? []).find(sp => sp.id === id))
-      .filter(sp => sp?.email)
-      .map(sp => sp!.email!);
-    
-    const extraEmails = sendOutExtraEmails
-      .split(/[,;\s\n]+/)
-      .map(e => e.trim().toLowerCase())
-      .filter(e => e && e.includes('@'));
-    
-    const allRecipients = [...new Set([...salespersonEmails, ...extraEmails])];
-    
-    if (allRecipients.length === 0) {
-      alert('Please select at least one salesperson with email or enter extra emails');
+    const selectedSalespersonIds = Array.from(sendOutSalespersons);
+    const emailList = sendOutEmailList;
+
+    if (selectedSalespersonIds.length > 0 && emailList.length > 0) {
+      alert('Choose either Salespersons OR Email list (not both)');
+      return;
+    }
+    if (selectedSalespersonIds.length === 0 && emailList.length === 0) {
+      alert('Please select at least one salesperson OR add at least one email to the email list');
       return;
     }
 
     // Validate: must have either statistics PDFs or stock lists selected
     const hasStatistics = sendOutIncludeCountries || sendOutIncludeTop15Salesmen || 
                           sendOutIncludeTop15Overall || sendOutIncludeOverview || 
-                          sendOutIncludeGeneralCombined || sendOutSalespersons.size > 0;
+                          sendOutIncludeGeneralCombined || selectedSalespersonIds.length > 0;
     const hasStockLists = sendOutStockLists.size > 0;
 
     if (!hasStatistics && !hasStockLists) {
@@ -1112,6 +1135,7 @@ export default function StatisticsDashboardPage() {
 
     setSendOutSending(true);
     setSendOutLastJobId(null);
+    setSendOutJob(null);
 
     try {
       const res = await fetch('/api/statistics/send-out', {
@@ -1119,8 +1143,8 @@ export default function StatisticsDashboardPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           scrapeFirst: sendOutScrapeFirst,
-          salespersonIds: Array.from(sendOutSalespersons),
-          emails: extraEmails,
+          salespersonIds: selectedSalespersonIds,
+          emails: emailList,
           include: {
             countries: sendOutIncludeCountries,
             top15Salesmen: sendOutIncludeTop15Salesmen,
@@ -1137,6 +1161,15 @@ export default function StatisticsDashboardPage() {
         return;
       }
       setSendOutLastJobId(data.jobId);
+      setSendOutJob({
+        id: data.jobId,
+        type: 'run_manual_sendout_pipeline',
+        status: 'queued',
+        created_at: new Date().toISOString(),
+        started_at: null,
+        finished_at: null,
+        error: null,
+      });
       alert(`Send out queued! Job ID: ${data.jobId}\n\n${sendOutScrapeFirst ? 'Will scrape + export first, then send.' : 'Will send using latest exports.'}\n\nView progress in Settings → Jobs`);
     } catch (err: any) {
       alert(`Error: ${err?.message || 'Failed to start send out'}`);
@@ -1144,6 +1177,46 @@ export default function StatisticsDashboardPage() {
       setSendOutSending(false);
     }
   }
+
+  const fetchSendOutJob = React.useCallback(async (jobId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('jobs')
+        .select('id, type, status, created_at, started_at, finished_at, error')
+        .eq('id', jobId)
+        .maybeSingle();
+      if (error) return;
+      if (data?.id) setSendOutJob(data as any);
+    } catch {}
+  }, []);
+
+  React.useEffect(() => {
+    if (!sendOutLastJobId) return;
+    fetchSendOutJob(sendOutLastJobId);
+  }, [sendOutLastJobId, fetchSendOutJob]);
+
+  React.useEffect(() => {
+    if (!sendOutLastJobId) return;
+    if (!sendOutJob || (sendOutJob.status !== 'queued' && sendOutJob.status !== 'running')) return;
+    const t = setInterval(() => fetchSendOutJob(sendOutLastJobId), 5000);
+    return () => clearInterval(t);
+  }, [sendOutLastJobId, sendOutJob, fetchSendOutJob]);
+
+  React.useEffect(() => {
+    if (!sendOutJob) {
+      setSendOutElapsed('');
+      return;
+    }
+    const tick = () => {
+      const base = sendOutJob.started_at || sendOutJob.created_at;
+      const elapsed = formatElapsedTime(base);
+      setSendOutElapsed(elapsed);
+    };
+    tick();
+    if (sendOutJob.status !== 'queued' && sendOutJob.status !== 'running') return;
+    const t = setInterval(tick, 1000);
+    return () => clearInterval(t);
+  }, [sendOutJob]);
 
   async function saveSchedules(newSchedules: StockListSchedule[]) {
     setSavingSchedules(true);
@@ -1694,6 +1767,7 @@ export default function StatisticsDashboardPage() {
                     <button
                       type="button"
                       onClick={() => {
+                        if (sendOutEmailList.length > 0) return;
                         const allIds = (salespersons ?? []).filter(sp => sp.email).map(sp => sp.id);
                         const allSelected = allIds.every(id => sendOutSalespersons.has(id));
                         if (allSelected) {
@@ -1707,7 +1781,7 @@ export default function StatisticsDashboardPage() {
                       {(salespersons ?? []).filter(sp => sp.email).every(sp => sendOutSalespersons.has(sp.id)) ? 'Deselect all' : 'Select all'}
                     </button>
                   </div>
-                  <div className="max-h-40 overflow-auto rounded-md border">
+                  <div className={`max-h-40 overflow-auto rounded-md border ${sendOutEmailList.length > 0 ? 'opacity-50 pointer-events-none' : ''}`}>
                     <Table>
                       <TableBody>
                         {(salespersons ?? []).map((sp) => {
@@ -1740,19 +1814,47 @@ export default function StatisticsDashboardPage() {
                       </TableBody>
                     </Table>
                   </div>
-                  <p className="text-xs text-gray-500 mt-1">Each salesperson receives their personal PDF</p>
+                  <div className="flex items-center justify-between mt-1">
+                    <p className="text-xs text-gray-500">Each salesperson receives their personal PDF</p>
+                    {sendOutEmailList.length > 0 && (
+                      <button
+                        type="button"
+                        className="text-xs text-slate-600 hover:text-slate-900"
+                        onClick={() => setSendOutEmailList([])}
+                        title="Clear email list"
+                      >
+                        Clear email list to select salespersons
+                      </button>
+                    )}
+                  </div>
                 </div>
 
-                {/* Extra Emails */}
+                {/* Email list (separate recipient group) */}
                 <div>
-                  <label className="text-sm text-gray-600 font-medium block mb-2">Extra emails (comma-separated)</label>
-                  <textarea
-                    className="w-full min-h-[100px] rounded-md border border-slate-200 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-offset-2"
-                    placeholder="email1@example.com, email2@example.com, ..."
-                    value={sendOutExtraEmails}
-                    onChange={(e) => setSendOutExtraEmails(e.target.value)}
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="text-sm text-gray-600 font-medium">Email list</label>
+                    {sendOutSalespersons.size > 0 && (
+                      <button
+                        type="button"
+                        className="text-xs text-slate-600 hover:text-slate-900"
+                        onClick={() => setSendOutSalespersons(new Set())}
+                        title="Clear salespersons"
+                      >
+                        Clear salespersons to use email list
+                      </button>
+                    )}
+                  </div>
+                  <EmailPillsInput
+                    value={sendOutEmailList}
+                    disabled={sendOutSalespersons.size > 0}
+                    placeholder="Add email, press comma…"
+                    helpText="These recipients receive ONLY the selected global PDFs (not personal salesperson PDFs). Saved for next time."
+                    onChange={(next) => {
+                      setSendOutEmailList(next);
+                      if (saveSendOutEmailListTimer.current) clearTimeout(saveSendOutEmailListTimer.current);
+                      saveSendOutEmailListTimer.current = setTimeout(() => saveSendOutEmailList(next), 600);
+                    }}
                   />
-                  <p className="text-xs text-gray-500 mt-1">Additional recipients (no personal PDF, only selected global PDFs)</p>
                 </div>
               </div>
 
@@ -1880,6 +1982,37 @@ export default function StatisticsDashboardPage() {
                   </Button>
                 </div>
               </div>
+
+              {/* Live status card */}
+              {sendOutLastJobId && sendOutJob && (
+                <div className="rounded-md border bg-slate-50 p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-sm font-medium text-slate-900">Send out status</div>
+                    <Badge className="bg-white">
+                      {sendOutJob.status}
+                    </Badge>
+                  </div>
+                  <div className="mt-2 grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs text-slate-600">
+                    <div>
+                      <div className="text-[11px] text-slate-500">Queued</div>
+                      <div className="font-mono">{formatLastRunTime(sendOutJob.created_at)}</div>
+                    </div>
+                    <div>
+                      <div className="text-[11px] text-slate-500">Elapsed</div>
+                      <div className="font-mono">{sendOutElapsed || '—'}</div>
+                    </div>
+                    <div>
+                      <div className="text-[11px] text-slate-500">Job</div>
+                      <div className="font-mono">{sendOutJob.id.slice(0, 8)}…</div>
+                    </div>
+                  </div>
+                  {sendOutJob.status === 'failed' && sendOutJob.error && (
+                    <div className="mt-2 text-xs text-red-700">
+                      {sendOutJob.error}
+                    </div>
+                  )}
+                </div>
+              )}
             </CardContent>
           </Card>
 

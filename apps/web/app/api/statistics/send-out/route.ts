@@ -4,8 +4,8 @@
  * 
  * Body: {
  *   scrapeFirst: boolean,
- *   salespersonIds: string[],
- *   emails: string[],
+ *   salespersonIds: string[], // mutually exclusive with emails
+ *   emails: string[],         // mutually exclusive with salespersonIds
  *   include: { countries, top15Salesmen, top15Overall, overview, generalCombined },
  *   stockLists: string[],
  * }
@@ -50,6 +50,13 @@ export async function POST(req: Request) {
         { status: 400 }
       );
     }
+    // Enforce: recipient groups are mutually exclusive (attachments differ)
+    if (salespersonIds.length > 0 && emails.length > 0) {
+      return NextResponse.json(
+        { error: 'Choose either salespersons OR email list recipients (not both)' },
+        { status: 400 }
+      );
+    }
 
     // Validate: at least one thing to send
     const hasStatistics =
@@ -83,6 +90,17 @@ export async function POST(req: Request) {
     const supabase = createClient(url, serviceKey, {
       auth: { persistSession: false, autoRefreshToken: false },
     });
+
+    // If another send-out pipeline is currently running, we still allow queueing
+    // (the DB lease_next_job function ensures these run serially).
+    const { data: runningSendout } = await supabase
+      .from('jobs')
+      .select('id, status, started_at, lease_until, created_at')
+      .eq('type', 'run_manual_sendout_pipeline')
+      .eq('status', 'running')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
 
     // Normalize and dedupe extra emails
     const normalizedEmails = emails
@@ -164,6 +182,8 @@ export async function POST(req: Request) {
       salespersonCount: validSalespersonIds.length,
       extraEmailCount: uniqueEmails.length,
       stockListCount: validStockLists.length,
+      queuedBehindRunningSendout: Boolean(runningSendout?.id),
+      runningSendoutJobId: (runningSendout as any)?.id ?? null,
     });
   } catch (err: any) {
     console.error('[send-out] Error:', err);

@@ -25,6 +25,7 @@ export interface EmailPillsInputProps {
   placeholder?: string;
   label?: string;
   helpText?: string;
+  disabled?: boolean;
   className?: string;
 }
 
@@ -34,6 +35,7 @@ export function EmailPillsInput({
   placeholder = 'Add email…',
   label,
   helpText,
+  disabled = false,
   className,
 }: EmailPillsInputProps) {
   const [inputValue, setInputValue] = React.useState('');
@@ -79,6 +81,7 @@ export function EmailPillsInput({
   );
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (disabled) return;
     if (e.key === 'Enter' || e.key === ',') {
       e.preventDefault();
       addEmails(inputValue);
@@ -90,12 +93,14 @@ export function EmailPillsInput({
   };
 
   const handlePaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
+    if (disabled) return;
     e.preventDefault();
     const pasted = e.clipboardData.getData('text');
     addEmails(pasted);
   };
 
   const handleBlur = () => {
+    if (disabled) return;
     if (inputValue.trim()) {
       addEmails(inputValue);
     }
@@ -111,10 +116,12 @@ export function EmailPillsInput({
           type="text"
           className={cn(
             'h-8 flex-1 rounded-md border border-slate-200 bg-white px-3 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-offset-2',
-            error && 'border-red-400'
+            error && 'border-red-400',
+            disabled && 'opacity-60 pointer-events-none bg-slate-50'
           )}
           placeholder={placeholder}
           value={inputValue}
+          disabled={disabled}
           onChange={(e) => {
             setInputValue(e.target.value);
             if (error) setError(null);
