@@ -420,31 +420,56 @@ export default function SizeCalculatorPage() {
     setSavedOrders(savedOrders.filter(order => order.timestamp !== timestamp));
   };
 
+  // Get style details for current item
+  const currentStyleDetails = useMemo(() => {
+    if (!currentItem) return null;
+    return styles?.find(s => s.style_no === currentItem.style);
+  }, [currentItem, styles]);
+
   return (
-    <div className="min-h-screen bg-slate-50">
-      <div className="max-w-5xl mx-auto p-8">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
+      <div className="max-w-6xl mx-auto p-6">
         {/* Header */}
-        <div className="mb-12 text-center">
-          <h1 className="text-4xl font-light text-slate-900 tracking-tight mb-2">
-            Purchase Order Calculator
-          </h1>
-          <p className="text-slate-500 text-sm">
-            {flowStep === 'selection' && 'Select styles and colors to calculate'}
-            {flowStep === 'calculator' && `${currentItemIndex + 1} of ${selectedItems.length}`}
-            {flowStep === 'overview' && 'Order summary'}
-          </p>
+        <div className="mb-8">
+          <div className="flex items-center gap-3 mb-2">
+            <Calculator className="w-7 h-7 text-slate-700" />
+            <h1 className="text-3xl font-semibold text-slate-900">
+              Size Distribution Calculator
+            </h1>
+          </div>
+          <div className="flex items-center gap-4">
+            <p className="text-slate-600 text-sm">
+              {flowStep === 'selection' && 'Select styles and colors to calculate'}
+              {flowStep === 'calculator' && (
+                <>
+                  <span className="font-medium">Processing:</span> {currentItemIndex + 1} of {selectedItems.length} items
+                </>
+              )}
+              {flowStep === 'overview' && `Order summary - ${savedOrders.length} items`}
+            </p>
+            {flowStep === 'calculator' && (
+              <div className="flex-1 max-w-xs">
+                <div className="w-full bg-slate-300 h-2 rounded-full overflow-hidden">
+                  <div 
+                    className="bg-slate-900 h-2 transition-all duration-300"
+                    style={{ width: `${((currentItemIndex + 1) / selectedItems.length) * 100}%` }}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* STEP 1: Style/Color Selection */}
         {flowStep === 'selection' && (
-          <div className="space-y-8">
-            <Card className="border-0 shadow-sm">
-              <CardContent className="p-8">
-                <div className="space-y-6">
+          <div className="space-y-6">
+            <Card className="border border-slate-200 shadow-md">
+              <CardContent className="p-6">
+                <div className="space-y-5">
                   {/* Style Search */}
                   <div>
-                    <label className="block text-xs font-medium text-slate-600 mb-2 uppercase tracking-wide">
-                      Search Style ({styles?.length || 0} available)
+                    <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                      Search Style <span className="text-slate-500 font-normal">({styles?.length || 0} available)</span>
                     </label>
                     <SearchSelect
                       items={styles?.map(s => ({
@@ -457,7 +482,7 @@ export default function SizeCalculatorPage() {
                         setSelectedStyleId(id);
                         setSelectedColorIds(new Set()); // Reset colors when style changes
                       }}
-                      placeholder="Type to search styles..."
+                      placeholder="Type to search..."
                       className="w-full"
                     />
                   </div>
@@ -465,120 +490,129 @@ export default function SizeCalculatorPage() {
                   {/* Color Multi-Select */}
                   {selectedStyleId && styleColors && (
                     <div>
-                      <div className="flex items-center justify-between mb-2">
-                        <label className="block text-xs font-medium text-slate-600 uppercase tracking-wide">
-                          Select Colors ({styleColors.length} available)
+                      <div className="flex items-center justify-between mb-1.5">
+                        <label className="block text-xs font-semibold text-slate-700">
+                          Select Colors <span className="text-slate-500 font-normal">({styleColors.length} available)</span>
                         </label>
-                        <div className="flex gap-2">
+                        <div className="flex gap-3">
                           <button
                             onClick={selectAllColors}
-                            className="text-xs text-slate-600 hover:text-slate-900 underline"
+                            className="text-xs text-blue-600 hover:text-blue-800 font-medium"
                           >
-                            All
+                            Select All
                           </button>
                           <button
                             onClick={deselectAllColors}
-                            className="text-xs text-slate-600 hover:text-slate-900 underline"
+                            className="text-xs text-slate-600 hover:text-slate-900 font-medium"
                           >
-                            None
+                            Clear
                           </button>
                         </div>
                       </div>
-                      <div className="border border-slate-200 max-h-64 overflow-y-auto">
+                      <div className="border-2 border-slate-200 rounded-lg max-h-64 overflow-y-auto">
                         {styleColors.map(color => (
                           <label
                             key={color.id}
-                            className="flex items-center gap-3 px-4 py-2.5 hover:bg-slate-50 cursor-pointer border-b border-slate-100 last:border-b-0"
+                            className="flex items-center gap-3 px-3 py-2 hover:bg-slate-50 cursor-pointer border-b border-slate-100 last:border-b-0 transition-colors"
                           >
                             <input
                               type="checkbox"
                               checked={selectedColorIds.has(color.id)}
                               onChange={() => toggleColorSelection(color.id)}
-                              className="w-4 h-4 border-2 border-slate-300 rounded-none focus:ring-2 focus:ring-slate-900"
+                              className="w-4 h-4 border-2 border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-900 rounded"
                             />
                             <span className="text-sm text-slate-900">{color.color}</span>
                           </label>
                         ))}
                       </div>
-                      <p className="text-xs text-slate-500 mt-2">
-                        {selectedColorIds.size} color{selectedColorIds.size !== 1 ? 's' : ''} selected
-                      </p>
+                      <div className="flex items-center justify-between mt-1.5">
+                        <p className="text-xs text-slate-600 font-medium">
+                          {selectedColorIds.size} selected
+                        </p>
+                      </div>
                     </div>
                   )}
                   
                   <Button
                     onClick={handleAddStyleColors}
                     disabled={!selectedStyleId || selectedColors.length === 0}
-                    variant="outline"
-                    className="w-full rounded-none border-slate-900 text-slate-900 hover:bg-slate-900 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="w-full bg-gradient-to-r from-slate-900 to-slate-800 hover:from-slate-800 hover:to-slate-700 text-white h-11 shadow-md disabled:opacity-50"
                   >
                     <Plus className="w-4 h-4 mr-2" />
-                    Add {selectedColors.length > 0 ? `${selectedColors.length} Line${selectedColors.length !== 1 ? 's' : ''}` : 'to List'}
+                    Add {selectedColors.length > 0 ? `${selectedColors.length} Line${selectedColors.length !== 1 ? 's' : ''}` : 'Lines'}
                   </Button>
-                  {selectedStyle && selectedColors.length > 0 && (
-                    <div className="p-3 bg-slate-50 border border-slate-200 text-xs text-slate-600">
-                      <p className="font-medium mb-1">Will create {selectedColors.length} line{selectedColors.length !== 1 ? 's' : ''}:</p>
-                      <ul className="space-y-0.5">
-                        {selectedColors.slice(0, 5).map(color => (
-                          <li key={color.id}>• {selectedStyle.style_no} - {color.color}</li>
-                        ))}
-                        {selectedColors.length > 5 && (
-                          <li className="text-slate-400">... and {selectedColors.length - 5} more</li>
-                        )}
-                      </ul>
-                    </div>
-                  )}
                 </div>
               </CardContent>
             </Card>
 
             {/* Selected Items */}
             {selectedItems.length > 0 && (
-              <div className="space-y-3">
-                <p className="text-xs font-medium text-slate-600 uppercase tracking-wide">
-                  Selected Lines ({selectedItems.length})
-                </p>
-                <div className="space-y-2">
-                  {selectedItems.map((item) => (
-                    <div
-                      key={item.id}
-                      className="p-4 bg-white border border-slate-200"
-                    >
-                      <div className="flex items-start justify-between mb-3">
-                        <div className="flex items-center gap-4">
-                          <div className="w-8 h-8 bg-slate-100 flex items-center justify-center text-xs font-medium text-slate-600 flex-shrink-0">
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm font-semibold text-slate-900">
+                    Selected Lines <Badge className="ml-2 bg-slate-900 text-white border-0">{selectedItems.length}</Badge>
+                  </p>
+                </div>
+                
+                <div className="grid gap-2">
+                  {selectedItems.map((item) => {
+                    const styleDetail = styles?.find(s => s.style_no === item.style);
+                    return (
+                      <div
+                        key={item.id}
+                        className="group flex items-center justify-between p-3 bg-white border border-slate-200 hover:border-slate-300 hover:shadow-sm transition-all"
+                      >
+                        <div className="flex items-center gap-3 flex-1">
+                          <div className="w-7 h-7 bg-slate-900 text-white flex items-center justify-center text-xs font-semibold flex-shrink-0">
                             {selectedItems.indexOf(item) + 1}
                           </div>
-                          <div>
-                            <p className="font-medium text-slate-900">{item.style}</p>
-                            <p className="text-sm text-slate-500">{item.color}</p>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <p className="font-semibold text-slate-900 text-sm">
+                                {item.style}
+                              </p>
+                              {styleDetail?.style_name && (
+                                <p className="text-xs text-slate-500 truncate">
+                                  {styleDetail.style_name}
+                                </p>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-2 mt-0.5">
+                              <p className="text-xs text-slate-600">{item.color}</p>
+                              {item.isColorBreakdown && (
+                                <Badge className="bg-blue-100 text-blue-700 border-blue-200 text-[10px] px-1.5 py-0.5">
+                                  Breakdown
+                                </Badge>
+                              )}
+                            </div>
                           </div>
+                          
+                          {/* Color Breakdown Toggle - Inline */}
+                          <label className="flex items-center gap-2 cursor-pointer mr-2" onClick={(e) => e.stopPropagation()}>
+                            <input
+                              type="checkbox"
+                              checked={item.isColorBreakdown}
+                              onChange={() => toggleItemColorBreakdown(item.id)}
+                              className="w-4 h-4 border-2 border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-900 rounded"
+                            />
+                            <span className="text-[11px] text-slate-500 whitespace-nowrap">Break</span>
+                          </label>
+
+                          <button
+                            onClick={() => handleRemoveItem(item.id)}
+                            className="text-slate-400 hover:text-red-600 transition-colors opacity-0 group-hover:opacity-100"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
                         </div>
-                        <button
-                          onClick={() => handleRemoveItem(item.id)}
-                          className="text-slate-400 hover:text-slate-900 transition-colors"
-                        >
-                          <X className="w-4 h-4" />
-                        </button>
                       </div>
-                      
-                      {/* Color Breakdown Toggle */}
-                      <label className="flex items-center gap-2 cursor-pointer pl-12">
-                        <input
-                          type="checkbox"
-                          checked={item.isColorBreakdown}
-                          onChange={() => toggleItemColorBreakdown(item.id)}
-                          className="w-4 h-4 border-2 border-slate-300 rounded-none focus:ring-2 focus:ring-slate-900"
-                        />
-                        <span className="text-xs text-slate-600">Color Breakdown (deduct from WHITE WEFT)</span>
-                      </label>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
 
                 <Button
                   onClick={handleStartCalculator}
-                  className="w-full rounded-none bg-slate-900 hover:bg-slate-800 text-white py-6"
+                  className="w-full bg-slate-900 hover:bg-slate-800 text-white h-12 text-sm font-medium"
                 >
                   Start Calculator
                   <ArrowRight className="w-4 h-4 ml-2" />
@@ -590,154 +624,150 @@ export default function SizeCalculatorPage() {
 
         {/* STEP 2: Calculator */}
         {flowStep === 'calculator' && currentItem && (
-          <div className="space-y-8">
-            {/* Current Item Header with Progress */}
-            <Card className="border-0 shadow-sm bg-slate-900 text-white">
-              <CardContent className="p-6">
-                <div>
-                  <div className="flex items-center justify-between mb-4">
-                    <div>
-                      <p className="text-xs opacity-60 mb-1">Currently calculating</p>
-                      <p className="text-xl font-light">{currentItem.style}</p>
-                      <p className="text-sm opacity-80">{currentItem.color}</p>
-                    </div>
+          <div className="space-y-6">
+            {/* Current Item Info Bar */}
+            <div className="bg-gradient-to-r from-slate-900 to-slate-800 text-white rounded-lg p-5 shadow-lg">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <div className="w-10 h-10 bg-white/10 backdrop-blur flex items-center justify-center rounded-lg">
+                    <Package className="w-5 h-5" />
                   </div>
-                  
-                  {/* Progress Bar */}
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="opacity-60">Progress</span>
-                      <span className="font-medium">{currentItemIndex + 1} / {selectedItems.length}</span>
-                    </div>
-                    <div className="w-full bg-slate-700 h-1.5">
-                      <div 
-                        className="bg-white h-1.5 transition-all duration-300"
-                        style={{ width: `${((currentItemIndex + 1) / selectedItems.length) * 100}%` }}
-                      />
+                  <div>
+                    <p className="font-semibold text-lg">{currentItem.style}</p>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <p className="text-sm text-slate-300">{currentStyleDetails?.style_name || currentItem.style}</p>
+                      <span className="text-slate-400">•</span>
+                      <p className="text-sm text-white">{currentItem.color}</p>
+                      {currentItem.isColorBreakdown && (
+                        <>
+                          <span className="text-slate-400">•</span>
+                          <Badge className="bg-blue-500 text-white border-0 text-[10px] px-2">
+                            Color Breakdown
+                          </Badge>
+                        </>
+                      )}
                     </div>
                   </div>
                 </div>
-              </CardContent>
-            </Card>
+                <div className="text-right">
+                  <p className="text-xs text-slate-400">Item</p>
+                  <p className="text-2xl font-light">{currentItemIndex + 1}<span className="text-slate-400 text-lg">/{selectedItems.length}</span></p>
+                </div>
+              </div>
+            </div>
 
-            <Card className="border-0 shadow-sm">
-              <CardContent className="p-8 space-y-6">
+            <Card className="border border-slate-200 shadow-md">
+              <CardContent className="p-6 space-y-5">
+                {/* Color Breakdown Info (if enabled) */}
+                {isColorBreakdown && whiteWeftPo !== null && (
+                  <div className="bg-gradient-to-r from-blue-50 to-blue-100 border-l-4 border-blue-500 p-4 rounded-r">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-xs font-semibold text-blue-900 uppercase tracking-wide">
+                          WHITE WEFT Available
+                        </p>
+                        <p className="text-sm text-blue-700 mt-0.5">
+                          Running/Shipped PO for {currentItem.style}
+                        </p>
+                      </div>
+                      <p className="text-3xl font-bold text-blue-900">
+                        {whiteWeftPo.toLocaleString()}
+                      </p>
+                    </div>
+                  </div>
+                )}
+
                 {/* Size Set Selection */}
                 <div>
-                  <label className="block text-xs font-medium text-slate-600 mb-3 uppercase tracking-wide">
+                  <label className="block text-xs font-semibold text-slate-700 mb-2">
                     Size Range
                   </label>
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="flex gap-2">
                     <button
                       onClick={() => setSizeSet('34-46')}
-                      className={`p-3 border text-sm transition-all ${
+                      className={`flex-1 px-4 py-2.5 text-sm font-medium border-2 transition-all ${
                         sizeSet === '34-46'
                           ? 'border-slate-900 bg-slate-900 text-white'
-                          : 'border-slate-200 hover:border-slate-300'
+                          : 'border-slate-200 hover:border-slate-400 bg-white'
                       }`}
                     >
                       34-46
                     </button>
                     <button
                       onClick={() => setSizeSet('S-XXL')}
-                      className={`p-3 border text-sm transition-all ${
+                      className={`flex-1 px-4 py-2.5 text-sm font-medium border-2 transition-all ${
                         sizeSet === 'S-XXL'
                           ? 'border-slate-900 bg-slate-900 text-white'
-                          : 'border-slate-200 hover:border-slate-300'
+                          : 'border-slate-200 hover:border-slate-400 bg-white'
                       }`}
                     >
                       S-XXL
                     </button>
                   </div>
-                  <div className="mt-2 flex gap-1 text-xs text-slate-500">
+                  <p className="text-xs text-slate-500 mt-1.5">
                     {sizes.join(' · ')}
-                  </div>
+                  </p>
                 </div>
 
-                {/* Color Breakdown Info (if enabled) */}
-                {isColorBreakdown && (
-                  <div className="pb-6 border-b border-slate-200">
-                    <div className="flex items-center gap-2 mb-3">
-                      <Badge className="bg-blue-100 text-blue-700 border-blue-300">
-                        Color Breakdown
-                      </Badge>
-                      <span className="text-xs text-slate-600">Deducting from WHITE WEFT</span>
-                    </div>
-                    {whiteWeftPo !== null && (
-                      <div className="p-3 bg-blue-50 border border-blue-200">
-                        <p className="text-xs font-medium text-blue-900 mb-1">
-                          WHITE WEFT PO (Running/Shipped)
-                        </p>
-                        <p className="text-2xl font-light text-blue-900">
-                          {whiteWeftPo.toLocaleString()} pieces
-                        </p>
-                        <p className="text-xs text-blue-700 mt-1">
-                          Available for {currentItem.style} - WHITE WEFT
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                )}
-
                 {/* Data Inputs */}
-                <div className="space-y-6">
+                <div className="grid md:grid-cols-3 gap-4">
                   {/* Current Net Need */}
                   <div>
-                    <label className="block text-xs font-medium text-slate-600 mb-2 uppercase tracking-wide">
-                      Current Net Need ({sizes.length} values)
+                    <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                      Current Net Need
                     </label>
                     <input
                       type="text"
                       value={netNeedInput}
                       onChange={(e) => setNetNeedInput(e.target.value)}
-                      placeholder="Paste space-separated values"
-                      className={`w-full px-4 py-3 border text-sm font-mono focus:outline-none transition-colors ${
+                      placeholder={`${sizes.length} values`}
+                      className={`w-full px-3 py-2 border-2 text-sm font-mono focus:outline-none focus:ring-2 transition-colors ${
                         !netNeedValid
-                          ? 'border-red-300 bg-red-50'
+                          ? 'border-red-400 bg-red-50 focus:ring-red-200'
                           : netNeedTotal > 0
-                          ? 'border-slate-900 bg-white'
-                          : 'border-slate-200'
+                          ? 'border-slate-900 bg-white focus:ring-slate-200'
+                          : 'border-slate-300 focus:ring-slate-200'
                       }`}
                     />
                     {netNeedValid && netNeedTotal > 0 && (
-                      <p className="text-xs text-slate-500 mt-1">Total: {netNeedTotal.toLocaleString()}</p>
+                      <p className="text-xs text-slate-600 mt-1 font-medium">{netNeedTotal.toLocaleString()} pcs</p>
                     )}
                   </div>
 
                   {/* Historical Sales */}
                   <div>
-                    <label className="block text-xs font-medium text-slate-600 mb-2 uppercase tracking-wide">
-                      Historical Sales ({sizes.length} values)
+                    <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                      Historical Sales
                     </label>
                     <input
                       type="text"
                       value={historicalSalesInput}
                       onChange={(e) => setHistoricalSalesInput(e.target.value)}
-                      placeholder="Paste space-separated values"
-                      className={`w-full px-4 py-3 border text-sm font-mono focus:outline-none transition-colors ${
+                      placeholder={`${sizes.length} values`}
+                      className={`w-full px-3 py-2 border-2 text-sm font-mono focus:outline-none focus:ring-2 transition-colors ${
                         !historicalSalesValid
-                          ? 'border-red-300 bg-red-50'
+                          ? 'border-red-400 bg-red-50 focus:ring-red-200'
                           : historicalSalesTotal > 0
-                          ? 'border-slate-900 bg-white'
-                          : 'border-slate-200'
+                          ? 'border-blue-600 bg-white focus:ring-blue-200'
+                          : 'border-slate-300 focus:ring-slate-200'
                       }`}
                     />
                     {historicalSalesValid && historicalSalesTotal > 0 && (
-                      <p className="text-xs text-slate-500 mt-1">Total: {historicalSalesTotal.toLocaleString()}</p>
+                      <p className="text-xs text-blue-600 mt-1 font-medium">{historicalSalesTotal.toLocaleString()} pcs</p>
                     )}
                   </div>
 
                   {/* Target Quantity */}
                   <div>
-                    <label className="block text-xs font-medium text-slate-600 mb-2 uppercase tracking-wide">
-                      Target Order Quantity
+                    <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                      Target Quantity
                     </label>
                     <input
                       type="number"
                       value={targetQuantity}
                       onChange={(e) => setTargetQuantity(e.target.value)}
-                      placeholder="Enter total pieces"
-                      className="w-full px-4 py-3 border border-slate-200 text-lg font-semibold focus:outline-none focus:border-slate-900 transition-colors"
+                      placeholder="Total"
+                      className="w-full px-3 py-2 border-2 border-slate-300 text-lg font-bold focus:outline-none focus:ring-2 focus:ring-slate-200 focus:border-slate-900 transition-colors"
                     />
                   </div>
                 </div>
@@ -759,94 +789,99 @@ export default function SizeCalculatorPage() {
                     netNeedTotal === 0 ||
                     historicalSalesTotal === 0
                   }
-                  className="w-full rounded-none bg-slate-900 hover:bg-slate-800 text-white py-6"
+                  className="w-full bg-gradient-to-r from-slate-900 to-slate-800 hover:from-slate-800 hover:to-slate-700 text-white h-11 text-sm font-semibold shadow-md"
                 >
-                  <Calculator className="w-4 h-4 mr-2" />
+                  <TrendingUp className="w-4 h-4 mr-2" />
                   Compute Optimal Order
                 </Button>
 
                 {/* Calculation Results */}
                 {computedOrder && netNeedValid && historicalSalesValid && (
-                  <div className="pt-6 border-t border-slate-200 space-y-6">
-                    <div className="flex items-center justify-center gap-2 text-sm text-slate-600">
-                      <Check className="w-4 h-4 text-green-600" />
-                      Order computed: {computedOrder.reduce((sum, val) => sum + val, 0).toLocaleString()} pieces
+                  <div className="pt-5 border-t-2 border-slate-200 space-y-4">
+                    <div className="flex items-center justify-between bg-green-50 border border-green-200 rounded-lg px-4 py-3">
+                      <div className="flex items-center gap-2">
+                        <Check className="w-5 h-5 text-green-600" />
+                        <span className="text-sm font-medium text-green-900">Order Computed</span>
+                      </div>
+                      <span className="text-xl font-bold text-green-900">
+                        {computedOrder.reduce((sum, val) => sum + val, 0).toLocaleString()}
+                      </span>
                     </div>
 
                     {/* Results Table */}
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-xs border border-slate-200">
+                    <div className="overflow-x-auto bg-white border-2 border-slate-200 rounded-lg">
+                      <table className="w-full text-xs">
                         <thead>
-                          <tr className="bg-slate-100 border-b border-slate-300">
-                            <th className="text-left py-2 px-3 font-medium text-slate-700">Metric</th>
+                          <tr className="bg-gradient-to-r from-slate-100 to-slate-50 border-b-2 border-slate-300">
+                            <th className="text-left py-2.5 px-4 font-semibold text-slate-700 w-32">Metric</th>
                             {sizes.map(size => (
-                              <th key={size} className="text-center py-2 px-2 font-medium text-slate-700 border-l border-slate-200">
+                              <th key={size} className="text-center py-2.5 px-2 font-semibold text-slate-700 border-l border-slate-200">
                                 {size}
                               </th>
                             ))}
-                            <th className="text-right py-2 px-3 font-medium text-slate-700 border-l-2 border-slate-300 bg-slate-50">
+                            <th className="text-right py-2.5 px-4 font-semibold text-slate-700 border-l-2 border-slate-300">
                               Total
                             </th>
                           </tr>
                         </thead>
                         <tbody>
                           {/* Current Net Need */}
-                          <tr className="border-b border-slate-100">
-                            <td className="py-2 px-3 text-slate-700">Net Need</td>
+                          <tr className="border-b border-slate-200 hover:bg-slate-50">
+                            <td className="py-2 px-4 text-slate-700 font-medium">Net Need</td>
                             {netNeedValues.map((val, idx) => (
                               <td key={idx} className="text-center py-2 px-2 border-l border-slate-100">
-                                <div className="text-slate-700">{val.toLocaleString()}</div>
-                                <div className="text-[9px] text-slate-400">{(netNeedPercentages[idx] ?? 0).toFixed(1)}%</div>
+                                <div className="font-semibold text-slate-800">{val.toLocaleString()}</div>
+                                <div className="text-[9px] text-slate-500">{(netNeedPercentages[idx] ?? 0).toFixed(1)}%</div>
                               </td>
                             ))}
-                            <td className="text-right py-2 px-3 font-semibold text-slate-700 border-l-2 border-slate-300 bg-slate-50">
+                            <td className="text-right py-2 px-4 font-bold text-slate-800 border-l-2 border-slate-300">
                               {netNeedTotal.toLocaleString()}
                             </td>
                           </tr>
 
                           {/* Historical Sales */}
-                          <tr className="border-b-2 border-slate-300 bg-blue-50">
-                            <td className="py-2 px-3 text-blue-800 font-medium">Hist. Sales</td>
+                          <tr className="border-b-2 border-blue-200 bg-gradient-to-r from-blue-50 to-blue-100">
+                            <td className="py-2 px-4 text-blue-900 font-semibold">Hist. Sales</td>
                             {historicalSalesValues.map((val, idx) => (
                               <td key={idx} className="text-center py-2 px-2 border-l border-blue-100">
-                                <div className="text-blue-700">{val.toLocaleString()}</div>
-                                <div className="text-[9px] text-blue-600 font-medium">{(historicalSalesPercentages[idx] ?? 0).toFixed(1)}%</div>
+                                <div className="font-semibold text-blue-800">{val.toLocaleString()}</div>
+                                <div className="text-[9px] text-blue-700 font-semibold">{(historicalSalesPercentages[idx] ?? 0).toFixed(1)}%</div>
                               </td>
                             ))}
-                            <td className="text-right py-2 px-3 font-semibold text-blue-800 border-l-2 border-slate-300 bg-blue-100">
+                            <td className="text-right py-2 px-4 font-bold text-blue-900 border-l-2 border-slate-300">
                               {historicalSalesTotal.toLocaleString()}
                             </td>
                           </tr>
 
                           {/* New Order */}
-                          <tr className="border-b-2 border-slate-300 bg-green-50">
-                            <td className="py-2 px-3 font-semibold text-green-900">New Order</td>
+                          <tr className="border-b-2 border-green-200 bg-gradient-to-r from-green-50 to-green-100">
+                            <td className="py-2 px-4 font-bold text-green-900">New Order</td>
                             {calculateOrder.map((qty, idx) => (
-                              <td key={idx} className="text-center py-2 px-2 font-semibold text-green-700 border-l border-green-100">
+                              <td key={idx} className="text-center py-2 px-2 font-bold text-green-800 border-l border-green-100">
                                 {qty.toLocaleString()}
                               </td>
                             ))}
-                            <td className="text-right py-2 px-3 font-bold text-green-900 border-l-2 border-slate-300 bg-green-100">
+                            <td className="text-right py-2 px-4 font-bold text-green-900 border-l-2 border-slate-300">
                               {orderTotal.toLocaleString()}
                             </td>
                           </tr>
 
                           {/* New Net Need After Order */}
-                          <tr className="border-b-2 border-slate-300 bg-purple-50">
-                            <td className="py-2 px-3 font-semibold text-purple-900">New Net Need</td>
+                          <tr className="bg-gradient-to-r from-purple-50 to-purple-100">
+                            <td className="py-2 px-4 font-bold text-purple-900">New Net Need</td>
                             {newNetNeedAfterOrder.map((val, idx) => {
                               const deviation = Math.abs((newNetNeedPercentages[idx] ?? 0) - (historicalSalesPercentages[idx] ?? 0));
                               const isClose = deviation < 1.0;
                               return (
                                 <td key={idx} className="text-center py-2 px-2 border-l border-purple-100">
-                                  <div className="font-semibold text-purple-700">{val.toLocaleString()}</div>
-                                  <div className={`text-[9px] font-medium ${isClose ? 'text-green-600' : 'text-orange-600'}`}>
+                                  <div className="font-bold text-purple-800">{val.toLocaleString()}</div>
+                                  <div className={`text-[9px] font-bold ${isClose ? 'text-green-600' : 'text-orange-600'}`}>
                                     {(newNetNeedPercentages[idx] ?? 0).toFixed(1)}%
                                   </div>
                                 </td>
                               );
                             })}
-                            <td className="text-right py-2 px-3 font-bold text-purple-900 border-l-2 border-slate-300 bg-purple-100">
+                            <td className="text-right py-2 px-4 font-bold text-purple-900 border-l-2 border-slate-300">
                               {newNetNeedTotal.toLocaleString()}
                             </td>
                           </tr>
@@ -854,26 +889,21 @@ export default function SizeCalculatorPage() {
                       </table>
                     </div>
 
-                    <p className="text-xs text-slate-500 text-center">
-                      <span className="text-green-600 font-medium">Green %</span> = within 1% of target | 
-                      <span className="text-orange-600 font-medium ml-1">Orange %</span> = needs adjustment
-                    </p>
-
                     {/* Action Buttons */}
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="flex gap-3">
                       <Button
                         onClick={handleSkipItem}
                         variant="outline"
-                        className="rounded-none border-slate-200 hover:border-slate-300"
+                        className="flex-1 border-2 border-slate-300 hover:border-slate-400 hover:bg-slate-50"
                       >
                         Skip
                       </Button>
                       <Button
                         onClick={handleSaveAndNext}
-                        className="rounded-none bg-slate-900 hover:bg-slate-800 text-white"
+                        className="flex-[2] bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 text-white shadow-md"
                       >
+                        <Check className="w-4 h-4 mr-2" />
                         {currentItemIndex < selectedItems.length - 1 ? 'Save & Next' : 'Save & Finish'}
-                        <ArrowRight className="w-4 h-4 ml-2" />
                       </Button>
                     </div>
                   </div>
@@ -882,66 +912,74 @@ export default function SizeCalculatorPage() {
             </Card>
 
             {/* Navigation */}
-            <div className="flex justify-between items-center text-sm text-slate-500">
-              <button
+            <div className="flex justify-between items-center">
+              <Button
                 onClick={() => setFlowStep('selection')}
-                className="hover:text-slate-900 transition-colors"
+                variant="ghost"
+                size="sm"
+                className="text-slate-600 hover:text-slate-900"
               >
-                ← Back to selection
-              </button>
-              <span>
+                <ChevronLeft className="w-4 h-4 mr-1" />
+                Back to selection
+              </Button>
+              <Badge className="bg-slate-100 text-slate-700 border-slate-300">
                 {savedOrders.length} of {selectedItems.length} saved
-              </span>
+              </Badge>
             </div>
           </div>
         )}
 
         {/* STEP 3: Overview */}
         {flowStep === 'overview' && (
-          <div className="space-y-8">
-            <Card className="border-0 shadow-sm">
-              <CardContent className="p-8">
+          <div className="space-y-6">
+            <Card className="border border-slate-200 shadow-md">
+              <CardHeader className="bg-gradient-to-r from-slate-50 to-slate-100 border-b">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-xl font-semibold text-slate-900">Order Summary</CardTitle>
+                  <Badge className="bg-slate-900 text-white border-0 px-3 py-1">
+                    {savedOrders.length} items
+                  </Badge>
+                </div>
+              </CardHeader>
+              <CardContent className="p-6">
                 {savedOrders.length === 0 ? (
-                  <div className="text-center py-12 text-slate-500">
-                    <p>No orders saved</p>
+                  <div className="text-center py-16 text-slate-500">
+                    <Package className="w-12 h-12 mx-auto mb-3 text-slate-300" />
+                    <p className="mb-4">No orders saved</p>
                     <Button
                       onClick={handleBackToSelection}
                       variant="outline"
-                      className="mt-4 rounded-none"
+                      className="border-2"
                     >
                       Start Over
                     </Button>
                   </div>
                 ) : (
-                  <div className="space-y-6">
-                    <div className="flex items-center justify-between">
-                      <h2 className="text-2xl font-light">Order Summary</h2>
-                      <p className="text-sm text-slate-500">{savedOrders.length} items</p>
-                    </div>
+                  <div className="space-y-5">
 
-                    <div className="overflow-x-auto">
+                    <div className="overflow-x-auto bg-white border-2 border-slate-200 rounded-lg">
                       <table className="w-full text-sm">
                         <thead>
-                          <tr className="border-b border-slate-200">
-                            <th className="text-left py-3 px-4 font-medium text-slate-600 uppercase tracking-wide text-xs">
+                          <tr className="bg-gradient-to-r from-slate-100 to-slate-50 border-b-2 border-slate-300">
+                            <th className="text-left py-3 px-4 font-semibold text-slate-700 text-xs">
                               Style / Color
                             </th>
-                            <th className="text-right py-3 px-3 font-medium text-slate-600 uppercase tracking-wide text-xs">
-                              Historical Sales
+                            <th className="text-right py-3 px-3 font-semibold text-slate-700 text-xs">
+                              Hist. Sales
                             </th>
-                            <th className="text-right py-3 px-3 font-medium text-slate-600 uppercase tracking-wide text-xs">
-                              Current Net Need
+                            <th className="text-right py-3 px-3 font-semibold text-slate-700 text-xs">
+                              Net Need
                             </th>
-                            <th className="text-right py-3 px-3 font-medium text-slate-600 uppercase tracking-wide text-xs">
+                            <th className="text-right py-3 px-3 font-semibold text-slate-700 text-xs">
                               New PO
                             </th>
-                            <th className="text-right py-3 px-3 font-medium text-slate-600 uppercase tracking-wide text-xs">
+                            <th className="text-right py-3 px-3 font-semibold text-slate-700 text-xs">
                               New Net Need
                             </th>
-                            <th className="text-right py-3 px-3 font-medium text-slate-600 uppercase tracking-wide text-xs">
-                              WHITE WEFT PO
+                            <th className="text-right py-3 px-3 font-semibold text-slate-700 text-xs">
+                              WHITE WEFT
                             </th>
-                            <th className="w-12"></th>
+                            <th className="w-10"></th>
                           </tr>
                         </thead>
                         <tbody>
@@ -950,48 +988,62 @@ export default function SizeCalculatorPage() {
                             const netNeedTotal = order.netNeedValues.reduce((sum, val) => sum + val, 0);
                             const poTotal = order.computedOrder.reduce((sum, val) => sum + val, 0);
                             const newNetNeedTotal = netNeedTotal + poTotal;
+                            const styleDetail = styles?.find(s => s.style_no === order.styleColor.style);
 
                             return (
-                              <tr key={order.timestamp} className="border-b border-slate-100 hover:bg-slate-50">
-                                <td className="py-4 px-4">
+                              <tr key={order.timestamp} className="border-b border-slate-200 hover:bg-gradient-to-r hover:from-slate-50 hover:to-transparent transition-colors">
+                                <td className="py-3 px-4">
                                   <div className="flex items-center gap-2">
-                                    <div>
-                                      <p className="font-medium text-slate-900">{order.styleColor.style}</p>
-                                      <p className="text-xs text-slate-500">{order.styleColor.color}</p>
-                                      <p className="text-xs text-slate-400 mt-1">{order.sizeSet}</p>
+                                    <div className="min-w-0 flex-1">
+                                      <div className="flex items-center gap-2">
+                                        <p className="font-semibold text-slate-900">{order.styleColor.style}</p>
+                                        {styleDetail?.style_name && (
+                                          <p className="text-xs text-slate-500 truncate">
+                                            {styleDetail.style_name}
+                                          </p>
+                                        )}
+                                      </div>
+                                      <div className="flex items-center gap-2 mt-0.5">
+                                        <p className="text-xs text-slate-600">{order.styleColor.color}</p>
+                                        <span className="text-slate-300">·</span>
+                                        <p className="text-xs text-slate-400">{order.sizeSet}</p>
+                                        {order.isColorBreakdown && (
+                                          <>
+                                            <span className="text-slate-300">·</span>
+                                            <Badge className="bg-blue-500 text-white border-0 text-[9px] px-1.5 py-0">
+                                              Breakdown
+                                            </Badge>
+                                          </>
+                                        )}
+                                      </div>
                                     </div>
-                                    {order.isColorBreakdown && (
-                                      <Badge className="bg-blue-100 text-blue-700 border-blue-300 text-[10px] px-1.5 py-0.5">
-                                        Breakdown
-                                      </Badge>
-                                    )}
                                   </div>
                                 </td>
-                                <td className="text-right py-4 px-3 text-slate-700">
+                                <td className="text-right py-3 px-3 text-slate-700 font-medium">
                                   {histTotal.toLocaleString()}
                                 </td>
-                                <td className="text-right py-4 px-3 text-slate-700">
+                                <td className="text-right py-3 px-3 text-slate-700 font-medium">
                                   {netNeedTotal.toLocaleString()}
                                 </td>
-                                <td className="text-right py-4 px-3 font-semibold text-slate-900">
+                                <td className="text-right py-3 px-3 font-bold text-green-700">
                                   {poTotal.toLocaleString()}
                                 </td>
-                                <td className="text-right py-4 px-3 text-slate-700">
+                                <td className="text-right py-3 px-3 text-slate-700 font-medium">
                                   {newNetNeedTotal.toLocaleString()}
                                 </td>
-                                <td className="text-right py-4 px-3">
+                                <td className="text-right py-3 px-3">
                                   {order.isColorBreakdown && order.whiteWeftPo !== undefined ? (
-                                    <span className="text-blue-700 font-medium">
+                                    <span className="text-blue-700 font-bold">
                                       {order.whiteWeftPo.toLocaleString()}
                                     </span>
                                   ) : (
-                                    <span className="text-slate-400">—</span>
+                                    <span className="text-slate-300">—</span>
                                   )}
                                 </td>
-                                <td className="py-4 px-3">
+                                <td className="py-3 px-3">
                                   <button
                                     onClick={() => handleRemoveOrder(order.timestamp)}
-                                    className="text-slate-400 hover:text-slate-900 transition-colors"
+                                    className="text-slate-400 hover:text-red-600 transition-colors"
                                   >
                                     <X className="w-4 h-4" />
                                   </button>
@@ -1001,25 +1053,25 @@ export default function SizeCalculatorPage() {
                           })}
                         </tbody>
                         <tfoot>
-                          <tr className="border-t-2 border-slate-300 font-semibold">
-                            <td className="py-4 px-4 text-slate-900">Total</td>
-                            <td className="text-right py-4 px-3 text-slate-900">
+                          <tr className="border-t-2 border-slate-300 bg-gradient-to-r from-slate-100 to-slate-50 font-bold">
+                            <td className="py-3 px-4 text-slate-900 text-base">Total</td>
+                            <td className="text-right py-3 px-3 text-slate-900">
                               {savedOrders.reduce((sum, o) => sum + o.historicalSalesValues.reduce((s, v) => s + v, 0), 0).toLocaleString()}
                             </td>
-                            <td className="text-right py-4 px-3 text-slate-900">
+                            <td className="text-right py-3 px-3 text-slate-900">
                               {savedOrders.reduce((sum, o) => sum + o.netNeedValues.reduce((s, v) => s + v, 0), 0).toLocaleString()}
                             </td>
-                            <td className="text-right py-4 px-3 text-slate-900">
+                            <td className="text-right py-3 px-3 text-green-700 text-base">
                               {savedOrders.reduce((sum, o) => sum + o.computedOrder.reduce((s, v) => s + v, 0), 0).toLocaleString()}
                             </td>
-                            <td className="text-right py-4 px-3 text-slate-900">
+                            <td className="text-right py-3 px-3 text-slate-900">
                               {savedOrders.reduce((sum, o) => {
                                 const netNeed = o.netNeedValues.reduce((s, v) => s + v, 0);
                                 const po = o.computedOrder.reduce((s, v) => s + v, 0);
                                 return sum + netNeed + po;
                               }, 0).toLocaleString()}
                             </td>
-                            <td className="text-right py-4 px-3 text-blue-700">
+                            <td className="text-right py-3 px-3 text-blue-700">
                               {savedOrders.reduce((sum, o) => sum + (o.whiteWeftPo || 0), 0).toLocaleString()}
                             </td>
                             <td></td>
@@ -1029,11 +1081,11 @@ export default function SizeCalculatorPage() {
                     </div>
 
                     {/* Actions */}
-                    <div className="flex gap-3 pt-6 border-t border-slate-200">
+                    <div className="flex gap-3 pt-5 border-t-2 border-slate-200">
                       <Button
                         onClick={handleBackToSelection}
                         variant="outline"
-                        className="rounded-none border-slate-200"
+                        className="border-2 border-slate-300 hover:border-slate-400 hover:bg-slate-50"
                       >
                         <ChevronLeft className="w-4 h-4 mr-2" />
                         Start New Order
@@ -1045,9 +1097,9 @@ export default function SizeCalculatorPage() {
                           ).join('\n');
                           navigator.clipboard.writeText(csvContent);
                         }}
-                        className="rounded-none bg-slate-900 hover:bg-slate-800"
+                        className="flex-1 bg-gradient-to-r from-slate-900 to-slate-800 hover:from-slate-800 hover:to-slate-700 text-white shadow-md"
                       >
-                        Copy All Orders
+                        Copy All Orders to Clipboard
                       </Button>
                     </div>
                   </div>
