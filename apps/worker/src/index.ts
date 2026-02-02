@@ -2996,7 +2996,7 @@ async function runJob(job: JobRow) {
         }
         
         // Count unique colors scraped
-        const colorsScraped = new Set(extracted.map(r => r.color.toLowerCase())).size;
+        const colorsScraped = new Set(extracted.map((r: any) => r.color.toLowerCase())).size;
         const requestedForThisStyle = byStyle.get(s.style_no)?.size || 0;
         
         await log(job.id, 'info', 'STEP:noos_call_off_extracted', { 
