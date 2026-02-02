@@ -2792,6 +2792,8 @@ async function runJob(job: JobRow) {
       } catch {}
       
       // Group pairs by style_no for efficient scraping
+      // Note: When scraping a style page, we get ALL colors at once (not just requested ones)
+      // This is more efficient and matches the existing stock scraping behavior
       const byStyle = new Map<string, Set<string>>();
       for (const pair of styleColorPairs) {
         if (!byStyle.has(pair.style_no)) byStyle.set(pair.style_no, new Set());
@@ -2799,7 +2801,11 @@ async function runJob(job: JobRow) {
       }
       
       const styleNos = Array.from(byStyle.keys());
-      await log(job.id, 'info', 'STEP:noos_call_off_styles', { styles: styleNos.length, pairs: styleColorPairs.length });
+      await log(job.id, 'info', 'STEP:noos_call_off_styles', { 
+        styles: styleNos.length, 
+        requestedPairs: styleColorPairs.length,
+        note: 'Scraping all colors per style (more efficient than individual colors)'
+      });
       
       // Fetch style data
       const { data: styles } = await supabase
@@ -2842,18 +2848,17 @@ async function runJob(job: JobRow) {
           if (clicked) { await page.waitForTimeout(500); }
         } catch {}
         
-        // Expand requested color sections
+        // Expand ALL color sections (we scrape all colors for efficiency since they're all on the same page)
         try {
           await page.waitForFunction(() => !!document.querySelector('.statAndStockBox'), {}, { timeout: 30_000 }).catch(() => {});
           
           for (let i = 0; i < 10; i++) {
-            const clicked = await page.evaluate((requested: string[]) => {
+            const clicked = await page.evaluate(() => {
               let clicks = 0;
               const headers = Array.from(document.querySelectorAll('.statAndStockBox tr.tableBackgroundBlack')) as HTMLTableRowElement[];
               for (const tr of headers) {
                 const td = tr.querySelector('td');
                 const colorName = (td?.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
-                if (!requested.includes(colorName)) continue;
                 
                 const hasInactive = /\(inactive\)/i.test(colorName);
                 const styleAttr = (tr.getAttribute('style') || '').toLowerCase();
@@ -2864,7 +2869,7 @@ async function runJob(job: JobRow) {
                 if (arrow) { arrow.click(); clicks++; }
               }
               return clicks;
-            }, Array.from(requestedColors));
+            });
             
             if (!clicked) break;
             await page.waitForTimeout(500);
@@ -2881,8 +2886,8 @@ async function runJob(job: JobRow) {
           continue;
         }
         
-        // Parse stock data (reuse existing parsing logic)
-        const extracted = await page.$$eval('.statAndStockBox', (boxes: Element[], requested: string[]) => {
+        // Parse stock data - scrape ALL colors for this style (efficient since they're all on the same page)
+        const extracted = await page.$$eval('.statAndStockBox', (boxes: Element[]) => {
           function text(el: Element | null | undefined): string { 
             return ((el as HTMLElement | null)?.textContent || '').replace(/\s+/g, ' ').trim(); 
           }
@@ -2912,9 +2917,7 @@ async function runJob(job: JobRow) {
             const color = text(headerTds[0]);
             const colorLower = color.toLowerCase();
             
-            // Only process requested colors
-            if (!requested.includes(colorLower)) continue;
-            
+            // Skip inactive or red-background colors
             const headerRowOutside = box.querySelector('tr.tableBackgroundBlack') as HTMLTableRowElement | null;
             const styleAttr = (headerRowOutside?.getAttribute('style') || '').toLowerCase();
             const hasRedBg = /#900/.test(styleAttr);
@@ -2961,12 +2964,14 @@ async function runJob(job: JobRow) {
             }
           }
           return out;
-        }, Array.from(requestedColors));
+        });
         
-        // Filter Delivered rows based on total >= 200 threshold
+        // Filter Delivered rows based on total >= 200 threshold per style+color
+        // We scrape ALL colors for this style (efficient), but apply filtering rules
         const filteredExtracted: typeof extracted = [];
         const deliveredByColor = new Map<string, { values: number[]; total: number }>();
         
+        // First pass: identify Delivered totals per color
         for (const row of extracted) {
           if (row.section === 'Sold' && /delivered/i.test(row.row_label)) {
             const total = row.values.reduce((sum: number, val: number) => sum + val, 0);
@@ -2974,8 +2979,9 @@ async function runJob(job: JobRow) {
           }
         }
         
+        // Second pass: filter rows based on Delivered threshold
         for (const row of extracted) {
-          // Check Delivered threshold
+          // Check Delivered threshold - only include if total >= 200
           if (row.section === 'Sold' && /delivered/i.test(row.row_label)) {
             const colorKey = row.color.toLowerCase();
             const delivered = deliveredByColor.get(colorKey);
@@ -2985,14 +2991,21 @@ async function runJob(job: JobRow) {
             // Skip if < 200
             continue;
           }
-          // Include all other rows
+          // Include all other rows (Stock, Sales, PO, etc.)
           filteredExtracted.push(row);
         }
         
+        // Count unique colors scraped
+        const colorsScraped = new Set(extracted.map(r => r.color.toLowerCase())).size;
+        const requestedForThisStyle = byStyle.get(s.style_no)?.size || 0;
+        
         await log(job.id, 'info', 'STEP:noos_call_off_extracted', { 
           style_no: s.style_no, 
-          rows: filteredExtracted.length,
-          delivered_filtered: extracted.length - filteredExtracted.length
+          colors_scraped: colorsScraped,
+          colors_requested: requestedForThisStyle,
+          rows_extracted: extracted.length,
+          rows_after_filtering: filteredExtracted.length,
+          delivered_filtered_out: extracted.length - filteredExtracted.length
         });
         
         // Upsert to noos_call_off_stock table
