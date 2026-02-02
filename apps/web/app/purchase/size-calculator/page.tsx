@@ -251,7 +251,7 @@ export default function SizeCalculatorPage() {
   };
 
   const handleSaveAndNext = () => {
-    if (!computedOrder) return;
+    if (!computedOrder || !currentItem) return;
 
     const orderData: OrderData = {
       styleColor: currentItem,
