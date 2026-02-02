@@ -2906,6 +2906,7 @@ async function runJob(job: JobRow) {
           }
           
           const out: Array<{ color: string; sizes: string[]; section: string; row_label: string; values: number[]; po_link: string | null }> = [];
+          const debugAllRows: Array<{ label: string; cls: string; hasDelivered: boolean; inSold: boolean }> = [];
           
           for (const box of Array.from(boxes) as HTMLElement[]) {
             const details = box.querySelector('.statAndStockDetails') as HTMLElement | null;
@@ -2942,6 +2943,16 @@ async function runJob(job: JobRow) {
               const tds = Array.from(rowEl.querySelectorAll('td')) as HTMLElement[];
               const label = text(tds[0]);
               const cls = rowEl.className || '';
+              
+              // Debug tracking - only for first color
+              if (r <= 30 && out.length < 10) {
+                debugAllRows.push({ 
+                  label, 
+                  cls, 
+                  hasDelivered: /delivered/i.test(label),
+                  inSold 
+                });
+              }
               
               if (/Sold/.test(label) && /header/.test(cls)) { inSold = true; inPurchase = false; inDedicated = false; continue; }
               if (/Available/.test(label) && /header/.test(cls)) { inSold = false; inDedicated = false; continue; }
@@ -3009,16 +3020,19 @@ async function runJob(job: JobRow) {
               }
             }
           }
-          return out;
+          return { rows: out, debug: debugAllRows };
         });
+        
+        const extractedRows = extracted.rows;
+        const debugRows = extracted.debug;
         
         // Filter Delivered rows based on total >= 200 threshold per style+color
         // We scrape ALL colors for this style (efficient), but apply filtering rules
-        const filteredExtracted: typeof extracted = [];
+        const filteredExtracted: typeof extractedRows = [];
         const deliveredByColor = new Map<string, { values: number[]; total: number }>();
         
         // First pass: identify Delivered totals per color
-        for (const row of extracted) {
+        for (const row of extractedRows) {
           if (row.section === 'Sold' && /delivered/i.test(row.row_label)) {
             const total = row.values.reduce((sum: number, val: number) => sum + val, 0);
             deliveredByColor.set(row.color.toLowerCase(), { values: row.values, total });
@@ -3026,7 +3040,7 @@ async function runJob(job: JobRow) {
         }
         
         // Second pass: filter rows based on Delivered threshold
-        for (const row of extracted) {
+        for (const row of extractedRows) {
           // Check Delivered threshold - only include if total >= 200
           if (row.section === 'Sold' && /delivered/i.test(row.row_label)) {
             const colorKey = row.color.toLowerCase();
@@ -3042,14 +3056,14 @@ async function runJob(job: JobRow) {
         }
         
         // Count unique colors scraped and analyze what was found
-        const colorsScraped = new Set(extracted.map((r: any) => r.color.toLowerCase())).size;
+        const colorsScraped = new Set(extractedRows.map((r: any) => r.color.toLowerCase())).size;
         const requestedForThisStyle = byStyle.get(s.style_no)?.size || 0;
         
         // Debug: what sections and row_labels do we have?
         const sectionCounts = new Map<string, number>();
-        const deliveredRows = extracted.filter((r: any) => /delivered/i.test(r.row_label));
-        const soldRows = extracted.filter((r: any) => r.section === 'Sold');
-        for (const row of extracted as any[]) {
+        const deliveredRows = extractedRows.filter((r: any) => /delivered/i.test(r.row_label));
+        const soldRows = extractedRows.filter((r: any) => r.section === 'Sold');
+        for (const row of extractedRows as any[]) {
           const key = row.section;
           sectionCounts.set(key, (sectionCounts.get(key) || 0) + 1);
         }
@@ -3057,17 +3071,22 @@ async function runJob(job: JobRow) {
         // Get ALL unique sold row labels for debugging
         const allSoldLabels = Array.from(new Set(soldRows.map((r: any) => r.row_label)));
         
+        // Find any row with "Delivered" in the label, regardless of section
+        const anyDeliveredRows = extractedRows.filter((r: any) => /delivered/i.test(r.row_label));
+        
         await log(job.id, 'info', 'STEP:noos_call_off_extracted', { 
           style_no: s.style_no, 
           colors_scraped: colorsScraped,
           colors_requested: requestedForThisStyle,
-          rows_extracted: extracted.length,
+          rows_extracted: extractedRows.length,
           rows_after_filtering: filteredExtracted.length,
-          delivered_filtered_out: extracted.length - filteredExtracted.length,
+          delivered_filtered_out: extractedRows.length - filteredExtracted.length,
           sections: Object.fromEntries(sectionCounts),
           sold_rows_count: soldRows.length,
           delivered_rows_found: deliveredRows.length,
           all_sold_labels: allSoldLabels,
+          any_delivered_anywhere: anyDeliveredRows.length,
+          debug_first_10_rows: debugRows.slice(0, 10),
           sample_sold_rows: soldRows.slice(0, 3).map((r: any) => ({ label: r.row_label, section: r.section, values: r.values }))
         });
         
