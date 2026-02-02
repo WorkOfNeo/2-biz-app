@@ -464,7 +464,7 @@ export default function SizeCalculatorPage() {
         // Check job status
         const { data: job, error: jobError } = await supabase
           .from('jobs')
-          .select('status, error, result')
+          .select('status, error')
           .eq('id', jobId)
           .maybeSingle();
         
