@@ -2882,7 +2882,7 @@ async function runJob(job: JobRow) {
         }
         
         // Parse stock data (reuse existing parsing logic)
-        const extracted = await page.$$eval('.statAndStockBox', (boxes, requested: string[]) => {
+        const extracted = await page.$$eval('.statAndStockBox', (boxes: Element[], requested: string[]) => {
           function text(el: Element | null | undefined): string { 
             return ((el as HTMLElement | null)?.textContent || '').replace(/\s+/g, ' ').trim(); 
           }
@@ -2969,7 +2969,7 @@ async function runJob(job: JobRow) {
         
         for (const row of extracted) {
           if (row.section === 'Sold' && /delivered/i.test(row.row_label)) {
-            const total = row.values.reduce((sum, val) => sum + val, 0);
+            const total = row.values.reduce((sum: number, val: number) => sum + val, 0);
             deliveredByColor.set(row.color.toLowerCase(), { values: row.values, total });
           }
         }
