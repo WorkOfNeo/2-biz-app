@@ -385,7 +385,7 @@ export default function SizeCalculatorPage() {
                     {netNeedValues.map((val, idx) => (
                       <td key={idx} className="text-center py-2 px-3 border-l border-slate-100">
                         <div className="font-semibold text-slate-700">{val.toLocaleString()}</div>
-                        <div className="text-[10px] text-slate-500">{netNeedPercentages[idx].toFixed(1)}%</div>
+                        <div className="text-[10px] text-slate-500">{(netNeedPercentages[idx] ?? 0).toFixed(1)}%</div>
                       </td>
                     ))}
                     <td className="text-right py-2 px-4 font-bold text-slate-800 border-l-2 border-slate-300 bg-slate-50">
@@ -399,7 +399,7 @@ export default function SizeCalculatorPage() {
                     {historicalSalesValues.map((val, idx) => (
                       <td key={idx} className="text-center py-2 px-3 border-l border-blue-100">
                         <div className="font-semibold text-blue-700">{val.toLocaleString()}</div>
-                        <div className="text-[10px] text-blue-600 font-medium">{historicalSalesPercentages[idx].toFixed(1)}%</div>
+                        <div className="text-[10px] text-blue-600 font-medium">{(historicalSalesPercentages[idx] ?? 0).toFixed(1)}%</div>
                       </td>
                     ))}
                     <td className="text-right py-2 px-4 font-bold text-blue-800 border-l-2 border-slate-300 bg-blue-100">
@@ -424,13 +424,13 @@ export default function SizeCalculatorPage() {
                   <tr className="border-b-2 border-slate-300 bg-purple-50">
                     <td className="py-2 px-4 font-bold text-purple-900">New Net Need (after order)</td>
                     {newNetNeedAfterOrder.map((val, idx) => {
-                      const deviation = Math.abs(newNetNeedPercentages[idx] - historicalSalesPercentages[idx]);
+                      const deviation = Math.abs((newNetNeedPercentages[idx] ?? 0) - (historicalSalesPercentages[idx] ?? 0));
                       const isClose = deviation < 1.0; // Within 1%
                       return (
                         <td key={idx} className="text-center py-2 px-3 border-l border-purple-100">
                           <div className="font-bold text-purple-700">{val.toLocaleString()}</div>
                           <div className={`text-[10px] font-medium ${isClose ? 'text-green-600' : 'text-orange-600'}`}>
-                            {newNetNeedPercentages[idx].toFixed(1)}%
+                            {(newNetNeedPercentages[idx] ?? 0).toFixed(1)}%
                           </div>
                         </td>
                       );
