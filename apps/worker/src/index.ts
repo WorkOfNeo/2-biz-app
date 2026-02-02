@@ -2887,9 +2887,13 @@ async function runJob(job: JobRow) {
         }
         
         // Parse stock data - scrape ALL colors for this style (efficient since they're all on the same page)
+        // Use the full parsing logic from update_style_stock for consistency
         const extracted = await page.$$eval('.statAndStockBox', (boxes: Element[]) => {
           function text(el: Element | null | undefined): string { 
             return ((el as HTMLElement | null)?.textContent || '').replace(/\s+/g, ' ').trim(); 
+          }
+          function normalizeLabel(label: string): string { 
+            return (label || '').replace(/\s+/g, ' ').trim().toUpperCase(); 
           }
           function numbersFromRow(tds: HTMLElement[]): number[] {
             const arr: number[] = [];
@@ -2929,6 +2933,9 @@ async function runJob(job: JobRow) {
             
             let inSold = false;
             let inPurchase = false;
+            let inDedicated = false;
+            let lastPurchaseHeading: { label: string; link: string | null } | null = null;
+            const seenPurchase = new Set<string>();
             
             for (let r = 1; r < rows.length; r++) {
               const rowEl = rows[r] as HTMLTableRowElement;
@@ -2936,10 +2943,10 @@ async function runJob(job: JobRow) {
               const label = text(tds[0]);
               const cls = rowEl.className || '';
               
-              if (/Sold/.test(label) && /header/.test(cls)) { inSold = true; inPurchase = false; continue; }
-              if (/Available/.test(label) && /header/.test(cls)) { inSold = false; continue; }
-              if (/Purchase/.test(label) && /header/.test(cls)) { inPurchase = true; inSold = false; continue; }
-              if (/Net Need/.test(label) && /header/.test(cls)) { inPurchase = false; break; }
+              if (/Sold/.test(label) && /header/.test(cls)) { inSold = true; inPurchase = false; inDedicated = false; continue; }
+              if (/Available/.test(label) && /header/.test(cls)) { inSold = false; inDedicated = false; continue; }
+              if (/Purchase/.test(label) && /header/.test(cls)) { inPurchase = true; inSold = false; inDedicated = false; continue; }
+              if (/Net Need/.test(label) && /header/.test(cls)) { inPurchase = false; inDedicated = false; break; }
               
               // Stock row
               if (!inSold && !inPurchase && label === 'Stock') { 
@@ -2947,19 +2954,50 @@ async function runJob(job: JobRow) {
                 continue; 
               }
               
-              // Sold block rows (including Delivered)
+              // Dedicated rows
+              if (rowEl.querySelector('a.edit-dedication')) { inDedicated = true; continue; }
+              if (inDedicated && cls.includes('stylecolor-expanded--main') || inDedicated && cls.includes('stylecolor-expanded--sub')) {
+                const kind = /Pre/i.test(label) ? 'Pre Dedicated' : 'Stock Dedicated';
+                out.push({ color, sizes: sizeLabels, section: kind, row_label: label || kind, values: numbersFromRow(tds), po_link: null });
+                continue;
+              }
+              
+              // Sold block rows (including Delivered) - ONLY parse detailed sub-rows; skip main (summed) rows
               if (inSold && cls.includes('stylecolor-expanded--sub')) {
                 out.push({ color, sizes: sizeLabels, section: 'Sold', row_label: label || 'Row', values: numbersFromRow(tds), po_link: null });
                 continue;
               }
               
-              // Purchase block rows
-              if (inPurchase && cls.includes('stylecolor-expanded--sub')) {
-                let po_link: string | null = null;
-                const poA = rowEl.querySelector('a[href*="purchase_orders.php"]') as HTMLAnchorElement | null;
-                po_link = poA ? (poA.getAttribute('href') || null) : null;
-                out.push({ color, sizes: sizeLabels, section: 'Purchase (Running + Shipped)', row_label: label || 'Row', values: numbersFromRow(tds), po_link });
-                continue;
+              // Available block rows
+              if (!inSold && !inPurchase && cls.includes('stylecolor-expanded--main')) {
+                if (/^Available$/i.test(label)) { out.push({ color, sizes: sizeLabels, section: 'Available', row_label: 'Available', values: numbersFromRow(tds), po_link: null }); continue; }
+                if (/PO Available/i.test(label)) { out.push({ color, sizes: sizeLabels, section: 'PO Available', row_label: 'PO Available', values: numbersFromRow(tds), po_link: null }); continue; }
+                if (/^Corrected$/i.test(label)) { out.push({ color, sizes: sizeLabels, section: 'Corrected', row_label: 'Corrected', values: numbersFromRow(tds), po_link: null }); continue; }
+              }
+              
+              // Purchase block rows with deduplication
+              if (inPurchase) {
+                const isSumRow = /^NOOS$/i.test(label) || /^Total\s+PO\s*\(/i.test(label);
+                if (isSumRow) { continue; }
+                if (cls.includes('stylecolor-expanded--main')) {
+                  const headingLinkA = rowEl.querySelector('a[href*="purchase_orders.php"]') as HTMLAnchorElement | null;
+                  const headingLink = headingLinkA ? (headingLinkA.getAttribute('href') || null) : null;
+                  if (headingLink) { lastPurchaseHeading = { label: label || 'Row', link: headingLink }; }
+                  continue;
+                }
+                if (cls.includes('stylecolor-expanded--sub')) {
+                  const isDedicatedLabel = /(Stock\s+Dedicated|Pre\s+Dedicated)/i.test(label);
+                  if (isDedicatedLabel) { continue; }
+                  let po_link: string | null = null;
+                  const poA = rowEl.querySelector('a[href*="purchase_orders.php"]') as HTMLAnchorElement | null;
+                  po_link = poA ? (poA.getAttribute('href') || null) : null;
+                  if (!po_link && lastPurchaseHeading) po_link = lastPurchaseHeading.link;
+                  const key = normalizeLabel(label || 'Row') + '|' + String(po_link || '');
+                  if (seenPurchase.has(key)) { continue; }
+                  seenPurchase.add(key);
+                  out.push({ color, sizes: sizeLabels, section: 'Purchase (Running + Shipped)', row_label: label || 'Row', values: numbersFromRow(tds), po_link });
+                  continue;
+                }
               }
             }
           }
@@ -2995,9 +3033,18 @@ async function runJob(job: JobRow) {
           filteredExtracted.push(row);
         }
         
-        // Count unique colors scraped
+        // Count unique colors scraped and analyze what was found
         const colorsScraped = new Set(extracted.map((r: any) => r.color.toLowerCase())).size;
         const requestedForThisStyle = byStyle.get(s.style_no)?.size || 0;
+        
+        // Debug: what sections and row_labels do we have?
+        const sectionCounts = new Map<string, number>();
+        const deliveredRows = extracted.filter((r: any) => /delivered/i.test(r.row_label));
+        const soldRows = extracted.filter((r: any) => r.section === 'Sold');
+        for (const row of extracted as any[]) {
+          const key = row.section;
+          sectionCounts.set(key, (sectionCounts.get(key) || 0) + 1);
+        }
         
         await log(job.id, 'info', 'STEP:noos_call_off_extracted', { 
           style_no: s.style_no, 
@@ -3005,7 +3052,11 @@ async function runJob(job: JobRow) {
           colors_requested: requestedForThisStyle,
           rows_extracted: extracted.length,
           rows_after_filtering: filteredExtracted.length,
-          delivered_filtered_out: extracted.length - filteredExtracted.length
+          delivered_filtered_out: extracted.length - filteredExtracted.length,
+          sections: Object.fromEntries(sectionCounts),
+          sold_rows_count: soldRows.length,
+          delivered_rows_found: deliveredRows.length,
+          sample_sold_labels: soldRows.slice(0, 5).map((r: any) => r.row_label)
         });
         
         // Upsert to noos_call_off_stock table
