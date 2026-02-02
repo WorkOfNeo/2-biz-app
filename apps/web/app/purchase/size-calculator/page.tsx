@@ -75,7 +75,7 @@ export default function SizeCalculatorPage() {
   
   // APP PO creation state
   const [creatingAppPo, setCreatingAppPo] = useState(false);
-  const [appPoCreated, setAppPoCreated] = useState<{ poNo: string; poId: string } | null>(null);
+  const [appPoCreated, setAppPoCreated] = useState<Array<{ poNo: string; poId: string }>>([]);
   
   // Style/Color selection
   const [selectedStyleId, setSelectedStyleId] = useState('');
@@ -597,6 +597,9 @@ export default function SizeCalculatorPage() {
     setFlowStep('selection');
     setCurrentItemIndex(0);
     setSavedOrders([]);
+    setAppPoCreated([]);
+    setScrapeJobId(null);
+    setScrapedData(new Map());
   };
 
   const handleRemoveOrder = (timestamp: number) => {
@@ -610,12 +613,9 @@ export default function SizeCalculatorPage() {
     setAppPoCreated(null);
     
     try {
-      // Generate PO number
-      const date = new Date();
-      const prefix = 'NOOS';
-      const dateStr = date.toISOString().slice(0, 10).replace(/-/g, '');
-      const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
-      const poNo = `${prefix}-${dateStr}-${random}`;
+      // Separate regular orders from color breakdown orders
+      const regularOrders = savedOrders.filter(o => !o.isColorBreakdown);
+      const colorBreakdownOrders = savedOrders.filter(o => o.isColorBreakdown);
       
       // Get unique styles to fetch suppliers
       const uniqueStyles = Array.from(new Set(savedOrders.map(o => o.styleColor.style)));
@@ -629,58 +629,103 @@ export default function SizeCalculatorPage() {
         styleToSupplier.set(style.style_no, style.supplier || 'Unknown');
       }
       
-      // Group by supplier
-      const ordersBySupplier = new Map<string, typeof savedOrders>();
-      for (const order of savedOrders) {
-        const supplier = styleToSupplier.get(order.styleColor.style) || 'Unknown';
-        if (!ordersBySupplier.has(supplier)) {
-          ordersBySupplier.set(supplier, []);
+      const createdPos: Array<{ poNo: string; poId: string }> = [];
+      
+      // Create APP PO for regular orders (if any)
+      if (regularOrders.length > 0) {
+        const date = new Date();
+        const poNo = `NOOS-${date.toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(Math.random() * 10000).toString().padStart(4, '0')}`;
+        
+        const supplier = styleToSupplier.get(regularOrders[0].styleColor.style) || 'Mixed';
+        const totalQty = regularOrders.reduce((sum, o) => sum + o.computedOrder.reduce((s, v) => s + v, 0), 0);
+        
+        const items = regularOrders.map(order => {
+          const sizes = SIZE_SETS[order.sizeSet];
+          return {
+            style_no: order.styleColor.style,
+            color: order.styleColor.color,
+            sizes,
+            quantities: order.computedOrder,
+            total: order.computedOrder.reduce((sum, val) => sum + val, 0),
+            size_source: 'noos_call_off',
+            net_need_before: order.netNeedValues,
+            historical_sales: order.historicalSalesValues,
+          };
+        });
+        
+        const { data: newPo, error: poError } = await supabase
+          .from('app_pos')
+          .insert({
+            po_no: poNo,
+            status: 'Running',
+            supplier,
+            styles: Array.from(new Set(regularOrders.map(o => o.styleColor.style))).length,
+            ordered: totalQty,
+            meta: {
+              items,
+              source: 'noos_call_off',
+              created_from_noos_call_off: true,
+              scrape_job_id: scrapeJobId,
+            },
+          })
+          .select('id, po_no')
+          .single();
+        
+        if (poError || !newPo) {
+          throw new Error(poError?.message || 'Failed to create regular APP PO');
         }
-        ordersBySupplier.get(supplier)!.push(order);
+        
+        createdPos.push({ poNo: newPo.po_no, poId: newPo.id });
       }
       
-      // For now, create one PO with all items (can be extended to create per supplier)
-      const supplier = ordersBySupplier.keys().next().value || 'Mixed';
-      const totalQty = savedOrders.reduce((sum, o) => sum + o.computedOrder.reduce((s, v) => s + v, 0), 0);
-      
-      // Build items array
-      const items = savedOrders.map(order => {
+      // Create separate APP PO for each color breakdown order
+      for (const order of colorBreakdownOrders) {
+        const date = new Date();
+        const poNo = `NOOS-COLORING-${date.toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(Math.random() * 10000).toString().padStart(4, '0')}`;
+        
+        const supplier = styleToSupplier.get(order.styleColor.style) || 'Unknown';
+        const totalQty = order.computedOrder.reduce((s, v) => s + v, 0);
         const sizes = SIZE_SETS[order.sizeSet];
-        return {
+        
+        const items = [{
           style_no: order.styleColor.style,
           color: order.styleColor.color,
           sizes,
           quantities: order.computedOrder,
-          total: order.computedOrder.reduce((sum, val) => sum + val, 0),
-          size_source: 'noos_call_off',
+          total: totalQty,
+          size_source: 'noos_call_off_color_breakdown',
           net_need_before: order.netNeedValues,
           historical_sales: order.historicalSalesValues,
-        };
-      });
-      
-      const { data: newPo, error: poError } = await supabase
-        .from('app_pos')
-        .insert({
-          po_no: poNo,
-          status: 'Running',
-          supplier,
-          styles: uniqueStyles.length,
-          ordered: totalQty,
-          meta: {
-            items,
-            source: 'noos_call_off',
-            created_from_noos_call_off: true,
-            scrape_job_id: scrapeJobId,
-          },
-        })
-        .select('id, po_no')
-        .single();
-      
-      if (poError || !newPo) {
-        throw new Error(poError?.message || 'Failed to create APP PO');
+          white_weft_po: order.whiteWeftPo,
+        }];
+        
+        const { data: newPo, error: poError } = await supabase
+          .from('app_pos')
+          .insert({
+            po_no: poNo,
+            status: 'Running',
+            supplier,
+            styles: 1,
+            ordered: totalQty,
+            meta: {
+              items,
+              source: 'noos_call_off_color_breakdown',
+              created_from_noos_call_off: true,
+              color_breakdown: true,
+              scrape_job_id: scrapeJobId,
+            },
+          })
+          .select('id, po_no')
+          .single();
+        
+        if (poError || !newPo) {
+          throw new Error(poError?.message || `Failed to create color breakdown APP PO for ${order.styleColor.style}/${order.styleColor.color}`);
+        }
+        
+        createdPos.push({ poNo: newPo.po_no, poId: newPo.id });
       }
       
-      setAppPoCreated({ poNo: newPo.po_no, poId: newPo.id });
+      setAppPoCreated(createdPos);
       
     } catch (error: any) {
       console.error('Error creating APP PO:', error);
@@ -695,6 +740,21 @@ export default function SizeCalculatorPage() {
     if (!currentItem) return null;
     return styles?.find(s => s.style_no === currentItem.style);
   }, [currentItem, styles]);
+
+  // Overview expanded state
+  const [expandedOrderTimestamps, setExpandedOrderTimestamps] = useState<Set<number>>(new Set());
+  
+  const toggleOrderExpanded = (timestamp: number) => {
+    setExpandedOrderTimestamps(prev => {
+      const next = new Set(prev);
+      if (next.has(timestamp)) {
+        next.delete(timestamp);
+      } else {
+        next.add(timestamp);
+      }
+      return next;
+    });
+  };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
@@ -1365,66 +1425,132 @@ export default function SizeCalculatorPage() {
                             const poTotal = order.computedOrder.reduce((sum, val) => sum + val, 0);
                             const newNetNeedTotal = netNeedTotal + poTotal;
                             const styleDetail = styles?.find(s => s.style_no === order.styleColor.style);
+                            const isExpanded = expandedOrderTimestamps.has(order.timestamp);
+                            const sizes = SIZE_SETS[order.sizeSet];
 
                             return (
-                              <tr key={order.timestamp} className="border-b border-slate-200 hover:bg-gradient-to-r hover:from-slate-50 hover:to-transparent transition-colors">
-                                <td className="py-3 px-4">
-                                  <div className="flex items-center gap-2">
-                                    <div className="min-w-0 flex-1">
-                                      <div className="flex items-center gap-2">
-                                        <p className="font-semibold text-slate-900">{order.styleColor.style}</p>
-                                        {styleDetail?.style_name && (
-                                          <p className="text-xs text-slate-500 truncate">
-                                            {styleDetail.style_name}
-                                          </p>
+                              <>
+                                <tr key={order.timestamp} className="border-b border-slate-200 hover:bg-gradient-to-r hover:from-slate-50 hover:to-transparent transition-colors">
+                                  <td className="py-3 px-4">
+                                    <div className="flex items-center gap-2">
+                                      <button
+                                        onClick={() => toggleOrderExpanded(order.timestamp)}
+                                        className="text-slate-400 hover:text-slate-700 transition-colors"
+                                      >
+                                        {isExpanded ? (
+                                          <ChevronDown className="w-4 h-4" />
+                                        ) : (
+                                          <ChevronRight className="w-4 h-4" />
                                         )}
-                                      </div>
-                                      <div className="flex items-center gap-2 mt-0.5">
-                                        <p className="text-xs text-slate-600">{order.styleColor.color}</p>
-                                        <span className="text-slate-300">·</span>
-                                        <p className="text-xs text-slate-400">{order.sizeSet}</p>
-                                        {order.isColorBreakdown && (
-                                          <>
-                                            <span className="text-slate-300">·</span>
-                                            <Badge className="bg-blue-500 text-white border-0 text-[9px] px-1.5 py-0">
-                                              Breakdown
-                                            </Badge>
-                                          </>
-                                        )}
+                                      </button>
+                                      <div className="min-w-0 flex-1">
+                                        <div className="flex items-center gap-2">
+                                          <p className="font-semibold text-slate-900">{order.styleColor.style}</p>
+                                          {styleDetail?.style_name && (
+                                            <p className="text-xs text-slate-500 truncate">
+                                              {styleDetail.style_name}
+                                            </p>
+                                          )}
+                                        </div>
+                                        <div className="flex items-center gap-2 mt-0.5">
+                                          <p className="text-xs text-slate-600">{order.styleColor.color}</p>
+                                          <span className="text-slate-300">·</span>
+                                          <p className="text-xs text-slate-400">{order.sizeSet}</p>
+                                          {order.isColorBreakdown && (
+                                            <>
+                                              <span className="text-slate-300">·</span>
+                                              <Badge className="bg-blue-500 text-white border-0 text-[9px] px-1.5 py-0">
+                                                Breakdown
+                                              </Badge>
+                                            </>
+                                          )}
+                                        </div>
                                       </div>
                                     </div>
-                                  </div>
-                                </td>
-                                <td className="text-right py-3 px-3 text-slate-700 font-medium">
-                                  {histTotal.toLocaleString()}
-                                </td>
-                                <td className="text-right py-3 px-3 text-slate-700 font-medium">
-                                  {netNeedTotal.toLocaleString()}
-                                </td>
-                                <td className="text-right py-3 px-3 font-bold text-green-700">
-                                  {poTotal.toLocaleString()}
-                                </td>
-                                <td className="text-right py-3 px-3 text-slate-700 font-medium">
-                                  {newNetNeedTotal.toLocaleString()}
-                                </td>
-                                <td className="text-right py-3 px-3">
-                                  {order.isColorBreakdown && order.whiteWeftPo !== undefined ? (
-                                    <span className="text-blue-700 font-bold">
-                                      {order.whiteWeftPo.toLocaleString()}
-                                    </span>
-                                  ) : (
-                                    <span className="text-slate-300">—</span>
-                                  )}
-                                </td>
-                                <td className="py-3 px-3">
-                                  <button
-                                    onClick={() => handleRemoveOrder(order.timestamp)}
-                                    className="text-slate-400 hover:text-red-600 transition-colors"
-                                  >
-                                    <X className="w-4 h-4" />
-                                  </button>
-                                </td>
-                              </tr>
+                                  </td>
+                                  <td className="text-right py-3 px-3 text-slate-700 font-medium">
+                                    {histTotal.toLocaleString()}
+                                  </td>
+                                  <td className="text-right py-3 px-3 text-slate-700 font-medium">
+                                    {netNeedTotal.toLocaleString()}
+                                  </td>
+                                  <td className="text-right py-3 px-3 font-bold text-green-700">
+                                    {poTotal.toLocaleString()}
+                                  </td>
+                                  <td className="text-right py-3 px-3 text-slate-700 font-medium">
+                                    {newNetNeedTotal.toLocaleString()}
+                                  </td>
+                                  <td className="text-right py-3 px-3">
+                                    {order.isColorBreakdown && order.whiteWeftPo !== undefined ? (
+                                      <span className="text-blue-700 font-bold">
+                                        {order.whiteWeftPo.toLocaleString()}
+                                      </span>
+                                    ) : (
+                                      <span className="text-slate-300">—</span>
+                                    )}
+                                  </td>
+                                  <td className="py-3 px-3">
+                                    <button
+                                      onClick={() => handleRemoveOrder(order.timestamp)}
+                                      className="text-slate-400 hover:text-red-600 transition-colors"
+                                    >
+                                      <X className="w-4 h-4" />
+                                    </button>
+                                  </td>
+                                </tr>
+                                {isExpanded && (
+                                  <tr key={`${order.timestamp}-detail`} className="bg-slate-50">
+                                    <td colSpan={7} className="px-4 py-3">
+                                      <div className="ml-8 bg-white border border-slate-200 rounded-lg p-3">
+                                        <p className="text-xs font-semibold text-slate-700 mb-2">Size Breakdown</p>
+                                        <div className="overflow-x-auto">
+                                          <table className="w-full text-xs">
+                                            <thead>
+                                              <tr className="border-b border-slate-200">
+                                                <th className="text-left py-1 px-2 text-slate-600 font-medium">Size</th>
+                                                {sizes.map(size => (
+                                                  <th key={size} className="text-center py-1 px-2 text-slate-600 font-medium">{size}</th>
+                                                ))}
+                                              </tr>
+                                            </thead>
+                                            <tbody>
+                                              {histTotal > 0 && (
+                                                <tr className="border-b border-slate-100">
+                                                  <td className="py-1 px-2 text-slate-600">Hist. Sales</td>
+                                                  {order.historicalSalesValues.map((val, idx) => (
+                                                    <td key={idx} className="text-center py-1 px-2 text-slate-700">{val}</td>
+                                                  ))}
+                                                </tr>
+                                              )}
+                                              <tr className="border-b border-slate-100">
+                                                <td className="py-1 px-2 text-slate-600">Net Need</td>
+                                                {order.netNeedValues.map((val, idx) => (
+                                                  <td key={idx} className="text-center py-1 px-2 text-slate-700">{val}</td>
+                                                ))}
+                                              </tr>
+                                              <tr className="border-b border-slate-100 bg-green-50">
+                                                <td className="py-1 px-2 text-green-800 font-semibold">New Order</td>
+                                                {order.computedOrder.map((val, idx) => (
+                                                  <td key={idx} className="text-center py-1 px-2 text-green-800 font-semibold">{val}</td>
+                                                ))}
+                                              </tr>
+                                              <tr className="bg-slate-50">
+                                                <td className="py-1 px-2 text-slate-800 font-semibold">New Net Need</td>
+                                                {order.netNeedValues.map((need, idx) => {
+                                                  const newNeed = need + (order.computedOrder[idx] || 0);
+                                                  return (
+                                                    <td key={idx} className="text-center py-1 px-2 text-slate-800 font-semibold">{newNeed}</td>
+                                                  );
+                                                })}
+                                              </tr>
+                                            </tbody>
+                                          </table>
+                                        </div>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                )}
+                              </>
                             );
                           })}
                         </tbody>
@@ -1457,23 +1583,48 @@ export default function SizeCalculatorPage() {
                     </div>
 
                     {/* Success Message */}
-                    {appPoCreated && (
+                    {appPoCreated.length > 0 && (
                       <div className="bg-green-50 border border-green-200 rounded-lg p-4">
                         <div className="flex items-center gap-3">
                           <Check className="w-5 h-5 text-green-600" />
                           <div className="flex-1">
-                            <p className="text-sm font-medium text-green-900">APP PO Created Successfully</p>
-                            <p className="text-sm text-green-700 mt-1">
-                              PO Number: <span className="font-mono font-semibold">{appPoCreated.poNo}</span>
+                            <p className="text-sm font-medium text-green-900">
+                              {appPoCreated.length === 1 
+                                ? 'APP PO Created Successfully' 
+                                : `${appPoCreated.length} APP POs Created Successfully`
+                              }
                             </p>
+                            {appPoCreated.length === 1 ? (
+                              <p className="text-sm text-green-700 mt-1">
+                                PO Number: <span className="font-mono font-semibold">{appPoCreated[0].poNo}</span>
+                              </p>
+                            ) : (
+                              <div className="text-sm text-green-700 mt-1 space-y-0.5">
+                                {appPoCreated.map((po, idx) => (
+                                  <div key={po.poId} className="flex items-center gap-2">
+                                    <span className="font-mono text-xs">{po.poNo}</span>
+                                    <Button
+                                      onClick={() => window.open(`/purchase/app-pos/${po.poId}`, '_blank')}
+                                      size="sm"
+                                      variant="ghost"
+                                      className="h-6 px-2 text-xs text-green-700 hover:text-green-900"
+                                    >
+                                      View
+                                    </Button>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
                           </div>
-                          <Button
-                            onClick={() => window.open(`/purchase/app-pos/${appPoCreated.poId}`, '_blank')}
-                            size="sm"
-                            className="bg-green-600 hover:bg-green-700 text-white"
-                          >
-                            View PO
-                          </Button>
+                          {appPoCreated.length === 1 && (
+                            <Button
+                              onClick={() => window.open(`/purchase/app-pos/${appPoCreated[0].poId}`, '_blank')}
+                              size="sm"
+                              className="bg-green-600 hover:bg-green-700 text-white"
+                            >
+                              View PO
+                            </Button>
+                          )}
                         </div>
                       </div>
                     )}
@@ -1502,20 +1653,20 @@ export default function SizeCalculatorPage() {
                       </Button>
                       <Button
                         onClick={handleCreateAppPo}
-                        disabled={creatingAppPo || !!appPoCreated}
+                        disabled={creatingAppPo || appPoCreated.length > 0}
                         className="flex-1 bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 text-white shadow-md disabled:opacity-50"
                       >
                         {creatingAppPo ? (
-                          <>Creating APP PO...</>
-                        ) : appPoCreated ? (
+                          <>Creating APP PO{savedOrders.filter(o => o.isColorBreakdown).length > 0 ? 's' : ''}...</>
+                        ) : appPoCreated.length > 0 ? (
                           <>
                             <Check className="w-4 h-4 mr-2" />
-                            APP PO Created
+                            {appPoCreated.length === 1 ? 'APP PO Created' : `${appPoCreated.length} APP POs Created`}
                           </>
                         ) : (
                           <>
                             <Package className="w-4 h-4 mr-2" />
-                            Create APP PO
+                            Create APP PO{savedOrders.filter(o => o.isColorBreakdown).length > 0 ? 's' : ''}
                           </>
                         )}
                       </Button>
