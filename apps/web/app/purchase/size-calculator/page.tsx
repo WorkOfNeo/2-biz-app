@@ -36,7 +36,18 @@ type OrderData = {
   whiteWeftPo?: number; // PO quantity from WHITE WEFT if color breakdown
 };
 
-type FlowStep = 'selection' | 'calculator' | 'overview';
+type FlowStep = 'selection' | 'loading' | 'calculator' | 'overview';
+
+type ScrapedStockData = {
+  style_no: string;
+  color: string;
+  sizes: string[];
+  stock: number[];
+  sales: number[];
+  po: number[];
+  delivered?: number[];
+  netNeed: number[];
+};
 
 export default function SizeCalculatorPage() {
   const supabase = createClientComponentClient();
@@ -56,6 +67,15 @@ export default function SizeCalculatorPage() {
   const [selectedItems, setSelectedItems] = useState<StyleColorItem[]>([]);
   const [currentItemIndex, setCurrentItemIndex] = useState(0);
   const [savedOrders, setSavedOrders] = useState<OrderData[]>([]);
+  
+  // Scraping state
+  const [scrapeJobId, setScrapeJobId] = useState<string | null>(null);
+  const [scrapedData, setScrapedData] = useState<Map<string, ScrapedStockData>>(new Map());
+  const [scrapeError, setScrapeError] = useState<string | null>(null);
+  
+  // APP PO creation state
+  const [creatingAppPo, setCreatingAppPo] = useState(false);
+  const [appPoCreated, setAppPoCreated] = useState<{ poNo: string; poId: string } | null>(null);
   
   // Style/Color selection
   const [selectedStyleId, setSelectedStyleId] = useState('');
@@ -110,17 +130,35 @@ export default function SizeCalculatorPage() {
   // Get color breakdown status from current item
   const isColorBreakdown = currentItem?.isColorBreakdown || false;
 
-  // Reset calculator when moving to next item
+  // Reset calculator and load scraped data when moving to next item
   useEffect(() => {
-    if (flowStep === 'calculator') {
-      setNetNeedInput('');
-      setHistoricalSalesInput('');
+    if (flowStep === 'calculator' && currentItem) {
+      const key = `${currentItem.style}|${currentItem.color}`;
+      const scraped = scrapedData.get(key);
+      
+      if (scraped) {
+        // Auto-populate from scraped data
+        setNetNeedInput(scraped.netNeed.join(' '));
+        setHistoricalSalesInput((scraped.delivered || []).join(' '));
+        // Detect size set from scraped sizes
+        const firstSize = scraped.sizes[0];
+        if (firstSize && /^\d+$/.test(firstSize)) {
+          setSizeSet('34-46');
+        } else {
+          setSizeSet('S-XXL');
+        }
+      } else {
+        // No scraped data, reset fields
+        setNetNeedInput('');
+        setHistoricalSalesInput('');
+        setSizeSet('34-46');
+      }
+      
       setTargetQuantity('');
       setComputedOrder(null);
-      setSizeSet('34-46');
       setWhiteWeftPo(null);
     }
-  }, [currentItemIndex, flowStep]);
+  }, [currentItemIndex, flowStep, currentItem, scrapedData]);
 
   // Fetch WHITE WEFT PO when color breakdown is enabled
   useEffect(() => {
@@ -371,10 +409,133 @@ export default function SizeCalculatorPage() {
     setSelectedItems(selectedItems.filter(item => item.id !== id));
   };
 
-  const handleStartCalculator = () => {
+  const handleStartCalculator = async () => {
     if (selectedItems.length === 0) return;
-    setCurrentItemIndex(0);
-    setFlowStep('calculator');
+    
+    setScrapeError(null);
+    setFlowStep('loading');
+    
+    // Prepare style/color pairs for scraping
+    const styleColorPairs = selectedItems.map(item => ({
+      style_no: item.style,
+      color: item.color
+    }));
+    
+    try {
+      // Enqueue scrape job
+      const response = await fetch('/api/noos-call-off/enqueue-scrape', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ styleColorPairs })
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to enqueue scrape job');
+      }
+      
+      const { jobId } = await response.json();
+      setScrapeJobId(jobId);
+      
+      // Poll for job completion
+      let attempts = 0;
+      const maxAttempts = 60; // 5 minutes with 5-second intervals
+      
+      while (attempts < maxAttempts) {
+        await new Promise(resolve => setTimeout(resolve, 5000));
+        attempts++;
+        
+        // Check job status
+        const { data: job } = await supabase
+          .from('jobs')
+          .select('status, error, result')
+          .eq('id', jobId)
+          .single();
+        
+        if (!job) {
+          throw new Error('Job not found');
+        }
+        
+        if (job.status === 'failed') {
+          throw new Error(job.error || 'Scrape job failed');
+        }
+        
+        if (job.status === 'succeeded') {
+          // Fetch scraped data
+          const { data: stockRows } = await supabase
+            .from('noos_call_off_stock')
+            .select('*')
+            .eq('job_id', jobId);
+          
+          if (!stockRows) {
+            throw new Error('No stock data found');
+          }
+          
+          // Process scraped data into usable format
+          const dataMap = new Map<string, ScrapedStockData>();
+          
+          for (const item of selectedItems) {
+            const key = `${item.style}|${item.color}`;
+            const rows = (stockRows as any[]).filter(
+              r => r.style_no === item.style && r.color.toLowerCase() === item.color.toLowerCase()
+            );
+            
+            if (rows.length === 0) continue;
+            
+            const stockRow = rows.find(r => r.section === 'Stock' && r.row_label === 'Stock');
+            const salesRows = rows.filter(r => r.section === 'Sold');
+            const poRows = rows.filter(r => r.section === 'Purchase (Running + Shipped)');
+            const deliveredRow = salesRows.find(r => /delivered/i.test(r.row_label || ''));
+            
+            if (!stockRow) continue;
+            
+            const sizes = stockRow.sizes as string[];
+            const stock = stockRow.values as number[];
+            
+            // Sum all sales rows
+            const sales = sizes.map((_, idx) => 
+              salesRows.reduce((sum, row) => sum + ((row.values as number[])[idx] || 0), 0)
+            );
+            
+            // Sum all PO rows
+            const po = sizes.map((_, idx) => 
+              poRows.reduce((sum, row) => sum + ((row.values as number[])[idx] || 0), 0)
+            );
+            
+            // Delivered (Historical Sales)
+            const delivered = deliveredRow ? (deliveredRow.values as number[]) : undefined;
+            
+            // Calculate Net Need: Stock - Sales + PO
+            const netNeed = sizes.map((_, idx) => 
+              (stock[idx] || 0) - (sales[idx] || 0) + (po[idx] || 0)
+            );
+            
+            dataMap.set(key, {
+              style_no: item.style,
+              color: item.color,
+              sizes,
+              stock,
+              sales,
+              po,
+              delivered,
+              netNeed
+            });
+          }
+          
+          setScrapedData(dataMap);
+          setCurrentItemIndex(0);
+          setFlowStep('calculator');
+          return;
+        }
+      }
+      
+      throw new Error('Scrape job timed out');
+      
+    } catch (error: any) {
+      console.error('Error scraping stock:', error);
+      setScrapeError(error.message || 'Failed to scrape stock data');
+      setFlowStep('selection');
+    }
   };
 
   const handleSaveAndNext = () => {
@@ -420,6 +581,93 @@ export default function SizeCalculatorPage() {
     setSavedOrders(savedOrders.filter(order => order.timestamp !== timestamp));
   };
 
+  const handleCreateAppPo = async () => {
+    if (savedOrders.length === 0) return;
+    
+    setCreatingAppPo(true);
+    setAppPoCreated(null);
+    
+    try {
+      // Generate PO number
+      const date = new Date();
+      const prefix = 'NOOS';
+      const dateStr = date.toISOString().slice(0, 10).replace(/-/g, '');
+      const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
+      const poNo = `${prefix}-${dateStr}-${random}`;
+      
+      // Get unique styles to fetch suppliers
+      const uniqueStyles = Array.from(new Set(savedOrders.map(o => o.styleColor.style)));
+      const { data: stylesData } = await supabase
+        .from('styles')
+        .select('style_no, supplier')
+        .in('style_no', uniqueStyles);
+      
+      const styleToSupplier = new Map<string, string>();
+      for (const style of (stylesData || [])) {
+        styleToSupplier.set(style.style_no, style.supplier || 'Unknown');
+      }
+      
+      // Group by supplier
+      const ordersBySupplier = new Map<string, typeof savedOrders>();
+      for (const order of savedOrders) {
+        const supplier = styleToSupplier.get(order.styleColor.style) || 'Unknown';
+        if (!ordersBySupplier.has(supplier)) {
+          ordersBySupplier.set(supplier, []);
+        }
+        ordersBySupplier.get(supplier)!.push(order);
+      }
+      
+      // For now, create one PO with all items (can be extended to create per supplier)
+      const supplier = ordersBySupplier.keys().next().value || 'Mixed';
+      const totalQty = savedOrders.reduce((sum, o) => sum + o.computedOrder.reduce((s, v) => s + v, 0), 0);
+      
+      // Build items array
+      const items = savedOrders.map(order => {
+        const sizes = SIZE_SETS[order.sizeSet];
+        return {
+          style_no: order.styleColor.style,
+          color: order.styleColor.color,
+          sizes,
+          quantities: order.computedOrder,
+          total: order.computedOrder.reduce((sum, val) => sum + val, 0),
+          size_source: 'noos_call_off',
+          net_need_before: order.netNeedValues,
+          historical_sales: order.historicalSalesValues,
+        };
+      });
+      
+      const { data: newPo, error: poError } = await supabase
+        .from('app_pos')
+        .insert({
+          po_no: poNo,
+          status: 'Running',
+          supplier,
+          styles: uniqueStyles.length,
+          ordered: totalQty,
+          meta: {
+            items,
+            source: 'noos_call_off',
+            created_from_noos_call_off: true,
+            scrape_job_id: scrapeJobId,
+          },
+        })
+        .select('id, po_no')
+        .single();
+      
+      if (poError || !newPo) {
+        throw new Error(poError?.message || 'Failed to create APP PO');
+      }
+      
+      setAppPoCreated({ poNo: newPo.po_no, poId: newPo.id });
+      
+    } catch (error: any) {
+      console.error('Error creating APP PO:', error);
+      alert(`Failed to create APP PO: ${error.message}`);
+    } finally {
+      setCreatingAppPo(false);
+    }
+  };
+
   // Get style details for current item
   const currentStyleDetails = useMemo(() => {
     if (!currentItem) return null;
@@ -432,14 +680,15 @@ export default function SizeCalculatorPage() {
         {/* Header */}
         <div className="mb-8">
           <div className="flex items-center gap-3 mb-2">
-            <Calculator className="w-7 h-7 text-slate-700" />
+            <Package className="w-7 h-7 text-slate-700" />
             <h1 className="text-3xl font-semibold text-slate-900">
-              Size Distribution Calculator
+              NOOS Call Off
             </h1>
           </div>
           <div className="flex items-center gap-4">
             <p className="text-slate-600 text-sm">
-              {flowStep === 'selection' && 'Select styles and colors to calculate'}
+              {flowStep === 'selection' && 'Select styles and colors for NOOS replenishment'}
+              {flowStep === 'loading' && 'Fetching stock data from supplier...'}
               {flowStep === 'calculator' && (
                 <>
                   <span className="font-medium">Processing:</span> {currentItemIndex + 1} of {selectedItems.length} items
@@ -610,16 +859,40 @@ export default function SizeCalculatorPage() {
                   })}
                 </div>
 
+                {scrapeError && (
+                  <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                    <p className="text-sm text-red-800 font-medium">Error fetching stock data:</p>
+                    <p className="text-sm text-red-600 mt-1">{scrapeError}</p>
+                  </div>
+                )}
+
                 <Button
                   onClick={handleStartCalculator}
                   className="w-full bg-slate-900 hover:bg-slate-800 text-white h-12 text-sm font-medium"
+                  disabled={selectedItems.length === 0}
                 >
-                  Start Calculator
+                  Start NOOS Call Off
                   <ArrowRight className="w-4 h-4 ml-2" />
                 </Button>
               </div>
             )}
           </div>
+        )}
+
+        {/* LOADING STATE */}
+        {flowStep === 'loading' && (
+          <Card className="border border-slate-200 shadow-md">
+            <CardContent className="p-12">
+              <div className="flex flex-col items-center justify-center">
+                <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-slate-900 mb-6"></div>
+                <p className="text-lg font-medium text-slate-900 mb-2">Fetching stock data...</p>
+                <p className="text-sm text-slate-600 text-center max-w-md">
+                  Scraping stock, sales, and PO data for {selectedItems.length} style{selectedItems.length !== 1 ? 's' : ''}. 
+                  This may take a few minutes.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
         )}
 
         {/* STEP 2: Calculator */}
@@ -658,6 +931,87 @@ export default function SizeCalculatorPage() {
 
             <Card className="border border-slate-200 shadow-md">
               <CardContent className="p-6 space-y-5">
+                {/* Scraped Stock Data Display */}
+                {(() => {
+                  const key = `${currentItem.style}|${currentItem.color}`;
+                  const scraped = scrapedData.get(key);
+                  if (scraped) {
+                    return (
+                      <div className="bg-slate-50 border border-slate-200 rounded-lg p-4">
+                        <h3 className="text-sm font-semibold text-slate-900 mb-3">Current Stock Status</h3>
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-xs">
+                            <thead>
+                              <tr className="border-b border-slate-300">
+                                <th className="text-left py-2 px-2 font-semibold text-slate-700">Size</th>
+                                {scraped.sizes.map(size => (
+                                  <th key={size} className="text-center py-2 px-2 font-semibold text-slate-700">{size}</th>
+                                ))}
+                                <th className="text-center py-2 px-2 font-semibold text-slate-700">Total</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-200">
+                              <tr className="hover:bg-white">
+                                <td className="py-2 px-2 font-medium text-slate-700">Stock</td>
+                                {scraped.stock.map((val, idx) => (
+                                  <td key={idx} className="text-center py-2 px-2 text-slate-900">{val}</td>
+                                ))}
+                                <td className="text-center py-2 px-2 font-semibold text-slate-900">
+                                  {scraped.stock.reduce((a, b) => a + b, 0)}
+                                </td>
+                              </tr>
+                              <tr className="hover:bg-white">
+                                <td className="py-2 px-2 font-medium text-slate-700">Sales</td>
+                                {scraped.sales.map((val, idx) => (
+                                  <td key={idx} className="text-center py-2 px-2 text-slate-900">{val}</td>
+                                ))}
+                                <td className="text-center py-2 px-2 font-semibold text-slate-900">
+                                  {scraped.sales.reduce((a, b) => a + b, 0)}
+                                </td>
+                              </tr>
+                              <tr className="hover:bg-white">
+                                <td className="py-2 px-2 font-medium text-slate-700">PO</td>
+                                {scraped.po.map((val, idx) => (
+                                  <td key={idx} className="text-center py-2 px-2 text-slate-900">{val}</td>
+                                ))}
+                                <td className="text-center py-2 px-2 font-semibold text-slate-900">
+                                  {scraped.po.reduce((a, b) => a + b, 0)}
+                                </td>
+                              </tr>
+                              {scraped.delivered && (
+                                <tr className="hover:bg-white bg-blue-50">
+                                  <td className="py-2 px-2 font-medium text-blue-900">Delivered</td>
+                                  {scraped.delivered.map((val, idx) => (
+                                    <td key={idx} className="text-center py-2 px-2 text-blue-900">{val}</td>
+                                  ))}
+                                  <td className="text-center py-2 px-2 font-semibold text-blue-900">
+                                    {scraped.delivered.reduce((a, b) => a + b, 0)}
+                                  </td>
+                                </tr>
+                              )}
+                              <tr className="hover:bg-white bg-slate-100 font-semibold">
+                                <td className="py-2 px-2 text-slate-900">Net Need</td>
+                                {scraped.netNeed.map((val, idx) => (
+                                  <td key={idx} className={`text-center py-2 px-2 ${val < 0 ? 'text-red-600' : 'text-green-600'}`}>
+                                    {val}
+                                  </td>
+                                ))}
+                                <td className={`text-center py-2 px-2 ${scraped.netNeed.reduce((a, b) => a + b, 0) < 0 ? 'text-red-600' : 'text-green-600'}`}>
+                                  {scraped.netNeed.reduce((a, b) => a + b, 0)}
+                                </td>
+                              </tr>
+                            </tbody>
+                          </table>
+                        </div>
+                        <p className="text-xs text-slate-600 mt-2 italic">
+                          Net Need = Stock - Sales + PO
+                        </p>
+                      </div>
+                    );
+                  }
+                  return null;
+                })()}
+
                 {/* Color Breakdown Info (if enabled) */}
                 {isColorBreakdown && whiteWeftPo !== null && (
                   <div className="bg-gradient-to-r from-blue-50 to-blue-100 border-l-4 border-blue-500 p-4 rounded-r">
@@ -1080,6 +1434,28 @@ export default function SizeCalculatorPage() {
                       </table>
                     </div>
 
+                    {/* Success Message */}
+                    {appPoCreated && (
+                      <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                        <div className="flex items-center gap-3">
+                          <Check className="w-5 h-5 text-green-600" />
+                          <div className="flex-1">
+                            <p className="text-sm font-medium text-green-900">APP PO Created Successfully</p>
+                            <p className="text-sm text-green-700 mt-1">
+                              PO Number: <span className="font-mono font-semibold">{appPoCreated.poNo}</span>
+                            </p>
+                          </div>
+                          <Button
+                            onClick={() => window.open(`/purchase/app-pos/${appPoCreated.poId}`, '_blank')}
+                            size="sm"
+                            className="bg-green-600 hover:bg-green-700 text-white"
+                          >
+                            View PO
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+
                     {/* Actions */}
                     <div className="flex gap-3 pt-5 border-t-2 border-slate-200">
                       <Button
@@ -1097,9 +1473,29 @@ export default function SizeCalculatorPage() {
                           ).join('\n');
                           navigator.clipboard.writeText(csvContent);
                         }}
-                        className="flex-1 bg-gradient-to-r from-slate-900 to-slate-800 hover:from-slate-800 hover:to-slate-700 text-white shadow-md"
+                        variant="outline"
+                        className="border-2 border-slate-300 hover:border-slate-400 hover:bg-slate-50"
                       >
-                        Copy All Orders to Clipboard
+                        Copy to Clipboard
+                      </Button>
+                      <Button
+                        onClick={handleCreateAppPo}
+                        disabled={creatingAppPo || !!appPoCreated}
+                        className="flex-1 bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 text-white shadow-md disabled:opacity-50"
+                      >
+                        {creatingAppPo ? (
+                          <>Creating APP PO...</>
+                        ) : appPoCreated ? (
+                          <>
+                            <Check className="w-4 h-4 mr-2" />
+                            APP PO Created
+                          </>
+                        ) : (
+                          <>
+                            <Package className="w-4 h-4 mr-2" />
+                            Create APP PO
+                          </>
+                        )}
                       </Button>
                     </div>
                   </div>

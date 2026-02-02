@@ -1337,6 +1337,10 @@ async function runJob(job: JobRow) {
     await checkStockFixJob({ job, page: page!, log, saveResult, setJobFailedOrRequeue, setJobSucceeded, ensureNotCancelled, supabase, SPY_BASE_URL, findFirst });
     return;
   }
+  if ((job.type as any) === 'scrape_noos_call_off_stock') {
+    await scrapeNoosCallOffStockJob({ job, page: page!, log, saveResult, setJobFailedOrRequeue, setJobSucceeded, ensureNotCancelled, supabase, SPY_BASE_URL });
+    return;
+  }
   /* LEGACY export_overview handler (disabled)
     try {
       await log(job.id, 'info', 'STEP:export_overview_begin', job.payload || {});
@@ -2757,6 +2761,272 @@ async function runJob(job: JobRow) {
       await log(job.id, 'info', 'STEP:complete');
     }
       return; // scrape_statistics handled successfully
+    }
+
+    // NOOS Call Off stock scraping handler
+    async function scrapeNoosCallOffStockJob(ctx: {
+      job: any;
+      page: any;
+      log: typeof log;
+      saveResult: typeof saveResult;
+      setJobFailedOrRequeue: typeof setJobFailedOrRequeue;
+      setJobSucceeded: typeof setJobSucceeded;
+      ensureNotCancelled: typeof ensureNotCancelled;
+      supabase: any;
+      SPY_BASE_URL: string;
+    }) {
+      const { job, page, log, saveResult, setJobFailedOrRequeue, setJobSucceeded, ensureNotCancelled, supabase, SPY_BASE_URL } = ctx;
+      
+      await log(job.id, 'info', 'STEP:noos_call_off_scrape_begin');
+      
+      const styleColorPairs = (job.payload as any)?.styleColorPairs as Array<{ style_no: string; color: string }> | undefined;
+      if (!styleColorPairs || styleColorPairs.length === 0) {
+        await saveResult(job.id, 'No style/color pairs provided', { count: 0 });
+        await log(job.id, 'info', 'STEP:complete', { scraped: 0 });
+        return;
+      }
+      
+      // Clear existing data for this job (in case of retry)
+      try {
+        await supabase.from('noos_call_off_stock').delete().eq('job_id', job.id);
+      } catch {}
+      
+      // Group pairs by style_no for efficient scraping
+      const byStyle = new Map<string, Set<string>>();
+      for (const pair of styleColorPairs) {
+        if (!byStyle.has(pair.style_no)) byStyle.set(pair.style_no, new Set());
+        byStyle.get(pair.style_no)!.add(pair.color.toLowerCase());
+      }
+      
+      const styleNos = Array.from(byStyle.keys());
+      await log(job.id, 'info', 'STEP:noos_call_off_styles', { styles: styleNos.length, pairs: styleColorPairs.length });
+      
+      // Fetch style data
+      const { data: styles } = await supabase
+        .from('styles')
+        .select('id, style_no, style_name, link_href, scrape_enabled')
+        .in('style_no', styleNos)
+        .eq('inactive', false);
+      
+      let processedStyles = 0;
+      let totalRows = 0;
+      const scrapeTs = new Date().toISOString();
+      
+      for (const s of (styles ?? []) as any[]) {
+        processedStyles++;
+        await log(job.id, 'info', 'STEP:noos_call_off_progress', { 
+          index: processedStyles, 
+          total: styles?.length || 0,
+          style_no: s.style_no 
+        });
+        
+        await ensureNotCancelled(job.id);
+        
+        const href = (s.link_href || '').toString();
+        if (!href) continue;
+        
+        const requestedColors = byStyle.get(s.style_no) || new Set();
+        
+        const url = new URL(href, SPY_BASE_URL).toString().replace(/#.*$/, '') + '#tab=statandstock';
+        await log(job.id, 'info', 'STEP:noos_call_off_nav', { style_no: s.style_no, url });
+        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+        await ensureNotCancelled(job.id);
+        
+        // Click stat & stock tab
+        try {
+          const clicked = await page.evaluate(() => {
+            const a = document.querySelector('a[href$="#tab=statandstock"], a[href*="#tab=statandstock"]') as HTMLAnchorElement | null;
+            if (a) { a.click(); return true; }
+            return false;
+          });
+          if (clicked) { await page.waitForTimeout(500); }
+        } catch {}
+        
+        // Expand requested color sections
+        try {
+          await page.waitForFunction(() => !!document.querySelector('.statAndStockBox'), {}, { timeout: 30_000 }).catch(() => {});
+          
+          for (let i = 0; i < 10; i++) {
+            const clicked = await page.evaluate((requested: string[]) => {
+              let clicks = 0;
+              const headers = Array.from(document.querySelectorAll('.statAndStockBox tr.tableBackgroundBlack')) as HTMLTableRowElement[];
+              for (const tr of headers) {
+                const td = tr.querySelector('td');
+                const colorName = (td?.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
+                if (!requested.includes(colorName)) continue;
+                
+                const hasInactive = /\(inactive\)/i.test(colorName);
+                const styleAttr = (tr.getAttribute('style') || '').toLowerCase();
+                const hasRedBg = /#900/.test(styleAttr);
+                if (hasInactive || hasRedBg) continue;
+                
+                const arrow = tr.querySelector('.sprite.sprite168.spriteArrowDown.right.clickable') as HTMLElement | null;
+                if (arrow) { arrow.click(); clicks++; }
+              }
+              return clicks;
+            }, Array.from(requestedColors));
+            
+            if (!clicked) break;
+            await page.waitForTimeout(500);
+          }
+        } catch (e: any) {
+          await log(job.id, 'error', 'STEP:noos_call_off_expand_error', { error: e?.message || String(e) });
+        }
+        
+        // Wait for details
+        try {
+          await page.waitForSelector('.statAndStockDetails', { timeout: 25_000, state: 'attached' as any });
+        } catch {
+          await log(job.id, 'info', 'STEP:noos_call_off_no_details', { style_no: s.style_no });
+          continue;
+        }
+        
+        // Parse stock data (reuse existing parsing logic)
+        const extracted = await page.$$eval('.statAndStockBox', (boxes, requested: string[]) => {
+          function text(el: Element | null | undefined): string { 
+            return ((el as HTMLElement | null)?.textContent || '').replace(/\s+/g, ' ').trim(); 
+          }
+          function numbersFromRow(tds: HTMLElement[]): number[] {
+            const arr: number[] = [];
+            for (let i = 1; i < tds.length - 1; i++) {
+              const raw = (tds[i]?.textContent || '').replace(/\s+/g, ' ').trim();
+              const n = Number(raw.replace(/[^0-9\-]/g, '')) || 0;
+              arr.push(n);
+            }
+            return arr;
+          }
+          
+          const out: Array<{ color: string; sizes: string[]; section: string; row_label: string; values: number[]; po_link: string | null }> = [];
+          
+          for (const box of Array.from(boxes) as HTMLElement[]) {
+            const details = box.querySelector('.statAndStockDetails') as HTMLElement | null;
+            if (!details) continue;
+            const firstTable = details.querySelector('table') as HTMLTableElement | null;
+            if (!firstTable) continue;
+            const rows = Array.from(firstTable.querySelectorAll('tr')) as HTMLTableRowElement[];
+            if (rows.length === 0) continue;
+            
+            const first = rows[0];
+            if (!first) continue;
+            const headerTds = Array.from(first.querySelectorAll('td')) as HTMLElement[];
+            const color = text(headerTds[0]);
+            const colorLower = color.toLowerCase();
+            
+            // Only process requested colors
+            if (!requested.includes(colorLower)) continue;
+            
+            const headerRowOutside = box.querySelector('tr.tableBackgroundBlack') as HTMLTableRowElement | null;
+            const styleAttr = (headerRowOutside?.getAttribute('style') || '').toLowerCase();
+            const hasRedBg = /#900/.test(styleAttr);
+            const hasInactive = /\(inactive\)/i.test(color);
+            if (hasInactive || hasRedBg) continue;
+            
+            const sizeLabels: string[] = [];
+            for (let i = 1; i < headerTds.length - 1; i++) sizeLabels.push(text(headerTds[i]));
+            
+            let inSold = false;
+            let inPurchase = false;
+            
+            for (let r = 1; r < rows.length; r++) {
+              const rowEl = rows[r] as HTMLTableRowElement;
+              const tds = Array.from(rowEl.querySelectorAll('td')) as HTMLElement[];
+              const label = text(tds[0]);
+              const cls = rowEl.className || '';
+              
+              if (/Sold/.test(label) && /header/.test(cls)) { inSold = true; inPurchase = false; continue; }
+              if (/Available/.test(label) && /header/.test(cls)) { inSold = false; continue; }
+              if (/Purchase/.test(label) && /header/.test(cls)) { inPurchase = true; inSold = false; continue; }
+              if (/Net Need/.test(label) && /header/.test(cls)) { inPurchase = false; break; }
+              
+              // Stock row
+              if (!inSold && !inPurchase && label === 'Stock') { 
+                out.push({ color, sizes: sizeLabels, section: 'Stock', row_label: 'Stock', values: numbersFromRow(tds), po_link: null }); 
+                continue; 
+              }
+              
+              // Sold block rows (including Delivered)
+              if (inSold && cls.includes('stylecolor-expanded--sub')) {
+                out.push({ color, sizes: sizeLabels, section: 'Sold', row_label: label || 'Row', values: numbersFromRow(tds), po_link: null });
+                continue;
+              }
+              
+              // Purchase block rows
+              if (inPurchase && cls.includes('stylecolor-expanded--sub')) {
+                let po_link: string | null = null;
+                const poA = rowEl.querySelector('a[href*="purchase_orders.php"]') as HTMLAnchorElement | null;
+                po_link = poA ? (poA.getAttribute('href') || null) : null;
+                out.push({ color, sizes: sizeLabels, section: 'Purchase (Running + Shipped)', row_label: label || 'Row', values: numbersFromRow(tds), po_link });
+                continue;
+              }
+            }
+          }
+          return out;
+        }, Array.from(requestedColors));
+        
+        // Filter Delivered rows based on total >= 200 threshold
+        const filteredExtracted: typeof extracted = [];
+        const deliveredByColor = new Map<string, { values: number[]; total: number }>();
+        
+        for (const row of extracted) {
+          if (row.section === 'Sold' && /delivered/i.test(row.row_label)) {
+            const total = row.values.reduce((sum, val) => sum + val, 0);
+            deliveredByColor.set(row.color.toLowerCase(), { values: row.values, total });
+          }
+        }
+        
+        for (const row of extracted) {
+          // Check Delivered threshold
+          if (row.section === 'Sold' && /delivered/i.test(row.row_label)) {
+            const colorKey = row.color.toLowerCase();
+            const delivered = deliveredByColor.get(colorKey);
+            if (delivered && delivered.total >= 200) {
+              filteredExtracted.push(row);
+            }
+            // Skip if < 200
+            continue;
+          }
+          // Include all other rows
+          filteredExtracted.push(row);
+        }
+        
+        await log(job.id, 'info', 'STEP:noos_call_off_extracted', { 
+          style_no: s.style_no, 
+          rows: filteredExtracted.length,
+          delivered_filtered: extracted.length - filteredExtracted.length
+        });
+        
+        // Upsert to noos_call_off_stock table
+        const payload = filteredExtracted.map((row: any) => ({
+          style_no: s.style_no,
+          color: row.color,
+          sizes: row.sizes,
+          section: row.section,
+          row_label: String(row.row_label || '').trim(),
+          values: row.values,
+          po_link: row.po_link,
+          scraped_at: scrapeTs,
+          job_id: job.id
+        }));
+        
+        // Deduplicate by conflict key
+        const dedupMap = new Map<string, any>();
+        for (const r of payload) {
+          const key = `${r.style_no}|${r.color}|${r.section}|${r.row_label}`;
+          dedupMap.set(key, r);
+        }
+        const deduped = Array.from(dedupMap.values());
+        
+        if (deduped.length) {
+          const { error: upErr } = await supabase
+            .from('noos_call_off_stock')
+            .upsert(deduped, { onConflict: 'style_no,color,section,row_label' as any });
+          if (upErr) throw upErr;
+          totalRows += deduped.length;
+        }
+      }
+      
+      await saveResult(job.id, 'NOOS Call Off stock scraped', { styles: processedStyles, rows: totalRows });
+      await log(job.id, 'info', 'STEP:complete', { styles: processedStyles, rows: totalRows });
     }
 
     // If we reach here, the job type was not handled (browser-less jobs are handled earlier)

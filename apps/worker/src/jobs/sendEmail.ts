@@ -27,10 +27,10 @@ export async function sendEmail(
   switch (context) {
     case 'stock_list':
     case 'stock_list_schedule':
-      return sendStockListEmail(payload, log);
+      return sendStockListEmail(payload as any, log);
     
     case 'salesmen_schedule':
-      return sendSalesmenEmail(payload, log);
+      return sendSalesmenEmail(payload as any, log);
     
     default:
       // Use core sender for unknown/generic emails
