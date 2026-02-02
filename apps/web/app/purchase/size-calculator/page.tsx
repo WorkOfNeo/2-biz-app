@@ -72,8 +72,10 @@ export default function SizeCalculatorPage() {
       
       // Calculate desired quantities for each size based on historical percentages
       let order = sizes.map((_, idx) => {
-        const desiredFinalQty = (historicalSalesPercentages[idx] / 100) * targetFinalTotal;
-        const orderQty = Math.max(0, desiredFinalQty - netNeedValues[idx]);
+        const histPct = historicalSalesPercentages[idx] ?? 0;
+        const needVal = netNeedValues[idx] ?? 0;
+        const desiredFinalQty = (histPct / 100) * targetFinalTotal;
+        const orderQty = Math.max(0, desiredFinalQty - needVal);
         return Math.round(orderQty);
       });
 
@@ -85,15 +87,15 @@ export default function SizeCalculatorPage() {
         if (Math.abs(diff) === 0) break;
 
         // Calculate current distribution quality (how close to target %)
-        const currentFinal = order.map((o, idx) => netNeedValues[idx] + o);
+        const currentFinal = order.map((o, idx) => (netNeedValues[idx] ?? 0) + o);
         const currentFinalTotal = currentFinal.reduce((sum, val) => sum + val, 0);
         const currentPcts = currentFinal.map(val => (val / currentFinalTotal) * 100);
         
         // Find size with largest deviation from target percentage
         const deviations = currentPcts.map((pct, idx) => ({
           idx,
-          deviation: Math.abs(pct - historicalSalesPercentages[idx]),
-          direction: pct - historicalSalesPercentages[idx]
+          deviation: Math.abs(pct - (historicalSalesPercentages[idx] ?? 0)),
+          direction: pct - (historicalSalesPercentages[idx] ?? 0)
         }));
         
         if (diff > 0) {
@@ -101,16 +103,16 @@ export default function SizeCalculatorPage() {
           const underTarget = deviations
             .filter(d => d.direction < 0)
             .sort((a, b) => b.deviation - a.deviation);
-          const targetIdx = underTarget.length > 0 ? underTarget[0].idx : deviations[0].idx;
-          order[targetIdx] += 1;
+          const targetIdx = underTarget.length > 0 ? underTarget[0]!.idx : deviations[0]!.idx;
+          order[targetIdx]! += 1;
         } else {
           // Need to remove - remove from size that's most over target
           const overTarget = deviations
-            .filter(d => d.direction > 0 && order[d.idx] > 0)
+            .filter(d => d.direction > 0 && (order[d.idx] ?? 0) > 0)
             .sort((a, b) => b.deviation - a.deviation);
-          const targetIdx = overTarget.length > 0 ? overTarget[0].idx : 
-            order.findIndex((o, idx) => o > 0);
-          if (targetIdx >= 0) order[targetIdx] -= 1;
+          const targetIdx = overTarget.length > 0 ? overTarget[0]!.idx : 
+            order.findIndex((o) => o > 0);
+          if (targetIdx >= 0 && order[targetIdx] !== undefined) order[targetIdx]! -= 1;
         }
       }
 
