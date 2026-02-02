@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../../../components/ui/card';
 import { Button } from '../../../components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../components/ui/tabs';
@@ -19,8 +19,14 @@ export default function SizeCalculatorPage() {
   const [netNeedInput, setNetNeedInput] = useState('');
   const [historicalSalesInput, setHistoricalSalesInput] = useState('');
   const [targetQuantity, setTargetQuantity] = useState('');
+  const [computedOrder, setComputedOrder] = useState<number[] | null>(null);
 
   const sizes = SIZE_SETS[sizeSet];
+
+  // Reset computed order when inputs change
+  useEffect(() => {
+    setComputedOrder(null);
+  }, [netNeedInput, historicalSalesInput, targetQuantity, sizeSet]);
 
   // Parse input strings into arrays of numbers
   const parseValues = (input: string): number[] => {
@@ -52,14 +58,76 @@ export default function SizeCalculatorPage() {
     return historicalSalesValues.map(val => (val / historicalSalesTotal) * 100);
   }, [historicalSalesValues, historicalSalesTotal]);
 
-  // Calculate suggested order based on target quantity and historical sales distribution
+  // Calculate optimal order to match historical sales distribution in the final net need
+  const calculateOptimalOrder = useMemo(() => {
+    return (targetQty: number): number[] => {
+      if (targetQty === 0 || historicalSalesTotal === 0 || netNeedTotal === 0) {
+        return sizes.map(() => 0);
+      }
+
+      const maxIterations = 100;
+      
+      // Target final total after order
+      const targetFinalTotal = netNeedTotal + targetQty;
+      
+      // Calculate desired quantities for each size based on historical percentages
+      let order = sizes.map((_, idx) => {
+        const desiredFinalQty = (historicalSalesPercentages[idx] / 100) * targetFinalTotal;
+        const orderQty = Math.max(0, desiredFinalQty - netNeedValues[idx]);
+        return Math.round(orderQty);
+      });
+
+      // Iteratively adjust to hit target total while maintaining distribution
+      for (let iteration = 0; iteration < maxIterations; iteration++) {
+        const currentTotal = order.reduce((sum, val) => sum + val, 0);
+        const diff = targetQty - currentTotal;
+        
+        if (Math.abs(diff) === 0) break;
+
+        // Calculate current distribution quality (how close to target %)
+        const currentFinal = order.map((o, idx) => netNeedValues[idx] + o);
+        const currentFinalTotal = currentFinal.reduce((sum, val) => sum + val, 0);
+        const currentPcts = currentFinal.map(val => (val / currentFinalTotal) * 100);
+        
+        // Find size with largest deviation from target percentage
+        const deviations = currentPcts.map((pct, idx) => ({
+          idx,
+          deviation: Math.abs(pct - historicalSalesPercentages[idx]),
+          direction: pct - historicalSalesPercentages[idx]
+        }));
+        
+        if (diff > 0) {
+          // Need to add more - add to size that's most under target
+          const underTarget = deviations
+            .filter(d => d.direction < 0)
+            .sort((a, b) => b.deviation - a.deviation);
+          const targetIdx = underTarget.length > 0 ? underTarget[0].idx : deviations[0].idx;
+          order[targetIdx] += 1;
+        } else {
+          // Need to remove - remove from size that's most over target
+          const overTarget = deviations
+            .filter(d => d.direction > 0 && order[d.idx] > 0)
+            .sort((a, b) => b.deviation - a.deviation);
+          const targetIdx = overTarget.length > 0 ? overTarget[0].idx : 
+            order.findIndex((o, idx) => o > 0);
+          if (targetIdx >= 0) order[targetIdx] -= 1;
+        }
+      }
+
+      return order;
+    };
+  }, [sizes, historicalSalesPercentages, historicalSalesTotal, netNeedTotal, netNeedValues]);
+  
+  // Use computed order if available, otherwise use simple distribution
   const calculateOrder = useMemo(() => {
+    if (computedOrder) return computedOrder;
+    
     const target = parseFloat(targetQuantity) || 0;
     if (target === 0 || historicalSalesTotal === 0) {
       return sizes.map(() => 0);
     }
 
-    // Initial distribution based on historical sales percentages
+    // Simple initial distribution based on historical sales percentages
     const initialOrder = historicalSalesPercentages.map(pct => 
       Math.round((pct / 100) * target)
     );
@@ -69,13 +137,12 @@ export default function SizeCalculatorPage() {
     const diff = target - currentTotal;
 
     if (diff !== 0) {
-      // Find the size with the highest historical percentage to adjust
       const maxIdx = historicalSalesPercentages.indexOf(Math.max(...historicalSalesPercentages));
       initialOrder[maxIdx] = (initialOrder[maxIdx] || 0) + diff;
     }
 
     return initialOrder;
-  }, [targetQuantity, historicalSalesPercentages, historicalSalesTotal, sizes]);
+  }, [targetQuantity, historicalSalesPercentages, historicalSalesTotal, sizes, computedOrder]);
 
   // Calculate new order with net need consideration
   const calculateNewOrderWithNetNeed = useMemo(() => {
@@ -265,255 +332,141 @@ export default function SizeCalculatorPage() {
 
       {/* Results Display */}
       {netNeedValid && historicalSalesValid && netNeedTotal > 0 && historicalSalesTotal > 0 && parseFloat(targetQuantity || '0') > 0 && (
-        <>
-          {/* Input Distribution Analysis */}
-          <Card className="border-2 border-blue-200">
-            <CardHeader className="bg-gradient-to-r from-blue-50 to-indigo-50">
-              <CardTitle className="flex items-center gap-2">
-                <TrendingUp className="w-5 h-5 text-blue-600" />
-                Input Distribution Analysis
-              </CardTitle>
-              <CardDescription>Current situation and historical patterns</CardDescription>
-            </CardHeader>
-            <CardContent className="pt-6">
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm border-collapse border border-slate-200 rounded-lg overflow-hidden">
-                  <thead>
-                    <tr className="bg-slate-100 border-b-2 border-slate-300">
-                      <th className="text-left py-3 px-4 font-semibold text-slate-700 w-48">Metric</th>
-                      {sizes.map(size => (
-                        <th key={size} className="text-center py-3 px-3 font-semibold text-slate-700 border-l border-slate-200">
-                          {size}
-                        </th>
-                      ))}
-                      <th className="text-right py-3 px-4 font-semibold text-slate-700 border-l-2 border-slate-300 bg-slate-50">
-                        Total
+        <Card className="border-2">
+          <CardHeader className="bg-gradient-to-r from-slate-50 to-blue-50">
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle className="flex items-center gap-2">
+                  <Calculator className="w-5 h-5 text-blue-600" />
+                  Order Analysis
+                </CardTitle>
+                <CardDescription>
+                  Target: <strong>{parseFloat(targetQuantity).toLocaleString()} pieces</strong>
+                </CardDescription>
+              </div>
+              <Button
+                onClick={() => {
+                  const target = parseFloat(targetQuantity) || 0;
+                  if (target > 0) {
+                    const optimal = calculateOptimalOrder(target);
+                    setComputedOrder(optimal);
+                  }
+                }}
+                className="bg-blue-600 hover:bg-blue-700"
+                disabled={!targetQuantity || parseFloat(targetQuantity) <= 0}
+              >
+                <TrendingUp className="w-4 h-4 mr-2" />
+                Compute Optimal Order
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent className="pt-6">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm border-collapse border border-slate-200">
+                <thead>
+                  <tr className="bg-slate-100 border-b-2 border-slate-300">
+                    <th className="text-left py-3 px-4 font-semibold text-slate-700 w-56">Metric</th>
+                    {sizes.map(size => (
+                      <th key={size} className="text-center py-3 px-3 font-semibold text-slate-700 border-l border-slate-200">
+                        {size}
                       </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {/* Current Net Need */}
-                    <tr className="border-b border-slate-200 hover:bg-slate-50">
-                      <td className="py-3 px-4 font-medium text-slate-800">Current Net Need</td>
-                      {netNeedValues.map((val, idx) => (
-                        <td key={idx} className="text-center py-3 px-3 text-slate-700 border-l border-slate-100">
-                          {val.toLocaleString()}
-                        </td>
-                      ))}
-                      <td className="text-right py-3 px-4 font-bold text-slate-800 border-l-2 border-slate-300 bg-slate-50">
-                        {netNeedTotal.toLocaleString()}
+                    ))}
+                    <th className="text-right py-3 px-4 font-semibold text-slate-700 border-l-2 border-slate-300 bg-slate-50">
+                      Total
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {/* Current Net Need */}
+                  <tr className="border-b border-slate-200">
+                    <td className="py-2 px-4 font-medium text-slate-800">Current Net Need</td>
+                    {netNeedValues.map((val, idx) => (
+                      <td key={idx} className="text-center py-2 px-3 border-l border-slate-100">
+                        <div className="font-semibold text-slate-700">{val.toLocaleString()}</div>
+                        <div className="text-[10px] text-slate-500">{netNeedPercentages[idx].toFixed(1)}%</div>
                       </td>
-                    </tr>
-                    <tr className="border-b-2 border-slate-300 bg-slate-50 hover:bg-slate-100">
-                      <td className="py-3 px-4 font-medium text-slate-700 italic">% of Net Need Total</td>
-                      {netNeedPercentages.map((pct, idx) => (
-                        <td key={idx} className="text-center py-3 px-3 font-semibold text-slate-600 border-l border-slate-200">
-                          {pct.toFixed(1)}%
-                        </td>
-                      ))}
-                      <td className="text-right py-3 px-4 font-bold text-slate-700 border-l-2 border-slate-300 bg-slate-100">
-                        100.0%
-                      </td>
-                    </tr>
+                    ))}
+                    <td className="text-right py-2 px-4 font-bold text-slate-800 border-l-2 border-slate-300 bg-slate-50">
+                      {netNeedTotal.toLocaleString()}
+                    </td>
+                  </tr>
 
-                    {/* Historical Sales */}
-                    <tr className="border-b border-slate-200 hover:bg-blue-50">
-                      <td className="py-3 px-4 font-medium text-blue-800">Historical Sales</td>
-                      {historicalSalesValues.map((val, idx) => (
-                        <td key={idx} className="text-center py-3 px-3 text-blue-700 border-l border-slate-100">
-                          {val.toLocaleString()}
-                        </td>
-                      ))}
-                      <td className="text-right py-3 px-4 font-bold text-blue-800 border-l-2 border-slate-300 bg-blue-50">
-                        {historicalSalesTotal.toLocaleString()}
+                  {/* Historical Sales */}
+                  <tr className="border-b-2 border-slate-300 bg-blue-50">
+                    <td className="py-2 px-4 font-medium text-blue-800">Historical Sales (Target)</td>
+                    {historicalSalesValues.map((val, idx) => (
+                      <td key={idx} className="text-center py-2 px-3 border-l border-blue-100">
+                        <div className="font-semibold text-blue-700">{val.toLocaleString()}</div>
+                        <div className="text-[10px] text-blue-600 font-medium">{historicalSalesPercentages[idx].toFixed(1)}%</div>
                       </td>
-                    </tr>
-                    <tr className="border-b-2 border-blue-300 bg-blue-50 hover:bg-blue-100">
-                      <td className="py-3 px-4 font-medium text-blue-800 italic">% of Historical Total</td>
-                      {historicalSalesPercentages.map((pct, idx) => (
-                        <td key={idx} className="text-center py-3 px-3 font-bold text-blue-700 border-l border-blue-100">
-                          {pct.toFixed(1)}%
-                        </td>
-                      ))}
-                      <td className="text-right py-3 px-4 font-bold text-blue-800 border-l-2 border-blue-300 bg-blue-100">
-                        100.0%
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            </CardContent>
-          </Card>
+                    ))}
+                    <td className="text-right py-2 px-4 font-bold text-blue-800 border-l-2 border-slate-300 bg-blue-100">
+                      {historicalSalesTotal.toLocaleString()}
+                    </td>
+                  </tr>
 
-          {/* Order Calculation Results */}
-          <Card className="border-2 border-green-200">
-            <CardHeader className="bg-gradient-to-r from-green-50 to-emerald-50">
-              <CardTitle className="flex items-center gap-2">
-                <ArrowRight className="w-5 h-5 text-green-600" />
-                Order Calculation
-              </CardTitle>
-              <CardDescription>
-                Target: <strong>{parseFloat(targetQuantity).toLocaleString()} pieces</strong> distributed by historical sales patterns
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="pt-6">
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm border-collapse border border-slate-200 rounded-lg overflow-hidden">
-                  <thead>
-                    <tr className="bg-slate-100 border-b-2 border-slate-300">
-                      <th className="text-left py-3 px-4 font-semibold text-slate-700 w-48">Calculation</th>
-                      {sizes.map(size => (
-                        <th key={size} className="text-center py-3 px-3 font-semibold text-slate-700 border-l border-slate-200">
-                          {size}
-                        </th>
-                      ))}
-                      <th className="text-right py-3 px-4 font-semibold text-slate-700 border-l-2 border-slate-300 bg-slate-50">
-                        Total
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr className="border-b border-slate-200 bg-green-50 hover:bg-green-100">
-                      <td className="py-3 px-4 font-medium text-green-800">Order (by Historical %)</td>
-                      {calculateOrder.map((qty, idx) => (
-                        <td key={idx} className="text-center py-3 px-3 font-bold text-green-700 border-l border-green-100">
-                          {qty.toLocaleString()}
-                        </td>
-                      ))}
-                      <td className="text-right py-3 px-4 font-bold text-green-800 border-l-2 border-slate-300 bg-green-100">
-                        {orderTotal.toLocaleString()}
+                  {/* New Order */}
+                  <tr className="border-b-2 border-slate-300 bg-green-50">
+                    <td className="py-3 px-4 font-bold text-green-900">New Order</td>
+                    {calculateOrder.map((qty, idx) => (
+                      <td key={idx} className="text-center py-3 px-3 font-bold text-green-700 text-base border-l border-green-100">
+                        {qty.toLocaleString()}
                       </td>
-                    </tr>
-                    <tr className="border-b border-slate-200 hover:bg-orange-50">
-                      <td className="py-3 px-4 font-medium text-orange-800">Less: Current Net Need</td>
-                      {netNeedValues.map((val, idx) => (
-                        <td key={idx} className="text-center py-3 px-3 text-orange-700 border-l border-slate-100">
-                          -{val.toLocaleString()}
-                        </td>
-                      ))}
-                      <td className="text-right py-3 px-4 font-bold text-orange-800 border-l-2 border-slate-300 bg-orange-50">
-                        -{netNeedTotal.toLocaleString()}
-                      </td>
-                    </tr>
-                    <tr className="border-b-2 border-emerald-300 bg-emerald-50 hover:bg-emerald-100">
-                      <td className="py-3 px-4 font-bold text-emerald-900">
-                        = New Order to Place
-                      </td>
-                      {calculateNewOrderWithNetNeed.map((qty, idx) => (
-                        <td key={idx} className="text-center py-3 px-3 font-bold text-emerald-800 text-base border-l border-emerald-100">
-                          {qty.toLocaleString()}
-                        </td>
-                      ))}
-                      <td className="text-right py-3 px-4 font-bold text-emerald-900 text-base border-l-2 border-emerald-300 bg-emerald-100">
-                        {newOrderTotal.toLocaleString()}
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
+                    ))}
+                    <td className="text-right py-3 px-4 font-bold text-green-900 text-base border-l-2 border-slate-300 bg-green-100">
+                      {orderTotal.toLocaleString()}
+                    </td>
+                  </tr>
 
-              {/* Copy Buttons */}
-              <div className="mt-4 flex flex-wrap gap-2">
-                <Button
-                  onClick={() => {
-                    const orderText = calculateOrder.join('\t');
-                    navigator.clipboard.writeText(orderText);
-                  }}
-                  variant="outline"
-                  className="text-sm"
-                >
-                  📋 Copy Order (by Historical %)
-                </Button>
-                <Button
-                  onClick={() => {
-                    const newOrderText = calculateNewOrderWithNetNeed.join('\t');
-                    navigator.clipboard.writeText(newOrderText);
-                  }}
-                  className="text-sm bg-emerald-600 hover:bg-emerald-700"
-                >
-                  📋 Copy New Order to Place
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
+                  {/* New Net Need (after order) */}
+                  <tr className="border-b-2 border-slate-300 bg-purple-50">
+                    <td className="py-2 px-4 font-bold text-purple-900">New Net Need (after order)</td>
+                    {newNetNeedAfterOrder.map((val, idx) => {
+                      const deviation = Math.abs(newNetNeedPercentages[idx] - historicalSalesPercentages[idx]);
+                      const isClose = deviation < 1.0; // Within 1%
+                      return (
+                        <td key={idx} className="text-center py-2 px-3 border-l border-purple-100">
+                          <div className="font-bold text-purple-700">{val.toLocaleString()}</div>
+                          <div className={`text-[10px] font-medium ${isClose ? 'text-green-600' : 'text-orange-600'}`}>
+                            {newNetNeedPercentages[idx].toFixed(1)}%
+                          </div>
+                        </td>
+                      );
+                    })}
+                    <td className="text-right py-2 px-4 font-bold text-purple-900 border-l-2 border-slate-300 bg-purple-100">
+                      {newNetNeedTotal.toLocaleString()}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
 
-          {/* NEW NET NEED After Order */}
-          <Card className="border-2 border-purple-200">
-            <CardHeader className="bg-gradient-to-r from-purple-50 to-violet-50">
-              <CardTitle className="flex items-center gap-2">
-                <Package className="w-5 h-5 text-purple-600" />
-                Net Need After Order
-              </CardTitle>
-              <CardDescription>
-                Your inventory situation after placing the order
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="pt-6">
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm border-collapse border border-slate-200 rounded-lg overflow-hidden">
-                  <thead>
-                    <tr className="bg-slate-100 border-b-2 border-slate-300">
-                      <th className="text-left py-3 px-4 font-semibold text-slate-700 w-48">Metric</th>
-                      {sizes.map(size => (
-                        <th key={size} className="text-center py-3 px-3 font-semibold text-slate-700 border-l border-slate-200">
-                          {size}
-                        </th>
-                      ))}
-                      <th className="text-right py-3 px-4 font-semibold text-slate-700 border-l-2 border-slate-300 bg-slate-50">
-                        Total
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr className="border-b border-slate-200 hover:bg-purple-50">
-                      <td className="py-3 px-4 font-medium text-purple-800">New Net Need (after order)</td>
-                      {newNetNeedAfterOrder.map((val, idx) => (
-                        <td key={idx} className="text-center py-3 px-3 font-bold text-purple-700 border-l border-slate-100">
-                          {val.toLocaleString()}
-                        </td>
-                      ))}
-                      <td className="text-right py-3 px-4 font-bold text-purple-800 border-l-2 border-slate-300 bg-purple-50">
-                        {newNetNeedTotal.toLocaleString()}
-                      </td>
-                    </tr>
-                    <tr className="border-b-2 border-purple-300 bg-purple-50 hover:bg-purple-100">
-                      <td className="py-3 px-4 font-medium text-purple-800 italic">% of New Net Need Total</td>
-                      {newNetNeedPercentages.map((pct, idx) => (
-                        <td key={idx} className="text-center py-3 px-3 font-bold text-purple-700 border-l border-purple-100">
-                          {pct.toFixed(1)}%
-                        </td>
-                      ))}
-                      <td className="text-right py-3 px-4 font-bold text-purple-800 border-l-2 border-purple-300 bg-purple-100">
-                        100.0%
-                      </td>
-                    </tr>
-                    {/* Comparison row */}
-                    <tr className="border-t-2 border-slate-300 bg-blue-50 hover:bg-blue-100">
-                      <td className="py-3 px-4 font-medium text-blue-800 italic">Target % (Historical Sales)</td>
-                      {historicalSalesPercentages.map((pct, idx) => (
-                        <td key={idx} className="text-center py-3 px-3 font-semibold text-blue-700 border-l border-blue-100">
-                          {pct.toFixed(1)}%
-                        </td>
-                      ))}
-                      <td className="text-right py-3 px-4 font-semibold text-blue-800 border-l-2 border-slate-300 bg-blue-100">
-                        100.0%
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
+            {/* Action Buttons */}
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              <Button
+                onClick={() => {
+                  const orderText = calculateOrder.join('\t');
+                  navigator.clipboard.writeText(orderText);
+                }}
+                variant="outline"
+                size="sm"
+              >
+                📋 Copy Order
+              </Button>
+              
+              {computedOrder && (
+                <Badge className="bg-green-100 text-green-800 border-green-300 px-3 py-1">
+                  ✓ Optimized for target distribution
+                </Badge>
+              )}
 
-              {/* Insights */}
-              <div className="mt-4 p-4 bg-slate-50 rounded-lg border border-slate-200">
-                <h4 className="text-sm font-semibold text-slate-700 mb-2">📊 Distribution Comparison</h4>
-                <p className="text-xs text-slate-600">
-                  The "New Net Need %" shows your inventory distribution after placing the order. 
-                  Compare it with "Target % (Historical Sales)" to see how closely it matches your historical sales patterns.
-                </p>
+              <div className="ml-auto text-xs text-slate-600">
+                <span className="text-green-600 font-medium">Green %</span> = within 1% of target | 
+                <span className="text-orange-600 font-medium ml-1">Orange %</span> = needs adjustment
               </div>
-            </CardContent>
-          </Card>
-        </>
+            </div>
+          </CardContent>
+        </Card>
       )}
     </div>
   );
