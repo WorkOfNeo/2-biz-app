@@ -2962,10 +2962,18 @@ async function runJob(job: JobRow) {
                 continue;
               }
               
-              // Sold block rows (including Delivered) - ONLY parse detailed sub-rows; skip main (summed) rows
-              if (inSold && cls.includes('stylecolor-expanded--sub')) {
-                out.push({ color, sizes: sizeLabels, section: 'Sold', row_label: label || 'Row', values: numbersFromRow(tds), po_link: null });
-                continue;
+              // Sold block rows (including Delivered)
+              // Parse detailed sub-rows AND the special "Delivered" row (which has tableBackgroundGrey class)
+              if (inSold) {
+                // Skip main summed rows, but allow Delivered (which doesn't have sub/main class)
+                if (cls.includes('stylecolor-expanded--main')) {
+                  continue; // Skip sum rows
+                }
+                // Capture sub-rows OR rows with "Delivered" label
+                if (cls.includes('stylecolor-expanded--sub') || /delivered/i.test(label)) {
+                  out.push({ color, sizes: sizeLabels, section: 'Sold', row_label: label || 'Row', values: numbersFromRow(tds), po_link: null });
+                  continue;
+                }
               }
               
               // Available block rows
