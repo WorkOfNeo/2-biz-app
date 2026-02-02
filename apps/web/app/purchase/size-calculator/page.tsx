@@ -104,11 +104,11 @@ export default function SizeCalculatorPage() {
   const [computedOrder, setComputedOrder] = useState<number[] | null>(null);
   const [whiteWeftPo, setWhiteWeftPo] = useState<number | null>(null);
 
-  // Get color breakdown status from current item
-  const isColorBreakdown = currentItem?.isColorBreakdown || false;
-
   const sizes = SIZE_SETS[sizeSet];
   const currentItem = selectedItems[currentItemIndex];
+  
+  // Get color breakdown status from current item
+  const isColorBreakdown = currentItem?.isColorBreakdown || false;
 
   // Reset calculator when moving to next item
   useEffect(() => {
