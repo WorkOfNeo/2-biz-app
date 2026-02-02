@@ -30,6 +30,8 @@ type OrderData = {
   targetQuantity: number;
   computedOrder: number[];
   timestamp: number;
+  isColorBreakdown: boolean;
+  whiteWeftPo?: number; // PO quantity from WHITE WEFT if color breakdown
 };
 
 type FlowStep = 'selection' | 'calculator' | 'overview';
@@ -77,6 +79,8 @@ export default function SizeCalculatorPage() {
   const [historicalSalesInput, setHistoricalSalesInput] = useState('');
   const [targetQuantity, setTargetQuantity] = useState('');
   const [computedOrder, setComputedOrder] = useState<number[] | null>(null);
+  const [isColorBreakdown, setIsColorBreakdown] = useState(false);
+  const [whiteWeftPo, setWhiteWeftPo] = useState<number | null>(null);
 
   const sizes = SIZE_SETS[sizeSet];
   const currentItem = selectedItems[currentItemIndex];
@@ -89,8 +93,54 @@ export default function SizeCalculatorPage() {
       setTargetQuantity('');
       setComputedOrder(null);
       setSizeSet('34-46');
+      setIsColorBreakdown(false);
+      setWhiteWeftPo(null);
     }
   }, [currentItemIndex, flowStep]);
+
+  // Fetch WHITE WEFT PO when color breakdown is enabled
+  useEffect(() => {
+    if (!isColorBreakdown || !currentItem || flowStep !== 'calculator') {
+      setWhiteWeftPo(null);
+      return;
+    }
+
+    const fetchWhiteWeftPo = async () => {
+      try {
+        // First get Running/Shipped PO numbers
+        const { data: pos, error: posError } = await supabase
+          .from('purchase_orders')
+          .select('po_no')
+          .in('status', ['Running', 'Shipped']);
+
+        if (posError) throw posError;
+        if (!pos || pos.length === 0) {
+          setWhiteWeftPo(0);
+          return;
+        }
+
+        const poNumbers = pos.map(p => p.po_no);
+
+        // Then get WHITE WEFT items for this style from those POs
+        const { data: items, error: itemsError } = await supabase
+          .from('purchase_order_items')
+          .select('qty')
+          .eq('style_no', currentItem.style)
+          .ilike('color', 'WHITE WEFT')
+          .in('po_no', poNumbers);
+
+        if (itemsError) throw itemsError;
+
+        const total = (items || []).reduce((sum, item) => sum + (item.qty || 0), 0);
+        setWhiteWeftPo(total);
+      } catch (error) {
+        console.error('Error fetching WHITE WEFT PO:', error);
+        setWhiteWeftPo(0);
+      }
+    };
+
+    fetchWhiteWeftPo();
+  }, [isColorBreakdown, currentItem, flowStep, supabase]);
 
   // Reset computed order when inputs change
   useEffect(() => {
@@ -300,6 +350,8 @@ export default function SizeCalculatorPage() {
       targetQuantity: parseFloat(targetQuantity),
       computedOrder,
       timestamp: Date.now(),
+      isColorBreakdown,
+      whiteWeftPo: isColorBreakdown ? (whiteWeftPo ?? undefined) : undefined,
     };
 
     setSavedOrders([...savedOrders, orderData]);
@@ -509,6 +561,37 @@ export default function SizeCalculatorPage() {
                   </div>
                 </div>
 
+                {/* Color Breakdown Toggle */}
+                <div className="pb-6 border-b border-slate-200">
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={isColorBreakdown}
+                      onChange={(e) => setIsColorBreakdown(e.target.checked)}
+                      className="w-5 h-5 border-2 border-slate-300 rounded-none focus:outline-none focus:ring-2 focus:ring-slate-900"
+                    />
+                    <div>
+                      <span className="text-sm font-medium text-slate-900">Color Breakdown</span>
+                      <p className="text-xs text-slate-500 mt-0.5">
+                        This color is made by deducting from WHITE WEFT inventory
+                      </p>
+                    </div>
+                  </label>
+                  {isColorBreakdown && whiteWeftPo !== null && (
+                    <div className="mt-3 p-3 bg-blue-50 border border-blue-200">
+                      <p className="text-xs font-medium text-blue-900 mb-1">
+                        WHITE WEFT PO (Running/Shipped)
+                      </p>
+                      <p className="text-2xl font-light text-blue-900">
+                        {whiteWeftPo.toLocaleString()} pieces
+                      </p>
+                      <p className="text-xs text-blue-700 mt-1">
+                        Available for {currentItem.style} - WHITE WEFT
+                      </p>
+                    </div>
+                  )}
+                </div>
+
                 {/* Data Inputs */}
                 <div className="space-y-6">
                   {/* Current Net Need */}
@@ -680,6 +763,9 @@ export default function SizeCalculatorPage() {
                             <th className="text-right py-3 px-3 font-medium text-slate-600 uppercase tracking-wide text-xs">
                               New Net Need
                             </th>
+                            <th className="text-right py-3 px-3 font-medium text-slate-600 uppercase tracking-wide text-xs">
+                              WHITE WEFT PO
+                            </th>
                             <th className="w-12"></th>
                           </tr>
                         </thead>
@@ -693,9 +779,18 @@ export default function SizeCalculatorPage() {
                             return (
                               <tr key={order.timestamp} className="border-b border-slate-100 hover:bg-slate-50">
                                 <td className="py-4 px-4">
-                                  <p className="font-medium text-slate-900">{order.styleColor.style}</p>
-                                  <p className="text-xs text-slate-500">{order.styleColor.color}</p>
-                                  <p className="text-xs text-slate-400 mt-1">{order.sizeSet}</p>
+                                  <div className="flex items-center gap-2">
+                                    <div>
+                                      <p className="font-medium text-slate-900">{order.styleColor.style}</p>
+                                      <p className="text-xs text-slate-500">{order.styleColor.color}</p>
+                                      <p className="text-xs text-slate-400 mt-1">{order.sizeSet}</p>
+                                    </div>
+                                    {order.isColorBreakdown && (
+                                      <Badge className="bg-blue-100 text-blue-700 border-blue-300 text-[10px] px-1.5 py-0.5">
+                                        Breakdown
+                                      </Badge>
+                                    )}
+                                  </div>
                                 </td>
                                 <td className="text-right py-4 px-3 text-slate-700">
                                   {histTotal.toLocaleString()}
@@ -708,6 +803,15 @@ export default function SizeCalculatorPage() {
                                 </td>
                                 <td className="text-right py-4 px-3 text-slate-700">
                                   {newNetNeedTotal.toLocaleString()}
+                                </td>
+                                <td className="text-right py-4 px-3">
+                                  {order.isColorBreakdown && order.whiteWeftPo !== undefined ? (
+                                    <span className="text-blue-700 font-medium">
+                                      {order.whiteWeftPo.toLocaleString()}
+                                    </span>
+                                  ) : (
+                                    <span className="text-slate-400">—</span>
+                                  )}
                                 </td>
                                 <td className="py-4 px-3">
                                   <button
@@ -739,6 +843,9 @@ export default function SizeCalculatorPage() {
                                 const po = o.computedOrder.reduce((s, v) => s + v, 0);
                                 return sum + netNeed + po;
                               }, 0).toLocaleString()}
+                            </td>
+                            <td className="text-right py-4 px-3 text-blue-700">
+                              {savedOrders.reduce((sum, o) => sum + (o.whiteWeftPo || 0), 0).toLocaleString()}
                             </td>
                             <td></td>
                           </tr>
