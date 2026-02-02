@@ -3054,6 +3054,9 @@ async function runJob(job: JobRow) {
           sectionCounts.set(key, (sectionCounts.get(key) || 0) + 1);
         }
         
+        // Get ALL unique sold row labels for debugging
+        const allSoldLabels = Array.from(new Set(soldRows.map((r: any) => r.row_label)));
+        
         await log(job.id, 'info', 'STEP:noos_call_off_extracted', { 
           style_no: s.style_no, 
           colors_scraped: colorsScraped,
@@ -3064,7 +3067,8 @@ async function runJob(job: JobRow) {
           sections: Object.fromEntries(sectionCounts),
           sold_rows_count: soldRows.length,
           delivered_rows_found: deliveredRows.length,
-          sample_sold_labels: soldRows.slice(0, 5).map((r: any) => r.row_label)
+          all_sold_labels: allSoldLabels,
+          sample_sold_rows: soldRows.slice(0, 3).map((r: any) => ({ label: r.row_label, section: r.section, values: r.values }))
         });
         
         // Upsert to noos_call_off_stock table
