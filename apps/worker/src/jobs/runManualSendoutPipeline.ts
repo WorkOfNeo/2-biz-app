@@ -507,22 +507,14 @@ export async function runManualSendoutPipeline(
         statsEmailCount++;
       }
 
-      // Send to extra recipients (no personal PDF, just global stats)
-      for (const email of payload.emails) {
-        // Skip if this email belongs to a salesperson already sent to
-        const alreadySent = payload.salespersonIds.some((spId) => {
-          const sp = spById.get(spId);
-          return sp?.email?.toLowerCase() === email.toLowerCase();
-        });
-        if (alreadySent) continue;
-
+      // Email list group: send ONE email to all recipients (same attachments)
+      if (payload.salespersonIds.length === 0 && (payload.emails?.length || 0) > 0) {
         const templateParams = statsParams;
         const bodyHtml = `Hej,\n\nHermed statistik :)`;
-
         await supabase.from('jobs').insert({
           type: 'send_email',
           payload: {
-            recipient: email,
+            recipients: payload.emails,
             subject: 'Statistik',
             body: bodyHtml,
             context: 'manual_sendout',
@@ -564,18 +556,18 @@ export async function runManualSendoutPipeline(
         idx++;
       }
 
-      // Send one stock list email per recipient
-      for (const recipient of uniqueRecipients) {
-        const bodyHtml = `Hej,\n\nHermed lagerliste :)`;
-        const subject =
-          stockListExports.length === 1
-            ? `${stockListExports[0]!.name} - Lagerliste`
-            : 'Lagerliste';
+      const bodyHtml = `Hej,\n\nHermed lagerliste :)`;
+      const subject =
+        stockListExports.length === 1
+          ? `${stockListExports[0]!.name} - Lagerliste`
+          : 'Lagerliste';
 
+      // Email list group: send ONE email to all recipients
+      if (payload.salespersonIds.length === 0) {
         await supabase.from('jobs').insert({
           type: 'send_email',
           payload: {
-            recipient,
+            recipients: uniqueRecipients,
             subject,
             body: bodyHtml,
             context: 'manual_sendout_stocklist',
@@ -588,6 +580,26 @@ export async function runManualSendoutPipeline(
           queue: 'default',
         });
         stockListEmailCount++;
+      } else {
+        // Salespersons: keep individual emails
+        for (const recipient of uniqueRecipients) {
+          await supabase.from('jobs').insert({
+            type: 'send_email',
+            payload: {
+              recipient,
+              subject,
+              body: bodyHtml,
+              context: 'manual_sendout_stocklist',
+              contextId: job.id,
+              contextName: 'Manual Send Out - Stock List',
+              templateParams: stockListParams,
+              pipelineRootJobId,
+            },
+            status: 'queued',
+            queue: 'default',
+          });
+          stockListEmailCount++;
+        }
       }
     }
 

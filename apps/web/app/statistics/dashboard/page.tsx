@@ -805,6 +805,7 @@ export default function StatisticsDashboardPage() {
   // ============================================================================
   const [sendOutSalespersons, setSendOutSalespersons] = React.useState<Set<string>>(new Set());
   const [sendOutEmailList, setSendOutEmailList] = React.useState<string[]>([]);
+  const [sendOutRecipientMode, setSendOutRecipientMode] = React.useState<'salespersons' | 'email_list'>('salespersons');
   const [sendOutIncludeCountries, setSendOutIncludeCountries] = React.useState(true);
   const [sendOutIncludeTop15Salesmen, setSendOutIncludeTop15Salesmen] = React.useState(true);
   const [sendOutIncludeTop15Overall, setSendOutIncludeTop15Overall] = React.useState(false);
@@ -824,15 +825,18 @@ export default function StatisticsDashboardPage() {
       .select('id, value')
       .eq('key', 'sendout_email_list')
       .maybeSingle();
-    const val = ((data?.value as any) || {}) as { emails?: string[] };
+    const val = ((data?.value as any) || {}) as { emails?: string[]; enabled?: boolean };
     if (Array.isArray(val.emails)) setSendOutEmailList(val.emails);
+    if (typeof val.enabled === 'boolean') {
+      setSendOutRecipientMode(val.enabled ? 'email_list' : 'salespersons');
+    }
     return data;
   });
 
   const saveSendOutEmailListTimer = React.useRef<any>(null);
-  async function saveSendOutEmailList(nextEmails: string[]) {
+  async function saveSendOutEmailList(next: { emails: string[]; enabled: boolean }) {
     try {
-      const value = { emails: nextEmails };
+      const value = { emails: next.emails, enabled: next.enabled };
       const { data: existing } = await supabase
         .from('app_settings')
         .select('id')
@@ -1113,19 +1117,23 @@ export default function StatisticsDashboardPage() {
     const selectedSalespersonIds = Array.from(sendOutSalespersons);
     const emailList = sendOutEmailList;
 
-    if (selectedSalespersonIds.length > 0 && emailList.length > 0) {
-      alert('Choose either Salespersons OR Email list (not both)');
-      return;
+    if (sendOutRecipientMode === 'salespersons') {
+      if (selectedSalespersonIds.length === 0) {
+        alert('Please select at least one salesperson');
+        return;
+      }
     }
-    if (selectedSalespersonIds.length === 0 && emailList.length === 0) {
-      alert('Please select at least one salesperson OR add at least one email to the email list');
-      return;
+    if (sendOutRecipientMode === 'email_list') {
+      if (emailList.length === 0) {
+        alert('Please add at least one email to the email list');
+        return;
+      }
     }
 
     // Validate: must have either statistics PDFs or stock lists selected
     const hasStatistics = sendOutIncludeCountries || sendOutIncludeTop15Salesmen || 
                           sendOutIncludeTop15Overall || sendOutIncludeOverview || 
-                          sendOutIncludeGeneralCombined || selectedSalespersonIds.length > 0;
+                          sendOutIncludeGeneralCombined || (sendOutRecipientMode === 'salespersons' && selectedSalespersonIds.length > 0);
     const hasStockLists = sendOutStockLists.size > 0;
 
     if (!hasStatistics && !hasStockLists) {
@@ -1143,8 +1151,8 @@ export default function StatisticsDashboardPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           scrapeFirst: sendOutScrapeFirst,
-          salespersonIds: selectedSalespersonIds,
-          emails: emailList,
+          salespersonIds: sendOutRecipientMode === 'salespersons' ? selectedSalespersonIds : [],
+          emails: sendOutRecipientMode === 'email_list' ? emailList : [],
           include: {
             countries: sendOutIncludeCountries,
             top15Salesmen: sendOutIncludeTop15Salesmen,
@@ -1758,42 +1766,56 @@ export default function StatisticsDashboardPage() {
               <CardDescription>Manually send statistics and stock lists to recipients</CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
-              {/* Recipients Row */}
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                {/* Salespersons Selection */}
-                <div>
+              {/* Recipients (two tabs to avoid confusion) */}
+              <Tabs
+                value={sendOutRecipientMode}
+                onValueChange={(v) => {
+                  const nextMode = (v as any) as 'salespersons' | 'email_list';
+                  setSendOutRecipientMode(nextMode);
+                  // Keep persisted toggle for backwards compatibility + default next time
+                  if (saveSendOutEmailListTimer.current) clearTimeout(saveSendOutEmailListTimer.current);
+                  saveSendOutEmailListTimer.current = setTimeout(
+                    () => saveSendOutEmailList({ emails: sendOutEmailList, enabled: nextMode === 'email_list' }),
+                    200
+                  );
+                  // Enforce exclusivity: switching to email list clears salespersons
+                  if (nextMode === 'email_list') setSendOutSalespersons(new Set());
+                }}
+              >
+                <TabsList className="w-full grid grid-cols-2">
+                  <TabsTrigger value="salespersons">Salespersons</TabsTrigger>
+                  <TabsTrigger value="email_list">Email list</TabsTrigger>
+                </TabsList>
+
+                <TabsContent value="salespersons" className="mt-4">
                   <div className="flex items-center justify-between mb-2">
                     <label className="text-sm text-gray-600 font-medium">Salespersons</label>
                     <button
                       type="button"
                       onClick={() => {
-                        if (sendOutEmailList.length > 0) return;
                         const allIds = (salespersons ?? []).filter(sp => sp.email).map(sp => sp.id);
                         const allSelected = allIds.every(id => sendOutSalespersons.has(id));
-                        if (allSelected) {
-                          setSendOutSalespersons(new Set());
-                        } else {
-                          setSendOutSalespersons(new Set(allIds));
-                        }
+                        if (allSelected) setSendOutSalespersons(new Set());
+                        else setSendOutSalespersons(new Set(allIds));
                       }}
                       className="text-xs text-slate-600 hover:text-slate-900"
                     >
                       {(salespersons ?? []).filter(sp => sp.email).every(sp => sendOutSalespersons.has(sp.id)) ? 'Deselect all' : 'Select all'}
                     </button>
                   </div>
-                  <div className={`max-h-40 overflow-auto rounded-md border ${sendOutEmailList.length > 0 ? 'opacity-50 pointer-events-none' : ''}`}>
+                  <div className="max-h-40 overflow-auto rounded-md border">
                     <Table>
                       <TableBody>
                         {(salespersons ?? []).map((sp) => {
                           const hasEmail = Boolean(sp.email);
                           const on = sendOutSalespersons.has(sp.id);
                           return (
-                            <TableRow 
-                              key={sp.id} 
+                            <TableRow
+                              key={sp.id}
                               className={!hasEmail ? 'opacity-50' : 'cursor-pointer hover:bg-slate-50'}
                               onClick={() => {
                                 if (!hasEmail) return;
-                                setSendOutSalespersons(prev => {
+                                setSendOutSalespersons((prev) => {
                                   const n = new Set(prev);
                                   if (n.has(sp.id)) n.delete(sp.id);
                                   else n.add(sp.id);
@@ -1814,49 +1836,25 @@ export default function StatisticsDashboardPage() {
                       </TableBody>
                     </Table>
                   </div>
-                  <div className="flex items-center justify-between mt-1">
-                    <p className="text-xs text-gray-500">Each salesperson receives their personal PDF</p>
-                    {sendOutEmailList.length > 0 && (
-                      <button
-                        type="button"
-                        className="text-xs text-slate-600 hover:text-slate-900"
-                        onClick={() => setSendOutEmailList([])}
-                        title="Clear email list"
-                      >
-                        Clear email list to select salespersons
-                      </button>
-                    )}
-                  </div>
-                </div>
+                  <p className="text-xs text-gray-500 mt-1">Salespersons receive their personal PDF (individual emails)</p>
+                </TabsContent>
 
-                {/* Email list (separate recipient group) */}
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <label className="text-sm text-gray-600 font-medium">Email list</label>
-                    {sendOutSalespersons.size > 0 && (
-                      <button
-                        type="button"
-                        className="text-xs text-slate-600 hover:text-slate-900"
-                        onClick={() => setSendOutSalespersons(new Set())}
-                        title="Clear salespersons"
-                      >
-                        Clear salespersons to use email list
-                      </button>
-                    )}
-                  </div>
+                <TabsContent value="email_list" className="mt-4">
                   <EmailPillsInput
                     value={sendOutEmailList}
-                    disabled={sendOutSalespersons.size > 0}
                     placeholder="Add email, press comma…"
-                    helpText="These recipients receive ONLY the selected global PDFs (not personal salesperson PDFs). Saved for next time."
+                    helpText="Sends ONE email to all recipients (in To). These recipients receive ONLY the selected global PDFs. Saved for next time."
                     onChange={(next) => {
                       setSendOutEmailList(next);
                       if (saveSendOutEmailListTimer.current) clearTimeout(saveSendOutEmailListTimer.current);
-                      saveSendOutEmailListTimer.current = setTimeout(() => saveSendOutEmailList(next), 600);
+                      saveSendOutEmailListTimer.current = setTimeout(
+                        () => saveSendOutEmailList({ emails: next, enabled: true }),
+                        600
+                      );
                     }}
                   />
-                </div>
-              </div>
+                </TabsContent>
+              </Tabs>
 
               {/* Statistics PDFs Selection */}
               <div>

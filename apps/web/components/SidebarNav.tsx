@@ -76,6 +76,7 @@ const SECTIONS: SectionConfig[] = [
       { href: '/purchase/call-off-learning', label: 'Learning Studio' },
       { href: '/purchase/noos', label: 'NOOS Checker' },
       { href: '/purchase/smart-draft', label: 'Smart Draft' },
+      { href: '/purchase/size-calculator', label: 'Size Calculator' },
       { href: '/purchase/conversations', label: 'Conversations' },
       { href: '/purchase/suppliers', label: 'Suppliers' },
       { href: '/purchase/feedback', label: 'AI Feedback' },

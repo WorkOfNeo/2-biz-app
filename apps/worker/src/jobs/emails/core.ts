@@ -9,8 +9,17 @@ const EMAILJS_ENDPOINT = 'https://api.emailjs.com/api/v1.0/email/send';
  * Generic email payload - used by all email types
  */
 export interface SendEmailPayload {
-  // Required
-  recipient: string;
+  /**
+   * Single recipient.
+   * Backwards-compatible with older job payloads.
+   */
+  recipient?: string;
+
+  /**
+   * Multiple recipients (sent as one email with comma-separated "To").
+   * Used for the manual send-out email list.
+   */
+  recipients?: string[];
   subject: string;
   body: string;
   
@@ -39,7 +48,19 @@ export async function sendEmailCore(
   payload: SendEmailPayload,
   log: LogFn
 ): Promise<EmailResult> {
-  const { recipient, subject, body, context, contextId, contextName, templateParams } = payload;
+  const { subject, body, context, contextId, contextName, templateParams } = payload;
+  const recipients = (payload.recipients ?? []).map((e) => String(e || '').trim().toLowerCase()).filter(Boolean);
+  const uniqueRecipients = [...new Set(recipients)];
+  const recipient = uniqueRecipients.length > 0 ? uniqueRecipients.join(', ') : (payload.recipient || '').trim();
+
+  if (!recipient) {
+    await log('error', 'Missing recipient(s) for email', {
+      context,
+      contextId,
+      contextName,
+    });
+    return { success: false, message: 'Missing recipient(s)' };
+  }
 
   // Get EmailJS config from environment
   const serviceId = process.env.EMAILJS_SERVICE_ID || '';
@@ -68,6 +89,7 @@ export async function sendEmailCore(
     contextId,
     contextName,
     recipient,
+    recipientCount: uniqueRecipients.length || 1,
     subject,
   });
 
@@ -102,17 +124,19 @@ export async function sendEmailCore(
         context,
         contextName,
         recipient,
+        recipientCount: uniqueRecipients.length || 1,
         subject,
       });
       return {
         success: true,
         message: `Sent to ${recipient}`,
-        data: { recipient, subject, context },
+        data: { recipient, recipients: uniqueRecipients, subject, context },
       };
     } else {
       await log('error', `Failed to send email to ${recipient}: ${responseText}`, {
         context,
         recipient,
+        recipientCount: uniqueRecipients.length || 1,
         status: res.status,
         error: responseText,
       });
@@ -125,6 +149,7 @@ export async function sendEmailCore(
     await log('error', `Exception sending email to ${recipient}: ${err?.message || String(err)}`, {
       context,
       recipient,
+      recipientCount: uniqueRecipients.length || 1,
       error: err?.message || String(err),
     });
     return {
