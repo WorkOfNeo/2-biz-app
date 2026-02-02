@@ -5,9 +5,10 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../..
 import { Button } from '../../../components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../components/ui/tabs';
 import { Badge } from '../../../components/ui/badge';
-import { Calculator, TrendingUp, Package, ArrowRight, Plus, Check, ChevronLeft, ChevronRight, X } from 'lucide-react';
+import { Calculator, TrendingUp, Package, ArrowRight, Plus, Check, ChevronLeft, ChevronRight, X, Search } from 'lucide-react';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import useSWR from 'swr';
+import { SearchSelect } from '../../../components/SearchSelect';
 
 type SizeSetType = '34-46' | 'S-XXL';
 
@@ -20,6 +21,7 @@ type StyleColorItem = {
   id: string;
   style: string;
   color: string;
+  isColorBreakdown: boolean;
 };
 
 type OrderData = {
@@ -57,7 +59,7 @@ export default function SizeCalculatorPage() {
   
   // Style/Color selection
   const [selectedStyleId, setSelectedStyleId] = useState('');
-  const [selectedColorId, setSelectedColorId] = useState('');
+  const [selectedColorIds, setSelectedColorIds] = useState<Set<string>>(new Set());
   
   // Fetch colors for selected style
   const { data: styleColors } = useSWR(
@@ -73,14 +75,37 @@ export default function SizeCalculatorPage() {
     }
   );
 
+  const toggleColorSelection = (colorId: string) => {
+    setSelectedColorIds(prev => {
+      const next = new Set(prev);
+      if (next.has(colorId)) {
+        next.delete(colorId);
+      } else {
+        next.add(colorId);
+      }
+      return next;
+    });
+  };
+
+  const selectAllColors = () => {
+    if (!styleColors) return;
+    setSelectedColorIds(new Set(styleColors.map(c => c.id)));
+  };
+
+  const deselectAllColors = () => {
+    setSelectedColorIds(new Set());
+  };
+
   // Calculator state
   const [sizeSet, setSizeSet] = useState<SizeSetType>('34-46');
   const [netNeedInput, setNetNeedInput] = useState('');
   const [historicalSalesInput, setHistoricalSalesInput] = useState('');
   const [targetQuantity, setTargetQuantity] = useState('');
   const [computedOrder, setComputedOrder] = useState<number[] | null>(null);
-  const [isColorBreakdown, setIsColorBreakdown] = useState(false);
   const [whiteWeftPo, setWhiteWeftPo] = useState<number | null>(null);
+
+  // Get color breakdown status from current item
+  const isColorBreakdown = currentItem?.isColorBreakdown || false;
 
   const sizes = SIZE_SETS[sizeSet];
   const currentItem = selectedItems[currentItemIndex];
@@ -93,7 +118,6 @@ export default function SizeCalculatorPage() {
       setTargetQuantity('');
       setComputedOrder(null);
       setSizeSet('34-46');
-      setIsColorBreakdown(false);
       setWhiteWeftPo(null);
     }
   }, [currentItemIndex, flowStep]);
@@ -305,28 +329,42 @@ export default function SizeCalculatorPage() {
   const netNeedValid = netNeedValues.length === 0 || netNeedValues.length === sizes.length;
   const historicalSalesValid = historicalSalesValues.length === 0 || historicalSalesValues.length === sizes.length;
 
-  // Get selected style and color details
+  // Get selected style details
   const selectedStyle = styles?.find(s => s.id === selectedStyleId);
-  const selectedColor = styleColors?.find(c => c.id === selectedColorId);
+  const selectedColors = styleColors?.filter(c => selectedColorIds.has(c.id)) || [];
 
   // Handler functions
-  const handleAddStyleColor = () => {
-    if (!selectedStyle || !selectedColor) return;
+  const handleAddStyleColors = () => {
+    if (!selectedStyle || selectedColors.length === 0) return;
     
-    // Check if already added
-    const exists = selectedItems.some(
-      item => item.style === selectedStyle.style_no && item.color === selectedColor.color
-    );
-    if (exists) return;
+    // Create a line for each selected color
+    const newItems: StyleColorItem[] = selectedColors
+      .filter(color => {
+        // Skip if already exists
+        return !selectedItems.some(
+          item => item.style === selectedStyle.style_no && item.color === color.color
+        );
+      })
+      .map(color => ({
+        id: `${Date.now()}-${Math.random()}-${color.id}`,
+        style: selectedStyle.style_no,
+        color: color.color,
+        isColorBreakdown: false, // Default to false, can be toggled per line
+      }));
 
-    const newItem: StyleColorItem = {
-      id: `${Date.now()}-${Math.random()}`,
-      style: selectedStyle.style_no,
-      color: selectedColor.color,
-    };
-    setSelectedItems([...selectedItems, newItem]);
+    setSelectedItems([...selectedItems, ...newItems]);
     setSelectedStyleId('');
-    setSelectedColorId('');
+    setSelectedColorIds(new Set());
+  };
+
+  const toggleItemColorBreakdown = (itemId: string) => {
+    setSelectedItems(prev =>
+      prev.map(item =>
+        item.id === itemId
+          ? { ...item, isColorBreakdown: !item.isColorBreakdown }
+          : item
+      )
+    );
   };
 
   const handleRemoveItem = (id: string) => {
@@ -403,63 +441,92 @@ export default function SizeCalculatorPage() {
             <Card className="border-0 shadow-sm">
               <CardContent className="p-8">
                 <div className="space-y-6">
-                  {/* Input Form */}
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-xs font-medium text-slate-600 mb-2 uppercase tracking-wide">
-                        Style ({styles?.length || 0} available)
-                      </label>
-                      <select
-                        value={selectedStyleId}
-                        onChange={(e) => {
-                          setSelectedStyleId(e.target.value);
-                          setSelectedColorId(''); // Reset color when style changes
-                        }}
-                        className="w-full px-4 py-3 border border-slate-200 rounded-none focus:outline-none focus:border-slate-900 transition-colors text-sm bg-white"
-                      >
-                        <option value="">Select a style...</option>
-                        {styles?.map(style => (
-                          <option key={style.id} value={style.id}>
-                            {style.style_no} {style.style_name ? `- ${style.style_name}` : ''}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-slate-600 mb-2 uppercase tracking-wide">
-                        Color {styleColors ? `(${styleColors.length} available)` : ''}
-                      </label>
-                      <select
-                        value={selectedColorId}
-                        onChange={(e) => setSelectedColorId(e.target.value)}
-                        disabled={!selectedStyleId}
-                        className="w-full px-4 py-3 border border-slate-200 rounded-none focus:outline-none focus:border-slate-900 transition-colors text-sm bg-white disabled:bg-slate-100 disabled:text-slate-400"
-                      >
-                        <option value="">
-                          {!selectedStyleId ? 'Select a style first' : 'Select a color...'}
-                        </option>
-                        {styleColors?.map(color => (
-                          <option key={color.id} value={color.id}>
-                            {color.color}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
+                  {/* Style Search */}
+                  <div>
+                    <label className="block text-xs font-medium text-slate-600 mb-2 uppercase tracking-wide">
+                      Search Style ({styles?.length || 0} available)
+                    </label>
+                    <SearchSelect
+                      items={styles?.map(s => ({
+                        value: s.id,
+                        label: s.style_no,
+                        description: s.style_name || undefined,
+                      })) || []}
+                      value={selectedStyleId}
+                      onChange={(id) => {
+                        setSelectedStyleId(id);
+                        setSelectedColorIds(new Set()); // Reset colors when style changes
+                      }}
+                      placeholder="Type to search styles..."
+                      className="w-full"
+                    />
                   </div>
+
+                  {/* Color Multi-Select */}
+                  {selectedStyleId && styleColors && (
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <label className="block text-xs font-medium text-slate-600 uppercase tracking-wide">
+                          Select Colors ({styleColors.length} available)
+                        </label>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={selectAllColors}
+                            className="text-xs text-slate-600 hover:text-slate-900 underline"
+                          >
+                            All
+                          </button>
+                          <button
+                            onClick={deselectAllColors}
+                            className="text-xs text-slate-600 hover:text-slate-900 underline"
+                          >
+                            None
+                          </button>
+                        </div>
+                      </div>
+                      <div className="border border-slate-200 max-h-64 overflow-y-auto">
+                        {styleColors.map(color => (
+                          <label
+                            key={color.id}
+                            className="flex items-center gap-3 px-4 py-2.5 hover:bg-slate-50 cursor-pointer border-b border-slate-100 last:border-b-0"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={selectedColorIds.has(color.id)}
+                              onChange={() => toggleColorSelection(color.id)}
+                              className="w-4 h-4 border-2 border-slate-300 rounded-none focus:ring-2 focus:ring-slate-900"
+                            />
+                            <span className="text-sm text-slate-900">{color.color}</span>
+                          </label>
+                        ))}
+                      </div>
+                      <p className="text-xs text-slate-500 mt-2">
+                        {selectedColorIds.size} color{selectedColorIds.size !== 1 ? 's' : ''} selected
+                      </p>
+                    </div>
+                  )}
                   
                   <Button
-                    onClick={handleAddStyleColor}
-                    disabled={!selectedStyleId || !selectedColorId || !selectedStyle || !selectedColor}
+                    onClick={handleAddStyleColors}
+                    disabled={!selectedStyleId || selectedColors.length === 0}
                     variant="outline"
                     className="w-full rounded-none border-slate-900 text-slate-900 hover:bg-slate-900 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <Plus className="w-4 h-4 mr-2" />
-                    Add to List
+                    Add {selectedColors.length > 0 ? `${selectedColors.length} Line${selectedColors.length !== 1 ? 's' : ''}` : 'to List'}
                   </Button>
-                  {selectedStyle && selectedColor && (
-                    <p className="text-xs text-center text-slate-500">
-                      Adding: <span className="font-medium">{selectedStyle.style_no} - {selectedColor.color}</span>
-                    </p>
+                  {selectedStyle && selectedColors.length > 0 && (
+                    <div className="p-3 bg-slate-50 border border-slate-200 text-xs text-slate-600">
+                      <p className="font-medium mb-1">Will create {selectedColors.length} line{selectedColors.length !== 1 ? 's' : ''}:</p>
+                      <ul className="space-y-0.5">
+                        {selectedColors.slice(0, 5).map(color => (
+                          <li key={color.id}>• {selectedStyle.style_no} - {color.color}</li>
+                        ))}
+                        {selectedColors.length > 5 && (
+                          <li className="text-slate-400">... and {selectedColors.length - 5} more</li>
+                        )}
+                      </ul>
+                    </div>
                   )}
                 </div>
               </CardContent>
@@ -469,29 +536,42 @@ export default function SizeCalculatorPage() {
             {selectedItems.length > 0 && (
               <div className="space-y-3">
                 <p className="text-xs font-medium text-slate-600 uppercase tracking-wide">
-                  Selected ({selectedItems.length})
+                  Selected Lines ({selectedItems.length})
                 </p>
                 <div className="space-y-2">
                   {selectedItems.map((item) => (
                     <div
                       key={item.id}
-                      className="flex items-center justify-between p-4 bg-white border border-slate-200"
+                      className="p-4 bg-white border border-slate-200"
                     >
-                      <div className="flex items-center gap-4">
-                        <div className="w-8 h-8 bg-slate-100 flex items-center justify-center text-xs font-medium text-slate-600">
-                          {selectedItems.indexOf(item) + 1}
+                      <div className="flex items-start justify-between mb-3">
+                        <div className="flex items-center gap-4">
+                          <div className="w-8 h-8 bg-slate-100 flex items-center justify-center text-xs font-medium text-slate-600 flex-shrink-0">
+                            {selectedItems.indexOf(item) + 1}
+                          </div>
+                          <div>
+                            <p className="font-medium text-slate-900">{item.style}</p>
+                            <p className="text-sm text-slate-500">{item.color}</p>
+                          </div>
                         </div>
-                        <div>
-                          <p className="font-medium text-slate-900">{item.style}</p>
-                          <p className="text-sm text-slate-500">{item.color}</p>
-                        </div>
+                        <button
+                          onClick={() => handleRemoveItem(item.id)}
+                          className="text-slate-400 hover:text-slate-900 transition-colors"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
                       </div>
-                      <button
-                        onClick={() => handleRemoveItem(item.id)}
-                        className="text-slate-400 hover:text-slate-900 transition-colors"
-                      >
-                        <X className="w-4 h-4" />
-                      </button>
+                      
+                      {/* Color Breakdown Toggle */}
+                      <label className="flex items-center gap-2 cursor-pointer pl-12">
+                        <input
+                          type="checkbox"
+                          checked={item.isColorBreakdown}
+                          onChange={() => toggleItemColorBreakdown(item.id)}
+                          className="w-4 h-4 border-2 border-slate-300 rounded-none focus:ring-2 focus:ring-slate-900"
+                        />
+                        <span className="text-xs text-slate-600">Color Breakdown (deduct from WHITE WEFT)</span>
+                      </label>
                     </div>
                   ))}
                 </div>
@@ -561,36 +641,30 @@ export default function SizeCalculatorPage() {
                   </div>
                 </div>
 
-                {/* Color Breakdown Toggle */}
-                <div className="pb-6 border-b border-slate-200">
-                  <label className="flex items-center gap-3 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={isColorBreakdown}
-                      onChange={(e) => setIsColorBreakdown(e.target.checked)}
-                      className="w-5 h-5 border-2 border-slate-300 rounded-none focus:outline-none focus:ring-2 focus:ring-slate-900"
-                    />
-                    <div>
-                      <span className="text-sm font-medium text-slate-900">Color Breakdown</span>
-                      <p className="text-xs text-slate-500 mt-0.5">
-                        This color is made by deducting from WHITE WEFT inventory
-                      </p>
+                {/* Color Breakdown Info (if enabled) */}
+                {isColorBreakdown && (
+                  <div className="pb-6 border-b border-slate-200">
+                    <div className="flex items-center gap-2 mb-3">
+                      <Badge className="bg-blue-100 text-blue-700 border-blue-300">
+                        Color Breakdown
+                      </Badge>
+                      <span className="text-xs text-slate-600">Deducting from WHITE WEFT</span>
                     </div>
-                  </label>
-                  {isColorBreakdown && whiteWeftPo !== null && (
-                    <div className="mt-3 p-3 bg-blue-50 border border-blue-200">
-                      <p className="text-xs font-medium text-blue-900 mb-1">
-                        WHITE WEFT PO (Running/Shipped)
-                      </p>
-                      <p className="text-2xl font-light text-blue-900">
-                        {whiteWeftPo.toLocaleString()} pieces
-                      </p>
-                      <p className="text-xs text-blue-700 mt-1">
-                        Available for {currentItem.style} - WHITE WEFT
-                      </p>
-                    </div>
-                  )}
-                </div>
+                    {whiteWeftPo !== null && (
+                      <div className="p-3 bg-blue-50 border border-blue-200">
+                        <p className="text-xs font-medium text-blue-900 mb-1">
+                          WHITE WEFT PO (Running/Shipped)
+                        </p>
+                        <p className="text-2xl font-light text-blue-900">
+                          {whiteWeftPo.toLocaleString()} pieces
+                        </p>
+                        <p className="text-xs text-blue-700 mt-1">
+                          Available for {currentItem.style} - WHITE WEFT
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Data Inputs */}
                 <div className="space-y-6">
