@@ -167,10 +167,10 @@ export default function SizeCalculatorPage() {
   // Calculate NEW NET NEED after placing the order
   const newNetNeedAfterOrder = useMemo(() => {
     return netNeedValues.map((need, idx) => {
-      const ordered = calculateNewOrderWithNetNeed[idx] || 0;
+      const ordered = calculateOrder[idx] || 0;
       return need + ordered;
     });
-  }, [netNeedValues, calculateNewOrderWithNetNeed]);
+  }, [netNeedValues, calculateOrder]);
 
   const newNetNeedTotal = useMemo(() => 
     newNetNeedAfterOrder.reduce((sum, val) => sum + val, 0), 
