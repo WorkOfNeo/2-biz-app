@@ -8,7 +8,7 @@ create table if not exists public.noos_call_off_stock (
   color text not null,
   sizes jsonb not null default '[]'::jsonb, -- array of size labels in column order
   section text not null, -- 'Stock' | 'Sold' | 'Available' | 'PO Available' | 'Purchase (Running + Shipped)' | etc.
-  row_label text, -- e.g., 'Stock', 'Delivered', '25 WINTER', '10 PCS', 'BR7225'
+  row_label text not null default '', -- e.g., 'Stock', 'Delivered', '25 WINTER', '10 PCS', 'BR7225' (normalized to empty string, never null)
   values jsonb not null default '[]'::jsonb, -- numeric array across sizes plus total if present
   po_link text, -- href when present on purchase rows
   scraped_at timestamptz not null default now(),
@@ -20,9 +20,10 @@ create index if not exists idx_noos_call_off_stock_job_id on public.noos_call_of
 create index if not exists idx_noos_call_off_stock_scraped_at on public.noos_call_off_stock(scraped_at desc);
 
 -- Ensure one row per (style_no, color, section, row_label) logical key
--- We normalize null row_label to '' via expression to match worker behavior
-create unique index if not exists uq_noos_call_off_stock_key on public.noos_call_off_stock
-using btree (style_no, color, section, (coalesce(row_label, '')));
+-- Worker normalizes null to empty string before insert, so we can use a simple constraint
+alter table public.noos_call_off_stock 
+  add constraint uq_noos_call_off_stock_key 
+  unique (style_no, color, section, row_label);
 
 -- RLS: Allow authenticated users to read/write
 alter table if exists public.noos_call_off_stock enable row level security;
