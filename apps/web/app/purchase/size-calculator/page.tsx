@@ -6,6 +6,8 @@ import { Button } from '../../../components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../components/ui/tabs';
 import { Badge } from '../../../components/ui/badge';
 import { Calculator, TrendingUp, Package, ArrowRight, Plus, Check, ChevronLeft, ChevronRight, X } from 'lucide-react';
+import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
+import useSWR from 'swr';
 
 type SizeSetType = '34-46' | 'S-XXL';
 
@@ -33,15 +35,41 @@ type OrderData = {
 type FlowStep = 'selection' | 'calculator' | 'overview';
 
 export default function SizeCalculatorPage() {
+  const supabase = createClientComponentClient();
+
+  // Fetch styles from database
+  const { data: styles } = useSWR('styles:all', async () => {
+    const { data, error } = await supabase
+      .from('styles')
+      .select('id, style_no, style_name')
+      .order('style_no');
+    if (error) throw error;
+    return data as Array<{ id: string; style_no: string; style_name: string }>;
+  });
+
   // Flow state
   const [flowStep, setFlowStep] = useState<FlowStep>('selection');
   const [selectedItems, setSelectedItems] = useState<StyleColorItem[]>([]);
   const [currentItemIndex, setCurrentItemIndex] = useState(0);
   const [savedOrders, setSavedOrders] = useState<OrderData[]>([]);
   
-  // Style/Color input
-  const [styleInput, setStyleInput] = useState('');
-  const [colorInput, setColorInput] = useState('');
+  // Style/Color selection
+  const [selectedStyleId, setSelectedStyleId] = useState('');
+  const [selectedColorId, setSelectedColorId] = useState('');
+  
+  // Fetch colors for selected style
+  const { data: styleColors } = useSWR(
+    selectedStyleId ? ['style_colors', selectedStyleId] : null,
+    async () => {
+      const { data, error } = await supabase
+        .from('style_colors')
+        .select('id, color')
+        .eq('style_id', selectedStyleId)
+        .order('color');
+      if (error) throw error;
+      return data as Array<{ id: string; color: string }>;
+    }
+  );
 
   // Calculator state
   const [sizeSet, setSizeSet] = useState<SizeSetType>('34-46');
@@ -227,17 +255,28 @@ export default function SizeCalculatorPage() {
   const netNeedValid = netNeedValues.length === 0 || netNeedValues.length === sizes.length;
   const historicalSalesValid = historicalSalesValues.length === 0 || historicalSalesValues.length === sizes.length;
 
+  // Get selected style and color details
+  const selectedStyle = styles?.find(s => s.id === selectedStyleId);
+  const selectedColor = styleColors?.find(c => c.id === selectedColorId);
+
   // Handler functions
   const handleAddStyleColor = () => {
-    if (!styleInput.trim() || !colorInput.trim()) return;
+    if (!selectedStyle || !selectedColor) return;
+    
+    // Check if already added
+    const exists = selectedItems.some(
+      item => item.style === selectedStyle.style_no && item.color === selectedColor.color
+    );
+    if (exists) return;
+
     const newItem: StyleColorItem = {
       id: `${Date.now()}-${Math.random()}`,
-      style: styleInput.trim(),
-      color: colorInput.trim(),
+      style: selectedStyle.style_no,
+      color: selectedColor.color,
     };
     setSelectedItems([...selectedItems, newItem]);
-    setStyleInput('');
-    setColorInput('');
+    setSelectedStyleId('');
+    setSelectedColorId('');
   };
 
   const handleRemoveItem = (id: string) => {
@@ -316,41 +355,60 @@ export default function SizeCalculatorPage() {
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <label className="block text-xs font-medium text-slate-600 mb-2 uppercase tracking-wide">
-                        Style
+                        Style ({styles?.length || 0} available)
                       </label>
-                      <input
-                        type="text"
-                        value={styleInput}
-                        onChange={(e) => setStyleInput(e.target.value)}
-                        onKeyDown={(e) => e.key === 'Enter' && colorInput && handleAddStyleColor()}
-                        placeholder="e.g., T-Shirt Basic"
-                        className="w-full px-4 py-3 border border-slate-200 rounded-none focus:outline-none focus:border-slate-900 transition-colors text-sm"
-                      />
+                      <select
+                        value={selectedStyleId}
+                        onChange={(e) => {
+                          setSelectedStyleId(e.target.value);
+                          setSelectedColorId(''); // Reset color when style changes
+                        }}
+                        className="w-full px-4 py-3 border border-slate-200 rounded-none focus:outline-none focus:border-slate-900 transition-colors text-sm bg-white"
+                      >
+                        <option value="">Select a style...</option>
+                        {styles?.map(style => (
+                          <option key={style.id} value={style.id}>
+                            {style.style_no} {style.style_name ? `- ${style.style_name}` : ''}
+                          </option>
+                        ))}
+                      </select>
                     </div>
                     <div>
                       <label className="block text-xs font-medium text-slate-600 mb-2 uppercase tracking-wide">
-                        Color
+                        Color {styleColors ? `(${styleColors.length} available)` : ''}
                       </label>
-                      <input
-                        type="text"
-                        value={colorInput}
-                        onChange={(e) => setColorInput(e.target.value)}
-                        onKeyDown={(e) => e.key === 'Enter' && styleInput && handleAddStyleColor()}
-                        placeholder="e.g., Navy Blue"
-                        className="w-full px-4 py-3 border border-slate-200 rounded-none focus:outline-none focus:border-slate-900 transition-colors text-sm"
-                      />
+                      <select
+                        value={selectedColorId}
+                        onChange={(e) => setSelectedColorId(e.target.value)}
+                        disabled={!selectedStyleId}
+                        className="w-full px-4 py-3 border border-slate-200 rounded-none focus:outline-none focus:border-slate-900 transition-colors text-sm bg-white disabled:bg-slate-100 disabled:text-slate-400"
+                      >
+                        <option value="">
+                          {!selectedStyleId ? 'Select a style first' : 'Select a color...'}
+                        </option>
+                        {styleColors?.map(color => (
+                          <option key={color.id} value={color.id}>
+                            {color.color}
+                          </option>
+                        ))}
+                      </select>
                     </div>
                   </div>
                   
                   <Button
                     onClick={handleAddStyleColor}
-                    disabled={!styleInput.trim() || !colorInput.trim()}
+                    disabled={!selectedStyleId || !selectedColorId || !selectedStyle || !selectedColor}
                     variant="outline"
-                    className="w-full rounded-none border-slate-900 text-slate-900 hover:bg-slate-900 hover:text-white transition-colors"
+                    className="w-full rounded-none border-slate-900 text-slate-900 hover:bg-slate-900 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <Plus className="w-4 h-4 mr-2" />
-                    Add Style/Color
+                    Add to List
                   </Button>
+                  {selectedStyle && selectedColor && (
+                    <p className="text-xs text-center text-slate-500">
+                      Adding: <span className="font-medium">{selectedStyle.style_no} - {selectedColor.color}</span>
+                    </p>
+                  )}
                 </div>
               </CardContent>
             </Card>
