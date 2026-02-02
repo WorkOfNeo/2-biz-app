@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../..
 import { Button } from '../../../components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../components/ui/tabs';
 import { Badge } from '../../../components/ui/badge';
-import { Calculator, TrendingUp, Package, ArrowRight } from 'lucide-react';
+import { Calculator, TrendingUp, Package, ArrowRight, Plus, Check, ChevronLeft, ChevronRight, X } from 'lucide-react';
 
 type SizeSetType = '34-46' | 'S-XXL';
 
@@ -14,7 +14,36 @@ const SIZE_SETS = {
   'S-XXL': ['S', 'M', 'L', 'XL', 'XXL'],
 };
 
+type StyleColorItem = {
+  id: string;
+  style: string;
+  color: string;
+};
+
+type OrderData = {
+  styleColor: StyleColorItem;
+  sizeSet: SizeSetType;
+  netNeedValues: number[];
+  historicalSalesValues: number[];
+  targetQuantity: number;
+  computedOrder: number[];
+  timestamp: number;
+};
+
+type FlowStep = 'selection' | 'calculator' | 'overview';
+
 export default function SizeCalculatorPage() {
+  // Flow state
+  const [flowStep, setFlowStep] = useState<FlowStep>('selection');
+  const [selectedItems, setSelectedItems] = useState<StyleColorItem[]>([]);
+  const [currentItemIndex, setCurrentItemIndex] = useState(0);
+  const [savedOrders, setSavedOrders] = useState<OrderData[]>([]);
+  
+  // Style/Color input
+  const [styleInput, setStyleInput] = useState('');
+  const [colorInput, setColorInput] = useState('');
+
+  // Calculator state
   const [sizeSet, setSizeSet] = useState<SizeSetType>('34-46');
   const [netNeedInput, setNetNeedInput] = useState('');
   const [historicalSalesInput, setHistoricalSalesInput] = useState('');
@@ -22,6 +51,18 @@ export default function SizeCalculatorPage() {
   const [computedOrder, setComputedOrder] = useState<number[] | null>(null);
 
   const sizes = SIZE_SETS[sizeSet];
+  const currentItem = selectedItems[currentItemIndex];
+
+  // Reset calculator when moving to next item
+  useEffect(() => {
+    if (flowStep === 'calculator') {
+      setNetNeedInput('');
+      setHistoricalSalesInput('');
+      setTargetQuantity('');
+      setComputedOrder(null);
+      setSizeSet('34-46');
+    }
+  }, [currentItemIndex, flowStep]);
 
   // Reset computed order when inputs change
   useEffect(() => {
@@ -186,290 +227,496 @@ export default function SizeCalculatorPage() {
   const netNeedValid = netNeedValues.length === 0 || netNeedValues.length === sizes.length;
   const historicalSalesValid = historicalSalesValues.length === 0 || historicalSalesValues.length === sizes.length;
 
+  // Handler functions
+  const handleAddStyleColor = () => {
+    if (!styleInput.trim() || !colorInput.trim()) return;
+    const newItem: StyleColorItem = {
+      id: `${Date.now()}-${Math.random()}`,
+      style: styleInput.trim(),
+      color: colorInput.trim(),
+    };
+    setSelectedItems([...selectedItems, newItem]);
+    setStyleInput('');
+    setColorInput('');
+  };
+
+  const handleRemoveItem = (id: string) => {
+    setSelectedItems(selectedItems.filter(item => item.id !== id));
+  };
+
+  const handleStartCalculator = () => {
+    if (selectedItems.length === 0) return;
+    setCurrentItemIndex(0);
+    setFlowStep('calculator');
+  };
+
+  const handleSaveAndNext = () => {
+    if (!computedOrder) return;
+
+    const orderData: OrderData = {
+      styleColor: currentItem,
+      sizeSet,
+      netNeedValues,
+      historicalSalesValues,
+      targetQuantity: parseFloat(targetQuantity),
+      computedOrder,
+      timestamp: Date.now(),
+    };
+
+    setSavedOrders([...savedOrders, orderData]);
+
+    // Move to next item or overview
+    if (currentItemIndex < selectedItems.length - 1) {
+      setCurrentItemIndex(currentItemIndex + 1);
+    } else {
+      setFlowStep('overview');
+    }
+  };
+
+  const handleSkipItem = () => {
+    if (currentItemIndex < selectedItems.length - 1) {
+      setCurrentItemIndex(currentItemIndex + 1);
+    } else {
+      setFlowStep('overview');
+    }
+  };
+
+  const handleBackToSelection = () => {
+    setFlowStep('selection');
+    setCurrentItemIndex(0);
+    setSavedOrders([]);
+  };
+
+  const handleRemoveOrder = (timestamp: number) => {
+    setSavedOrders(savedOrders.filter(order => order.timestamp !== timestamp));
+  };
+
   return (
-    <div className="p-6 space-y-6 max-w-7xl mx-auto">
-      {/* Header */}
-      <div className="space-y-2">
-        <div className="flex items-center gap-2">
-          <Calculator className="w-6 h-6 text-blue-600" />
-          <div>
-            <div className="text-xs text-slate-500 uppercase tracking-wide">Purchase</div>
-            <h1 className="text-3xl font-bold text-slate-900">Size Distribution Calculator</h1>
-          </div>
+    <div className="min-h-screen bg-slate-50">
+      <div className="max-w-5xl mx-auto p-8">
+        {/* Header */}
+        <div className="mb-12 text-center">
+          <h1 className="text-4xl font-light text-slate-900 tracking-tight mb-2">
+            Purchase Order Calculator
+          </h1>
+          <p className="text-slate-500 text-sm">
+            {flowStep === 'selection' && 'Select styles and colors to calculate'}
+            {flowStep === 'calculator' && `${currentItemIndex + 1} of ${selectedItems.length}`}
+            {flowStep === 'overview' && 'Order summary'}
+          </p>
         </div>
-        <p className="text-slate-600">
-          Calculate optimal order quantities based on historical sales patterns and current net need
-        </p>
-      </div>
 
-      {/* Configuration Card */}
-      <Card className="border-2">
-        <CardHeader className="bg-gradient-to-r from-slate-50 to-slate-100">
-          <CardTitle className="flex items-center gap-2">
-            <Package className="w-5 h-5" />
-            Configuration
-          </CardTitle>
-          <CardDescription>Set up your size range and input data</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-6 pt-6">
-          {/* Size Set Selection */}
-          <div>
-            <label className="block text-sm font-semibold text-slate-700 mb-3">
-              Select Size Set
-            </label>
-            <Tabs value={sizeSet} onValueChange={(v) => setSizeSet(v as SizeSetType)} className="w-full">
-              <TabsList className="grid w-full max-w-md grid-cols-2">
-                <TabsTrigger value="34-46" className="flex items-center gap-2">
-                  34-46 <Badge className="ml-1 bg-slate-100 text-slate-700">Numeric</Badge>
-                </TabsTrigger>
-                <TabsTrigger value="S-XXL" className="flex items-center gap-2">
-                  S-XXL <Badge className="ml-1 bg-slate-100 text-slate-700">Letter</Badge>
-                </TabsTrigger>
-              </TabsList>
-            </Tabs>
-            <div className="mt-3 flex flex-wrap gap-1.5">
-              {sizes.map(size => (
-                <Badge key={size} className="text-xs bg-blue-100 text-blue-700 border-blue-200">
-                  {size}
-                </Badge>
-              ))}
-            </div>
-          </div>
-
-          {/* Data Inputs Grid */}
-          <div className="grid md:grid-cols-2 gap-6">
-            {/* Current Net Need Input */}
-            <div className="space-y-2">
-              <label className="block text-sm font-semibold text-slate-700">
-                Current Net Need
-              </label>
-              <p className="text-xs text-slate-500">
-                Paste {sizes.length} space-separated values from Excel
-              </p>
-              <input
-                type="text"
-                value={netNeedInput}
-                onChange={(e) => setNetNeedInput(e.target.value)}
-                placeholder="e.g., 19 96 175 171 182 147 68"
-                className={`
-                  w-full px-4 py-3 border-2 rounded-lg text-sm font-mono
-                  ${!netNeedValid 
-                    ? 'border-red-300 bg-red-50 focus:ring-red-500' 
-                    : 'border-slate-300 focus:border-blue-500'
-                  }
-                  focus:outline-none focus:ring-2
-                `}
-              />
-              {!netNeedValid && (
-                <p className="text-xs text-red-600 font-medium flex items-center gap-1">
-                  ⚠️ Must have exactly {sizes.length} values (got {netNeedValues.length})
-                </p>
-              )}
-              {netNeedValid && netNeedTotal > 0 && (
-                <div className="flex items-center justify-between bg-slate-50 rounded px-3 py-2">
-                  <span className="text-xs text-slate-600">Total:</span>
-                  <Badge className="text-sm font-semibold bg-slate-200 text-slate-800 border-slate-300">
-                    {netNeedTotal.toLocaleString()} pcs
-                  </Badge>
+        {/* STEP 1: Style/Color Selection */}
+        {flowStep === 'selection' && (
+          <div className="space-y-8">
+            <Card className="border-0 shadow-sm">
+              <CardContent className="p-8">
+                <div className="space-y-6">
+                  {/* Input Form */}
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-medium text-slate-600 mb-2 uppercase tracking-wide">
+                        Style
+                      </label>
+                      <input
+                        type="text"
+                        value={styleInput}
+                        onChange={(e) => setStyleInput(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && colorInput && handleAddStyleColor()}
+                        placeholder="e.g., T-Shirt Basic"
+                        className="w-full px-4 py-3 border border-slate-200 rounded-none focus:outline-none focus:border-slate-900 transition-colors text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-slate-600 mb-2 uppercase tracking-wide">
+                        Color
+                      </label>
+                      <input
+                        type="text"
+                        value={colorInput}
+                        onChange={(e) => setColorInput(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && styleInput && handleAddStyleColor()}
+                        placeholder="e.g., Navy Blue"
+                        className="w-full px-4 py-3 border border-slate-200 rounded-none focus:outline-none focus:border-slate-900 transition-colors text-sm"
+                      />
+                    </div>
+                  </div>
+                  
+                  <Button
+                    onClick={handleAddStyleColor}
+                    disabled={!styleInput.trim() || !colorInput.trim()}
+                    variant="outline"
+                    className="w-full rounded-none border-slate-900 text-slate-900 hover:bg-slate-900 hover:text-white transition-colors"
+                  >
+                    <Plus className="w-4 h-4 mr-2" />
+                    Add Style/Color
+                  </Button>
                 </div>
-              )}
-            </div>
+              </CardContent>
+            </Card>
 
-            {/* Historical Sales Input */}
-            <div className="space-y-2">
-              <label className="block text-sm font-semibold text-slate-700">
-                Historical Sales
-              </label>
-              <p className="text-xs text-slate-500">
-                Paste {sizes.length} space-separated values from Excel
-              </p>
-              <input
-                type="text"
-                value={historicalSalesInput}
-                onChange={(e) => setHistoricalSalesInput(e.target.value)}
-                placeholder="e.g., 19 96 175 171 182 147 68"
-                className={`
-                  w-full px-4 py-3 border-2 rounded-lg text-sm font-mono
-                  ${!historicalSalesValid 
-                    ? 'border-red-300 bg-red-50 focus:ring-red-500' 
-                    : 'border-slate-300 focus:border-blue-500'
-                  }
-                  focus:outline-none focus:ring-2
-                `}
-              />
-              {!historicalSalesValid && (
-                <p className="text-xs text-red-600 font-medium flex items-center gap-1">
-                  ⚠️ Must have exactly {sizes.length} values (got {historicalSalesValues.length})
+            {/* Selected Items */}
+            {selectedItems.length > 0 && (
+              <div className="space-y-3">
+                <p className="text-xs font-medium text-slate-600 uppercase tracking-wide">
+                  Selected ({selectedItems.length})
                 </p>
-              )}
-              {historicalSalesValid && historicalSalesTotal > 0 && (
-                <div className="flex items-center justify-between bg-blue-50 rounded px-3 py-2">
-                  <span className="text-xs text-slate-600">Total:</span>
-                  <Badge className="text-sm font-semibold bg-blue-600">
-                    {historicalSalesTotal.toLocaleString()} pcs
-                  </Badge>
+                <div className="space-y-2">
+                  {selectedItems.map((item) => (
+                    <div
+                      key={item.id}
+                      className="flex items-center justify-between p-4 bg-white border border-slate-200"
+                    >
+                      <div className="flex items-center gap-4">
+                        <div className="w-8 h-8 bg-slate-100 flex items-center justify-center text-xs font-medium text-slate-600">
+                          {selectedItems.indexOf(item) + 1}
+                        </div>
+                        <div>
+                          <p className="font-medium text-slate-900">{item.style}</p>
+                          <p className="text-sm text-slate-500">{item.color}</p>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => handleRemoveItem(item.id)}
+                        className="text-slate-400 hover:text-slate-900 transition-colors"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ))}
                 </div>
-              )}
-            </div>
-          </div>
 
-          {/* Target Quantity Input */}
-          <div className="space-y-2 max-w-md">
-            <label className="block text-sm font-semibold text-slate-700">
-              Target Order Quantity
-            </label>
-            <p className="text-xs text-slate-500">
-              Enter the total number of pieces you want to order
-            </p>
-            <input
-              type="number"
-              value={targetQuantity}
-              onChange={(e) => setTargetQuantity(e.target.value)}
-              placeholder="e.g., 400"
-              className="w-full px-4 py-3 border-2 border-slate-300 rounded-lg text-lg font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            />
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Results Display */}
-      {netNeedValid && historicalSalesValid && netNeedTotal > 0 && historicalSalesTotal > 0 && parseFloat(targetQuantity || '0') > 0 && (
-        <Card className="border-2">
-          <CardHeader className="bg-gradient-to-r from-slate-50 to-blue-50">
-            <div className="flex items-center justify-between">
-              <div>
-                <CardTitle className="flex items-center gap-2">
-                  <Calculator className="w-5 h-5 text-blue-600" />
-                  Order Analysis
-                </CardTitle>
-                <CardDescription>
-                  Target: <strong>{parseFloat(targetQuantity).toLocaleString()} pieces</strong>
-                </CardDescription>
+                <Button
+                  onClick={handleStartCalculator}
+                  className="w-full rounded-none bg-slate-900 hover:bg-slate-800 text-white py-6"
+                >
+                  Start Calculator
+                  <ArrowRight className="w-4 h-4 ml-2" />
+                </Button>
               </div>
-              <Button
-                onClick={() => {
-                  const target = parseFloat(targetQuantity) || 0;
-                  if (target > 0) {
-                    const optimal = calculateOptimalOrder(target);
-                    setComputedOrder(optimal);
-                  }
-                }}
-                className="bg-blue-600 hover:bg-blue-700"
-                disabled={!targetQuantity || parseFloat(targetQuantity) <= 0}
-              >
-                <TrendingUp className="w-4 h-4 mr-2" />
-                Compute Optimal Order
-              </Button>
-            </div>
-          </CardHeader>
-          <CardContent className="pt-6">
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm border-collapse border border-slate-200">
-                <thead>
-                  <tr className="bg-slate-100 border-b-2 border-slate-300">
-                    <th className="text-left py-3 px-4 font-semibold text-slate-700 w-56">Metric</th>
-                    {sizes.map(size => (
-                      <th key={size} className="text-center py-3 px-3 font-semibold text-slate-700 border-l border-slate-200">
-                        {size}
-                      </th>
-                    ))}
-                    <th className="text-right py-3 px-4 font-semibold text-slate-700 border-l-2 border-slate-300 bg-slate-50">
-                      Total
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
+            )}
+          </div>
+        )}
+
+        {/* STEP 2: Calculator */}
+        {flowStep === 'calculator' && currentItem && (
+          <div className="space-y-8">
+            {/* Current Item Header */}
+            <Card className="border-0 shadow-sm bg-slate-900 text-white">
+              <CardContent className="p-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-xs opacity-60 mb-1">Currently calculating</p>
+                    <p className="text-xl font-light">{currentItem.style}</p>
+                    <p className="text-sm opacity-80">{currentItem.color}</p>
+                  </div>
+                  <Badge className="bg-white text-slate-900 border-0">
+                    {currentItemIndex + 1} / {selectedItems.length}
+                  </Badge>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="border-0 shadow-sm">
+              <CardContent className="p-8 space-y-6">
+                {/* Size Set Selection */}
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-3 uppercase tracking-wide">
+                    Size Range
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      onClick={() => setSizeSet('34-46')}
+                      className={`p-3 border text-sm transition-all ${
+                        sizeSet === '34-46'
+                          ? 'border-slate-900 bg-slate-900 text-white'
+                          : 'border-slate-200 hover:border-slate-300'
+                      }`}
+                    >
+                      34-46
+                    </button>
+                    <button
+                      onClick={() => setSizeSet('S-XXL')}
+                      className={`p-3 border text-sm transition-all ${
+                        sizeSet === 'S-XXL'
+                          ? 'border-slate-900 bg-slate-900 text-white'
+                          : 'border-slate-200 hover:border-slate-300'
+                      }`}
+                    >
+                      S-XXL
+                    </button>
+                  </div>
+                  <div className="mt-2 flex gap-1 text-xs text-slate-500">
+                    {sizes.join(' · ')}
+                  </div>
+                </div>
+
+                {/* Data Inputs */}
+                <div className="space-y-6">
                   {/* Current Net Need */}
-                  <tr className="border-b border-slate-200">
-                    <td className="py-2 px-4 font-medium text-slate-800">Current Net Need</td>
-                    {netNeedValues.map((val, idx) => (
-                      <td key={idx} className="text-center py-2 px-3 border-l border-slate-100">
-                        <div className="font-semibold text-slate-700">{val.toLocaleString()}</div>
-                        <div className="text-[10px] text-slate-500">{(netNeedPercentages[idx] ?? 0).toFixed(1)}%</div>
-                      </td>
-                    ))}
-                    <td className="text-right py-2 px-4 font-bold text-slate-800 border-l-2 border-slate-300 bg-slate-50">
-                      {netNeedTotal.toLocaleString()}
-                    </td>
-                  </tr>
+                  <div>
+                    <label className="block text-xs font-medium text-slate-600 mb-2 uppercase tracking-wide">
+                      Current Net Need ({sizes.length} values)
+                    </label>
+                    <input
+                      type="text"
+                      value={netNeedInput}
+                      onChange={(e) => setNetNeedInput(e.target.value)}
+                      placeholder="Paste space-separated values"
+                      className={`w-full px-4 py-3 border text-sm font-mono focus:outline-none transition-colors ${
+                        !netNeedValid
+                          ? 'border-red-300 bg-red-50'
+                          : netNeedTotal > 0
+                          ? 'border-slate-900 bg-white'
+                          : 'border-slate-200'
+                      }`}
+                    />
+                    {netNeedValid && netNeedTotal > 0 && (
+                      <p className="text-xs text-slate-500 mt-1">Total: {netNeedTotal.toLocaleString()}</p>
+                    )}
+                  </div>
 
                   {/* Historical Sales */}
-                  <tr className="border-b-2 border-slate-300 bg-blue-50">
-                    <td className="py-2 px-4 font-medium text-blue-800">Historical Sales (Target)</td>
-                    {historicalSalesValues.map((val, idx) => (
-                      <td key={idx} className="text-center py-2 px-3 border-l border-blue-100">
-                        <div className="font-semibold text-blue-700">{val.toLocaleString()}</div>
-                        <div className="text-[10px] text-blue-600 font-medium">{(historicalSalesPercentages[idx] ?? 0).toFixed(1)}%</div>
-                      </td>
-                    ))}
-                    <td className="text-right py-2 px-4 font-bold text-blue-800 border-l-2 border-slate-300 bg-blue-100">
-                      {historicalSalesTotal.toLocaleString()}
-                    </td>
-                  </tr>
+                  <div>
+                    <label className="block text-xs font-medium text-slate-600 mb-2 uppercase tracking-wide">
+                      Historical Sales ({sizes.length} values)
+                    </label>
+                    <input
+                      type="text"
+                      value={historicalSalesInput}
+                      onChange={(e) => setHistoricalSalesInput(e.target.value)}
+                      placeholder="Paste space-separated values"
+                      className={`w-full px-4 py-3 border text-sm font-mono focus:outline-none transition-colors ${
+                        !historicalSalesValid
+                          ? 'border-red-300 bg-red-50'
+                          : historicalSalesTotal > 0
+                          ? 'border-slate-900 bg-white'
+                          : 'border-slate-200'
+                      }`}
+                    />
+                    {historicalSalesValid && historicalSalesTotal > 0 && (
+                      <p className="text-xs text-slate-500 mt-1">Total: {historicalSalesTotal.toLocaleString()}</p>
+                    )}
+                  </div>
 
-                  {/* New Order */}
-                  <tr className="border-b-2 border-slate-300 bg-green-50">
-                    <td className="py-3 px-4 font-bold text-green-900">New Order</td>
-                    {calculateOrder.map((qty, idx) => (
-                      <td key={idx} className="text-center py-3 px-3 font-bold text-green-700 text-base border-l border-green-100">
-                        {qty.toLocaleString()}
-                      </td>
-                    ))}
-                    <td className="text-right py-3 px-4 font-bold text-green-900 text-base border-l-2 border-slate-300 bg-green-100">
-                      {orderTotal.toLocaleString()}
-                    </td>
-                  </tr>
+                  {/* Target Quantity */}
+                  <div>
+                    <label className="block text-xs font-medium text-slate-600 mb-2 uppercase tracking-wide">
+                      Target Order Quantity
+                    </label>
+                    <input
+                      type="number"
+                      value={targetQuantity}
+                      onChange={(e) => setTargetQuantity(e.target.value)}
+                      placeholder="Enter total pieces"
+                      className="w-full px-4 py-3 border border-slate-200 text-lg font-semibold focus:outline-none focus:border-slate-900 transition-colors"
+                    />
+                  </div>
+                </div>
 
-                  {/* New Net Need (after order) */}
-                  <tr className="border-b-2 border-slate-300 bg-purple-50">
-                    <td className="py-2 px-4 font-bold text-purple-900">New Net Need (after order)</td>
-                    {newNetNeedAfterOrder.map((val, idx) => {
-                      const deviation = Math.abs((newNetNeedPercentages[idx] ?? 0) - (historicalSalesPercentages[idx] ?? 0));
-                      const isClose = deviation < 1.0; // Within 1%
-                      return (
-                        <td key={idx} className="text-center py-2 px-3 border-l border-purple-100">
-                          <div className="font-bold text-purple-700">{val.toLocaleString()}</div>
-                          <div className={`text-[10px] font-medium ${isClose ? 'text-green-600' : 'text-orange-600'}`}>
-                            {(newNetNeedPercentages[idx] ?? 0).toFixed(1)}%
-                          </div>
-                        </td>
-                      );
-                    })}
-                    <td className="text-right py-2 px-4 font-bold text-purple-900 border-l-2 border-slate-300 bg-purple-100">
-                      {newNetNeedTotal.toLocaleString()}
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
+                {/* Compute Button */}
+                <Button
+                  onClick={() => {
+                    const target = parseFloat(targetQuantity) || 0;
+                    if (target > 0) {
+                      const optimal = calculateOptimalOrder(target);
+                      setComputedOrder(optimal);
+                    }
+                  }}
+                  disabled={
+                    !targetQuantity ||
+                    parseFloat(targetQuantity) <= 0 ||
+                    !netNeedValid ||
+                    !historicalSalesValid ||
+                    netNeedTotal === 0 ||
+                    historicalSalesTotal === 0
+                  }
+                  className="w-full rounded-none bg-slate-900 hover:bg-slate-800 text-white py-6"
+                >
+                  <Calculator className="w-4 h-4 mr-2" />
+                  Compute Optimal Order
+                </Button>
 
-            {/* Action Buttons */}
-            <div className="mt-4 flex flex-wrap items-center gap-3">
-              <Button
-                onClick={() => {
-                  const orderText = calculateOrder.join('\t');
-                  navigator.clipboard.writeText(orderText);
-                }}
-                variant="outline"
-                size="sm"
+                {/* Action Buttons After Compute */}
+                {computedOrder && (
+                  <div className="pt-6 border-t border-slate-200 space-y-3">
+                    <div className="flex items-center justify-center gap-2 text-sm text-slate-600 mb-4">
+                      <Check className="w-4 h-4 text-green-600" />
+                      Order computed: {computedOrder.reduce((sum, val) => sum + val, 0).toLocaleString()} pieces
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <Button
+                        onClick={handleSkipItem}
+                        variant="outline"
+                        className="rounded-none border-slate-200 hover:border-slate-300"
+                      >
+                        Skip
+                      </Button>
+                      <Button
+                        onClick={handleSaveAndNext}
+                        className="rounded-none bg-slate-900 hover:bg-slate-800 text-white"
+                      >
+                        {currentItemIndex < selectedItems.length - 1 ? 'Save & Next' : 'Save & Finish'}
+                        <ArrowRight className="w-4 h-4 ml-2" />
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Navigation */}
+            <div className="flex justify-between items-center text-sm text-slate-500">
+              <button
+                onClick={() => setFlowStep('selection')}
+                className="hover:text-slate-900 transition-colors"
               >
-                📋 Copy Order
-              </Button>
-              
-              {computedOrder && (
-                <Badge className="bg-green-100 text-green-800 border-green-300 px-3 py-1">
-                  ✓ Optimized for target distribution
-                </Badge>
-              )}
-
-              <div className="ml-auto text-xs text-slate-600">
-                <span className="text-green-600 font-medium">Green %</span> = within 1% of target | 
-                <span className="text-orange-600 font-medium ml-1">Orange %</span> = needs adjustment
-              </div>
+                ← Back to selection
+              </button>
+              <span>
+                {savedOrders.length} of {selectedItems.length} saved
+              </span>
             </div>
-          </CardContent>
-        </Card>
-      )}
+          </div>
+        )}
+
+        {/* STEP 3: Overview */}
+        {flowStep === 'overview' && (
+          <div className="space-y-8">
+            <Card className="border-0 shadow-sm">
+              <CardContent className="p-8">
+                {savedOrders.length === 0 ? (
+                  <div className="text-center py-12 text-slate-500">
+                    <p>No orders saved</p>
+                    <Button
+                      onClick={handleBackToSelection}
+                      variant="outline"
+                      className="mt-4 rounded-none"
+                    >
+                      Start Over
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="space-y-6">
+                    <div className="flex items-center justify-between">
+                      <h2 className="text-2xl font-light">Order Summary</h2>
+                      <p className="text-sm text-slate-500">{savedOrders.length} items</p>
+                    </div>
+
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-slate-200">
+                            <th className="text-left py-3 px-4 font-medium text-slate-600 uppercase tracking-wide text-xs">
+                              Style / Color
+                            </th>
+                            <th className="text-right py-3 px-3 font-medium text-slate-600 uppercase tracking-wide text-xs">
+                              Historical Sales
+                            </th>
+                            <th className="text-right py-3 px-3 font-medium text-slate-600 uppercase tracking-wide text-xs">
+                              Current Net Need
+                            </th>
+                            <th className="text-right py-3 px-3 font-medium text-slate-600 uppercase tracking-wide text-xs">
+                              New PO
+                            </th>
+                            <th className="text-right py-3 px-3 font-medium text-slate-600 uppercase tracking-wide text-xs">
+                              New Net Need
+                            </th>
+                            <th className="w-12"></th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {savedOrders.map((order) => {
+                            const histTotal = order.historicalSalesValues.reduce((sum, val) => sum + val, 0);
+                            const netNeedTotal = order.netNeedValues.reduce((sum, val) => sum + val, 0);
+                            const poTotal = order.computedOrder.reduce((sum, val) => sum + val, 0);
+                            const newNetNeedTotal = netNeedTotal + poTotal;
+
+                            return (
+                              <tr key={order.timestamp} className="border-b border-slate-100 hover:bg-slate-50">
+                                <td className="py-4 px-4">
+                                  <p className="font-medium text-slate-900">{order.styleColor.style}</p>
+                                  <p className="text-xs text-slate-500">{order.styleColor.color}</p>
+                                  <p className="text-xs text-slate-400 mt-1">{order.sizeSet}</p>
+                                </td>
+                                <td className="text-right py-4 px-3 text-slate-700">
+                                  {histTotal.toLocaleString()}
+                                </td>
+                                <td className="text-right py-4 px-3 text-slate-700">
+                                  {netNeedTotal.toLocaleString()}
+                                </td>
+                                <td className="text-right py-4 px-3 font-semibold text-slate-900">
+                                  {poTotal.toLocaleString()}
+                                </td>
+                                <td className="text-right py-4 px-3 text-slate-700">
+                                  {newNetNeedTotal.toLocaleString()}
+                                </td>
+                                <td className="py-4 px-3">
+                                  <button
+                                    onClick={() => handleRemoveOrder(order.timestamp)}
+                                    className="text-slate-400 hover:text-slate-900 transition-colors"
+                                  >
+                                    <X className="w-4 h-4" />
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                        <tfoot>
+                          <tr className="border-t-2 border-slate-300 font-semibold">
+                            <td className="py-4 px-4 text-slate-900">Total</td>
+                            <td className="text-right py-4 px-3 text-slate-900">
+                              {savedOrders.reduce((sum, o) => sum + o.historicalSalesValues.reduce((s, v) => s + v, 0), 0).toLocaleString()}
+                            </td>
+                            <td className="text-right py-4 px-3 text-slate-900">
+                              {savedOrders.reduce((sum, o) => sum + o.netNeedValues.reduce((s, v) => s + v, 0), 0).toLocaleString()}
+                            </td>
+                            <td className="text-right py-4 px-3 text-slate-900">
+                              {savedOrders.reduce((sum, o) => sum + o.computedOrder.reduce((s, v) => s + v, 0), 0).toLocaleString()}
+                            </td>
+                            <td className="text-right py-4 px-3 text-slate-900">
+                              {savedOrders.reduce((sum, o) => {
+                                const netNeed = o.netNeedValues.reduce((s, v) => s + v, 0);
+                                const po = o.computedOrder.reduce((s, v) => s + v, 0);
+                                return sum + netNeed + po;
+                              }, 0).toLocaleString()}
+                            </td>
+                            <td></td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+
+                    {/* Actions */}
+                    <div className="flex gap-3 pt-6 border-t border-slate-200">
+                      <Button
+                        onClick={handleBackToSelection}
+                        variant="outline"
+                        className="rounded-none border-slate-200"
+                      >
+                        <ChevronLeft className="w-4 h-4 mr-2" />
+                        Start New Order
+                      </Button>
+                      <Button
+                        onClick={() => {
+                          const csvContent = savedOrders.map(o => 
+                            `${o.styleColor.style}\t${o.styleColor.color}\t${o.computedOrder.join('\t')}`
+                          ).join('\n');
+                          navigator.clipboard.writeText(csvContent);
+                        }}
+                        className="rounded-none bg-slate-900 hover:bg-slate-800"
+                      >
+                        Copy All Orders
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
