@@ -431,10 +431,26 @@ export default function SizeCalculatorPage() {
       
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to enqueue scrape job');
+        console.error('[NOOS Call Off] Enqueue failed:', errorData);
+        
+        let errorMsg = errorData.error || 'Failed to enqueue scrape job';
+        
+        // Provide helpful hint if it's a constraint violation
+        if (errorData.code === '23514' || errorMsg.includes('check constraint')) {
+          errorMsg += '\n\nThe database migrations may not have been run yet. Please run the SQL migrations in supabase/sql/154_*, 155_*, 156_*.';
+        }
+        
+        throw new Error(errorMsg);
       }
       
-      const { jobId } = await response.json();
+      const responseData = await response.json();
+      console.log('[NOOS Call Off] Enqueue response:', responseData);
+      
+      const { jobId } = responseData;
+      if (!jobId) {
+        throw new Error('No job ID returned from server');
+      }
+      
       setScrapeJobId(jobId);
       
       // Poll for job completion
@@ -446,14 +462,20 @@ export default function SizeCalculatorPage() {
         attempts++;
         
         // Check job status
-        const { data: job } = await supabase
+        const { data: job, error: jobError } = await supabase
           .from('jobs')
           .select('status, error, result')
           .eq('id', jobId)
-          .single();
+          .maybeSingle();
+        
+        if (jobError) {
+          console.error('Error fetching job:', jobError);
+          continue; // Retry on error
+        }
         
         if (!job) {
-          throw new Error('Job not found');
+          console.warn('Job not found yet, retrying...');
+          continue; // Job might not be visible yet, retry
         }
         
         if (job.status === 'failed') {

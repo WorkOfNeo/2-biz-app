@@ -47,13 +47,27 @@ async function handle(req: Request) {
     .single();
   
   if (error) {
+    console.error('[NOOS Call Off Enqueue] Job insert failed:', error);
     return new Response(
-      JSON.stringify({ error: 'job insert failed', detail: error.message }), 
+      JSON.stringify({ 
+        error: 'job insert failed', 
+        detail: error.message,
+        code: error.code,
+        hint: error.hint 
+      }), 
       { status: 500, headers: { 'Content-Type': 'application/json' } }
     );
   }
   
-  const jobId = (job as any)?.id as string;
+  if (!job || !job.id) {
+    console.error('[NOOS Call Off Enqueue] No job ID returned:', job);
+    return new Response(
+      JSON.stringify({ error: 'job created but no ID returned' }), 
+      { status: 500, headers: { 'Content-Type': 'application/json' } }
+    );
+  }
+  
+  const jobId = job.id as string;
   
   await supabase
     .from('job_logs')
