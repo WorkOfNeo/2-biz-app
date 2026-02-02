@@ -610,7 +610,7 @@ export default function SizeCalculatorPage() {
     if (savedOrders.length === 0) return;
     
     setCreatingAppPo(true);
-    setAppPoCreated(null);
+    setAppPoCreated([]);
     
     try {
       // Separate regular orders from color breakdown orders
