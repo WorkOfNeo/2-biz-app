@@ -591,18 +591,31 @@ export default function SizeCalculatorPage() {
         {/* STEP 2: Calculator */}
         {flowStep === 'calculator' && currentItem && (
           <div className="space-y-8">
-            {/* Current Item Header */}
+            {/* Current Item Header with Progress */}
             <Card className="border-0 shadow-sm bg-slate-900 text-white">
               <CardContent className="p-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-xs opacity-60 mb-1">Currently calculating</p>
-                    <p className="text-xl font-light">{currentItem.style}</p>
-                    <p className="text-sm opacity-80">{currentItem.color}</p>
+                <div>
+                  <div className="flex items-center justify-between mb-4">
+                    <div>
+                      <p className="text-xs opacity-60 mb-1">Currently calculating</p>
+                      <p className="text-xl font-light">{currentItem.style}</p>
+                      <p className="text-sm opacity-80">{currentItem.color}</p>
+                    </div>
                   </div>
-                  <Badge className="bg-white text-slate-900 border-0">
-                    {currentItemIndex + 1} / {selectedItems.length}
-                  </Badge>
+                  
+                  {/* Progress Bar */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="opacity-60">Progress</span>
+                      <span className="font-medium">{currentItemIndex + 1} / {selectedItems.length}</span>
+                    </div>
+                    <div className="w-full bg-slate-700 h-1.5">
+                      <div 
+                        className="bg-white h-1.5 transition-all duration-300"
+                        style={{ width: `${((currentItemIndex + 1) / selectedItems.length) * 100}%` }}
+                      />
+                    </div>
+                  </div>
                 </div>
               </CardContent>
             </Card>
@@ -752,13 +765,101 @@ export default function SizeCalculatorPage() {
                   Compute Optimal Order
                 </Button>
 
-                {/* Action Buttons After Compute */}
-                {computedOrder && (
-                  <div className="pt-6 border-t border-slate-200 space-y-3">
-                    <div className="flex items-center justify-center gap-2 text-sm text-slate-600 mb-4">
+                {/* Calculation Results */}
+                {computedOrder && netNeedValid && historicalSalesValid && (
+                  <div className="pt-6 border-t border-slate-200 space-y-6">
+                    <div className="flex items-center justify-center gap-2 text-sm text-slate-600">
                       <Check className="w-4 h-4 text-green-600" />
                       Order computed: {computedOrder.reduce((sum, val) => sum + val, 0).toLocaleString()} pieces
                     </div>
+
+                    {/* Results Table */}
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs border border-slate-200">
+                        <thead>
+                          <tr className="bg-slate-100 border-b border-slate-300">
+                            <th className="text-left py-2 px-3 font-medium text-slate-700">Metric</th>
+                            {sizes.map(size => (
+                              <th key={size} className="text-center py-2 px-2 font-medium text-slate-700 border-l border-slate-200">
+                                {size}
+                              </th>
+                            ))}
+                            <th className="text-right py-2 px-3 font-medium text-slate-700 border-l-2 border-slate-300 bg-slate-50">
+                              Total
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {/* Current Net Need */}
+                          <tr className="border-b border-slate-100">
+                            <td className="py-2 px-3 text-slate-700">Net Need</td>
+                            {netNeedValues.map((val, idx) => (
+                              <td key={idx} className="text-center py-2 px-2 border-l border-slate-100">
+                                <div className="text-slate-700">{val.toLocaleString()}</div>
+                                <div className="text-[9px] text-slate-400">{(netNeedPercentages[idx] ?? 0).toFixed(1)}%</div>
+                              </td>
+                            ))}
+                            <td className="text-right py-2 px-3 font-semibold text-slate-700 border-l-2 border-slate-300 bg-slate-50">
+                              {netNeedTotal.toLocaleString()}
+                            </td>
+                          </tr>
+
+                          {/* Historical Sales */}
+                          <tr className="border-b-2 border-slate-300 bg-blue-50">
+                            <td className="py-2 px-3 text-blue-800 font-medium">Hist. Sales</td>
+                            {historicalSalesValues.map((val, idx) => (
+                              <td key={idx} className="text-center py-2 px-2 border-l border-blue-100">
+                                <div className="text-blue-700">{val.toLocaleString()}</div>
+                                <div className="text-[9px] text-blue-600 font-medium">{(historicalSalesPercentages[idx] ?? 0).toFixed(1)}%</div>
+                              </td>
+                            ))}
+                            <td className="text-right py-2 px-3 font-semibold text-blue-800 border-l-2 border-slate-300 bg-blue-100">
+                              {historicalSalesTotal.toLocaleString()}
+                            </td>
+                          </tr>
+
+                          {/* New Order */}
+                          <tr className="border-b-2 border-slate-300 bg-green-50">
+                            <td className="py-2 px-3 font-semibold text-green-900">New Order</td>
+                            {calculateOrder.map((qty, idx) => (
+                              <td key={idx} className="text-center py-2 px-2 font-semibold text-green-700 border-l border-green-100">
+                                {qty.toLocaleString()}
+                              </td>
+                            ))}
+                            <td className="text-right py-2 px-3 font-bold text-green-900 border-l-2 border-slate-300 bg-green-100">
+                              {orderTotal.toLocaleString()}
+                            </td>
+                          </tr>
+
+                          {/* New Net Need After Order */}
+                          <tr className="border-b-2 border-slate-300 bg-purple-50">
+                            <td className="py-2 px-3 font-semibold text-purple-900">New Net Need</td>
+                            {newNetNeedAfterOrder.map((val, idx) => {
+                              const deviation = Math.abs((newNetNeedPercentages[idx] ?? 0) - (historicalSalesPercentages[idx] ?? 0));
+                              const isClose = deviation < 1.0;
+                              return (
+                                <td key={idx} className="text-center py-2 px-2 border-l border-purple-100">
+                                  <div className="font-semibold text-purple-700">{val.toLocaleString()}</div>
+                                  <div className={`text-[9px] font-medium ${isClose ? 'text-green-600' : 'text-orange-600'}`}>
+                                    {(newNetNeedPercentages[idx] ?? 0).toFixed(1)}%
+                                  </div>
+                                </td>
+                              );
+                            })}
+                            <td className="text-right py-2 px-3 font-bold text-purple-900 border-l-2 border-slate-300 bg-purple-100">
+                              {newNetNeedTotal.toLocaleString()}
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+
+                    <p className="text-xs text-slate-500 text-center">
+                      <span className="text-green-600 font-medium">Green %</span> = within 1% of target | 
+                      <span className="text-orange-600 font-medium ml-1">Orange %</span> = needs adjustment
+                    </p>
+
+                    {/* Action Buttons */}
                     <div className="grid grid-cols-2 gap-3">
                       <Button
                         onClick={handleSkipItem}
