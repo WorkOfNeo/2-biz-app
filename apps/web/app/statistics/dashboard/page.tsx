@@ -377,6 +377,28 @@ function ScrapesTab() {
         }
         return;
       }
+
+      // Special handling for export_statistics - enqueue ALL statistics exports (General + Overview + Countries)
+      // via the same cron endpoint used for automated runs, but bypassing the time window.
+      if (schedule.key === 'export_statistics') {
+        const res = await fetch('/api/cron/export-statistics-fixed?debug=1&manual=1', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+        });
+
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(text || 'Failed to enqueue exports');
+        }
+
+        const data = await res.json();
+        if (data.skipped) {
+          alert(`Export skipped: ${data.reason}`);
+        } else {
+          alert(`Exports enqueued: ${data.enqueued} jobs (General + Overview + Countries)`);
+        }
+        return;
+      }
       
       // Map schedule key to job type
       const jobTypeMap: Record<string, string> = {

@@ -32,6 +32,7 @@ function getCopenhagenParts(date: Date): { isoDate: string; hour: number; minute
 async function handle(req: Request) {
   const urlObj = new URL(req.url);
   const debug = urlObj.searchParams.get('debug') === '1';
+  const manual = urlObj.searchParams.get('manual') === '1';
   const { createClient } = await import('@supabase/supabase-js');
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
   const serviceKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVER_ROLE_KEY || '').trim();
@@ -51,7 +52,7 @@ async function handle(req: Request) {
   // Fallback defaults
   const schedule = scheduleRow ?? { enabled: true, hours: [7, 15], days_of_week: null, config: {} };
   
-  if (!schedule.enabled) {
+  if (!manual && !schedule.enabled) {
     const res = { skipped: true, reason: 'schedule disabled' };
     return new Response(JSON.stringify(debug ? { ...res, debug: true } : res), { status: 200, headers: { 'Content-Type': 'application/json' } });
   }
@@ -60,7 +61,7 @@ async function handle(req: Request) {
   const cph = getCopenhagenParts(now);
 
   // Check day of week if specified
-  if (schedule.days_of_week !== null && !schedule.days_of_week.includes(cph.dayOfWeek)) {
+  if (!manual && schedule.days_of_week !== null && !schedule.days_of_week.includes(cph.dayOfWeek)) {
     const res = { skipped: true, reason: 'not a scheduled day', cph };
     return new Response(JSON.stringify(debug ? { ...res, debug: true } : res), { status: 200, headers: { 'Content-Type': 'application/json' } });
   }
@@ -69,30 +70,38 @@ async function handle(req: Request) {
   const isScheduledHour = schedule.hours.includes(cph.hour);
   const isInWindow = cph.minute >= 0 && cph.minute <= 9;
   
-  if (!isScheduledHour || !isInWindow) {
+  if (!manual && (!isScheduledHour || !isInWindow)) {
     const res = { skipped: true, reason: 'outside scheduled window', cph, scheduledHours: schedule.hours };
     return new Response(JSON.stringify(debug ? { ...res, debug: true } : res), { status: 200, headers: { 'Content-Type': 'application/json' } });
   }
 
-  const runKey = `${cph.isoDate}-${String(cph.hour).padStart(2, '0')}`; // once per target hour per day
+  // For cron runs: once per target hour per day. For manual runs: unique runKey every time.
+  const runKey = manual
+    ? `manual:${now.toISOString()}`
+    : `${cph.isoDate}-${String(cph.hour).padStart(2, '0')}`; // once per target hour per day
 
   // Dedupe: if we already enqueued this runKey, do nothing.
-  const { data: existing } = await supabase
-    .from('jobs')
-    .select('id,status')
-    .eq('type', 'export_overview')
-    .contains('payload', { requestedBy: 'cron_statistics_export', runKey })
-    .order('created_at', { ascending: false })
-    .limit(1);
-  if ((existing ?? []).length > 0) {
-    const res = { skipped: true, reason: 'already enqueued', runKey, existingJobId: (existing as any)[0]?.id };
-    return new Response(JSON.stringify(debug ? { ...res, debug: true } : res), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  if (!manual) {
+    const { data: existing } = await supabase
+      .from('jobs')
+      .select('id,status')
+      .eq('type', 'export_overview')
+      .contains('payload', { requestedBy: 'cron_statistics_export', runKey })
+      .order('created_at', { ascending: false })
+      .limit(1);
+    if ((existing ?? []).length > 0) {
+      const res = { skipped: true, reason: 'already enqueued', runKey, existingJobId: (existing as any)[0]?.id };
+      return new Response(JSON.stringify(debug ? { ...res, debug: true } : res), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
   }
 
+  const requestedBy = manual ? 'manual_export_statistics' : 'cron_statistics_export';
+  const basePayload = { ...((schedule as any).config ?? {}), requestedBy, runKey };
+
   const inserts = [
-    { type: 'export_overview', payload: { mode: 'general_salesmen_react_pdf', requestedBy: 'cron_statistics_export', runKey }, status: 'queued' as const, max_attempts: 3 },
-    { type: 'export_overview', payload: { mode: 'overview_react_pdf', requestedBy: 'cron_statistics_export', runKey }, status: 'queued' as const, max_attempts: 3 },
-    { type: 'export_overview', payload: { mode: 'countries_react_pdf', requestedBy: 'cron_statistics_export', runKey }, status: 'queued' as const, max_attempts: 3 },
+    { type: 'export_overview', payload: { ...basePayload, mode: 'general_salesmen_react_pdf' }, status: 'queued' as const, max_attempts: 3 },
+    { type: 'export_overview', payload: { ...basePayload, mode: 'overview_react_pdf' }, status: 'queued' as const, max_attempts: 3 },
+    { type: 'export_overview', payload: { ...basePayload, mode: 'countries_react_pdf' }, status: 'queued' as const, max_attempts: 3 },
   ];
   const { error: insErr } = await supabase.from('jobs').insert(inserts as any);
   if (insErr) {
@@ -100,7 +109,7 @@ async function handle(req: Request) {
     return new Response(JSON.stringify(debug ? { ...errRes, debug: true } : errRes), { status: 500 });
   }
 
-  const res = { enqueued: inserts.length, runKey, cph };
+  const res = { enqueued: inserts.length, runKey, cph, manual, scheduleEnabled: Boolean((schedule as any).enabled) };
   return new Response(JSON.stringify(debug ? { ...res, debug: true } : res), { status: 200, headers: { 'Content-Type': 'application/json' } });
 }
 
