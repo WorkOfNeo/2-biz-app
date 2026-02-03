@@ -636,7 +636,12 @@ export default function SizeCalculatorPage() {
         const date = new Date();
         const poNo = `NOOS-${date.toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(Math.random() * 10000).toString().padStart(4, '0')}`;
         
-        const supplier = styleToSupplier.get(regularOrders[0].styleColor.style) || 'Mixed';
+        // With `noUncheckedIndexedAccess`, `regularOrders[0]` is possibly undefined even after length check.
+        // Also handle multiple suppliers by labeling as Mixed.
+        const suppliers = new Set(
+          regularOrders.map((o) => styleToSupplier.get(o.styleColor.style) || 'Unknown')
+        );
+        const supplier = suppliers.size === 1 ? (Array.from(suppliers)[0] as string) : 'Mixed';
         const totalQty = regularOrders.reduce((sum, o) => sum + o.computedOrder.reduce((s, v) => s + v, 0), 0);
         
         const items = regularOrders.map(order => {
