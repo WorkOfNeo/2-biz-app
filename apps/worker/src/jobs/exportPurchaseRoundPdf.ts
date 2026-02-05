@@ -220,6 +220,16 @@ export async function exportPurchaseRoundPdf(ctx: Ctx) {
       },
       sizeLabel: { fontSize: 6, color: '#64748b', marginRight: 2 },
       sizeQty: { fontSize: 6, fontWeight: 'bold', color: '#0f172a' },
+      // Size Analysis Table
+      sizeTable: { marginTop: 6, marginLeft: 32, marginBottom: 4, borderWidth: 0.5, borderColor: '#cbd5e1' },
+      sizeTableHeader: { flexDirection: 'row', backgroundColor: '#f1f5f9', borderBottomWidth: 0.5, borderBottomColor: '#cbd5e1' },
+      sizeTableRow: { flexDirection: 'row', borderBottomWidth: 0.5, borderBottomColor: '#e2e8f0' },
+      sizeTableCell: { flex: 1, padding: 3, fontSize: 6, textAlign: 'center' },
+      sizeTableLabelCell: { width: 50, padding: 3, fontSize: 6, fontWeight: 'bold', backgroundColor: '#f8fafc', textAlign: 'left' },
+      sizeTableHeaderCell: { flex: 1, padding: 3, fontSize: 6, fontWeight: 'bold', color: '#475569', textAlign: 'center' },
+      sizeTableTotalCell: { flex: 1, padding: 3, fontSize: 6, fontWeight: 'bold', backgroundColor: '#f1f5f9', textAlign: 'center' },
+      netNeedRow: { backgroundColor: '#fef3c7' },
+      suggestionRow: { backgroundColor: '#dbeafe' },
       badge: { 
         paddingHorizontal: 4, 
         paddingVertical: 2, 
@@ -271,18 +281,77 @@ export async function exportPurchaseRoundPdf(ctx: Ctx) {
         // Build size breakdown display
         const sizes: string[] = style.sizes || [];
         const sizeBreakdown: number[] = style.size_breakdown || [];
-        const sizeElements = sizes.map((size: string, sIdx: number) => {
-          const qty = sizeBreakdown[sIdx] || 0;
-          if (qty === 0) return null; // Skip zero quantities
-          return E(View, { key: sIdx, style: styles.sizeBox },
-            E(Text, { style: styles.sizeLabel }, size),
-            E(Text, { style: styles.sizeQty }, String(qty))
+        
+        // Check if we have size_level_details for detailed table
+        const sizeLevelDetails = style.size_level_details;
+        let sizeTable = null;
+        
+        if (sizeLevelDetails && sizes.length > 0) {
+          // Calculate totals
+          const soldTotal = sizes.reduce((sum, size) => sum + (sizeLevelDetails.sold_by_size[size] || 0), 0);
+          const poTotal = sizes.reduce((sum, size) => sum + (sizeLevelDetails.po_by_size[size] || 0), 0);
+          const stockTotal = sizes.reduce((sum, size) => sum + (sizeLevelDetails.stock_by_size[size] || 0), 0);
+          const netNeedTotal = sizes.reduce((sum, size) => sum + (sizeLevelDetails.net_need_by_size[size] || 0), 0);
+          const suggestedTotal = sizeBreakdown.reduce((a, b) => a + b, 0);
+          
+          sizeTable = E(View, { style: styles.sizeTable },
+            // Header row
+            E(View, { style: styles.sizeTableHeader },
+              E(Text, { style: styles.sizeTableLabelCell }, 'Metric'),
+              ...sizes.map((size, si) => E(Text, { key: `h-${si}`, style: styles.sizeTableHeaderCell }, size)),
+              E(Text, { style: [styles.sizeTableHeaderCell, { fontWeight: 'extrabold' }] }, 'Total')
+            ),
+            // Sold row
+            E(View, { style: styles.sizeTableRow },
+              E(Text, { style: styles.sizeTableLabelCell }, 'Sold'),
+              ...sizes.map((size, si) => E(Text, { key: `s-${si}`, style: styles.sizeTableCell }, fmt(sizeLevelDetails.sold_by_size[size] || 0))),
+              E(Text, { style: styles.sizeTableTotalCell }, fmt(soldTotal))
+            ),
+            // Open POs row
+            E(View, { style: styles.sizeTableRow },
+              E(Text, { style: styles.sizeTableLabelCell }, 'Open POs'),
+              ...sizes.map((size, si) => E(Text, { key: `po-${si}`, style: styles.sizeTableCell }, fmt(sizeLevelDetails.po_by_size[size] || 0))),
+              E(Text, { style: styles.sizeTableTotalCell }, fmt(poTotal))
+            ),
+            // Stock row
+            E(View, { style: styles.sizeTableRow },
+              E(Text, { style: styles.sizeTableLabelCell }, 'Stock'),
+              ...sizes.map((size, si) => E(Text, { key: `st-${si}`, style: styles.sizeTableCell }, fmt(sizeLevelDetails.stock_by_size[size] || 0))),
+              E(Text, { style: styles.sizeTableTotalCell }, fmt(stockTotal))
+            ),
+            // Net Need row (highlighted)
+            E(View, { style: [styles.sizeTableRow, styles.netNeedRow] },
+              E(Text, { style: [styles.sizeTableLabelCell, { fontWeight: 'extrabold' }] }, 'Net Need'),
+              ...sizes.map((size, si) => E(Text, { key: `nn-${si}`, style: [styles.sizeTableCell, { fontWeight: 'bold' }] }, fmt(sizeLevelDetails.net_need_by_size[size] || 0))),
+              E(Text, { style: [styles.sizeTableTotalCell, { fontWeight: 'extrabold' }] }, fmt(netNeedTotal))
+            ),
+            // Suggestion row (highlighted)
+            E(View, { style: [styles.sizeTableRow, styles.suggestionRow] },
+              E(Text, { style: [styles.sizeTableLabelCell, { fontWeight: 'extrabold' }] }, 'Suggestion'),
+              ...sizes.map((size, si) => E(Text, { key: `sg-${si}`, style: [styles.sizeTableCell, { fontWeight: 'extrabold' }] }, fmt(sizeBreakdown[si] || 0))),
+              E(Text, { style: [styles.sizeTableTotalCell, { fontWeight: 'extrabold' }] }, fmt(suggestedTotal))
+            )
           );
-        }).filter(Boolean);
+        } else {
+          // Fallback: simple size breakdown boxes
+          const sizeElements = sizes.map((size: string, sIdx: number) => {
+            const qty = sizeBreakdown[sIdx] || 0;
+            if (qty === 0) return null;
+            return E(View, { key: sIdx, style: styles.sizeBox },
+              E(Text, { style: styles.sizeLabel }, size),
+              E(Text, { style: styles.sizeQty }, String(qty))
+            );
+          }).filter(Boolean);
+          
+          if (sizeElements.length > 0) {
+            sizeTable = E(View, { style: styles.sizeBreakdownRow }, ...sizeElements);
+          }
+        }
         
         return E(View, { 
           key: idx, 
-          style: [styles.styleRow, idx % 2 === 1 ? styles.styleRowAlt : {}] 
+          style: [styles.styleRow, idx % 2 === 1 ? styles.styleRowAlt : {}],
+          wrap: false
         },
           info?.image_url 
             ? E(Image, { src: info.image_url, style: styles.styleImage })
@@ -292,10 +361,7 @@ export async function exportPurchaseRoundPdf(ctx: Ctx) {
             E(Text, { style: styles.styleNo }, 
               `${style.style_no} • Solgt: ${fmt(style.sold_qty || 0)} • Lager: ${fmt(style.current_stock || 0)} • ${style.active_salespeople_count || 0} sælgere`
             ),
-            // Size breakdown row
-            sizeElements.length > 0 
-              ? E(View, { style: styles.sizeBreakdownRow }, ...sizeElements)
-              : null
+            sizeTable
           ),
           E(Text, { style: styles.styleQty }, `${fmt(style.suggested_qty_total || 0)} stk`)
         );

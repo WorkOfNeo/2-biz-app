@@ -1052,52 +1052,28 @@ export default function AIPurchaseReviewPage() {
 
                                       {/* Size breakdown */}
                                       {isColorExpanded && style.sizes.length > 0 && (
-                                        <div className="px-6 pb-4 ml-8 space-y-4">
-                                          {/* Size-Level Table (Sold/PO/Stock/Net Need/Suggestion) */}
+                                        <div className="px-6 pb-4 ml-8">
+                                          {/* Size-Level Table (Sold/PO/Stock/Net Need/Suggestion) with inline editing */}
                                           {style.size_level_details && (
                                             <div className="bg-white border border-slate-200 rounded-lg overflow-hidden">
-                                              <div className="bg-slate-100 px-3 py-2 border-b border-slate-200">
+                                              <div className="bg-slate-100 px-3 py-2 border-b border-slate-200 flex items-center justify-between">
                                                 <h4 className="text-xs font-semibold text-slate-700 uppercase tracking-wider">
-                                                  Size Analysis
+                                                  Size Analysis & Purchase Order
                                                 </h4>
+                                                <div className="text-xs text-slate-500">
+                                                  Solgt: {style.sold_qty} • Åbne PO: {style.open_po_qty} • Lager: {style.current_stock || 0}
+                                                </div>
                                               </div>
                                               <SizeLevelTable 
                                                 sizes={style.sizes}
                                                 data={style.size_level_details}
+                                                editable={true}
+                                                currentBreakdown={breakdown}
+                                                onQuantityChange={(sizeIdx, value) => handleSizeQtyChange(supplier.supplier, style, sizeIdx, value)}
+                                                isSkipped={fb?.verdict === 'skipped'}
                                               />
                                             </div>
                                           )}
-                                          
-                                          {/* Editable Per-size quantities */}
-                                          <div className="bg-slate-50 rounded-lg p-3">
-                                            <div className="text-xs text-slate-500 mb-2">Adjust per-size quantities:</div>
-                                            <div className="flex flex-wrap gap-2">
-                                              {style.sizes.map((size, sizeIdx) => (
-                                                <div key={size} className="flex flex-col items-center">
-                                                  <div className="text-xs text-slate-600 font-medium mb-1">{size}</div>
-                                                  <Input
-                                                    type="number"
-                                                    className="w-16 text-center text-sm h-8"
-                                                    value={breakdown[sizeIdx] || 0}
-                                                    min={0}
-                                                    onChange={(e) => handleSizeQtyChange(
-                                                      supplier.supplier, 
-                                                      style, 
-                                                      sizeIdx, 
-                                                      parseInt(e.target.value) || 0
-                                                    )}
-                                                    disabled={fb?.verdict === 'skipped'}
-                                                  />
-                                                  <div className="text-xs text-slate-400 mt-1">
-                                                    (suggested: {style.size_breakdown[sizeIdx]})
-                                                  </div>
-                                                </div>
-                                              ))}
-                                            </div>
-                                            <div className="mt-2 text-xs text-slate-500">
-                                              Solgt: {style.sold_qty} • Åbne PO: {style.open_po_qty} • Lager: {style.current_stock || 0}
-                                            </div>
-                                          </div>
                                         </div>
                                       )}
                                     </div>
