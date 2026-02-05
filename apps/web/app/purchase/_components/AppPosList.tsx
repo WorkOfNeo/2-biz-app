@@ -5,7 +5,8 @@ import useSWR from 'swr';
 import { supabase } from '../../../lib/supabaseClient';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../../components/ui/card';
 import { Badge } from '../../../components/ui/badge';
-import { ChevronDown, ChevronRight, Trash2 } from 'lucide-react';
+import { Button } from '../../../components/ui/button';
+import { ChevronDown, ChevronRight, Trash2, CheckSquare } from 'lucide-react';
 
 type AppPo = {
   id: number;
@@ -26,6 +27,8 @@ export function AppPosList({ embedded = false }: { embedded?: boolean }) {
   const router = useRouter();
   const [showConfirmed, setShowConfirmed] = React.useState(false);
   const [deleting, setDeleting] = React.useState<number | null>(null);
+  const [selectedIds, setSelectedIds] = React.useState<Set<number>>(new Set());
+  const [bulkDeleting, setBulkDeleting] = React.useState(false);
 
   const { data: pos, error, isLoading, mutate } = useSWR('app-pos', async () => {
     const { data, error } = await supabase
@@ -52,7 +55,7 @@ export function AppPosList({ embedded = false }: { embedded?: boolean }) {
     setDeleting(po.id);
 
     try {
-      const { error, count } = await supabase
+      const { error, data } = await supabase
         .from('app_pos')
         .delete()
         .eq('id', po.id)
@@ -63,10 +66,17 @@ export function AppPosList({ embedded = false }: { embedded?: boolean }) {
         throw new Error(error.message || 'Database error');
       }
 
-      // Check if anything was actually deleted (RLS might silently block)
-      if (count === 0) {
+      // Check if anything was actually deleted
+      if (!data || data.length === 0) {
         throw new Error('No rows deleted - you may not have permission to delete this PO');
       }
+
+      // Remove from selected if it was selected
+      setSelectedIds(prev => {
+        const next = new Set(prev);
+        next.delete(po.id);
+        return next;
+      });
 
       await mutate();
     } catch (err: any) {
@@ -74,6 +84,72 @@ export function AppPosList({ embedded = false }: { embedded?: boolean }) {
       alert(`Failed to delete APP PO: ${err.message || 'Unknown error'}\n\nIf this persists, check the browser console for details.`);
     } finally {
       setDeleting(null);
+    }
+  }
+
+  async function handleBulkDelete() {
+    if (selectedIds.size === 0) return;
+
+    const confirmed = window.confirm(
+      `Are you sure you want to delete ${selectedIds.size} APP PO${selectedIds.size > 1 ? 's' : ''}?\n\nThis action cannot be undone.`
+    );
+
+    if (!confirmed) return;
+
+    setBulkDeleting(true);
+
+    try {
+      const idsToDelete = Array.from(selectedIds);
+      
+      const { error, data } = await supabase
+        .from('app_pos')
+        .delete()
+        .in('id', idsToDelete)
+        .select();
+
+      if (error) {
+        console.error('Bulk delete error:', error);
+        throw new Error(error.message || 'Database error');
+      }
+
+      const deletedCount = data?.length || 0;
+      
+      if (deletedCount === 0) {
+        throw new Error('No rows deleted - you may not have permission to delete these POs');
+      }
+
+      if (deletedCount < selectedIds.size) {
+        alert(`Warning: Only ${deletedCount} of ${selectedIds.size} POs were deleted. Some may have been protected.`);
+      }
+
+      setSelectedIds(new Set());
+      await mutate();
+    } catch (err: any) {
+      console.error('Bulk delete error:', err);
+      alert(`Failed to delete APP POs: ${err.message || 'Unknown error'}\n\nIf this persists, check the browser console for details.`);
+    } finally {
+      setBulkDeleting(false);
+    }
+  }
+
+  function toggleSelect(poId: number, e: React.MouseEvent) {
+    e.stopPropagation();
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(poId)) {
+        next.delete(poId);
+      } else {
+        next.add(poId);
+      }
+      return next;
+    });
+  }
+
+  function toggleSelectAll(pos: AppPo[]) {
+    if (selectedIds.size === pos.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(pos.map(po => po.id)));
     }
   }
 
@@ -114,11 +190,56 @@ export function AppPosList({ embedded = false }: { embedded?: boolean }) {
 
       {!isLoading && !error && pos && pos.length > 0 && (
         <div className="space-y-4">
+          {/* Bulk Actions Bar */}
+          {selectedIds.size > 0 && (
+            <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <CheckSquare className="w-5 h-5 text-indigo-600" />
+                <span className="font-medium text-indigo-900">
+                  {selectedIds.size} PO{selectedIds.size > 1 ? 's' : ''} selected
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setSelectedIds(new Set())}
+                >
+                  Clear Selection
+                </Button>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={handleBulkDelete}
+                  disabled={bulkDeleting}
+                >
+                  <Trash2 className="w-4 h-4 mr-2" />
+                  {bulkDeleting ? 'Deleting...' : `Delete ${selectedIds.size}`}
+                </Button>
+              </div>
+            </div>
+          )}
+
           {/* Active Orders */}
           <Card>
             <CardHeader>
-              <CardTitle>Active Orders</CardTitle>
-              <CardDescription>Purchase orders awaiting confirmation</CardDescription>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle>Active Orders</CardTitle>
+                  <CardDescription>Purchase orders awaiting confirmation</CardDescription>
+                </div>
+                {unconfirmedPos.length > 0 && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => toggleSelectAll(unconfirmedPos)}
+                  >
+                    {selectedIds.size === unconfirmedPos.length && unconfirmedPos.every(po => selectedIds.has(po.id))
+                      ? 'Deselect All'
+                      : 'Select All'}
+                  </Button>
+                )}
+              </div>
             </CardHeader>
             <CardContent>
               {unconfirmedPos.length === 0 ? (
@@ -128,38 +249,58 @@ export function AppPosList({ embedded = false }: { embedded?: boolean }) {
                   {unconfirmedPos.map((po) => (
                     <div
                       key={po.id}
-                      onClick={() => router.push(`/purchase/app-pos/${po.id}`)}
-                      className="border rounded-lg p-4 hover:border-slate-400 hover:bg-slate-50 cursor-pointer transition-all"
+                      className={`border rounded-lg p-4 hover:border-slate-400 hover:bg-slate-50 transition-all ${
+                        selectedIds.has(po.id) ? 'border-indigo-400 bg-indigo-50' : ''
+                      }`}
                     >
-                      <div className="flex items-start justify-between">
-                        <div className="space-y-1">
-                          <div className="flex items-center gap-2">
-                            <div className="font-semibold text-lg">{po.po_no}</div>
-                            <Badge
-                              className={
-                                po.status === 'Shipped' ? 'bg-green-100 text-green-800' : 'bg-blue-100 text-blue-800'
-                              }
-                            >
-                              {po.status}
-                            </Badge>
-                          </div>
-                          {po.supplier && <div className="text-sm text-slate-600">Supplier: {po.supplier}</div>}
-                          <div className="flex items-center gap-4 text-xs text-slate-500">
-                            {po.styles !== null && <span>{po.styles} style{po.styles !== 1 ? 's' : ''}</span>}
-                            {po.ordered !== null && <span>{po.ordered} ordered</span>}
-                            {po.shipped !== null && po.shipped > 0 && <span>{po.shipped} shipped</span>}
-                          </div>
+                      <div className="flex items-start gap-3">
+                        {/* Checkbox */}
+                        <div className="pt-1">
+                          <input
+                            type="checkbox"
+                            checked={selectedIds.has(po.id)}
+                            onChange={(e) => toggleSelect(po.id, e as any)}
+                            onClick={(e) => e.stopPropagation()}
+                            className="w-4 h-4 text-indigo-600 bg-white border-slate-300 rounded focus:ring-indigo-500 focus:ring-2 cursor-pointer"
+                          />
                         </div>
-                        <div className="flex items-center gap-2">
-                          <div className="text-xs text-slate-400">{new Date(po.created_at).toLocaleDateString()}</div>
-                          <button
-                            onClick={(e) => handleDelete(po, e)}
-                            disabled={deleting === po.id}
-                            className="p-2 rounded hover:bg-red-50 text-red-600 hover:text-red-700 disabled:opacity-50 transition-colors"
-                            title="Delete APP PO"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
+
+                        {/* PO Content - Clickable */}
+                        <div
+                          className="flex-1 cursor-pointer"
+                          onClick={() => router.push(`/purchase/app-pos/${po.id}`)}
+                        >
+                          <div className="flex items-start justify-between">
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2">
+                                <div className="font-semibold text-lg">{po.po_no}</div>
+                                <Badge
+                                  className={
+                                    po.status === 'Shipped' ? 'bg-green-100 text-green-800' : 'bg-blue-100 text-blue-800'
+                                  }
+                                >
+                                  {po.status}
+                                </Badge>
+                              </div>
+                              {po.supplier && <div className="text-sm text-slate-600">Supplier: {po.supplier}</div>}
+                              <div className="flex items-center gap-4 text-xs text-slate-500">
+                                {po.styles !== null && <span>{po.styles} style{po.styles !== 1 ? 's' : ''}</span>}
+                                {po.ordered !== null && <span>{po.ordered} ordered</span>}
+                                {po.shipped !== null && po.shipped > 0 && <span>{po.shipped} shipped</span>}
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <div className="text-xs text-slate-400">{new Date(po.created_at).toLocaleDateString()}</div>
+                              <button
+                                onClick={(e) => handleDelete(po, e)}
+                                disabled={deleting === po.id}
+                                className="p-2 rounded hover:bg-red-50 text-red-600 hover:text-red-700 disabled:opacity-50 transition-colors"
+                                title="Delete APP PO"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -172,19 +313,38 @@ export function AppPosList({ embedded = false }: { embedded?: boolean }) {
           {/* Confirmed Orders (Collapsible) */}
           {confirmedPos.length > 0 && (
             <Card className="border-green-200 bg-green-50/30">
-              <CardHeader className="cursor-pointer hover:bg-green-50/50 transition-colors" onClick={() => setShowConfirmed(!showConfirmed)}>
+              <CardHeader>
                 <div className="flex items-center justify-between">
-                  <div>
-                    <CardTitle className="text-green-900 flex items-center gap-2">
-                      Confirmed Orders
-                      <Badge className="bg-green-100 text-green-800">{confirmedPos.length}</Badge>
-                    </CardTitle>
-                    <CardDescription className="text-green-700">Confirmed purchase orders</CardDescription>
+                  <div
+                    className="flex-1 cursor-pointer hover:bg-green-50/50 transition-colors -m-6 p-6"
+                    onClick={() => setShowConfirmed(!showConfirmed)}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <CardTitle className="text-green-900 flex items-center gap-2">
+                          Confirmed Orders
+                          <Badge className="bg-green-100 text-green-800">{confirmedPos.length}</Badge>
+                        </CardTitle>
+                        <CardDescription className="text-green-700">Confirmed purchase orders</CardDescription>
+                      </div>
+                      {showConfirmed ? (
+                        <ChevronDown className="w-5 h-5 text-green-700" />
+                      ) : (
+                        <ChevronRight className="w-5 h-5 text-green-700" />
+                      )}
+                    </div>
                   </div>
-                  {showConfirmed ? (
-                    <ChevronDown className="w-5 h-5 text-green-700" />
-                  ) : (
-                    <ChevronRight className="w-5 h-5 text-green-700" />
+                  {showConfirmed && confirmedPos.length > 0 && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => toggleSelectAll(confirmedPos)}
+                      className="ml-2"
+                    >
+                      {selectedIds.size > 0 && confirmedPos.every(po => selectedIds.has(po.id))
+                        ? 'Deselect All'
+                        : 'Select All'}
+                    </Button>
                   )}
                 </div>
               </CardHeader>
@@ -194,41 +354,61 @@ export function AppPosList({ embedded = false }: { embedded?: boolean }) {
                     {confirmedPos.map((po) => (
                       <div
                         key={po.id}
-                        onClick={() => router.push(`/purchase/app-pos/${po.id}`)}
-                        className="border border-green-200 bg-white rounded-lg p-4 hover:border-green-400 hover:bg-green-50 cursor-pointer transition-all"
+                        className={`border border-green-200 bg-white rounded-lg p-4 hover:border-green-400 hover:bg-green-50 transition-all ${
+                          selectedIds.has(po.id) ? 'border-indigo-400 bg-indigo-50' : ''
+                        }`}
                       >
-                        <div className="flex items-start justify-between">
-                          <div className="space-y-1">
-                            <div className="flex items-center gap-2">
-                              <div className="font-semibold text-lg">{po.po_no}</div>
-                              <Badge className="bg-green-100 text-green-800 border-green-300">Confirmed</Badge>
-                              <Badge
-                                className={
-                                  po.status === 'Shipped'
-                                    ? 'bg-green-100 text-green-800'
-                                    : 'bg-blue-100 text-blue-800'
-                                }
-                              >
-                                {po.status}
-                              </Badge>
-                            </div>
-                            {po.supplier && <div className="text-sm text-slate-600">Supplier: {po.supplier}</div>}
-                            <div className="flex items-center gap-4 text-xs text-slate-500">
-                              {po.styles !== null && <span>{po.styles} style{po.styles !== 1 ? 's' : ''}</span>}
-                              {po.ordered !== null && <span>{po.ordered} ordered</span>}
-                              {po.shipped !== null && po.shipped > 0 && <span>{po.shipped} shipped</span>}
-                            </div>
+                        <div className="flex items-start gap-3">
+                          {/* Checkbox */}
+                          <div className="pt-1">
+                            <input
+                              type="checkbox"
+                              checked={selectedIds.has(po.id)}
+                              onChange={(e) => toggleSelect(po.id, e as any)}
+                              onClick={(e) => e.stopPropagation()}
+                              className="w-4 h-4 text-indigo-600 bg-white border-slate-300 rounded focus:ring-indigo-500 focus:ring-2 cursor-pointer"
+                            />
                           </div>
-                          <div className="flex items-center gap-2">
-                            <div className="text-xs text-slate-400">{new Date(po.created_at).toLocaleDateString()}</div>
-                            <button
-                              onClick={(e) => handleDelete(po, e)}
-                              disabled={deleting === po.id}
-                              className="p-2 rounded hover:bg-red-50 text-red-600 hover:text-red-700 disabled:opacity-50 transition-colors"
-                              title="Delete APP PO"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
+
+                          {/* PO Content - Clickable */}
+                          <div
+                            className="flex-1 cursor-pointer"
+                            onClick={() => router.push(`/purchase/app-pos/${po.id}`)}
+                          >
+                            <div className="flex items-start justify-between">
+                              <div className="space-y-1">
+                                <div className="flex items-center gap-2">
+                                  <div className="font-semibold text-lg">{po.po_no}</div>
+                                  <Badge className="bg-green-100 text-green-800 border-green-300">Confirmed</Badge>
+                                  <Badge
+                                    className={
+                                      po.status === 'Shipped'
+                                        ? 'bg-green-100 text-green-800'
+                                        : 'bg-blue-100 text-blue-800'
+                                    }
+                                  >
+                                    {po.status}
+                                  </Badge>
+                                </div>
+                                {po.supplier && <div className="text-sm text-slate-600">Supplier: {po.supplier}</div>}
+                                <div className="flex items-center gap-4 text-xs text-slate-500">
+                                  {po.styles !== null && <span>{po.styles} style{po.styles !== 1 ? 's' : ''}</span>}
+                                  {po.ordered !== null && <span>{po.ordered} ordered</span>}
+                                  {po.shipped !== null && po.shipped > 0 && <span>{po.shipped} shipped</span>}
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <div className="text-xs text-slate-400">{new Date(po.created_at).toLocaleDateString()}</div>
+                                <button
+                                  onClick={(e) => handleDelete(po, e)}
+                                  disabled={deleting === po.id}
+                                  className="p-2 rounded hover:bg-red-50 text-red-600 hover:text-red-700 disabled:opacity-50 transition-colors"
+                                  title="Delete APP PO"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </div>
+                            </div>
                           </div>
                         </div>
                       </div>
