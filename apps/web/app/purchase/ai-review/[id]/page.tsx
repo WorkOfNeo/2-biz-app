@@ -16,6 +16,7 @@ import {
   FileDown, FileText
 } from 'lucide-react';
 import Image from 'next/image';
+import { SizeLevelTable } from '../_components/SizeLevelTable';
 
 const supabase = createClientComponentClient();
 
@@ -29,6 +30,13 @@ type StyleSuggestion = {
   suggested_qty_total: number;
   sizes: string[];
   size_breakdown: number[];
+  size_level_details?: {
+    sold_by_size: Record<string, number>;
+    stock_by_size: Record<string, number>;
+    po_by_size: Record<string, number>;
+    net_need_by_size: Record<string, number>;
+    suggested_by_size: Record<string, number>;
+  };
   active_salespeople_count: number;
   reasoning?: string;
 };
@@ -1044,9 +1052,25 @@ export default function AIPurchaseReviewPage() {
 
                                       {/* Size breakdown */}
                                       {isColorExpanded && style.sizes.length > 0 && (
-                                        <div className="px-6 pb-4 ml-8">
+                                        <div className="px-6 pb-4 ml-8 space-y-4">
+                                          {/* Size-Level Table (Sold/PO/Stock/Net Need/Suggestion) */}
+                                          {style.size_level_details && (
+                                            <div className="bg-white border border-slate-200 rounded-lg overflow-hidden">
+                                              <div className="bg-slate-100 px-3 py-2 border-b border-slate-200">
+                                                <h4 className="text-xs font-semibold text-slate-700 uppercase tracking-wider">
+                                                  Size Analysis
+                                                </h4>
+                                              </div>
+                                              <SizeLevelTable 
+                                                sizes={style.sizes}
+                                                data={style.size_level_details}
+                                              />
+                                            </div>
+                                          )}
+                                          
+                                          {/* Editable Per-size quantities */}
                                           <div className="bg-slate-50 rounded-lg p-3">
-                                            <div className="text-xs text-slate-500 mb-2">Per-size quantities:</div>
+                                            <div className="text-xs text-slate-500 mb-2">Adjust per-size quantities:</div>
                                             <div className="flex flex-wrap gap-2">
                                               {style.sizes.map((size, sizeIdx) => (
                                                 <div key={size} className="flex flex-col items-center">
@@ -1065,7 +1089,7 @@ export default function AIPurchaseReviewPage() {
                                                     disabled={fb?.verdict === 'skipped'}
                                                   />
                                                   <div className="text-xs text-slate-400 mt-1">
-                                                    ({style.size_breakdown[sizeIdx]})
+                                                    (suggested: {style.size_breakdown[sizeIdx]})
                                                   </div>
                                                 </div>
                                               ))}

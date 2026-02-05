@@ -81,6 +81,13 @@ interface StyleColorSuggestion {
   suggested_qty_total: number;
   sizes: string[];
   size_breakdown: number[];
+  size_level_details?: {
+    sold_by_size: Record<string, number>;
+    stock_by_size: Record<string, number>;
+    po_by_size: Record<string, number>;
+    net_need_by_size: Record<string, number>;
+    suggested_by_size: Record<string, number>;
+  };
   active_salespeople_count: number;
   rounding_step: number;
   reasoning?: string;
@@ -210,6 +217,162 @@ function rescaleBreakdownToTotal(
   return rounded;
 }
 
+// Load size-level data for detailed UI display
+type SizeLevelData = {
+  sold_by_size: Record<string, number>;
+  stock_by_size: Record<string, number>;
+  po_by_size: Record<string, number>;
+};
+
+async function loadSizeLevelData(
+  supabase: SupabaseClient,
+  styleDetails: any[],
+  styleStockRows: any[],
+  styleNos: string[],
+  ignoreOpenPOs: boolean
+): Promise<Map<string, SizeLevelData>> {
+  const sizeLevelMap = new Map<string, SizeLevelData>();
+  
+  // 1. Aggregate sold quantities by size from styleDetails
+  for (const row of styleDetails) {
+    if (!row.style_no || !row.color || !row.size) continue;
+    const key = `${row.style_no}|${row.color.toLowerCase()}`;
+    
+    if (!sizeLevelMap.has(key)) {
+      sizeLevelMap.set(key, {
+        sold_by_size: {},
+        stock_by_size: {},
+        po_by_size: {}
+      });
+    }
+    
+    const data = sizeLevelMap.get(key)!;
+    data.sold_by_size[row.size] = (data.sold_by_size[row.size] || 0) + (Number(row.qty) || 0);
+  }
+  
+  // 2. Process style_stock for stock and PO quantities by size
+  // Group and deduplicate like the main flow does
+  const grouped = new Map<string, any[]>();
+  for (const r of styleStockRows) {
+    if (!r.style_no || !r.color || !r.section) continue;
+    const k = `${r.style_no}|${String(r.color).toLowerCase()}`;
+    const arr = grouped.get(k) || [];
+    arr.push(r);
+    grouped.set(k, arr);
+  }
+  
+  for (const [k, rows] of grouped.entries()) {
+    // Deduplicate: latest per (section, row_label)
+    const latestMap = new Map<string, any>();
+    let unnamed = 0;
+    for (const r of rows) {
+      const lbl = String(r.row_label ?? '').trim();
+      const dedupeKey = lbl ? `${r.section}|${lbl}` : `${r.section}|__unnamed_${unnamed++}`;
+      const curr = latestMap.get(dedupeKey);
+      const t = new Date(r.scraped_at || 0).getTime();
+      const ct = curr ? new Date(curr.scraped_at || 0).getTime() : -1;
+      if (!curr || t > ct) latestMap.set(dedupeKey, r);
+    }
+    const latestRows = Array.from(latestMap.values());
+    
+    const stockRows = latestRows.filter(r => r.section === 'Stock');
+    const purchaseRows = latestRows.filter(r => r.section === 'Purchase (Running + Shipped)');
+    
+    if (!sizeLevelMap.has(k)) {
+      sizeLevelMap.set(k, {
+        sold_by_size: {},
+        stock_by_size: {},
+        po_by_size: {}
+      });
+    }
+    
+    const data = sizeLevelMap.get(k)!;
+    
+    // Extract stock by size
+    if (stockRows.length > 0) {
+      const stockRow = stockRows[0];
+      const sizes = Array.isArray(stockRow.sizes) ? stockRow.sizes : JSON.parse(stockRow.sizes || '[]');
+      const values = Array.isArray(stockRow.values) ? stockRow.values : JSON.parse(stockRow.values || '[]');
+      
+      for (let i = 0; i < sizes.length && i < values.length; i++) {
+        const size = String(sizes[i] || '');
+        if (size) {
+          data.stock_by_size[size] = Number(values[i]) || 0;
+        }
+      }
+    }
+    
+    // Extract PO by size
+    if (!ignoreOpenPOs && purchaseRows.length > 0) {
+      for (const poRow of purchaseRows) {
+        const sizes = Array.isArray(poRow.sizes) ? poRow.sizes : JSON.parse(poRow.sizes || '[]');
+        const values = Array.isArray(poRow.values) ? poRow.values : JSON.parse(poRow.values || '[]');
+        
+        for (let i = 0; i < sizes.length && i < values.length; i++) {
+          const size = String(sizes[i] || '');
+          if (size) {
+            data.po_by_size[size] = (data.po_by_size[size] || 0) + (Number(values[i]) || 0);
+          }
+        }
+      }
+    }
+  }
+  
+  return sizeLevelMap;
+}
+
+// Calculate country signals for smart purchasing decisions
+function calculateCountrySignals(data: {
+  country_sales: Map<string, { qty: number; customers: Set<string> }>;
+  country_visit_rates: Map<string, { visited: number; total: number }>;
+}): {
+  shouldWait: boolean;
+  reason: string | null;
+  dominantCountry: string | null;
+  dominantHitRate: number;
+} {
+  // Find country with highest hit rate
+  let dominantCountry: string | null = null;
+  let maxHitRate = 0;
+  
+  for (const [country, sales] of data.country_sales) {
+    const visitRate = data.country_visit_rates.get(country);
+    if (!visitRate || visitRate.visited === 0) continue;
+    
+    const hitRate = sales.customers.size / visitRate.visited;
+    
+    if (hitRate > maxHitRate) {
+      maxHitRate = hitRate;
+      dominantCountry = country;
+    }
+  }
+  
+  // Check if dominant country is "done" (30%+ hit rate AND 80%+ visited)
+  if (dominantCountry && maxHitRate >= 0.30) {
+    const visitRate = data.country_visit_rates.get(dominantCountry);
+    if (visitRate && (visitRate.visited / visitRate.total) >= 0.80) {
+      // Check if any other country is showing interest (10%+ hit rate)
+      const otherCountriesActive = Array.from(data.country_sales.entries())
+        .some(([country, sales]) => {
+          if (country === dominantCountry) return false;
+          const vr = data.country_visit_rates.get(country);
+          if (!vr || vr.visited === 0) return false;
+          const hitRate = sales.customers.size / vr.visited;
+          return hitRate > 0.10; // 10%+ hit rate = showing interest
+        });
+      
+      return {
+        shouldWait: !otherCountriesActive,
+        reason: `${dominantCountry} dominant (${Math.round(maxHitRate * 100)}% hit rate) and 80%+ visited. ${otherCountriesActive ? 'Other countries active - buy now.' : 'Waiting for other countries to show interest.'}`,
+        dominantCountry,
+        dominantHitRate: maxHitRate
+      };
+    }
+  }
+  
+  return { shouldWait: false, reason: null, dominantCountry, dominantHitRate: maxHitRate };
+}
+
 // Validate and fix AI response for a supplier
 function validateAndFixAIDecision(
   aiDecision: AISupplierDecision,
@@ -221,6 +384,9 @@ function validateAndFixAIDecision(
     style_name: string;
     active_salespeople: number;
     purchase_stage: 'early' | 'mid' | 'closing';
+    // Country data for smart decision making
+    country_sales?: Map<string, { qty: number; customers: Set<string> }>;
+    country_visit_rates?: Map<string, { visited: number; total: number }>;
     // Optional signals for deterministic explanation in UI
     signals?: {
       dominant_country?: string | null;
@@ -230,9 +396,11 @@ function validateAndFixAIDecision(
       lot_rule?: string | null;
       target_demand_qty?: number | null;
       remaining_to_order_cap?: number | null;
+      country_wait_reason?: string | null;
     };
   }>,
   moq: number,
+  sizeLevelData: Map<string, SizeLevelData>,
   log: (msg: string, data?: any) => void
 ): { styles: StyleColorSuggestion[]; totalQty: number; corrections: string[] } {
   const corrections: string[] = [];
@@ -288,24 +456,54 @@ function validateAndFixAIDecision(
       qty = sizeBreakdown.reduce((a, b) => a + b, 0);
     }
 
-    // ---------- Deterministic caps + good-practice lot rounding ----------
-    const maxMultiplier =
-      inputData.purchase_stage === 'early' ? 1.5 :
-      inputData.purchase_stage === 'mid' ? 1.2 :
-      1.0;
-
-    const targetDemandQty = Math.round(inputData.sold_qty * maxMultiplier);
+    // ---------- NEW: Net-need based calculation ----------
+    const netNeed = Math.max(0, inputData.sold_qty - (inputData.open_po_qty || 0) - (inputData.current_stock || 0));
     const coveredQty = (inputData.open_po_qty || 0) + (inputData.current_stock || 0);
-    const remainingToOrderCap = Math.max(0, targetDemandQty - coveredQty);
+    let targetQty = Math.round((netNeed * 1.4) + 50);
+    let countryWaitReason: string | null = null;
+    
+    // Check country logic for mid/closing stages
+    if (inputData.purchase_stage !== 'early' && inputData.country_sales && inputData.country_visit_rates) {
+      const countrySignal = calculateCountrySignals({
+        country_sales: inputData.country_sales,
+        country_visit_rates: inputData.country_visit_rates
+      });
+      if (countrySignal.shouldWait) {
+        targetQty = 0;
+        countryWaitReason = countrySignal.reason;
+      }
+    }
+    
+    const targetDemandQty = targetQty;
+    const remainingToOrderCap = Math.max(0, targetQty);
 
     // If already covered, force 0 (prevents the “sold=905, PO=1625, still buy 1280” failure)
-    if (remainingToOrderCap === 0 && qty > 0) {
-      corrections.push(`${aiStyle.style_no}/${aiStyle.color}: already covered by stock+PO (cap=0), forcing qty=0`);
+    // Override AI suggestion with our calculated qty
+    if (qty !== targetQty) {
+      corrections.push(`${aiStyle.style_no}/${aiStyle.color}: AI suggested ${qty}, overriding to ${targetQty} (net_need=${netNeed}, stage=${inputData.purchase_stage})`);
+      qty = targetQty;
+    }
+    
+    // If net need is 0 or negative, skip
+    if (netNeed <= 0 && qty > 0) {
+      corrections.push(`${aiStyle.style_no}/${aiStyle.color}: net_need=${netNeed} (already covered), forcing qty=0`);
       qty = 0;
       sizeBreakdown = sizes.map(() => 0);
-    } else if (qty > remainingToOrderCap) {
-      corrections.push(`${aiStyle.style_no}/${aiStyle.color}: qty ${qty} > cap ${remainingToOrderCap}, capping`);
-      qty = remainingToOrderCap;
+    }
+    
+    // If waiting for countries, force 0
+    if (countryWaitReason && qty > 0) {
+      corrections.push(`${aiStyle.style_no}/${aiStyle.color}: ${countryWaitReason}`);
+      qty = 0;
+      sizeBreakdown = sizes.map(() => 0);
+    }
+    
+    // Check MOQ per style/color (default 100, read from supplier)
+    const styleMoq = moq > 0 ? moq : 100; // Default to 100 per style
+    if (qty > 0 && qty < styleMoq) {
+      corrections.push(`${aiStyle.style_no}/${aiStyle.color}: qty ${qty} < MOQ ${styleMoq}, skipping`);
+      qty = 0;
+      sizeBreakdown = sizes.map(() => 0);
     }
 
     // Apply "nice lot" rounding (allow small surplus up to one lotStep)
@@ -329,8 +527,24 @@ function validateAndFixAIDecision(
     const sig = inputData.signals || {};
     sig.lot_rule = lotRule;
     sig.target_demand_qty = targetDemandQty;
-    sig.remaining_to_order_cap = remainingToOrderCap;
+    sig.remaining_to_order_cap = netNeed;
+    sig.country_wait_reason = countryWaitReason;
 
+    // Get size-level details for this style/color
+    const key = `${aiStyle.style_no}|${aiStyle.color.toLowerCase()}`;
+    const sizeData = sizeLevelData.get(key);
+    
+    // Calculate net need by size
+    const netNeedBySize: Record<string, number> = {};
+    if (sizeData) {
+      for (const size of sizes) {
+        const sold = sizeData.sold_by_size[size] || 0;
+        const stock = sizeData.stock_by_size[size] || 0;
+        const po = sizeData.po_by_size[size] || 0;
+        netNeedBySize[size] = Math.max(0, sold - stock - po);
+      }
+    }
+    
     resultStyles.push({
       style_no: aiStyle.style_no,
       style_name: inputData.style_name,
@@ -341,14 +555,27 @@ function validateAndFixAIDecision(
       suggested_qty_total: qty,
       sizes,
       size_breakdown: sizeBreakdown,
+      size_level_details: sizeData ? {
+        sold_by_size: sizeData.sold_by_size,
+        stock_by_size: sizeData.stock_by_size,
+        po_by_size: sizeData.po_by_size,
+        net_need_by_size: netNeedBySize,
+        suggested_by_size: sizes.reduce((acc, size, idx) => {
+          acc[size] = sizeBreakdown[idx] || 0;
+          return acc;
+        }, {} as Record<string, number>)
+      } : undefined,
       active_salespeople_count: inputData.active_salespeople,
       rounding_step: step,
       reasoning: (() => {
         const base = (aiStyle.reasoning || '').trim();
         const parts: string[] = [];
+        parts.push(`Net=${formatDK(netNeed)}`);
         parts.push(`Covered(stock+PO)=${formatDK(coveredQty)}`);
-        parts.push(`Target≈${formatDK(targetDemandQty)} (${inputData.purchase_stage})`);
-        parts.push(`Cap=${formatDK(remainingToOrderCap)}`);
+        parts.push(`Formula=(${netNeed}×1.4)+50=${formatDK(targetDemandQty)} (${inputData.purchase_stage})`);
+        if (countryWaitReason) {
+          parts.push(`Country: ${countryWaitReason}`);
+        }
         if (sig.dominant_country) {
           const share = sig.dominant_country_share_percent != null ? `${Math.round(sig.dominant_country_share_percent)}%` : '?%';
           const vr = sig.dominant_country_visit_rate_percent != null ? `${Math.round(sig.dominant_country_visit_rate_percent)}%` : '?%';
@@ -364,10 +591,7 @@ function validateAndFixAIDecision(
     totalQty += qty;
   }
 
-  // Check MOQ
-  if (aiDecision.decision === 'buy' && totalQty < moq && moq > 0) {
-    corrections.push(`AI said buy but total ${totalQty} < MOQ ${moq}`);
-  }
+  // MOQ is now checked per-style/color (not supplier total) - see above
 
   return { styles: resultStyles, totalQty, corrections };
 }
@@ -576,7 +800,7 @@ export async function runPurchaseRoundEngine(
 
     const { data: styleStockRows } = await supabase
       .from('style_stock')
-      .select('style_no, color, section, row_label, values, scraped_at')
+      .select('style_no, color, section, row_label, sizes, values, scraped_at')
       .in('style_no', styleNos.slice(0, 1000))
       .in('section', ['Stock', 'Purchase (Running + Shipped)']);
 
@@ -699,6 +923,17 @@ export async function runPurchaseRoundEngine(
     }
 
     await log('info', 'SALES_AGGREGATED', { uniqueStyleColors: styleColorAgg.size });
+
+    // ========== STEP 5.5: Load Size-Level Data for UI Display ==========
+    await log('info', 'STEP_5_5_LOAD_SIZE_LEVEL_DATA');
+    const sizeLevelData = await loadSizeLevelData(
+      supabase,
+      styleDetails,
+      styleStockRows || [],
+      styleNos,
+      ignoreOpenPOs
+    );
+    await log('info', 'SIZE_LEVEL_DATA_LOADED', { count: sizeLevelData.size });
 
     // ========== STEP 6: Group by Supplier and Prepare AI Context ==========
     await log('info', 'STEP_6_GROUP_BY_SUPPLIER');
@@ -930,6 +1165,41 @@ export async function runPurchaseRoundEngine(
         for (const s of supplierStyles) {
           const key = `${s.style_no}|${s.color.toLowerCase()}`;
           const dom = dominantCountrySignals(key);
+          
+          // Build country sales data for this style/color
+          const countrySales = new Map<string, { qty: number; customers: Set<string> }>();
+          const countryQty = countryQtyByStyleColor.get(key);
+          const buyers = buyersByStyleColor.get(key) || new Set<string>();
+          
+          // Aggregate buyers by country
+          for (const custId of buyers) {
+            const meta = customerMetaById.get(custId);
+            if (meta?.visitable) {
+              const ctry = meta.country || 'Unknown';
+              const entry = countrySales.get(ctry) || { qty: 0, customers: new Set<string>() };
+              entry.customers.add(custId);
+              countrySales.set(ctry, entry);
+            }
+          }
+          
+          // Add quantities from countryQtyByStyleColor
+          if (countryQty) {
+            for (const [ctry, qty] of countryQty.entries()) {
+              const entry = countrySales.get(ctry) || { qty: 0, customers: new Set<string>() };
+              entry.qty = qty;
+              countrySales.set(ctry, entry);
+            }
+          }
+          
+          // Build country visit rates map
+          const countryVisitRates = new Map<string, { visited: number; total: number }>();
+          for (const ctry of countrySales.keys()) {
+            countryVisitRates.set(ctry, {
+              visited: visitedVisitableByCountry.get(ctry) || 0,
+              total: totalVisitableByCountry.get(ctry) || 0
+            });
+          }
+          
           inputStylesMap.set(key, { 
             sizes: s.sizes, 
             sold_qty: s.sold_qty, 
@@ -938,6 +1208,8 @@ export async function runPurchaseRoundEngine(
             style_name: s.style_name,
             active_salespeople: s.active_salespeople,
             purchase_stage: purchaseStage,
+            country_sales: countrySales,
+            country_visit_rates: countryVisitRates,
             signals: { ...dom }
           });
         }
@@ -1113,6 +1385,7 @@ export async function runPurchaseRoundEngine(
             aiDecision,
             inputStylesMap,
             moq,
+            sizeLevelData,
             (msg, data) => log('info', msg, data)
           );
 

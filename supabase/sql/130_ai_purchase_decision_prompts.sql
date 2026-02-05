@@ -207,3 +207,57 @@ ON CONFLICT (key, version) DO UPDATE SET
   max_tokens = EXCLUDED.max_tokens,
   notes = EXCLUDED.notes,
   updated_at = now();
+
+-- =========================
+-- v5: Nuanced purchase formula (net_need × 1.4 + 50) with country-awareness
+-- =========================
+
+-- Ensure v4 is not active when v5 exists
+UPDATE public.ai_prompts
+SET active = false
+WHERE key = 'purchase_decision_per_supplier_v1' AND version = 4;
+
+INSERT INTO public.ai_prompts (key, version, content, schema, model, temperature, max_tokens, active, notes)
+VALUES (
+  'purchase_decision_per_supplier_v1',
+  5,
+  E'Du er en indkøbsassistent for 2-BIZ, en dansk mode-grossist. Din opgave er at BESLUTTE indkøbsmængder for en leverandør.\nDette er IKKE kun en kommentar - du BESLUTTER mængderne!\n\n## DIN MÅLSÆTNING\n- Maksimer salg og minimer stockouts i sæsonen\n- Respekter MOQ per style/farve (default 100 stk)\n- Brug ny net-need formel for bedre præcision\n\n## LEVERANDØR-INFO\n{{supplier_info}}\n\n## SÆSON-KONTEKST\n{{season_context}}\n\n## LÆRING (tidligere feedback)\n{{feedback_context}}\n\n## STYLES\n{{styles_data}}\n\n## KRITISK: Ny Purchase Formel\nFor hver style/farve:\n- **net_need** = max(0, sold_qty - open_po_qty - current_stock)\n- **purchase_qty** = (net_need × 1.4) + 50\n\nDenne formel gælder for alle stages (early/mid/closing).\nForklaring:\n- net_need er basis: hvad vi faktisk mangler efter at trække lager og åbne POs fra\n- 1.4× buffer sikrer vi kan følge med efterspørgslen\n- +50 base mængde sikrer minimum order og reducerer stockout risiko\n\nEksempler:\n- Solgt 250, PO 0, Stock 0 → net_need=250 → purchase=(250×1.4)+50 = 400\n- Solgt 300, PO 50, Stock 20 → net_need=230 → purchase=(230×1.4)+50 = 372\n- Solgt 100, PO 80, Stock 30 → net_need=0 → purchase=50 (kun base)\n\n### UNDTAGELSE: Country Waiting Logic (kun mid/closing stage)\nI **mid eller closing** stage:\n1. Tjek om der er en **dominant country** (højest hit rate >= 30%)\n2. Hvis dominant country er \"soon done\" (visit rate >= 80%):\n   - VENT med at købe hvis INGEN andre lande har vist interesse (hit rate > 10%)\n   - Sæt flag \"country_wait\" og recommended_qty = 0\n   - Reasoning: \"Dominant land [X] er næsten færdig (80% besøgt), andre lande ikke vist interesse endnu - venter\"\n3. Ellers: brug normal formel\n\nI **early stage**: brug altid formlen, ingen country waiting.\n\n### MOQ Enforcement\n- MOQ er per style/farve: **default 100 stk** (kan overskrides i supplier data)\n- Hvis calculated purchase < MOQ: **SKIP** (recommended_qty = 0)\n- Reasoning: \"Purchase [X] < MOQ 100 - springer over\"\n\n### Timing\n- Hvis total_lead_time_days > days_until_latest_delivery: sæt flag \"delivery_too_late\", recommended_qty = 0\n\n## OUTPUT (kun JSON)\n{\n  \"supplier\": \"{{supplier_name}}\",\n  \"decision\": \"buy\" | \"skip\" | \"wait\",\n  \"reasoning\": \"1-2 sætninger om beslutning\",\n  \"days_until_must_order\": null eller antal dage,\n  \"moq_status\": \"met\" | \"below\" | \"not_applicable\",\n  \"total_qty\": tal,\n  \"styles\": [\n    {\n      \"style_no\": \"string\",\n      \"color\": \"string\",\n      \"recommended_qty\": tal,\n      \"size_breakdown\": {\"S\": 10, \"M\": 20},\n      \"reasoning\": \"Inkludér: net_need, formel=(net_need×1.4)+50=X, stage, evt. country_wait eller MOQ skip\"\n    }\n  ],\n  \"flags\": [\"moq_risk\",\"lead_time_risk\",\"delivery_too_late\",\"country_wait\",\"below_moq\"]\n}\n',
+  '{
+    "type": "object",
+    "properties": {
+      "supplier": { "type": "string" },
+      "decision": { "type": "string", "enum": ["buy", "skip", "wait"] },
+      "reasoning": { "type": "string" },
+      "days_until_must_order": { "type": ["number", "null"] },
+      "moq_status": { "type": "string", "enum": ["met", "below", "not_applicable"] },
+      "total_qty": { "type": "number" },
+      "styles": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "style_no": { "type": "string" },
+            "color": { "type": "string" },
+            "recommended_qty": { "type": "number" },
+            "size_breakdown": { "type": "object" },
+            "reasoning": { "type": "string" }
+          }
+        }
+      },
+      "flags": { "type": "array", "items": { "type": "string" } }
+    }
+  }'::jsonb,
+  'gpt-4o',
+  0.3,
+  8000,
+  true,
+  'Per-supplier decision prompt v5 - Uses net-need formula (net_need × 1.4 + 50), country-aware waiting logic for mid/closing, MOQ per style/color (default 100).'
+)
+ON CONFLICT (key, version) DO UPDATE SET
+  content = EXCLUDED.content,
+  schema = EXCLUDED.schema,
+  model = EXCLUDED.model,
+  temperature = EXCLUDED.temperature,
+  max_tokens = EXCLUDED.max_tokens,
+  notes = EXCLUDED.notes,
+  updated_at = now();
