@@ -1621,9 +1621,9 @@ export default function SizeCalculatorPage() {
                               </div>
                             )}
                           </div>
-                          {appPoCreated.length === 1 && (
+                          {appPoCreated.length === 1 && appPoCreated[0] && (
                             <Button
-                              onClick={() => window.open(`/purchase/app-pos/${appPoCreated[0].poId}`, '_blank')}
+                              onClick={() => window.open(`/purchase/app-pos/${appPoCreated[0]?.poId}`, '_blank')}
                               size="sm"
                               className="bg-green-600 hover:bg-green-700 text-white"
                             >
