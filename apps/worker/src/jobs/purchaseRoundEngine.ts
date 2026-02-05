@@ -530,8 +530,7 @@ function validateAndFixAIDecision(
     sig.remaining_to_order_cap = netNeed;
     sig.country_wait_reason = countryWaitReason;
 
-    // Get size-level details for this style/color
-    const key = `${aiStyle.style_no}|${aiStyle.color.toLowerCase()}`;
+    // Get size-level details for this style/color (reuse key from above)
     const sizeData = sizeLevelData.get(key);
     
     // Calculate net need by size
@@ -1152,6 +1151,8 @@ export async function runPurchaseRoundEngine(
           style_name: string;
           active_salespeople: number;
           purchase_stage: 'early' | 'mid' | 'closing';
+          country_sales?: Map<string, { qty: number; customers: Set<string> }>;
+          country_visit_rates?: Map<string, { visited: number; total: number }>;
           signals?: {
             dominant_country?: string | null;
             dominant_country_share_percent?: number | null;
