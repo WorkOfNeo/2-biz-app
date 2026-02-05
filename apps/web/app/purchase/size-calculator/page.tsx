@@ -1601,7 +1601,7 @@ export default function SizeCalculatorPage() {
                             </p>
                             {appPoCreated.length === 1 ? (
                               <p className="text-sm text-green-700 mt-1">
-                                PO Number: <span className="font-mono font-semibold">{appPoCreated[0].poNo}</span>
+                                PO Number: <span className="font-mono font-semibold">{appPoCreated[0]?.poNo}</span>
                               </p>
                             ) : (
                               <div className="text-sm text-green-700 mt-1 space-y-0.5">
