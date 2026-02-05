@@ -619,89 +619,206 @@ export default function AIPurchaseReviewPage() {
     );
   }
 
-  // Pending state
+  // Pending state with animated stages
   if (purchaseRun?.status === 'pending') {
     const hasJobId = !!purchaseRun?.job_id;
     const lastLog = jobLogs.length > 0 ? jobLogs[jobLogs.length - 1] : null;
     const currentStep = lastLog?.msg || (hasJobId ? 'Starting...' : 'Waiting for worker...');
-    const lastUpdated = lastLog?.ts ? new Date(lastLog.ts).toLocaleTimeString('da-DK') : null;
     
-    const stepMessages: Record<string, string> = {
-      'purchase_engine_start': 'Starting purchase engine...',
-      'loading_season_data': 'Loading season data...',
-      'season_loaded': 'Season loaded',
-      'loading_sales_data': 'Loading sales data...',
-      'stage_computed': 'Computing purchase stage...',
-      'loading_style_details': 'Loading style details...',
-      'style_details_loaded': 'Style details loaded',
-      'loading_styles_and_suppliers': 'Loading suppliers...',
-      'suppliers_loaded': 'Suppliers loaded',
-      'loading_open_pos': 'Loading existing POs...',
-      'open_pos_loaded': 'Open POs loaded',
-      'aggregating_sales': 'Aggregating sales...',
-      'sales_aggregated': 'Sales aggregated',
-      'calculating_recommendations': 'Calculating recommendations...',
-      'recommendations_calculated': 'Recommendations ready',
-      'calling_ai_for_commentary': 'Getting AI commentary...',
-      'ai_commentary_received': 'AI commentary received',
-      'persisting_results': 'Saving results...',
-      'purchase_engine_complete': 'Complete!',
+    // Map steps to stage info
+    const getStageInfo = (step: string, data?: any) => {
+      const stages = {
+        'PURCHASE_ENGINE_START': { 
+          stage: 1, 
+          title: 'Initializing', 
+          desc: 'Starting purchase analysis engine',
+          samples: [] 
+        },
+        'STEP_1_LOAD_SEASON': { 
+          stage: 1, 
+          title: 'Loading Season', 
+          desc: 'Fetching season configuration and dates',
+          samples: [] 
+        },
+        'STEP_2_LOAD_CUSTOMERS': { 
+          stage: 2, 
+          title: 'Analyzing Customers', 
+          desc: 'Loading customer base and visit patterns',
+          samples: data?.totalVisitable ? [`${data.totalVisitable} active customers`, `${data.visitedVisitable || 0} visited`] : [] 
+        },
+        'STEP_3_LOAD_STYLES': { 
+          stage: 3, 
+          title: 'Fetching Styles', 
+          desc: 'Loading product catalog and details',
+          samples: [] 
+        },
+        'STEP_4_LOAD_SALES': { 
+          stage: 3, 
+          title: 'Processing Sales', 
+          desc: 'Analyzing order history and quantities',
+          samples: data?.totalOrders ? [`${data.totalOrders} orders`, `${data.totalQty || 0} units sold`] : [] 
+        },
+        'SALES_AGGREGATED': { 
+          stage: 4, 
+          title: 'Aggregating Data', 
+          desc: 'Combining sales by style, color, and size',
+          samples: data?.uniqueStyleColors ? [`${data.uniqueStyleColors} style/color combinations`] : [] 
+        },
+        'STEP_5_5_LOAD_SIZE_LEVEL_DATA': { 
+          stage: 4, 
+          title: 'Size Analysis', 
+          desc: 'Building size-level inventory breakdown',
+          samples: [] 
+        },
+        'SIZE_LEVEL_DATA_LOADED': { 
+          stage: 4, 
+          title: 'Size Data Ready', 
+          desc: 'Size-level analysis complete',
+          samples: data?.count ? [`${data.count} style/colors analyzed`] : [] 
+        },
+        'STEP_6_GROUP_BY_SUPPLIER': { 
+          stage: 5, 
+          title: 'Organizing by Supplier', 
+          desc: 'Grouping products by manufacturer',
+          samples: [] 
+        },
+        'STEP_7_AI_CALLS': { 
+          stage: 6, 
+          title: 'AI Analysis', 
+          desc: 'Calculating smart purchase recommendations',
+          samples: [] 
+        },
+        'AI_CALL_SUPPLIER_START': { 
+          stage: 6, 
+          title: 'Analyzing Supplier', 
+          desc: data?.supplier ? `Processing ${data.supplier}` : 'AI calculating quantities',
+          samples: data?.styles_count ? [`${data.styles_count} styles`, `MOQ: ${data.moq || 0}`, `Lead: ${data.lead_time || 0}d`] : [] 
+        },
+        'VALIDATION_ADJUSTMENTS': { 
+          stage: 6, 
+          title: 'Validating Results', 
+          desc: 'Applying business rules and constraints',
+          samples: data?.corrections?.length ? [`${data.corrections.length} adjustments made`] : [] 
+        },
+        'STEP_8_PERSIST': { 
+          stage: 7, 
+          title: 'Saving Results', 
+          desc: 'Storing purchase recommendations',
+          samples: [] 
+        },
+        'PURCHASE_ENGINE_COMPLETE': { 
+          stage: 7, 
+          title: 'Complete', 
+          desc: 'Analysis finished successfully',
+          samples: [] 
+        }
+      };
+      
+      const key = step.toUpperCase().replace(/^INFO_/, '');
+      return stages[key as keyof typeof stages] || { stage: 0, title: 'Processing', desc: step.replace(/_/g, ' '), samples: [] };
     };
+    
+    const currentStageInfo = getStageInfo(currentStep, lastLog?.data);
+    const progress = Math.min(100, (currentStageInfo.stage / 7) * 100);
+    
+    // Get sample items from recent logs
+    const recentSamples = jobLogs.slice(-5).map(log => {
+      const info = getStageInfo(log.msg, log.data);
+      return info.samples;
+    }).flat().filter(Boolean).slice(0, 3);
 
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 flex items-center justify-center p-8">
-        <div className="w-full max-w-xl">
+        <div className="w-full max-w-2xl">
           <div className="text-center mb-8">
-            <div className="inline-flex items-center justify-center w-20 h-20 rounded-full bg-indigo-600/20 border border-indigo-500/30 mb-6">
-              <Package className="h-10 w-10 text-indigo-400" />
+            <div className="inline-flex items-center justify-center w-20 h-20 rounded-full bg-indigo-600/20 border border-indigo-500/30 mb-6 relative">
+              <Package className="h-10 w-10 text-indigo-400 animate-pulse" />
+              <div className="absolute inset-0 rounded-full bg-indigo-500/20 animate-ping" />
             </div>
             <h1 className="text-2xl font-semibold text-white mb-2">
               Purchase Round #{purchaseRun.run_number}
             </h1>
             <p className="text-slate-400">
-              Analyzing season data and calculating purchase recommendations...
+              {purchaseRun.season?.name} {purchaseRun.season?.year}
             </p>
           </div>
 
-          <div className="bg-slate-800/50 backdrop-blur-sm rounded-2xl border border-slate-700/50 p-6">
-            <div className="flex items-center gap-4 mb-6">
-              <Loader2 className="h-8 w-8 text-indigo-400 animate-spin" />
-              <div className="flex-1">
-                <p className="text-white font-medium">
-                  {stepMessages[currentStep] || currentStep.replace(/_/g, ' ')}
+          {/* Progress Bar */}
+          <div className="mb-6">
+            <div className="flex items-center justify-between text-sm text-slate-400 mb-2">
+              <span>Stage {currentStageInfo.stage} of 7</span>
+              <span>{Math.round(progress)}%</span>
+            </div>
+            <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
+              <div 
+                className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 transition-all duration-500 ease-out"
+                style={{ width: `${progress}%` }}
+              />
+            </div>
+          </div>
+
+          {/* Current Stage Card */}
+          <div className="bg-slate-800/50 backdrop-blur-sm rounded-2xl border border-slate-700/50 p-6 mb-4">
+            <div className="flex items-start gap-4">
+              <div className="flex-shrink-0">
+                <Loader2 className="h-8 w-8 text-indigo-400 animate-spin" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 className="text-lg font-semibold text-white mb-1">
+                  {currentStageInfo.title}
+                </h3>
+                <p className="text-slate-400 text-sm mb-3">
+                  {currentStageInfo.desc}
                 </p>
-                <p className="text-slate-500 text-sm">
-                  {purchaseRun.season?.name} {purchaseRun.season?.year}
-                  {lastUpdated && <> • Opdateret {lastUpdated}</>}
-                </p>
-                {!hasJobId && (
-                  <p className="text-amber-400/80 text-xs mt-1">
-                    Venter på at worker starter jobbet...
-                  </p>
+                
+                {/* Animated Sample Data */}
+                {(currentStageInfo.samples.length > 0 || recentSamples.length > 0) && (
+                  <div className="space-y-1.5">
+                    {(currentStageInfo.samples.length > 0 ? currentStageInfo.samples : recentSamples).map((sample, idx) => (
+                      <div 
+                        key={idx}
+                        className="flex items-center gap-2 text-xs text-slate-300 animate-fade-in"
+                        style={{ animationDelay: `${idx * 100}ms` }}
+                      >
+                        <div className="w-1 h-1 rounded-full bg-indigo-400" />
+                        <span className="font-mono">{sample}</span>
+                      </div>
+                    ))}
+                  </div>
                 )}
               </div>
             </div>
+          </div>
 
-            <div className="space-y-2 max-h-64 overflow-y-auto">
-              {jobLogs.map((log, idx) => (
-                <div
-                  key={log.id}
-                  className={`flex items-center gap-3 text-sm ${
-                    idx === jobLogs.length - 1 ? 'text-white' : 'text-slate-500 opacity-60'
-                  }`}
-                >
-                  {log.level === 'error' ? (
-                    <XCircle className="h-4 w-4 text-red-400 flex-shrink-0" />
-                  ) : idx === jobLogs.length - 1 ? (
-                    <Clock className="h-4 w-4 text-indigo-400 flex-shrink-0" />
-                  ) : (
-                    <CheckCircle2 className="h-4 w-4 text-emerald-400 flex-shrink-0" />
-                  )}
-                  <span>{stepMessages[log.msg] || log.msg.replace(/_/g, ' ')}</span>
-                </div>
-              ))}
+          {/* Completed Steps */}
+          <div className="bg-slate-800/30 backdrop-blur-sm rounded-xl border border-slate-700/30 p-4">
+            <div className="text-xs text-slate-500 uppercase tracking-wider mb-3">Completed Steps</div>
+            <div className="space-y-2 max-h-40 overflow-y-auto">
+              {jobLogs.filter(log => log.msg !== currentStep).slice(-6).map((log, idx) => {
+                const info = getStageInfo(log.msg, log.data);
+                return (
+                  <div
+                    key={log.id}
+                    className="flex items-center gap-3 text-sm text-slate-500"
+                  >
+                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500/70 flex-shrink-0" />
+                    <span className="truncate">{info.title}</span>
+                    {info.samples.length > 0 && (
+                      <span className="text-xs text-slate-600 ml-auto font-mono">
+                        {info.samples[0]}
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
+
+          {!hasJobId && (
+            <div className="mt-4 text-center text-amber-400/80 text-sm">
+              Waiting for worker to pick up job...
+            </div>
+          )}
 
           <div className="text-center mt-6">
             <Link href="/ai-analysis" className="text-slate-400 hover:text-white text-sm">
