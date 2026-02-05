@@ -1,6 +1,6 @@
 import React from 'react';
-import { Input } from '../../../components/ui/input';
-import { Pencil, Check } from 'lucide-react';
+import { Input } from '../../../../components/ui/input';
+import { Check } from 'lucide-react';
 
 type SizeLevelData = {
   sold_by_size: Record<string, number>;
