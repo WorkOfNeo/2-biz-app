@@ -625,89 +625,98 @@ export default function AIPurchaseReviewPage() {
     const lastLog = jobLogs.length > 0 ? jobLogs[jobLogs.length - 1] : null;
     const currentStep = lastLog?.msg || (hasJobId ? 'Starting...' : 'Waiting for worker...');
     
+    // Count suppliers being processed (from AI_CALL_SUPPLIER_START logs)
+    const supplierLogs = jobLogs.filter(log => log.msg === 'AI_CALL_SUPPLIER_START');
+    const totalSuppliers = supplierLogs.length > 0 ? supplierLogs.length : null;
+    const currentSupplierIdx = supplierLogs.length;
+    
+    // Detect highest stage reached
+    const getBaseStage = (step: string): number => {
+      const stepUpper = step.toUpperCase();
+      if (stepUpper.includes('PURCHASE_ENGINE_START') || stepUpper.includes('STEP_1')) return 1;
+      if (stepUpper.includes('STEP_2')) return 2;
+      if (stepUpper.includes('STEP_3') || stepUpper.includes('STEP_4')) return 3;
+      if (stepUpper.includes('SALES_AGGREGATED') || stepUpper.includes('STEP_5') || stepUpper.includes('SIZE_LEVEL')) return 4;
+      if (stepUpper.includes('STEP_6_GROUP')) return 5;
+      if (stepUpper.includes('STEP_7') || stepUpper.includes('AI_CALL') || stepUpper.includes('VALIDATION')) return 6;
+      if (stepUpper.includes('STEP_8') || stepUpper.includes('COMPLETE')) return 7;
+      return 0;
+    };
+    
+    const highestStageReached = jobLogs.reduce((max, log) => {
+      const stage = getBaseStage(log.msg);
+      return Math.max(max, stage);
+    }, 0);
+    
     // Map steps to stage info
     const getStageInfo = (step: string, data?: any) => {
       const stages = {
         'PURCHASE_ENGINE_START': { 
-          stage: 1, 
           title: 'Initializing', 
           desc: 'Starting purchase analysis engine',
           samples: [] 
         },
         'STEP_1_LOAD_SEASON': { 
-          stage: 1, 
           title: 'Loading Season', 
           desc: 'Fetching season configuration and dates',
           samples: [] 
         },
         'STEP_2_LOAD_CUSTOMERS': { 
-          stage: 2, 
           title: 'Analyzing Customers', 
           desc: 'Loading customer base and visit patterns',
           samples: data?.totalVisitable ? [`${data.totalVisitable} active customers`, `${data.visitedVisitable || 0} visited`] : [] 
         },
         'STEP_3_LOAD_STYLES': { 
-          stage: 3, 
           title: 'Fetching Styles', 
           desc: 'Loading product catalog and details',
           samples: [] 
         },
         'STEP_4_LOAD_SALES': { 
-          stage: 3, 
           title: 'Processing Sales', 
           desc: 'Analyzing order history and quantities',
           samples: data?.totalOrders ? [`${data.totalOrders} orders`, `${data.totalQty || 0} units sold`] : [] 
         },
         'SALES_AGGREGATED': { 
-          stage: 4, 
           title: 'Aggregating Data', 
           desc: 'Combining sales by style, color, and size',
           samples: data?.uniqueStyleColors ? [`${data.uniqueStyleColors} style/color combinations`] : [] 
         },
         'STEP_5_5_LOAD_SIZE_LEVEL_DATA': { 
-          stage: 4, 
           title: 'Size Analysis', 
           desc: 'Building size-level inventory breakdown',
           samples: [] 
         },
         'SIZE_LEVEL_DATA_LOADED': { 
-          stage: 4, 
           title: 'Size Data Ready', 
           desc: 'Size-level analysis complete',
           samples: data?.count ? [`${data.count} style/colors analyzed`] : [] 
         },
         'STEP_6_GROUP_BY_SUPPLIER': { 
-          stage: 5, 
           title: 'Organizing by Supplier', 
           desc: 'Grouping products by manufacturer',
           samples: [] 
         },
         'STEP_7_AI_CALLS': { 
-          stage: 6, 
           title: 'AI Analysis', 
           desc: 'Calculating smart purchase recommendations',
           samples: [] 
         },
         'AI_CALL_SUPPLIER_START': { 
-          stage: 6, 
-          title: 'Analyzing Supplier', 
-          desc: data?.supplier ? `Processing ${data.supplier}` : 'AI calculating quantities',
+          title: 'AI Analysis', 
+          desc: data?.supplier ? `Analyzing ${data.supplier}${totalSuppliers ? ` (${currentSupplierIdx} of ${totalSuppliers})` : ''}` : 'AI calculating quantities',
           samples: data?.styles_count ? [`${data.styles_count} styles`, `MOQ: ${data.moq || 0}`, `Lead: ${data.lead_time || 0}d`] : [] 
         },
         'VALIDATION_ADJUSTMENTS': { 
-          stage: 6, 
           title: 'Validating Results', 
-          desc: 'Applying business rules and constraints',
-          samples: data?.corrections?.length ? [`${data.corrections.length} adjustments made`] : [] 
+          desc: data?.supplier ? `Adjustments for ${data.supplier}` : 'Applying business rules',
+          samples: data?.corrections?.length ? [`${data.corrections.length} adjustments`] : [] 
         },
         'STEP_8_PERSIST': { 
-          stage: 7, 
           title: 'Saving Results', 
           desc: 'Storing purchase recommendations',
           samples: [] 
         },
         'PURCHASE_ENGINE_COMPLETE': { 
-          stage: 7, 
           title: 'Complete', 
           desc: 'Analysis finished successfully',
           samples: [] 
@@ -715,17 +724,27 @@ export default function AIPurchaseReviewPage() {
       };
       
       const key = step.toUpperCase().replace(/^INFO_/, '');
-      return stages[key as keyof typeof stages] || { stage: 0, title: 'Processing', desc: step.replace(/_/g, ' '), samples: [] };
+      return stages[key as keyof typeof stages] || { title: 'Processing', desc: step.replace(/_/g, ' '), samples: [] };
     };
     
     const currentStageInfo = getStageInfo(currentStep, lastLog?.data);
-    const progress = Math.min(100, (currentStageInfo.stage / 7) * 100);
     
-    // Get sample items from recent logs
-    const recentSamples = jobLogs.slice(-5).map(log => {
-      const info = getStageInfo(log.msg, log.data);
-      return info.samples;
-    }).flat().filter(Boolean).slice(0, 3);
+    // Calculate progress with sub-progress for stage 6 (supplier loop)
+    let progress = 0;
+    if (highestStageReached === 0) {
+      progress = 5; // Show minimal progress when starting
+    } else if (highestStageReached === 6 && totalSuppliers && currentSupplierIdx > 0) {
+      // In stage 6 (AI calls), show sub-progress through suppliers
+      const stage6BaseProgress = (5 / 7) * 100; // Stages 1-5 complete = ~71%
+      const stage6Width = (1 / 7) * 100; // Stage 6 = ~14%
+      const supplierProgress = (currentSupplierIdx / totalSuppliers) * stage6Width;
+      progress = stage6BaseProgress + supplierProgress;
+    } else {
+      // Normal stage-based progress
+      progress = (highestStageReached / 7) * 100;
+    }
+    
+    progress = Math.min(100, progress);
 
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 flex items-center justify-center p-8">
@@ -746,7 +765,10 @@ export default function AIPurchaseReviewPage() {
           {/* Progress Bar */}
           <div className="mb-6">
             <div className="flex items-center justify-between text-sm text-slate-400 mb-2">
-              <span>Stage {currentStageInfo.stage} of 7</span>
+              <span>
+                Stage {highestStageReached} of 7
+                {highestStageReached === 6 && totalSuppliers && ` • Supplier ${currentSupplierIdx} of ${totalSuppliers}`}
+              </span>
               <span>{Math.round(progress)}%</span>
             </div>
             <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
@@ -772,9 +794,9 @@ export default function AIPurchaseReviewPage() {
                 </p>
                 
                 {/* Animated Sample Data */}
-                {(currentStageInfo.samples.length > 0 || recentSamples.length > 0) && (
+                {currentStageInfo.samples.length > 0 && (
                   <div className="space-y-1.5">
-                    {(currentStageInfo.samples.length > 0 ? currentStageInfo.samples : recentSamples).map((sample, idx) => (
+                    {currentStageInfo.samples.map((sample, idx) => (
                       <div 
                         key={idx}
                         className="flex items-center gap-2 text-xs text-slate-300 animate-fade-in"
@@ -790,28 +812,66 @@ export default function AIPurchaseReviewPage() {
             </div>
           </div>
 
-          {/* Completed Steps */}
+          {/* Completed Steps / Supplier Progress */}
           <div className="bg-slate-800/30 backdrop-blur-sm rounded-xl border border-slate-700/30 p-4">
-            <div className="text-xs text-slate-500 uppercase tracking-wider mb-3">Completed Steps</div>
-            <div className="space-y-2 max-h-40 overflow-y-auto">
-              {jobLogs.filter(log => log.msg !== currentStep).slice(-6).map((log, idx) => {
-                const info = getStageInfo(log.msg, log.data);
-                return (
-                  <div
-                    key={log.id}
-                    className="flex items-center gap-3 text-sm text-slate-500"
-                  >
-                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500/70 flex-shrink-0" />
-                    <span className="truncate">{info.title}</span>
-                    {info.samples.length > 0 && (
-                      <span className="text-xs text-slate-600 ml-auto font-mono">
-                        {info.samples[0]}
-                      </span>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
+            {highestStageReached === 6 && supplierLogs.length > 1 ? (
+              // Show supplier progress during AI analysis
+              <>
+                <div className="text-xs text-slate-500 uppercase tracking-wider mb-3">
+                  Suppliers Analyzed ({supplierLogs.length - 1} of {totalSuppliers || supplierLogs.length})
+                </div>
+                <div className="space-y-2 max-h-40 overflow-y-auto">
+                  {supplierLogs.slice(0, -1).reverse().slice(0, 5).reverse().map((log) => {
+                    const supplierName = log.data?.supplier || 'Unknown';
+                    const stylesCount = log.data?.styles_count || 0;
+                    return (
+                      <div
+                        key={log.id}
+                        className="flex items-center gap-3 text-sm text-slate-500"
+                      >
+                        <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500/70 flex-shrink-0" />
+                        <span className="truncate">{supplierName}</span>
+                        <span className="text-xs text-slate-600 ml-auto font-mono">
+                          {stylesCount} styles
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            ) : (
+              // Show completed stages
+              <>
+                <div className="text-xs text-slate-500 uppercase tracking-wider mb-3">Completed Steps</div>
+                <div className="space-y-2 max-h-40 overflow-y-auto">
+                  {(() => {
+                    // Show key milestone stages
+                    const milestones = jobLogs.filter(log => {
+                      const stage = getBaseStage(log.msg);
+                      return stage > 0 && stage < highestStageReached && log.msg !== currentStep;
+                    }).slice(-6);
+                    
+                    return milestones.map((log) => {
+                      const info = getStageInfo(log.msg, log.data);
+                      return (
+                        <div
+                          key={log.id}
+                          className="flex items-center gap-3 text-sm text-slate-500"
+                        >
+                          <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500/70 flex-shrink-0" />
+                          <span className="truncate">{info.title}</span>
+                          {info.samples.length > 0 && (
+                            <span className="text-xs text-slate-600 ml-auto font-mono truncate max-w-[200px]">
+                              {info.samples[0]}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    });
+                  })()}
+                </div>
+              </>
+            )}
           </div>
 
           {!hasJobId && (
