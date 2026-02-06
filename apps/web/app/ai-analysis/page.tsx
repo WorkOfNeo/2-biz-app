@@ -804,27 +804,27 @@ export default function AIAnalysisDashboard() {
             {latestAnalysis.metrics?.salesperson_table && latestAnalysis.metrics.salesperson_table.length > 0 && (
               <div className="mt-5">
                 <h3 className="text-sm font-medium text-slate-500 mb-3">Salesperson Progress</h3>
-                <div className="overflow-x-auto">
+                <div className="overflow-x-auto border border-slate-200 rounded-lg">
                   <table className="w-full text-sm">
-                    <thead>
+                    <thead className="bg-slate-50">
                       <tr className="border-b border-slate-200">
-                        <th className="text-left py-2 px-3 font-medium text-slate-600">Salesperson</th>
-                        <th className="text-right py-2 px-3 font-medium text-slate-600">Visited</th>
-                        <th className="text-right py-2 px-3 font-medium text-slate-600">Qty</th>
-                        <th className="text-right py-2 px-3 font-medium text-slate-600">Price</th>
-                        <th className="text-right py-2 px-3 font-medium text-slate-600">Index</th>
+                        <th className="text-left py-3 px-4 font-semibold text-slate-700 uppercase text-xs tracking-wider">Salesperson</th>
+                        <th className="text-right py-3 px-4 font-semibold text-slate-700 uppercase text-xs tracking-wider">Visited</th>
+                        <th className="text-right py-3 px-4 font-semibold text-slate-700 uppercase text-xs tracking-wider">Qty</th>
+                        <th className="text-right py-3 px-4 font-semibold text-slate-700 uppercase text-xs tracking-wider">Price</th>
+                        <th className="text-right py-3 px-4 font-semibold text-slate-700 uppercase text-xs tracking-wider">Index</th>
                       </tr>
                     </thead>
                     <tbody>
                       {latestAnalysis.metrics.salesperson_table.map((sp: any, i: number) => (
-                        <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
-                          <td className="py-2 px-3 font-medium text-slate-900">{sp.salesperson}</td>
-                          <td className="py-2 px-3 text-right text-slate-700">{sp.visited_customers}</td>
-                          <td className="py-2 px-3 text-right text-slate-700">{sp.qty.toLocaleString()}</td>
-                          <td className="py-2 px-3 text-right text-slate-700">{sp.price.toLocaleString('da-DK', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</td>
-                          <td className="py-2 px-3 text-right">
+                        <tr key={i} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
+                          <td className="py-3 px-4 font-medium text-slate-900">{sp.salesperson}</td>
+                          <td className="py-3 px-4 text-right text-slate-700">{sp.visited_customers}</td>
+                          <td className="py-3 px-4 text-right text-slate-700">{sp.qty.toLocaleString()}</td>
+                          <td className="py-3 px-4 text-right text-slate-700">{sp.price.toLocaleString('da-DK', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</td>
+                          <td className="py-3 px-4 text-right">
                             {sp.index != null ? (
-                              <span className={`font-medium ${sp.index >= 100 ? 'text-green-600' : sp.index >= 80 ? 'text-amber-600' : 'text-red-600'}`}>
+                              <span className={`font-semibold ${sp.index >= 100 ? 'text-green-600' : sp.index >= 80 ? 'text-amber-600' : 'text-red-600'}`}>
                                 {sp.index}%
                               </span>
                             ) : (
