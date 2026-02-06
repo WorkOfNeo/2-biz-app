@@ -514,7 +514,7 @@ function AdjustmentInsightsTab({ patterns }: { patterns: PatternData | undefined
                           {(style.avgRatio * 100).toFixed(0)}%
                         </td>
                         <td className="py-3 px-4 text-right">
-                          <Badge variant="secondary">{style.count}×</Badge>
+                          <Badge className="bg-slate-100 text-slate-700">{style.count}×</Badge>
                         </td>
                       </tr>
                     );
