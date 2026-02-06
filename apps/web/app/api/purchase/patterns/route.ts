@@ -156,6 +156,18 @@ export async function GET(request: NextRequest) {
     
     // Calculate overall summary (latest version or all if no version)
     const latestVersion = versionMetrics[0];
+    
+    // Calculate improvement from previous version
+    let approvalRateChange: number | undefined;
+    let skipRateChange: number | undefined;
+    
+    if (versionMetrics.length >= 2) {
+      const current = versionMetrics[0];
+      const previous = versionMetrics[1];
+      approvalRateChange = current.approvalRate - previous.approvalRate;
+      skipRateChange = current.skipRate - previous.skipRate;
+    }
+    
     const summary = {
       currentPromptKey: promptKey,
       currentVersion: activePrompt?.version || null,
@@ -165,15 +177,9 @@ export async function GET(request: NextRequest) {
       latestApprovalRate: latestVersion?.approvalRate || 0,
       latestSkipRate: latestVersion?.skipRate || 0,
       latestAvgAdjustmentRatio: latestVersion?.avgAdjustmentRatio,
+      approvalRateChange,
+      skipRateChange,
     };
-    
-    // Calculate improvement from previous version
-    if (versionMetrics.length >= 2) {
-      const current = versionMetrics[0];
-      const previous = versionMetrics[1];
-      summary['approvalRateChange'] = current.approvalRate - previous.approvalRate;
-      summary['skipRateChange'] = current.skipRate - previous.skipRate;
-    }
     
     // Context-specific performance (by stage)
     const byStage = new Map<string, FeedbackRow[]>();
