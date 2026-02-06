@@ -308,7 +308,7 @@ function OverviewTab({ performance }: { performance: PromptPerformance | undefin
               </div>
             )}
             
-            {versionMetrics[0]?.approvalRate > 0.7 && (
+            {versionMetrics[0] && versionMetrics[0].approvalRate > 0.7 && (
               <div className="flex items-start gap-3 p-3 bg-blue-50 rounded-lg">
                 <Brain className="h-5 w-5 text-blue-600 flex-shrink-0 mt-0.5" />
                 <div>
@@ -320,7 +320,7 @@ function OverviewTab({ performance }: { performance: PromptPerformance | undefin
               </div>
             )}
             
-            {versionMetrics[0]?.skipRate > 0.15 && (
+            {versionMetrics[0] && versionMetrics[0].skipRate > 0.15 && (
               <div className="flex items-start gap-3 p-3 bg-amber-50 rounded-lg">
                 <AlertCircle className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
                 <div>
