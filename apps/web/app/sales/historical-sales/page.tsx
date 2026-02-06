@@ -239,6 +239,8 @@ export default function HistoricalSalesPage() {
   const [resetting, setResetting] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [parsing, setParsing] = useState(false);
+  const [parsingProgress, setParsingProgress] = useState({ current: 0, total: 0, phase: '' });
   
   // Modal states
   const [addColorModal, setAddColorModal] = useState<{
@@ -372,7 +374,7 @@ export default function HistoricalSalesPage() {
   }, []);
   
   // Step 2: Parse rows after column mapping is confirmed
-  const parseRowsWithMapping = useCallback(() => {
+  const parseRowsWithMapping = useCallback(async () => {
     if (!rawFileData || !columnMapping || !styles) return;
     
     const { styleNo, styleName, size, quantity, date, orderType, orderChannel } = columnMapping;
@@ -386,97 +388,139 @@ export default function HistoricalSalesPage() {
       return;
     }
     
-    // Parse rows
-    const rows: NarrowRow[] = rawFileData.rows.map(row => {
-      const parsedDate = parseDate(row[date]);
-      const qty = typeof row[quantity] === 'number' ? row[quantity] : parseInt(String(row[quantity] || '0'), 10);
-      
-      return {
-        styleNo: String(row[styleNo] || '').trim(),
-        styleName: String(row[styleName] || '').trim(),
-        size: String(row[size] || '').trim(),
-        quantity: isNaN(qty) ? 0 : qty,
-        date: parsedDate || '',
-        orderType: orderType ? String(row[orderType] || '').trim() : undefined,
-        orderChannel: orderChannel ? String(row[orderChannel] || '').trim() : undefined,
-      };
-    }).filter(r => r.styleNo && r.styleName && r.size && r.quantity > 0 && r.date);
+    setParsing(true);
+    setParsingProgress({ current: 0, total: rawFileData.rows.length, phase: 'Parsing rows...' });
     
-    // Match each row against styles and colors
-    const parsed: ParsedNarrowRow[] = rows.map(row => {
-      let matchedStyleNo: string | null = null;
-      let matchedColor: string | null = null;
-      let styleScore = 0;
-      let colorScore = 0;
-      let matchNote: string | null = null;
+    try {
+      // Phase 1: Parse raw data into structured rows
+      const rows: NarrowRow[] = [];
+      const rawBatchSize = 1000;
       
-      // Try exact match on style_no first
-      const exactStyleMatch = styles.find(s => s.style_no.toLowerCase() === row.styleNo.toLowerCase());
-      if (exactStyleMatch) {
-        matchedStyleNo = exactStyleMatch.style_no;
-        styleScore = 1.0;
-        matchNote = 'Exact style no match';
-      } else {
-        // Try fuzzy match on style_name
-        let bestMatch: StyleRow | null = null;
-        let bestScore = 0;
+      for (let i = 0; i < rawFileData.rows.length; i += rawBatchSize) {
+        const batch = rawFileData.rows.slice(i, i + rawBatchSize);
         
-        for (const style of styles) {
-          if (!style.style_name) continue;
-          const score = fuzzyScore(row.styleName, style.style_name);
-          if (score > bestScore && score >= 0.7) {
-            bestScore = score;
-            bestMatch = style;
-          }
-        }
+        const batchRows = batch.map(row => {
+          const parsedDate = parseDate(row[date]);
+          const qty = typeof row[quantity] === 'number' ? row[quantity] : parseInt(String(row[quantity] || '0'), 10);
+          
+          return {
+            styleNo: String(row[styleNo] || '').trim(),
+            styleName: String(row[styleName] || '').trim(),
+            size: String(row[size] || '').trim(),
+            quantity: isNaN(qty) ? 0 : qty,
+            date: parsedDate || '',
+            orderType: orderType ? String(row[orderType] || '').trim() : undefined,
+            orderChannel: orderChannel ? String(row[orderChannel] || '').trim() : undefined,
+          };
+        }).filter(r => r.styleNo && r.styleName && r.size && r.quantity > 0 && r.date);
         
-        if (bestMatch) {
-          matchedStyleNo = bestMatch.style_no;
-          styleScore = bestScore;
-          matchNote = `Fuzzy match (${Math.round(bestScore * 100)}%)`;
-        }
+        rows.push(...batchRows);
+        setParsingProgress({ 
+          current: Math.min(i + rawBatchSize, rawFileData.rows.length), 
+          total: rawFileData.rows.length, 
+          phase: 'Parsing rows...' 
+        });
+        
+        // Allow UI to update
+        await new Promise(resolve => setTimeout(resolve, 0));
       }
       
-      // Match color (from size column in original data, we'll extract from styleName for now)
-      // For narrow format, we need to determine color somehow
-      // Let's check if there's a color in the hardcoded rules
-      if (matchedStyleNo) {
-        const colors = colorsByStyleNo.get(matchedStyleNo) || [];
+      // Phase 2: Match against styles and colors
+      setParsingProgress({ current: 0, total: rows.length, phase: 'Matching styles and colors...' });
+      const parsed: ParsedNarrowRow[] = [];
+      const matchBatchSize = 500;
+      
+      for (let i = 0; i < rows.length; i += matchBatchSize) {
+        const batch = rows.slice(i, i + matchBatchSize);
         
-        // Try to extract color from styleName or check hardcoded rules
-        const hardcodedStyleNo = checkHardcodedRules(row.styleName, row.size);
-        if (hardcodedStyleNo && hardcodedStyleNo === matchedStyleNo) {
-          // The size might actually be indicating a color in the old format
-          // For now, let's just pick the first color if available
-          if (colors.length > 0 && colors[0]) {
-            matchedColor = colors[0];
-            colorScore = 1.0;
+        const batchParsed = batch.map(row => {
+          let matchedStyleNo: string | null = null;
+          let matchedColor: string | null = null;
+          let styleScore = 0;
+          let colorScore = 0;
+          let matchNote: string | null = null;
+          
+          // Try exact match on style_no first
+          const exactStyleMatch = styles.find(s => s.style_no.toLowerCase() === row.styleNo.toLowerCase());
+          if (exactStyleMatch) {
+            matchedStyleNo = exactStyleMatch.style_no;
+            styleScore = 1.0;
+            matchNote = 'Exact style no match';
+          } else {
+            // Try fuzzy match on style_name
+            let bestMatch: StyleRow | null = null;
+            let bestScore = 0;
+            
+            for (const style of styles) {
+              if (!style.style_name) continue;
+              const score = fuzzyScore(row.styleName, style.style_name);
+              if (score > bestScore && score >= 0.7) {
+                bestScore = score;
+                bestMatch = style;
+              }
+            }
+            
+            if (bestMatch) {
+              matchedStyleNo = bestMatch.style_no;
+              styleScore = bestScore;
+              matchNote = `Fuzzy match (${Math.round(bestScore * 100)}%)`;
+            }
           }
-        } else if (colors.length > 0 && colors[0]) {
-          matchedColor = colors[0];
-          colorScore = 0.8;
-          matchNote = (matchNote || '') + ' (auto-selected first color)';
-        }
+          
+          // Match color
+          if (matchedStyleNo) {
+            const colors = colorsByStyleNo.get(matchedStyleNo) || [];
+            
+            // Try to extract color from styleName or check hardcoded rules
+            const hardcodedStyleNo = checkHardcodedRules(row.styleName, row.size);
+            if (hardcodedStyleNo && hardcodedStyleNo === matchedStyleNo) {
+              if (colors.length > 0 && colors[0]) {
+                matchedColor = colors[0];
+                colorScore = 1.0;
+              }
+            } else if (colors.length > 0 && colors[0]) {
+              matchedColor = colors[0];
+              colorScore = 0.8;
+              matchNote = (matchNote || '') + ' (auto-selected first color)';
+            }
+          }
+          
+          const status: 'matched' | 'unmatched_style' | 'unmatched_color' =
+            !matchedStyleNo ? 'unmatched_style' :
+            !matchedColor ? 'unmatched_color' :
+            'matched';
+          
+          return {
+            ...row,
+            matchedStyleNo,
+            matchedColor,
+            styleScore,
+            colorScore,
+            matchNote,
+            status,
+          };
+        });
+        
+        parsed.push(...batchParsed);
+        setParsingProgress({ 
+          current: Math.min(i + matchBatchSize, rows.length), 
+          total: rows.length, 
+          phase: 'Matching styles and colors...' 
+        });
+        
+        // Allow UI to update
+        await new Promise(resolve => setTimeout(resolve, 0));
       }
       
-      const status: 'matched' | 'unmatched_style' | 'unmatched_color' =
-        !matchedStyleNo ? 'unmatched_style' :
-        !matchedColor ? 'unmatched_color' :
-        'matched';
-      
-      return {
-        ...row,
-        matchedStyleNo,
-        matchedColor,
-        styleScore,
-        colorScore,
-        matchNote,
-        status,
-      };
-    });
-    
-    setParsedRows(parsed);
-    setUploadResult({ success: true, message: `Parsed ${parsed.length} rows successfully` });
+      setParsedRows(parsed);
+      setUploadResult({ success: true, message: `Parsed ${parsed.length} rows successfully (${parsed.filter(r => r.status === 'matched').length} matched)` });
+    } catch (error) {
+      console.error('[Historical Sales] Parsing error:', error);
+      setUploadResult({ success: false, message: `Parsing failed: ${error}` });
+    } finally {
+      setParsing(false);
+      setParsingProgress({ current: 0, total: 0, phase: '' });
+    }
   }, [rawFileData, columnMapping, styles, colorsByStyleNo]);
   
   // Update column mapping
@@ -591,7 +635,7 @@ export default function HistoricalSalesPage() {
     setUploadProgress({ current: 0, total: matchedRows.length });
     
     try {
-      const batchSize = 50;
+      const batchSize = 500; // Increased from 50 for better performance
       let uploaded = 0;
       
       for (let i = 0; i < matchedRows.length; i += batchSize) {
@@ -617,6 +661,9 @@ export default function HistoricalSalesPage() {
         
         uploaded += batch.length;
         setUploadProgress({ current: uploaded, total: matchedRows.length });
+        
+        // Allow UI to update between batches
+        await new Promise(resolve => setTimeout(resolve, 0));
       }
       
       setUploadResult({
@@ -776,11 +823,35 @@ export default function HistoricalSalesPage() {
                   <Button
                     onClick={parseRowsWithMapping}
                     size="sm"
+                    disabled={parsing}
                     className="bg-[#8FA894] hover:bg-[#8FA894]/90"
                   >
-                    Parse Rows
+                    {parsing ? (
+                      <>
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        Parsing... ({parsingProgress.current}/{parsingProgress.total})
+                      </>
+                    ) : (
+                      'Parse Rows'
+                    )}
                   </Button>
                 </div>
+                
+                {/* Parsing Progress Bar */}
+                {parsing && parsingProgress.total > 0 && (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between text-sm text-slate-600">
+                      <span>{parsingProgress.phase}</span>
+                      <span>{Math.round((parsingProgress.current / parsingProgress.total) * 100)}%</span>
+                    </div>
+                    <div className="w-full bg-slate-200 rounded-full h-2 overflow-hidden">
+                      <div 
+                        className="h-full bg-[#8FA894] transition-all duration-300"
+                        style={{ width: `${(parsingProgress.current / parsingProgress.total) * 100}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
                 
                 <div className="grid grid-cols-2 gap-4">
                   {/* Style No */}
@@ -1018,28 +1089,46 @@ export default function HistoricalSalesPage() {
                 </div>
                 <p className="text-xs text-slate-500">Showing all {parsedRows.length} rows</p>
 
-                {/* Upload button */}
-                <div className="flex items-center gap-4">
-                  <Button
-                    onClick={uploadMatchedRows}
-                    disabled={uploading || matchStats.matched === 0}
-                    className="bg-[#8FA894] hover:bg-[#8FA894]/90"
-                  >
-                    {uploading ? (
-                      <>
-                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                        Uploading... ({uploadProgress.current}/{uploadProgress.total})
-                      </>
-                    ) : (
-                      `Upload ${matchStats.matched} Matched Rows`
-                    )}
-                  </Button>
-                  {matchStats.matched < matchStats.total && (
-                    <span className="text-xs text-slate-500">
+                {/* Upload button and progress */}
+                <div className="space-y-3">
+                  <div className="flex items-center gap-4">
+                    <Button
+                      onClick={uploadMatchedRows}
+                      disabled={uploading || matchStats.matched === 0}
+                      className="bg-[#8FA894] hover:bg-[#8FA894]/90"
+                    >
+                      {uploading ? (
+                        <>
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          Uploading... ({uploadProgress.current}/{uploadProgress.total})
+                        </>
+                      ) : (
+                        `Upload ${matchStats.matched} Matched Rows`
+                      )}
+                    </Button>
+                    {matchStats.matched < matchStats.total && (
+                      <span className="text-xs text-slate-500">
                       {matchStats.unmatchedColor > 0 
                         ? 'Fix unmatched colors in the dropdown above, or they will be skipped'
                         : 'Unmatched style rows will be skipped'}
                     </span>
+                  )}
+                  </div>
+                  
+                  {/* Upload Progress Bar */}
+                  {uploading && uploadProgress.total > 0 && (
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between text-sm text-slate-600">
+                        <span>Uploading to database...</span>
+                        <span>{Math.round((uploadProgress.current / uploadProgress.total) * 100)}%</span>
+                      </div>
+                      <div className="w-full bg-slate-200 rounded-full h-2 overflow-hidden">
+                        <div 
+                          className="h-full bg-[#8FA894] transition-all duration-300"
+                          style={{ width: `${(uploadProgress.current / uploadProgress.total) * 100}%` }}
+                        />
+                      </div>
+                    </div>
                   )}
                 </div>
               </div>
