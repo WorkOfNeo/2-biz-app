@@ -845,7 +845,7 @@ export default function OverviewPage() {
       },
       alternateRowStyles: { fillColor: [239, 246, 255] },
       theme: 'grid',
-      didParseCell: function(data) {
+      didParseCell: function(data: any) {
         // Make last row (average of averages) bold with blue background
         if (data.row.index === body.length - 1) {
           data.cell.styles.fillColor = [29, 78, 216];
