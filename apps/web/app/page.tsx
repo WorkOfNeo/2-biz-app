@@ -570,8 +570,8 @@ export default function HomePage() {
   });
 
   return (
-    <div className="min-h-screen p-4">
-      <div className="max-w-7xl mx-auto">
+    <div className="page-container-wide">
+      <div>
         <div className="mb-4">
           <h1 className="text-2xl font-semibold">Hej{name ? ` ${name}` : ''}.</h1>
         </div>

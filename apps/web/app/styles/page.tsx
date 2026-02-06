@@ -434,7 +434,7 @@ export default function StylesPage() {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="page-container space-y-4">
       <div className="flex items-center justify-between">
         <div>
           <div className="text-xs text-gray-500">Styles</div>

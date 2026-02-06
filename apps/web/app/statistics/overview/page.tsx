@@ -756,11 +756,11 @@ export default function OverviewPage() {
   }
 
   return !ready ? (
-    <div className="flex items-center justify-center p-10">
+    <div className="page-container flex items-center justify-center">
       <div className="h-5 w-5 animate-spin rounded-full border-2 border-slate-300 border-t-slate-900" />
     </div>
   ) : (
-    <div className="space-y-6">
+    <div className="page-container space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-lg font-semibold tracking-tight text-slate-700">Overview</h1>
         <div className="flex gap-2">

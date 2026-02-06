@@ -18,10 +18,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       <aside className="sidebar flex-shrink-0 w-72 p-4 overflow-hidden">
         <SidebarNav />
       </aside>
-      <main className="flex-1 min-w-0 relative">
-        <div className="p-6 overflow-x-hidden">
-          {children}
-        </div>
+      <main className="flex-1 min-w-0 relative overflow-x-hidden">
+        {children}
       </main>
     </div>
   );

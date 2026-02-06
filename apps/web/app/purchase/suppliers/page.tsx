@@ -46,7 +46,7 @@ export default function SuppliersPage() {
   const suppliers = suppliersData || [];
 
   return (
-    <div className="max-w-5xl mx-auto py-8 px-4">
+    <div className="page-container-narrow">
       <div className="flex items-center justify-between mb-8">
         <div>
           <h1 className="text-2xl font-semibold text-slate-900">Suppliers</h1>

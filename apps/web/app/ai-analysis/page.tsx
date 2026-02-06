@@ -445,7 +445,7 @@ export default function AIAnalysisDashboard() {
   }
 
   return (
-    <div className="p-6 max-w-6xl mx-auto">
+    <div className="page-container-wide">
       {/* Header */}
       <div className="flex items-center justify-between mb-8">
         <div>

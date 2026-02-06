@@ -18,6 +18,21 @@ body { @apply bg-white text-gray-900; }
 
 /* Avoid global anchor styling in sidebar; `SidebarNav` controls link styling via Tailwind classes. */
 
+/* Standard page container - use this for consistent padding across pages */
+@layer components {
+  .page-container {
+    @apply p-6;
+  }
+  
+  .page-container-narrow {
+    @apply p-6 max-w-5xl mx-auto;
+  }
+  
+  .page-container-wide {
+    @apply p-6 max-w-7xl mx-auto;
+  }
+}
+
 /* Animations for loading states */
 @keyframes fade-in {
   from {

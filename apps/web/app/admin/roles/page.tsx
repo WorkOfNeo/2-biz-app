@@ -48,7 +48,7 @@ export default function RolesAdminPage() {
     return { id, value, list } as { id: string | null; value: Record<string, string>; list: Array<{ user_id: string; name: string }> };
   });
   return (
-    <div className="space-y-4">
+    <div className="page-container space-y-4">
       <div>
         <h1 className="text-xl font-semibold">Roles</h1>
         <div className="text-xs text-gray-500">Manage users and page access per role</div>
