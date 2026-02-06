@@ -146,15 +146,19 @@ function parseDate(dateStr: string): string | null {
   
   // DD-MM-YYYY or DD/MM/YYYY
   const dmy = str.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);
-  if (dmy) {
-    const [, day, month, year] = dmy;
+  if (dmy && dmy[1] && dmy[2] && dmy[3]) {
+    const day = dmy[1];
+    const month = dmy[2];
+    const year = dmy[3];
     return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
   }
   
   // YYYY-MM-DD
   const ymd = str.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
-  if (ymd) {
-    const [, year, month, day] = ymd;
+  if (ymd && ymd[1] && ymd[2] && ymd[3]) {
+    const year = ymd[1];
+    const month = ymd[2];
+    const day = ymd[3];
     return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
   }
   
