@@ -73,7 +73,7 @@ const SECTIONS: SectionConfig[] = [
       { href: '/ai-analysis', label: 'AI Analysis', alwaysVisible: true },
       { href: '/purchase/orders', label: 'Purchase Orders' },
       { href: '/purchase/size-calculator', label: 'NOOS Call Off' },
-      { href: '/purchase/call-off-learning', label: 'Learning Studio' },
+      { href: '/purchase/patterns', label: 'Purchase Patterns' },
       { href: '/purchase/noos', label: 'NOOS Checker' },
       { href: '/purchase/smart-draft', label: 'Smart Draft' },
       { href: '/purchase/conversations', label: 'Conversations' },
