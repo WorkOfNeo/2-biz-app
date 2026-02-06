@@ -536,7 +536,7 @@ export default function HistoricalSalesPage() {
   // Add new color to a style
   const openAddColorModal = (rowIndex: number) => {
     const row = parsedRows[rowIndex];
-    if (!row.matchedStyleNo) return;
+    if (!row || !row.matchedStyleNo) return;
     
     const style = styles?.find(s => s.style_no === row.matchedStyleNo);
     if (!style) return;
