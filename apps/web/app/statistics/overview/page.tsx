@@ -755,6 +755,110 @@ export default function OverviewPage() {
     };
   }
 
+  // Export to PDF
+  async function exportToPDF() {
+    if (!s1 || !s2) {
+      alert('Please select both Season 1 and Season 2');
+      return;
+    }
+
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
+    
+    // Title
+    doc.setFontSize(16);
+    doc.text(`Overview - ${country}`, 40, 40);
+    doc.setFontSize(10);
+    doc.text(`${getSeasonLabel(s1)} vs ${getSeasonLabel(s2)}`, 40, 55);
+
+    // Calculate average of averages
+    const avgS1Avg = rows.length > 0 ? rows.reduce((sum, r) => sum + r.s1Avg, 0) / rows.length : 0;
+    const avgS2Avg = rows.length > 0 ? rows.reduce((sum, r) => sum + r.s2Avg, 0) / rows.length : 0;
+
+    // Prepare table data
+    const headers = [
+      'Salesman',
+      'Qty',
+      'Price (DKK)',
+      'Gns pris pr. stk.',
+      'Qty',
+      'Price (DKK)',
+      'Gns pris pr. stk.',
+      'Qty %',
+      'Price %'
+    ];
+
+    const body = rows.map(r => {
+      const qtyPct = r.s2Qty === 0 ? 0 : ((r.s1Qty - r.s2Qty) / r.s2Qty) * 100;
+      const pricePct = typeof r.diffPct === 'number' ? r.diffPct : (r.s2Price === 0 ? 0 : ((r.s1Price - r.s2Price) / r.s2Price) * 100);
+      
+      return [
+        r.name,
+        r.s1Qty.toLocaleString('da-DK'),
+        Math.round(r.s1Price).toLocaleString('da-DK'),
+        Math.round(r.s1Avg).toLocaleString('da-DK'),
+        r.s2Qty.toLocaleString('da-DK'),
+        Math.round(r.s2Price).toLocaleString('da-DK'),
+        Math.round(r.s2Avg).toLocaleString('da-DK'),
+        (qtyPct >= 0 ? '+' : '') + qtyPct.toFixed(2) + '%',
+        (pricePct >= 0 ? '+' : '') + pricePct.toFixed(2) + '%'
+      ];
+    });
+
+    // Add average of averages row
+    body.push([
+      'Gennemsnit af gns. pris pr. stk.',
+      '—',
+      '—',
+      Math.round(avgS1Avg).toLocaleString('da-DK'),
+      '—',
+      '—',
+      Math.round(avgS2Avg).toLocaleString('da-DK'),
+      '—',
+      '—'
+    ]);
+
+    autoTable(doc, {
+      head: [
+        [
+          { content: 'Salesman', rowSpan: 2 },
+          { content: getSeasonLabel(s1) || 'Season 1', colSpan: 3 },
+          { content: getSeasonLabel(s2) || 'Season 2', colSpan: 3 },
+          { content: 'Diff vs S2', colSpan: 2 }
+        ],
+        headers.slice(1) // Skip first header as it's handled by rowSpan
+      ],
+      body,
+      startY: 70,
+      styles: { 
+        fontSize: 9, 
+        lineColor: [219, 234, 254], 
+        lineWidth: 0.5,
+        halign: 'center'
+      },
+      headStyles: { 
+        fillColor: [29, 78, 216], 
+        textColor: [255, 255, 255],
+        halign: 'center'
+      },
+      columnStyles: {
+        0: { halign: 'left' } // Salesman name left-aligned
+      },
+      alternateRowStyles: { fillColor: [239, 246, 255] },
+      theme: 'grid',
+      didParseCell: function(data) {
+        // Make last row (average of averages) bold with blue background
+        if (data.row.index === body.length - 1) {
+          data.cell.styles.fillColor = [29, 78, 216];
+          data.cell.styles.textColor = [255, 255, 255];
+          data.cell.styles.fontStyle = 'bold';
+        }
+      }
+    });
+
+    // Save the PDF
+    doc.save(`overview_${country}_${getSeasonLabel(s1)}_vs_${getSeasonLabel(s2)}.pdf`);
+  }
+
   return !ready ? (
     <div className="flex items-center justify-center p-10">
       <div className="h-5 w-5 animate-spin rounded-full border-2 border-slate-300 border-t-slate-900" />
@@ -797,8 +901,12 @@ export default function OverviewPage() {
               ))}
             </select>
           </div>
-          {/* Print preview removed */}
-          {/* Export PDF removed */}
+          <button
+            onClick={exportToPDF}
+            className="px-3 py-1.5 text-sm rounded-md bg-blue-600 text-white hover:bg-blue-700"
+          >
+            Export PDF
+          </button>
         </div>
       </div>
 

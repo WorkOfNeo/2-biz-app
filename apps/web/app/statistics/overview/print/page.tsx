@@ -117,6 +117,17 @@ function Inner() {
     return out;
   }, [people, customers, stats, country, s1, s2, rates, spCurrencyById]);
 
+  // Calculate average of averages for footer row
+  const avgOfAvgs = useMemo(() => {
+    if (rows.length === 0) return { s1Avg: 0, s2Avg: 0 };
+    const s1AvgSum = rows.reduce((sum, r) => sum + r.s1Avg, 0);
+    const s2AvgSum = rows.reduce((sum, r) => sum + r.s2Avg, 0);
+    return {
+      s1Avg: s1AvgSum / rows.length,
+      s2Avg: s2AvgSum / rows.length
+    };
+  }, [rows]);
+
   return (
     <div className="p-6">
       <div className="mb-3 text-sm">Overview · {country}</div>
@@ -155,6 +166,18 @@ function Inner() {
                 <td className="p-2 text-center">{(r.pricePct>=0?'+':'') + r.pricePct.toFixed(2)}%</td>
               </tr>
             ))}
+            {/* Average of Averages Row */}
+            <tr className="bg-blue-700 text-white border-t-2 border-blue-900 font-semibold">
+              <td className="p-2">Gennemsnit af gns. pris pr. stk.</td>
+              <td className="p-2 text-center">—</td>
+              <td className="p-2 text-center">—</td>
+              <td className="p-2 text-center">{Math.round(avgOfAvgs.s1Avg).toLocaleString('da-DK')}</td>
+              <td className="p-2 text-center">—</td>
+              <td className="p-2 text-center">—</td>
+              <td className="p-2 text-center">{Math.round(avgOfAvgs.s2Avg).toLocaleString('da-DK')}</td>
+              <td className="p-2 text-center">—</td>
+              <td className="p-2 text-center">—</td>
+            </tr>
           </tbody>
         </table>
       </div>
