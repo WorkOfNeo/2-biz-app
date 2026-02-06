@@ -114,15 +114,17 @@ export async function GET(request: NextRequest) {
       const date = new Date(fb.created_at);
       const weekStart = new Date(date);
       weekStart.setDate(date.getDate() - date.getDay()); // Start of week (Sunday)
-      const weekKey = weekStart.toISOString().split('T')[0];
+      const weekKey = weekStart.toISOString().split('T')[0] || '';
       
-      if (!weeklyData.has(weekKey)) {
+      if (weekKey && !weeklyData.has(weekKey)) {
         weeklyData.set(weekKey, { ratios: [], count: 0 });
       }
       
-      const week = weeklyData.get(weekKey)!;
-      week.ratios.push(fb.adjusted_qty! / fb.suggested_qty);
-      week.count++;
+      if (weekKey) {
+        const week = weeklyData.get(weekKey)!;
+        week.ratios.push(fb.adjusted_qty! / fb.suggested_qty);
+        week.count++;
+      }
     }
     
     const trendsByWeek = Array.from(weeklyData.entries())
