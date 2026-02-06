@@ -144,10 +144,10 @@ function Inner() {
               <th className="p-2 text-left"></th>
               <th className="p-2 text-center">Qty</th>
               <th className="p-2 text-center">Price (DKK)</th>
-              <th className="p-2 text-center">Avg</th>
+              <th className="p-2 text-center">Gns pris pr. stk.</th>
               <th className="p-2 text-center">Qty</th>
               <th className="p-2 text-center">Price (DKK)</th>
-              <th className="p-2 text-center">Avg</th>
+              <th className="p-2 text-center">Gns pris pr. stk.</th>
               <th className="p-2 text-center">Qty %</th>
               <th className="p-2 text-center">Price %</th>
             </tr>
