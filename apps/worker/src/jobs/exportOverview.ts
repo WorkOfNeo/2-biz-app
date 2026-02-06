@@ -293,29 +293,31 @@ export async function exportOverview(ctx: Ctx) {
       
       // Main table header (2 rows)
       const headerRow1 = React.createElement(View, { style: styles.headerGrouped },
-        HCell('', '14%', 'left'),
-        HCell('', '5%', 'center'),
-        HCell('', '7%', 'center'),
-        HCell('', '7%', 'center'),
-        HCell('', '7%', 'center'),
-        HCell('', '7%', 'center'),
-        HCell(s1Label, '18%', 'center'),
-        HCell(s2Label, '18%', 'center'),
-        HCell('Mangler', '17%', 'center')
+        HCell('', '12%', 'left'),
+        HCell('', '4%', 'center'),
+        HCell('', '6%', 'center'),
+        HCell('', '6%', 'center'),
+        HCell('', '6%', 'center'),
+        HCell('', '6%', 'center'),
+        HCell(s1Label, '22%', 'center'),
+        HCell(s2Label, '22%', 'center'),
+        HCell('Mangler', '16%', 'center')
       );
       
       const headerRow2 = React.createElement(View, { style: styles.header },
-        HCell('Sælger/Agent', '14%', 'left'),
-        HCell('Nullet', '5%', 'center'),
-        HCell('Besøgt', '7%', 'center'),
-        HCell('Total', '7%', 'center'),
-        HCell('Ikke besøgt', '7%', 'center'),
-        HCell('Fremskridt', '7%', 'center'),
-        HCell('Stk', '9%', 'right'),
-        HCell('Oms', '9%', 'right'),
-        HCell('Stk', '9%', 'right'),
-        HCell('Oms', '9%', 'right'),
-        HCell('Stk', '9%', 'right'),
+        HCell('Sælger/Agent', '12%', 'left'),
+        HCell('Nullet', '4%', 'center'),
+        HCell('Besøgt', '6%', 'center'),
+        HCell('Total', '6%', 'center'),
+        HCell('Ikke besøgt', '6%', 'center'),
+        HCell('Fremskridt', '6%', 'center'),
+        HCell('Stk', '7%', 'right'),
+        HCell('Oms', '7%', 'right'),
+        HCell('Gns', '8%', 'right'),
+        HCell('Stk', '7%', 'right'),
+        HCell('Oms', '7%', 'right'),
+        HCell('Gns', '8%', 'right'),
+        HCell('Stk', '8%', 'right'),
         HCell('Oms', '8%', 'right')
       );
       
@@ -328,6 +330,9 @@ export async function exportOverview(ctx: Ctx) {
         const notVisited = Math.max(0, validTotal - visited);
         const visitedPct = validTotal > 0 ? (visited / validTotal) * 100 : 0;
         
+        const s1Avg = a.s1Qty > 0 ? a.s1Price / a.s1Qty : 0;
+        const s2Avg = a.s2Qty > 0 ? a.s2Price / a.s2Qty : 0;
+        
         const diffQty = a.s1Qty - a.s2Qty;
         const diffPrice = a.s1Price - a.s2Price;
         // Calculate the actual difference percentage (positive if above, negative if below)
@@ -338,20 +343,53 @@ export async function exportOverview(ctx: Ctx) {
         const priceColor = diffPricePct > 0 ? styles.green : diffPricePct < 0 ? styles.red : undefined;
         
         return React.createElement(View, { style: idx % 2 === 1 ? [styles.row, styles.rowAlt] : styles.row },
-          Cell(sp.name, '14%', 'left'),
-          Cell(String(nulledCount), '5%', 'center'),
-          Cell(String(visited), '7%', 'center'),
-          Cell(String(validTotal), '7%', 'center'),
-          Cell(String(notVisited), '7%', 'center'),
-          Cell(visitedPct.toFixed(0) + '%', '7%', 'center'),
-          Cell(String(a.s1Qty), '9%', 'right'),
-          Cell(fmt(a.s1Price), '9%', 'right'),
-          Cell(String(a.s2Qty), '9%', 'right'),
-          Cell(fmt(a.s2Price), '9%', 'right'),
-          Cell((diffQtyPct >= 0 ? '+' : '') + diffQtyPct.toFixed(2) + '%', '9%', 'right', qtyColor),
+          Cell(sp.name, '12%', 'left'),
+          Cell(String(nulledCount), '4%', 'center'),
+          Cell(String(visited), '6%', 'center'),
+          Cell(String(validTotal), '6%', 'center'),
+          Cell(String(notVisited), '6%', 'center'),
+          Cell(visitedPct.toFixed(0) + '%', '6%', 'center'),
+          Cell(String(a.s1Qty), '7%', 'right'),
+          Cell(fmt(a.s1Price), '7%', 'right'),
+          Cell(fmt(s1Avg), '8%', 'right'),
+          Cell(String(a.s2Qty), '7%', 'right'),
+          Cell(fmt(a.s2Price), '7%', 'right'),
+          Cell(fmt(s2Avg), '8%', 'right'),
+          Cell((diffQtyPct >= 0 ? '+' : '') + diffQtyPct.toFixed(2) + '%', '8%', 'right', qtyColor),
           Cell((diffPricePct >= 0 ? '+' : '') + diffPricePct.toFixed(2) + '%', '8%', 'right', priceColor)
         );
       });
+      
+      // Calculate average of averages for summary row
+      let avgS1Sum = 0, avgS2Sum = 0, countWithData = 0;
+      for (const sp of list) {
+        const a = agg.get(sp.id)!;
+        if (a.s1Qty > 0 || a.s2Qty > 0) {
+          avgS1Sum += (a.s1Qty > 0 ? a.s1Price / a.s1Qty : 0);
+          avgS2Sum += (a.s2Qty > 0 ? a.s2Price / a.s2Qty : 0);
+          countWithData++;
+        }
+      }
+      const avgOfAvgS1 = countWithData > 0 ? avgS1Sum / countWithData : 0;
+      const avgOfAvgS2 = countWithData > 0 ? avgS2Sum / countWithData : 0;
+      
+      // Average of averages summary row
+      const avgOfAvgsRow = React.createElement(View, { style: [styles.row, { backgroundColor: '#1d4ed8' }] },
+        Cell('Gennemsnit af gns. pris pr. stk.', '12%', 'left', { color: '#ffffff', fontWeight: 700 }),
+        Cell('—', '4%', 'center', { color: '#ffffff' }),
+        Cell('—', '6%', 'center', { color: '#ffffff' }),
+        Cell('—', '6%', 'center', { color: '#ffffff' }),
+        Cell('—', '6%', 'center', { color: '#ffffff' }),
+        Cell('—', '6%', 'center', { color: '#ffffff' }),
+        Cell('—', '7%', 'right', { color: '#ffffff' }),
+        Cell('—', '7%', 'right', { color: '#ffffff' }),
+        Cell(fmt(avgOfAvgS1), '8%', 'right', { color: '#ffffff', fontWeight: 700 }),
+        Cell('—', '7%', 'right', { color: '#ffffff' }),
+        Cell('—', '7%', 'right', { color: '#ffffff' }),
+        Cell(fmt(avgOfAvgS2), '8%', 'right', { color: '#ffffff', fontWeight: 700 }),
+        Cell('—', '8%', 'right', { color: '#ffffff' }),
+        Cell('—', '8%', 'right', { color: '#ffffff' })
+      );
       
       // Second table: TOTALS
       const diffQtyPct = totalS2Qty === 0 ? 0 : ((totalS1Qty - totalS2Qty) / totalS2Qty) * 100;
@@ -425,6 +463,7 @@ export async function exportOverview(ctx: Ctx) {
           headerRow1,
           headerRow2,
           ...body,
+          avgOfAvgsRow,
           React.createElement(Text, { style: styles.h2 }, 'Totals'),
           totalsHeaderRow1,
           totalsHeaderRow2,
