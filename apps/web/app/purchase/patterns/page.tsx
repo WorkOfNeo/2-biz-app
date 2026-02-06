@@ -593,31 +593,39 @@ function SupplierAnalysisTab({ patterns }: { patterns: PatternData | undefined }
     
     if (highRatioSuppliers.length > 0) {
       const top = highRatioSuppliers[0];
-      insights.push(
-        `You typically increase quantities from ${top.supplier} by ${((top.avgAdjustmentRatio! - 1) * 100).toFixed(0)}%`
-      );
+      if (top && top.avgAdjustmentRatio) {
+        insights.push(
+          `You typically increase quantities from ${top.supplier} by ${((top.avgAdjustmentRatio - 1) * 100).toFixed(0)}%`
+        );
+      }
     }
     
     if (lowRatioSuppliers.length > 0) {
       const top = lowRatioSuppliers[0];
-      insights.push(
-        `You typically decrease quantities from ${top.supplier} by ${((1 - top.avgAdjustmentRatio!) * 100).toFixed(0)}%`
-      );
+      if (top && top.avgAdjustmentRatio) {
+        insights.push(
+          `You typically decrease quantities from ${top.supplier} by ${((1 - top.avgAdjustmentRatio) * 100).toFixed(0)}%`
+        );
+      }
     }
     
     if (wellCalibratedSuppliers.length > 0) {
       const top = wellCalibratedSuppliers[0];
-      insights.push(
-        `${top.supplier} has ${((1 - top.skipRate) * 100).toFixed(0)}% acceptance rate - AI is well-calibrated`
-      );
+      if (top) {
+        insights.push(
+          `${top.supplier} has ${((1 - top.skipRate) * 100).toFixed(0)}% acceptance rate - AI is well-calibrated`
+        );
+      }
     }
     
     const highSkipSuppliers = supplierPatterns.filter(s => s.skipRate > 0.3);
     if (highSkipSuppliers.length > 0) {
       const top = highSkipSuppliers[0];
-      insights.push(
-        `You skip ${(top.skipRate * 100).toFixed(0)}% of suggestions from ${top.supplier}`
-      );
+      if (top) {
+        insights.push(
+          `You skip ${(top.skipRate * 100).toFixed(0)}% of suggestions from ${top.supplier}`
+        );
+      }
     }
   }
   
