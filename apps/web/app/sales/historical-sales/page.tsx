@@ -141,7 +141,7 @@ function parseDate(dateStr: string): string | null {
     const utc_days = Math.floor(serial - 25569);
     const utc_value = utc_days * 86400;
     const date = new Date(utc_value * 1000);
-    return date.toISOString().split('T')[0];
+    return date.toISOString().split('T')[0] || null;
   }
   
   // DD-MM-YYYY or DD/MM/YYYY
