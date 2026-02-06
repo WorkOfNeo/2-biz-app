@@ -13,12 +13,29 @@ import {
   ArrowLeft, Check, X, Package, Loader2, 
   ChevronDown, ChevronRight, Building2, CheckCircle2, 
   AlertTriangle, Clock, XCircle, ShoppingCart, Info, ExternalLink,
-  FileDown, FileText
+  FileDown, FileText, CheckCheck
 } from 'lucide-react';
 import Image from 'next/image';
 import { SizeLevelTable } from '../_components/SizeLevelTable';
 
 const supabase = createClientComponentClient();
+
+// Toast notification component
+function Toast({ message, type = 'success', onClose }: { message: string; type?: 'success' | 'info'; onClose: () => void }) {
+  useEffect(() => {
+    const timer = setTimeout(onClose, 3000);
+    return () => clearTimeout(timer);
+  }, [onClose]);
+  
+  return (
+    <div className="fixed top-4 right-4 z-50 animate-in slide-in-from-right">
+      <div className={`${type === 'success' ? 'bg-emerald-600' : 'bg-blue-600'} text-white px-6 py-3 rounded-lg shadow-lg flex items-center gap-2`}>
+        {type === 'success' ? <CheckCircle2 className="h-5 w-5" /> : <Info className="h-5 w-5" />}
+        <span className="font-medium">{message}</span>
+      </div>
+    </div>
+  );
+}
 
 type StyleSuggestion = {
   style_no: string;
@@ -122,6 +139,8 @@ export default function AIPurchaseReviewPage() {
   const [shouldPoll, setShouldPoll] = useState(true);
   const [showReviewModal, setShowReviewModal] = useState(false);
   const [generatingPdf, setGeneratingPdf] = useState(false);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'info' } | null>(null);
+  const [justApproved, setJustApproved] = useState<Set<string>>(new Set());
 
   // Fetch the purchase run
   const { data: purchaseRun, mutate, error } = useSWR<PurchaseRun>(
@@ -380,6 +399,20 @@ export default function AIPurchaseReviewPage() {
         }
       };
     });
+    
+    // Show notification and visual feedback
+    if (verdict === 'approved') {
+      const qty = style.suggested_qty_total;
+      setToast({ message: `${style.style_no} - ${style.color} approved (${qty} units)`, type: 'success' });
+      setJustApproved(prev => new Set(prev).add(key));
+      setTimeout(() => {
+        setJustApproved(prev => {
+          const next = new Set(prev);
+          next.delete(key);
+          return next;
+        });
+      }, 2000);
+    }
   }
 
   function handleSizeQtyChange(supplier: string, style: StyleSuggestion, sizeIndex: number, value: number) {
@@ -407,8 +440,13 @@ export default function AIPurchaseReviewPage() {
 
   function approveAllForSupplier(supplier: SupplierSuggestion) {
     const updates: Record<string, LineFeedback> = {};
+    const keys: string[] = [];
+    let totalQty = 0;
+    
     supplier.styles.forEach(style => {
       const key = `${supplier.supplier}|${style.style_no}|${style.color}`;
+      keys.push(key);
+      totalQty += style.suggested_qty_total;
       updates[key] = {
         style_no: style.style_no,
         color: style.color,
@@ -422,6 +460,22 @@ export default function AIPurchaseReviewPage() {
       };
     });
     setFeedback(prev => ({ ...prev, ...updates }));
+    
+    // Show notification
+    setToast({ 
+      message: `All ${supplier.styles.length} items from ${supplier.supplier} approved (${totalQty.toLocaleString('da-DK')} units)`, 
+      type: 'success' 
+    });
+    
+    // Add visual feedback
+    setJustApproved(prev => new Set([...prev, ...keys]));
+    setTimeout(() => {
+      setJustApproved(prev => {
+        const next = new Set(prev);
+        keys.forEach(k => next.delete(k));
+        return next;
+      });
+    }, 2000);
   }
 
   async function saveFeedback() {
@@ -900,6 +954,9 @@ export default function AIPurchaseReviewPage() {
 
   return (
     <div className="min-h-screen bg-slate-50 pb-24">
+      {/* Toast Notification */}
+      {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
+      
       {/* Header */}
       <div className="bg-white border-b sticky top-0 z-10">
         <div className="max-w-7xl mx-auto px-6 py-4">
@@ -1179,7 +1236,13 @@ export default function AIPurchaseReviewPage() {
                                   return (
                                     <div 
                                       key={style.color} 
-                                      className={`${fb?.verdict === 'skipped' ? 'bg-red-50/50' : fb?.verdict === 'adjusted' ? 'bg-amber-50/50' : ''}`}
+                                      className={`transition-colors duration-500 ${
+                                        justApproved.has(key) ? 'bg-emerald-100 border-l-4 border-emerald-500' :
+                                        fb?.verdict === 'skipped' ? 'bg-red-50/50' : 
+                                        fb?.verdict === 'adjusted' ? 'bg-amber-50/50' : 
+                                        fb?.verdict === 'approved' ? 'bg-emerald-50/30' :
+                                        ''
+                                      }`}
                                     >
                                       <div className="px-6 py-3 flex items-center gap-4">
                                         <button 
