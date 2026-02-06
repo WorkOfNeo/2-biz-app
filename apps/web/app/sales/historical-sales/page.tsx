@@ -165,7 +165,7 @@ function parseDate(dateStr: string): string | null {
   // Try standard Date parsing
   const parsed = new Date(str);
   if (!isNaN(parsed.getTime())) {
-    return parsed.toISOString().split('T')[0];
+    return parsed.toISOString().split('T')[0] || null;
   }
   
   return null;
