@@ -7,73 +7,70 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../..
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../components/ui/tabs';
 import { Badge } from '../../../components/ui/badge';
 import { 
-  TrendingUp, TrendingDown, Minus, Package, 
-  CheckCircle2, XCircle, AlertCircle, BarChart3
+  TrendingUp, TrendingDown, Minus, Brain,
+  CheckCircle2, XCircle, AlertCircle, BarChart3, Activity
 } from 'lucide-react';
 import {
-  LineChart, Line, BarChart, Bar, PieChart, Pie, Cell,
+  LineChart, Line, BarChart, Bar,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer
 } from 'recharts';
 
 const supabase = createClientComponentClient();
 
-type PatternData = {
+type PromptPerformance = {
   summary: {
+    currentPromptKey: string;
+    currentVersion: number | null;
+    currentVersionUpdated: string | null;
     totalRounds: number;
+    totalSuggestions: number;
+    latestApprovalRate: number;
+    latestSkipRate: number;
+    latestAvgAdjustmentRatio: number | null;
+    approvalRateChange?: number;
+    skipRateChange?: number;
+  };
+  versionMetrics: Array<{
+    version: string;
+    versionNumber: number | null;
+    roundCount: number;
     totalSuggestions: number;
     approvedCount: number;
     adjustedCount: number;
     skippedCount: number;
-    avgAdjustmentRatio: number | null;
     approvalRate: number;
-  };
-  trendsByWeek: Array<{
-    week: string;
-    avgRatio: number;
-    count: number;
+    skipRate: number;
+    avgAdjustmentRatio: number | null;
+    firstUsed: string | null;
+    lastUsed: string | null;
   }>;
-  supplierPatterns: Array<{
+  stageMetrics: Record<string, Array<{
+    version: string;
+    versionNumber: number | null;
+    approvalRate: number;
+    count: number;
+  }>>;
+  supplierMetrics: Array<{
     supplier: string;
     totalSuggestions: number;
-    adjustedCount: number;
-    skippedCount: number;
-    avgAdjustmentRatio: number | null;
-    skipRate: number;
+    versions: Array<{
+      version: string;
+      versionNumber: number | null;
+      approvalRate: number;
+      count: number;
+    }>;
   }>;
-  stagePatterns: Record<string, {
-    avgRatio: number | null;
-    count: number;
-    approvalRate: number;
-    adjustedCount: number;
-  }>;
-  topAdjustedStyles: Array<{
-    style_no: string;
-    color: string;
-    avgSuggested: number;
-    avgAdjusted: number;
-    avgRatio: number;
-    count: number;
-  }>;
-  adjustmentDistribution: {
-    decrease_50plus: number;
-    decrease_25_50: number;
-    decrease_0_25: number;
-    no_change: number;
-    increase_0_25: number;
-    increase_25_50: number;
-    increase_50plus: number;
-  };
 };
 
-export default function PurchasePatternsPage() {
+export default function PromptPerformancePage() {
   const [days, setDays] = useState(90);
   const [activeTab, setActiveTab] = useState('overview');
   
-  const { data: patterns, error, isLoading } = useSWR<PatternData>(
+  const { data: performance, error, isLoading } = useSWR<PromptPerformance>(
     `/api/purchase/patterns?days=${days}`,
     async (url) => {
       const res = await fetch(url);
-      if (!res.ok) throw new Error('Failed to fetch patterns');
+      if (!res.ok) throw new Error('Failed to fetch prompt performance');
       return res.json();
     },
     { refreshInterval: 60000 }
@@ -96,7 +93,7 @@ export default function PurchasePatternsPage() {
         <Card>
           <CardContent className="py-12 text-center">
             <AlertCircle className="h-12 w-12 text-red-500 mx-auto mb-4" />
-            <p className="text-red-600">Failed to load purchase patterns</p>
+            <p className="text-red-600">Failed to load prompt performance</p>
             <p className="text-sm text-slate-500 mt-2">{error.message}</p>
           </CardContent>
         </Card>
@@ -109,15 +106,18 @@ export default function PurchasePatternsPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-slate-900">Purchase Patterns</h1>
+          <h1 className="text-3xl font-bold text-slate-900 flex items-center gap-2">
+            <Brain className="h-8 w-8 text-indigo-600" />
+            Prompt Performance
+          </h1>
           <p className="text-slate-500 mt-1">
-            Analyze AI performance and learn from completed purchase rounds
+            Track AI prompt versions and analyze performance improvements
           </p>
         </div>
         
         <div className="flex items-center gap-2">
           <Badge className="text-sm py-1 px-3 bg-slate-100 text-slate-700">
-            {patterns?.summary.totalRounds || 0} rounds analyzed
+            {performance?.summary.totalRounds || 0} rounds analyzed
           </Badge>
           
           <select
@@ -136,68 +136,47 @@ export default function PurchasePatternsPage() {
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList className="bg-slate-100">
           <TabsTrigger value="overview">Overview</TabsTrigger>
-          <TabsTrigger value="insights">Adjustment Insights</TabsTrigger>
-          <TabsTrigger value="suppliers">Supplier Analysis</TabsTrigger>
+          <TabsTrigger value="versions">Version Comparison</TabsTrigger>
+          <TabsTrigger value="context">Context Performance</TabsTrigger>
         </TabsList>
         
         <TabsContent value="overview" className="space-y-6 mt-6">
-          {/* Overview content will be added in next step */}
-          <OverviewTab patterns={patterns} />
+          <OverviewTab performance={performance} />
         </TabsContent>
         
-        <TabsContent value="insights" className="space-y-6 mt-6">
-          {/* Insights content will be added in next step */}
-          <AdjustmentInsightsTab patterns={patterns} />
+        <TabsContent value="versions" className="space-y-6 mt-6">
+          <VersionComparisonTab performance={performance} />
         </TabsContent>
         
-        <TabsContent value="suppliers" className="space-y-6 mt-6">
-          {/* Supplier content will be added in next step */}
-          <SupplierAnalysisTab patterns={patterns} />
+        <TabsContent value="context" className="space-y-6 mt-6">
+          <ContextPerformanceTab performance={performance} />
         </TabsContent>
       </Tabs>
     </div>
   );
 }
 
-// Tab components defined below
-function OverviewTab({ patterns }: { patterns: PatternData | undefined }) {
-  if (!patterns) return null;
+// Overview Tab
+function OverviewTab({ performance }: { performance: PromptPerformance | undefined }) {
+  if (!performance) return null;
   
-  const { summary, trendsByWeek, stagePatterns } = patterns;
+  const { summary, versionMetrics } = performance;
   
-  // Determine trend direction for adjustment ratio
-  const getTrendIcon = () => {
-    if (!summary.avgAdjustmentRatio) return <Minus className="h-5 w-5 text-slate-400" />;
-    
-    if (summary.avgAdjustmentRatio > 1.1) {
-      return <TrendingUp className="h-5 w-5 text-green-600" />;
-    } else if (summary.avgAdjustmentRatio < 0.9) {
-      return <TrendingDown className="h-5 w-5 text-red-600" />;
-    }
+  // Determine trend icon
+  const getTrendIcon = (change?: number) => {
+    if (change === undefined) return <Minus className="h-5 w-5 text-slate-400" />;
+    if (change > 0.02) return <TrendingUp className="h-5 w-5 text-green-600" />;
+    if (change < -0.02) return <TrendingDown className="h-5 w-5 text-red-600" />;
     return <Minus className="h-5 w-5 text-slate-400" />;
   };
   
-  // Find most adjusted supplier
-  const mostAdjustedSupplier = patterns.supplierPatterns.length > 0
-    ? patterns.supplierPatterns.reduce((prev, curr) => 
-        curr.adjustedCount > prev.adjustedCount ? curr : prev
-      )
-    : null;
-  
-  // Prepare stage data for chart
-  const stageChartData = Object.entries(stagePatterns).map(([stage, data]) => ({
-    stage: stage.charAt(0).toUpperCase() + stage.slice(1),
-    avgRatio: data.avgRatio || 0,
-    approvalRate: data.approvalRate * 100,
-    count: data.count,
-  }));
-  
-  // Format trend data for chart
-  const trendChartData = trendsByWeek.map(w => ({
-    week: new Date(w.week).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-    ratio: w.avgRatio,
-    count: w.count,
-  }));
+  // Prepare chart data
+  const versionChartData = versionMetrics.map(v => ({
+    version: v.version,
+    approvalRate: v.approvalRate * 100,
+    skipRate: v.skipRate * 100,
+    suggestions: v.totalSuggestions,
+  })).reverse(); // Oldest to newest
   
   return (
     <div className="space-y-6">
@@ -206,13 +185,15 @@ function OverviewTab({ patterns }: { patterns: PatternData | undefined }) {
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-slate-500">
-              Total Rounds
+              Active Version
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{summary.totalRounds}</div>
+            <div className="text-2xl font-bold text-indigo-600">
+              {summary.currentVersion ? `v${summary.currentVersion}` : 'Unknown'}
+            </div>
             <p className="text-xs text-slate-500 mt-1">
-              {summary.totalSuggestions} total suggestions
+              {summary.currentPromptKey || 'No prompt key'}
             </p>
           </CardContent>
         </Card>
@@ -220,149 +201,148 @@ function OverviewTab({ patterns }: { patterns: PatternData | undefined }) {
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-slate-500">
-              Avg Adjustment Ratio
+              Current Approval Rate
             </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="flex items-center gap-2">
-              <div className="text-2xl font-bold">
-                {summary.avgAdjustmentRatio 
-                  ? `${(summary.avgAdjustmentRatio * 100).toFixed(0)}%`
-                  : 'N/A'}
+              <div className="text-2xl font-bold text-emerald-600">
+                {(summary.latestApprovalRate * 100).toFixed(1)}%
               </div>
-              {getTrendIcon()}
+              {getTrendIcon(summary.approvalRateChange)}
             </div>
-            <p className="text-xs text-slate-500 mt-1">
-              {summary.adjustedCount} adjustments made
-            </p>
+            {summary.approvalRateChange !== undefined && (
+              <p className="text-xs text-slate-500 mt-1">
+                {summary.approvalRateChange > 0 ? '+' : ''}
+                {(summary.approvalRateChange * 100).toFixed(1)}% from previous
+              </p>
+            )}
           </CardContent>
         </Card>
         
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-slate-500">
-              Approval Rate
+              Skip Rate
             </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="flex items-center gap-2">
-              <div className="text-2xl font-bold">
-                {(summary.approvalRate * 100).toFixed(1)}%
+              <div className="text-2xl font-bold text-slate-900">
+                {(summary.latestSkipRate * 100).toFixed(1)}%
               </div>
-              <CheckCircle2 className="h-5 w-5 text-green-600" />
+              {summary.skipRateChange !== undefined && summary.skipRateChange < 0 && (
+                <TrendingDown className="h-5 w-5 text-green-600" />
+              )}
             </div>
-            <p className="text-xs text-slate-500 mt-1">
-              {summary.approvedCount} approved as-is
-            </p>
+            {summary.skipRateChange !== undefined && (
+              <p className="text-xs text-slate-500 mt-1">
+                {summary.skipRateChange > 0 ? '+' : ''}
+                {(summary.skipRateChange * 100).toFixed(1)}% from previous
+              </p>
+            )}
           </CardContent>
         </Card>
         
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-slate-500">
-              Most Adjusted Supplier
+              Total Analyzed
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-lg font-bold truncate">
-              {mostAdjustedSupplier?.supplier || 'N/A'}
-            </div>
+            <div className="text-2xl font-bold">{summary.totalSuggestions.toLocaleString()}</div>
             <p className="text-xs text-slate-500 mt-1">
-              {mostAdjustedSupplier?.adjustedCount || 0} adjustments
+              {summary.totalRounds} purchase rounds
             </p>
           </CardContent>
         </Card>
       </div>
       
-      {/* Trend Chart */}
-      {trendChartData.length > 0 && (
+      {/* Version Performance Chart */}
+      {versionChartData.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle>Adjustment Trend Over Time</CardTitle>
+            <CardTitle>Prompt Version Evolution</CardTitle>
             <CardDescription>
-              Shows how your adjustment ratio has changed week by week
+              How approval and skip rates have changed across prompt versions
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <ResponsiveContainer width="100%" height={300}>
-              <LineChart data={trendChartData}>
+            <ResponsiveContainer width="100%" height={350}>
+              <BarChart data={versionChartData}>
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis 
-                  dataKey="week" 
-                  tick={{ fontSize: 12 }}
-                />
-                <YAxis 
-                  label={{ value: 'Adjustment Ratio', angle: -90, position: 'insideLeft' }}
-                  domain={[0, 'auto']}
-                />
+                <XAxis dataKey="version" />
+                <YAxis label={{ value: 'Rate (%)', angle: -90, position: 'insideLeft' }} />
                 <Tooltip 
-                  formatter={(value: any, name: string) => {
-                    if (name === 'ratio') return [`${(value * 100).toFixed(0)}%`, 'Avg Ratio'];
-                    return [value, name];
-                  }}
+                  formatter={(value: any) => `${value.toFixed(1)}%`}
                 />
                 <Legend />
-                <Line 
-                  type="monotone" 
-                  dataKey="ratio" 
-                  stroke="#3b82f6" 
-                  strokeWidth={2}
-                  name="Adjustment Ratio"
-                  dot={{ r: 4 }}
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card>
-      )}
-      
-      {/* Stage Comparison */}
-      {stageChartData.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Adjustment by Purchase Stage</CardTitle>
-            <CardDescription>
-              Compare your buying behavior across early, mid, and closing stages
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={stageChartData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="stage" />
-                <YAxis 
-                  yAxisId="left"
-                  label={{ value: 'Adjustment Ratio', angle: -90, position: 'insideLeft' }}
-                />
-                <YAxis 
-                  yAxisId="right"
-                  orientation="right"
-                  label={{ value: 'Approval Rate (%)', angle: 90, position: 'insideRight' }}
-                />
-                <Tooltip 
-                  formatter={(value: any, name: string) => {
-                    if (name === 'avgRatio') return [`${(value * 100).toFixed(0)}%`, 'Avg Adjustment'];
-                    if (name === 'approvalRate') return [`${value.toFixed(1)}%`, 'Approval Rate'];
-                    return [value, name];
-                  }}
-                />
-                <Legend />
-                <Bar yAxisId="left" dataKey="avgRatio" fill="#3b82f6" name="Avg Adjustment" />
-                <Bar yAxisId="right" dataKey="approvalRate" fill="#10b981" name="Approval Rate" />
+                <Bar dataKey="approvalRate" fill="#10b981" name="Approval Rate" />
+                <Bar dataKey="skipRate" fill="#ef4444" name="Skip Rate" />
               </BarChart>
             </ResponsiveContainer>
           </CardContent>
         </Card>
       )}
       
+      {/* Key Insights */}
+      {versionMetrics.length >= 2 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Activity className="h-5 w-5 text-indigo-600" />
+              Key Insights
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {summary.approvalRateChange && summary.approvalRateChange > 0.05 && (
+              <div className="flex items-start gap-3 p-3 bg-green-50 rounded-lg">
+                <CheckCircle2 className="h-5 w-5 text-green-600 flex-shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-medium text-green-900">Strong Improvement</p>
+                  <p className="text-sm text-green-700">
+                    Latest version improved approval rate by {(summary.approvalRateChange * 100).toFixed(1)}% - keep it active!
+                  </p>
+                </div>
+              </div>
+            )}
+            
+            {versionMetrics[0]?.approvalRate > 0.7 && (
+              <div className="flex items-start gap-3 p-3 bg-blue-50 rounded-lg">
+                <Brain className="h-5 w-5 text-blue-600 flex-shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-medium text-blue-900">Well-Calibrated Prompt</p>
+                  <p className="text-sm text-blue-700">
+                    {versionMetrics[0].version} has {(versionMetrics[0].approvalRate * 100).toFixed(1)}% approval rate - AI suggestions are on target
+                  </p>
+                </div>
+              </div>
+            )}
+            
+            {versionMetrics[0]?.skipRate > 0.15 && (
+              <div className="flex items-start gap-3 p-3 bg-amber-50 rounded-lg">
+                <AlertCircle className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-medium text-amber-900">Room for Improvement</p>
+                  <p className="text-sm text-amber-700">
+                    {(versionMetrics[0].skipRate * 100).toFixed(1)}% of suggestions are being skipped - consider refining the prompt
+                  </p>
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+      
       {/* Empty state */}
-      {trendChartData.length === 0 && stageChartData.length === 0 && (
+      {versionMetrics.length === 0 && (
         <Card>
           <CardContent className="py-12 text-center">
-            <BarChart3 className="h-12 w-12 text-slate-300 mx-auto mb-4" />
-            <p className="text-slate-500">No pattern data available yet</p>
+            <Brain className="h-12 w-12 text-slate-300 mx-auto mb-4" />
+            <p className="text-slate-500">No prompt performance data available yet</p>
             <p className="text-sm text-slate-400 mt-1">
-              Complete more purchase rounds to see insights
+              Complete purchase rounds to start tracking prompt improvements
             </p>
           </CardContent>
         </Card>
@@ -371,381 +351,157 @@ function OverviewTab({ patterns }: { patterns: PatternData | undefined }) {
   );
 }
 
-function AdjustmentInsightsTab({ patterns }: { patterns: PatternData | undefined }) {
-  if (!patterns) return null;
+// Version Comparison Tab
+function VersionComparisonTab({ performance }: { performance: PromptPerformance | undefined }) {
+  if (!performance) return null;
   
-  const { summary, adjustmentDistribution, topAdjustedStyles } = patterns;
+  const { versionMetrics } = performance;
   
-  // Prepare distribution data for chart
-  const distributionData = [
-    { label: '-50%+', value: adjustmentDistribution.decrease_50plus, color: '#dc2626' },
-    { label: '-25-50%', value: adjustmentDistribution.decrease_25_50, color: '#f97316' },
-    { label: '-0-25%', value: adjustmentDistribution.decrease_0_25, color: '#fbbf24' },
-    { label: 'No Change', value: adjustmentDistribution.no_change, color: '#94a3b8' },
-    { label: '+0-25%', value: adjustmentDistribution.increase_0_25, color: '#4ade80' },
-    { label: '+25-50%', value: adjustmentDistribution.increase_25_50, color: '#22c55e' },
-    { label: '+50%+', value: adjustmentDistribution.increase_50plus, color: '#16a34a' },
-  ].filter(d => d.value > 0);
-  
-  // Verdict breakdown for pie chart
-  const verdictData = [
-    { name: 'Approved', value: summary.approvedCount, color: '#10b981' },
-    { name: 'Adjusted', value: summary.adjustedCount, color: '#3b82f6' },
-    { name: 'Skipped', value: summary.skippedCount, color: '#ef4444' },
-  ].filter(d => d.value > 0);
+  if (versionMetrics.length === 0) {
+    return (
+      <Card>
+        <CardContent className="py-12 text-center">
+          <BarChart3 className="h-12 w-12 text-slate-300 mx-auto mb-4" />
+          <p className="text-slate-500">No version data available</p>
+        </CardContent>
+      </Card>
+    );
+  }
   
   return (
     <div className="space-y-6">
-      {/* Verdict Breakdown */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <Card>
-          <CardHeader>
-            <CardTitle>Review Verdict Breakdown</CardTitle>
-            <CardDescription>
-              How you typically respond to AI suggestions
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <ResponsiveContainer width="100%" height={300}>
-              <PieChart>
-                <Pie
-                  data={verdictData}
-                  cx="50%"
-                  cy="50%"
-                  labelLine={false}
-                  label={(entry) => `${entry.name}: ${entry.value}`}
-                  outerRadius={100}
-                  fill="#8884d8"
-                  dataKey="value"
-                >
-                  {verdictData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.color} />
-                  ))}
-                </Pie>
-                <Tooltip />
-              </PieChart>
-            </ResponsiveContainer>
-            
-            <div className="grid grid-cols-3 gap-4 mt-4">
-              <div className="text-center">
-                <div className="text-2xl font-bold text-green-600">
-                  {summary.approvedCount}
-                </div>
-                <div className="text-xs text-slate-500">Approved</div>
-              </div>
-              <div className="text-center">
-                <div className="text-2xl font-bold text-blue-600">
-                  {summary.adjustedCount}
-                </div>
-                <div className="text-xs text-slate-500">Adjusted</div>
-              </div>
-              <div className="text-center">
-                <div className="text-2xl font-bold text-red-600">
-                  {summary.skippedCount}
-                </div>
-                <div className="text-xs text-slate-500">Skipped</div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        
-        {/* Adjustment Distribution */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Adjustment Distribution</CardTitle>
-            <CardDescription>
-              How much you typically increase or decrease quantities
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={distributionData} layout="vertical">
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis type="number" />
-                <YAxis dataKey="label" type="category" width={80} />
-                <Tooltip />
-                <Bar dataKey="value" fill="#3b82f6">
-                  {distributionData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.color} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card>
-      </div>
-      
-      {/* Top Adjusted Styles */}
       <Card>
         <CardHeader>
-          <CardTitle>Most Frequently Adjusted Styles</CardTitle>
+          <CardTitle>Version Metrics Comparison</CardTitle>
           <CardDescription>
-            Styles where you most often change the AI suggestion
+            Detailed performance metrics for each prompt version
           </CardDescription>
         </CardHeader>
         <CardContent>
-          {topAdjustedStyles.length > 0 ? (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-slate-200 text-left">
-                    <th className="py-3 px-4 font-medium text-slate-500">Style</th>
-                    <th className="py-3 px-4 font-medium text-slate-500">Color</th>
-                    <th className="py-3 px-4 font-medium text-slate-500 text-right">Avg Suggested</th>
-                    <th className="py-3 px-4 font-medium text-slate-500 text-right">Avg Adjusted</th>
-                    <th className="py-3 px-4 font-medium text-slate-500 text-right">Ratio</th>
-                    <th className="py-3 px-4 font-medium text-slate-500 text-right">Frequency</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {topAdjustedStyles.slice(0, 15).map((style, idx) => {
-                    const ratioColor = 
-                      style.avgRatio > 1.1 ? 'text-green-600' :
-                      style.avgRatio < 0.9 ? 'text-red-600' :
-                      'text-slate-600';
-                    
-                    return (
-                      <tr key={idx} className="border-b border-slate-100 hover:bg-slate-50">
-                        <td className="py-3 px-4 font-medium">{style.style_no}</td>
-                        <td className="py-3 px-4">{style.color}</td>
-                        <td className="py-3 px-4 text-right">{style.avgSuggested}</td>
-                        <td className="py-3 px-4 text-right font-medium">{style.avgAdjusted}</td>
-                        <td className={`py-3 px-4 text-right font-bold ${ratioColor}`}>
-                          {(style.avgRatio * 100).toFixed(0)}%
-                        </td>
-                        <td className="py-3 px-4 text-right">
-                          <Badge className="bg-slate-100 text-slate-700">{style.count}×</Badge>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <div className="py-8 text-center text-slate-500">
-              No adjusted styles yet
-            </div>
-          )}
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-200">
+                  <th className="py-3 px-4 text-left font-medium text-slate-500">Version</th>
+                  <th className="py-3 px-4 text-right font-medium text-slate-500">Rounds</th>
+                  <th className="py-3 px-4 text-right font-medium text-slate-500">Suggestions</th>
+                  <th className="py-3 px-4 text-right font-medium text-slate-500">Approved</th>
+                  <th className="py-3 px-4 text-right font-medium text-slate-500">Adjusted</th>
+                  <th className="py-3 px-4 text-right font-medium text-slate-500">Skipped</th>
+                  <th className="py-3 px-4 text-right font-medium text-slate-500">Approval Rate</th>
+                  <th className="py-3 px-4 text-right font-medium text-slate-500">Skip Rate</th>
+                  <th className="py-3 px-4 text-center font-medium text-slate-500">Period</th>
+                </tr>
+              </thead>
+              <tbody>
+                {versionMetrics.map((v, idx) => {
+                  const isLatest = idx === 0;
+                  const approvalRateColor = v.approvalRate > 0.7 ? 'text-green-600' : v.approvalRate > 0.5 ? 'text-amber-600' : 'text-red-600';
+                  
+                  return (
+                    <tr key={v.version} className={`border-b border-slate-100 hover:bg-slate-50 ${isLatest ? 'bg-indigo-50' : ''}`}>
+                      <td className="py-3 px-4 font-medium">
+                        <div className="flex items-center gap-2">
+                          {v.version}
+                          {isLatest && <Badge className="bg-indigo-600 text-white text-xs">Latest</Badge>}
+                        </div>
+                      </td>
+                      <td className="py-3 px-4 text-right">{v.roundCount}</td>
+                      <td className="py-3 px-4 text-right">{v.totalSuggestions}</td>
+                      <td className="py-3 px-4 text-right text-green-600">{v.approvedCount}</td>
+                      <td className="py-3 px-4 text-right text-amber-600">{v.adjustedCount}</td>
+                      <td className="py-3 px-4 text-right text-red-600">{v.skippedCount}</td>
+                      <td className={`py-3 px-4 text-right font-bold ${approvalRateColor}`}>
+                        {(v.approvalRate * 100).toFixed(1)}%
+                      </td>
+                      <td className="py-3 px-4 text-right">
+                        {(v.skipRate * 100).toFixed(1)}%
+                      </td>
+                      <td className="py-3 px-4 text-center text-xs text-slate-500">
+                        {v.firstUsed && new Date(v.firstUsed).toLocaleDateString('da-DK', { month: 'short', day: 'numeric' })}
+                        {v.firstUsed !== v.lastUsed && (
+                          <> - {v.lastUsed && new Date(v.lastUsed).toLocaleDateString('da-DK', { month: 'short', day: 'numeric' })}</>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </CardContent>
       </Card>
     </div>
   );
 }
 
-function SupplierAnalysisTab({ patterns }: { patterns: PatternData | undefined }) {
-  if (!patterns) return null;
+// Context Performance Tab
+function ContextPerformanceTab({ performance }: { performance: PromptPerformance | undefined }) {
+  if (!performance) return null;
   
-  const { supplierPatterns } = patterns;
-  const [sortBy, setSortBy] = useState<'suggestions' | 'adjustments' | 'ratio' | 'skipRate'>('suggestions');
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
-  
-  const sortedSuppliers = [...supplierPatterns].sort((a, b) => {
-    let aVal: number, bVal: number;
-    
-    switch (sortBy) {
-      case 'suggestions':
-        aVal = a.totalSuggestions;
-        bVal = b.totalSuggestions;
-        break;
-      case 'adjustments':
-        aVal = a.adjustedCount;
-        bVal = b.adjustedCount;
-        break;
-      case 'ratio':
-        aVal = a.avgAdjustmentRatio || 0;
-        bVal = b.avgAdjustmentRatio || 0;
-        break;
-      case 'skipRate':
-        aVal = a.skipRate;
-        bVal = b.skipRate;
-        break;
-      default:
-        return 0;
-    }
-    
-    return sortDir === 'desc' ? bVal - aVal : aVal - bVal;
-  });
-  
-  const handleSort = (column: typeof sortBy) => {
-    if (sortBy === column) {
-      setSortDir(sortDir === 'desc' ? 'asc' : 'desc');
-    } else {
-      setSortBy(column);
-      setSortDir('desc');
-    }
-  };
-  
-  // Generate insights
-  const insights: string[] = [];
-  
-  if (supplierPatterns.length > 0) {
-    const highRatioSuppliers = supplierPatterns.filter(s => 
-      s.avgAdjustmentRatio && s.avgAdjustmentRatio > 1.25
-    );
-    const lowRatioSuppliers = supplierPatterns.filter(s => 
-      s.avgAdjustmentRatio && s.avgAdjustmentRatio < 0.75
-    );
-    const wellCalibratedSuppliers = supplierPatterns.filter(s => 
-      s.totalSuggestions >= 5 && s.skipRate < 0.1 && 
-      s.avgAdjustmentRatio && Math.abs(s.avgAdjustmentRatio - 1.0) < 0.15
-    );
-    
-    if (highRatioSuppliers.length > 0) {
-      const top = highRatioSuppliers[0];
-      if (top && top.avgAdjustmentRatio) {
-        insights.push(
-          `You typically increase quantities from ${top.supplier} by ${((top.avgAdjustmentRatio - 1) * 100).toFixed(0)}%`
-        );
-      }
-    }
-    
-    if (lowRatioSuppliers.length > 0) {
-      const top = lowRatioSuppliers[0];
-      if (top && top.avgAdjustmentRatio) {
-        insights.push(
-          `You typically decrease quantities from ${top.supplier} by ${((1 - top.avgAdjustmentRatio) * 100).toFixed(0)}%`
-        );
-      }
-    }
-    
-    if (wellCalibratedSuppliers.length > 0) {
-      const top = wellCalibratedSuppliers[0];
-      if (top) {
-        insights.push(
-          `${top.supplier} has ${((1 - top.skipRate) * 100).toFixed(0)}% acceptance rate - AI is well-calibrated`
-        );
-      }
-    }
-    
-    const highSkipSuppliers = supplierPatterns.filter(s => s.skipRate > 0.3);
-    if (highSkipSuppliers.length > 0) {
-      const top = highSkipSuppliers[0];
-      if (top) {
-        insights.push(
-          `You skip ${(top.skipRate * 100).toFixed(0)}% of suggestions from ${top.supplier}`
-        );
-      }
-    }
-  }
+  const { stageMetrics, supplierMetrics } = performance;
   
   return (
     <div className="space-y-6">
-      {/* Insights Cards */}
-      {insights.length > 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {insights.map((insight, idx) => (
-            <Card key={idx}>
-              <CardContent className="pt-6">
-                <div className="flex items-start gap-3">
-                  <div className="p-2 bg-blue-100 rounded-lg">
-                    <BarChart3 className="h-5 w-5 text-blue-600" />
-                  </div>
-                  <p className="text-sm text-slate-700 flex-1">{insight}</p>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      )}
-      
-      {/* Supplier Performance Table */}
+      {/* Stage Performance */}
       <Card>
         <CardHeader>
-          <CardTitle>Supplier Performance</CardTitle>
+          <CardTitle>Performance by Purchase Stage</CardTitle>
           <CardDescription>
-            Detailed analysis of how you interact with AI suggestions per supplier
+            How prompt versions perform across different purchase stages
           </CardDescription>
         </CardHeader>
         <CardContent>
-          {sortedSuppliers.length > 0 ? (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-slate-200 text-left">
-                    <th className="py-3 px-4 font-medium text-slate-500">Supplier</th>
-                    <th 
-                      className="py-3 px-4 font-medium text-slate-500 text-right cursor-pointer hover:text-slate-700"
-                      onClick={() => handleSort('suggestions')}
-                    >
-                      Suggestions {sortBy === 'suggestions' && (sortDir === 'desc' ? '↓' : '↑')}
-                    </th>
-                    <th 
-                      className="py-3 px-4 font-medium text-slate-500 text-right cursor-pointer hover:text-slate-700"
-                      onClick={() => handleSort('adjustments')}
-                    >
-                      Adjustments {sortBy === 'adjustments' && (sortDir === 'desc' ? '↓' : '↑')}
-                    </th>
-                    <th 
-                      className="py-3 px-4 font-medium text-slate-500 text-right cursor-pointer hover:text-slate-700"
-                      onClick={() => handleSort('ratio')}
-                    >
-                      Avg Ratio {sortBy === 'ratio' && (sortDir === 'desc' ? '↓' : '↑')}
-                    </th>
-                    <th 
-                      className="py-3 px-4 font-medium text-slate-500 text-right cursor-pointer hover:text-slate-700"
-                      onClick={() => handleSort('skipRate')}
-                    >
-                      Skip Rate {sortBy === 'skipRate' && (sortDir === 'desc' ? '↓' : '↑')}
-                    </th>
-                    <th className="py-3 px-4 font-medium text-slate-500 text-center">Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {sortedSuppliers.map((supplier, idx) => {
-                    const ratioColor = 
-                      supplier.avgAdjustmentRatio && supplier.avgAdjustmentRatio > 1.15 ? 'text-green-600' :
-                      supplier.avgAdjustmentRatio && supplier.avgAdjustmentRatio < 0.85 ? 'text-red-600' :
-                      'text-slate-600';
-                    
-                    const skipRateColor = 
-                      supplier.skipRate > 0.3 ? 'text-red-600' :
-                      supplier.skipRate > 0.15 ? 'text-orange-600' :
-                      'text-slate-600';
-                    
-                    // Determine status badge
-                    let status = { label: 'Neutral', color: 'bg-slate-100 text-slate-700' };
-                    if (supplier.avgAdjustmentRatio) {
-                      if (supplier.avgAdjustmentRatio > 1.15) {
-                        status = { label: 'Buy More', color: 'bg-green-100 text-green-700' };
-                      } else if (supplier.avgAdjustmentRatio < 0.85) {
-                        status = { label: 'Buy Less', color: 'bg-red-100 text-red-700' };
-                      } else if (supplier.skipRate < 0.1) {
-                        status = { label: 'Well-calibrated', color: 'bg-blue-100 text-blue-700' };
-                      }
-                    }
-                    
-                    if (supplier.skipRate > 0.3) {
-                      status = { label: 'Often Skipped', color: 'bg-orange-100 text-orange-700' };
-                    }
-                    
-                    return (
-                      <tr key={idx} className="border-b border-slate-100 hover:bg-slate-50">
-                        <td className="py-3 px-4 font-medium">{supplier.supplier}</td>
-                        <td className="py-3 px-4 text-right">{supplier.totalSuggestions}</td>
-                        <td className="py-3 px-4 text-right">{supplier.adjustedCount}</td>
-                        <td className={`py-3 px-4 text-right font-bold ${ratioColor}`}>
-                          {supplier.avgAdjustmentRatio 
-                            ? `${(supplier.avgAdjustmentRatio * 100).toFixed(0)}%` 
-                            : 'N/A'}
-                        </td>
-                        <td className={`py-3 px-4 text-right ${skipRateColor}`}>
-                          {(supplier.skipRate * 100).toFixed(1)}%
-                        </td>
-                        <td className="py-3 px-4 text-center">
-                          <Badge className={status.color}>{status.label}</Badge>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <div className="py-8 text-center text-slate-500">
-              No supplier data yet
-            </div>
-          )}
+          <div className="space-y-6">
+            {Object.entries(stageMetrics).map(([stage, versions]) => (
+              <div key={stage}>
+                <h4 className="font-medium text-slate-900 mb-2 capitalize">{stage} Stage</h4>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  {versions.map(v => (
+                    <div key={v.version} className="border rounded-lg p-3">
+                      <div className="text-xs text-slate-500">{v.version}</div>
+                      <div className="text-lg font-bold text-slate-900">
+                        {(v.approvalRate * 100).toFixed(1)}%
+                      </div>
+                      <div className="text-xs text-slate-500">{v.count} suggestions</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+      
+      {/* Supplier Performance */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Top Suppliers by Volume</CardTitle>
+          <CardDescription>
+            Version performance for your most frequently analyzed suppliers
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-4">
+            {supplierMetrics.map(supplier => (
+              <div key={supplier.supplier} className="border-b pb-4 last:border-b-0">
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="font-medium text-slate-900">{supplier.supplier}</h4>
+                  <span className="text-sm text-slate-500">{supplier.totalSuggestions} total</span>
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                  {supplier.versions.map(v => (
+                    <div key={v.version} className="bg-slate-50 rounded p-2">
+                      <div className="text-xs text-slate-500">{v.version}</div>
+                      <div className="text-sm font-bold">
+                        {(v.approvalRate * 100).toFixed(1)}%
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
         </CardContent>
       </Card>
     </div>
