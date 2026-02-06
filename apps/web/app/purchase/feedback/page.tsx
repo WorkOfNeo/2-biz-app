@@ -151,7 +151,7 @@ export default function FeedbackPage() {
   };
 
   return (
-    <div className="container mx-auto py-8 px-4 max-w-7xl">
+    <div className="page-container-wide">
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-semibold text-slate-800">AI Feedback & Learning</h1>

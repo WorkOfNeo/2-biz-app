@@ -153,7 +153,7 @@ export default function ConversationsPage() {
   }, [conversations]);
 
   return (
-    <div className="max-w-6xl mx-auto py-8 px-4">
+    <div className="page-container-wide">
       {/* Header */}
       <div className="flex items-center justify-between mb-8">
         <div>
