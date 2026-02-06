@@ -164,8 +164,10 @@ export async function GET(request: NextRequest) {
     if (versionMetrics.length >= 2) {
       const current = versionMetrics[0];
       const previous = versionMetrics[1];
-      approvalRateChange = current.approvalRate - previous.approvalRate;
-      skipRateChange = current.skipRate - previous.skipRate;
+      if (current && previous) {
+        approvalRateChange = current.approvalRate - previous.approvalRate;
+        skipRateChange = current.skipRate - previous.skipRate;
+      }
     }
     
     const summary = {
