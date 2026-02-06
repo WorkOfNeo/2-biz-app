@@ -448,11 +448,11 @@ export default function HistoricalSalesPage() {
         if (hardcodedStyleNo && hardcodedStyleNo === matchedStyleNo) {
           // The size might actually be indicating a color in the old format
           // For now, let's just pick the first color if available
-          if (colors.length > 0) {
+          if (colors.length > 0 && colors[0]) {
             matchedColor = colors[0];
             colorScore = 1.0;
           }
-        } else if (colors.length > 0) {
+        } else if (colors.length > 0 && colors[0]) {
           matchedColor = colors[0];
           colorScore = 0.8;
           matchNote = (matchNote || '') + ' (auto-selected first color)';
