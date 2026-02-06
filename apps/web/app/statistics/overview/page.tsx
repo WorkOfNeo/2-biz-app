@@ -50,7 +50,7 @@ export default function OverviewPage() {
   } = useStatisticsData();
 
   const [country, setCountry] = useState<typeof COUNTRIES[number]>('All');
-  const [calcTab, setCalcTab] = useState<'visited' | 'visited_incl'>('visited');
+  const [calcTab, setCalcTab] = useState<'visited' | 'visited_incl'>('visited_incl');
   const [indexModal, setIndexModal] = useState<{ mode: 'visited' | 'visited_incl' | 'unvisited' } | null>(null);
   const [detailModal, setDetailModal] = useState<{ salespersonId: string; salespersonName: string; season: 's1' | 's2'; seasonLabel: string } | null>(null);
   const [notVisitedModal, setNotVisitedModal] = useState<{ salespersonId: string; salespersonName: string; customers: Customer[] } | null>(null);
@@ -902,88 +902,38 @@ export default function OverviewPage() {
               </tr>
             ))}
             <tr className="border-t bg-gray-50">
-              <td className="p-2 font-semibold">
-                <div className="flex flex-col leading-tight">
-                  <span>Avg</span>
-                  <span className="text-xs text-gray-500">Totals</span>
-                </div>
-              </td>
+              <td className="p-2 font-semibold">Avg</td>
+              <td className="p-2">{Math.round(salesmenSummary.avgNulled).toLocaleString('da-DK')}</td>
               <td className="p-2">
-                <div className="flex flex-col leading-tight">
-                  <span>{Math.round(salesmenSummary.avgNulled).toLocaleString('da-DK')}</span>
-                  <span className="text-xs text-gray-500">{Math.round(salesmenSummary.sums.nulled).toLocaleString('da-DK')}</span>
-                </div>
+                {Math.round(salesmenSummary.avgVisited).toLocaleString('da-DK')}/{Math.round(salesmenSummary.avgTotal).toLocaleString('da-DK')}
               </td>
+              <td className="p-2">{Math.round(salesmenSummary.avgNotVisited).toLocaleString('da-DK')}</td>
+              <td className="p-2">{salesmenSummary.avgVisitedPct.toFixed(1)}%</td>
+              <td className="p-2 text-center">{Math.round(salesmenSummary.avgS1Qty).toLocaleString('da-DK')}</td>
+              <td className="p-2 text-center">{Math.round(salesmenSummary.avgS1Price).toLocaleString('da-DK')}</td>
+              <td className="p-2 text-center">{Math.round(salesmenSummary.avgS1Avg).toLocaleString('da-DK')}</td>
+              <td className="p-2 text-center">{Math.round(salesmenSummary.avgS2Qty).toLocaleString('da-DK')}</td>
+              <td className="p-2 text-center">{Math.round(salesmenSummary.avgS2Price).toLocaleString('da-DK')}</td>
+              <td className="p-2 text-center">{Math.round(salesmenSummary.avgS2Avg).toLocaleString('da-DK')}</td>
+              <td className="p-2 text-center">{salesmenSummary.avgQtyPct.toFixed(2)}%</td>
+              <td className="p-2 text-center">{salesmenSummary.avgPricePct.toFixed(2)}%</td>
+            </tr>
+            <tr className="border-t bg-gray-100">
+              <td className="p-2 font-semibold">Totals</td>
+              <td className="p-2">{Math.round(salesmenSummary.sums.nulled).toLocaleString('da-DK')}</td>
               <td className="p-2">
-                <div className="flex flex-col leading-tight">
-                  <span>
-                    {Math.round(salesmenSummary.avgVisited).toLocaleString('da-DK')}/{Math.round(salesmenSummary.avgTotal).toLocaleString('da-DK')}
-                  </span>
-                  <span className="text-xs text-gray-500">
-                    {Math.round(salesmenSummary.sums.visited).toLocaleString('da-DK')}/{Math.round(salesmenSummary.sums.total).toLocaleString('da-DK')}
-                  </span>
-                </div>
+                {Math.round(salesmenSummary.sums.visited).toLocaleString('da-DK')}/{Math.round(salesmenSummary.sums.total).toLocaleString('da-DK')}
               </td>
-              <td className="p-2">
-                <div className="flex flex-col leading-tight">
-                  <span>{Math.round(salesmenSummary.avgNotVisited).toLocaleString('da-DK')}</span>
-                  <span className="text-xs text-gray-500">{Math.round(salesmenSummary.sums.notVisited).toLocaleString('da-DK')}</span>
-                </div>
-              </td>
-              <td className="p-2">
-                <div className="flex flex-col leading-tight">
-                  <span>{salesmenSummary.avgVisitedPct.toFixed(1)}%</span>
-                  <span className="text-xs text-gray-500">{salesmenSummary.overallVisitedPct.toFixed(1)}%</span>
-                </div>
-              </td>
-              <td className="p-2 text-center">
-                <div className="flex flex-col leading-tight">
-                  <span>{Math.round(salesmenSummary.avgS1Qty).toLocaleString('da-DK')}</span>
-                  <span className="text-xs text-gray-500">{Math.round(salesmenSummary.sums.s1Qty).toLocaleString('da-DK')}</span>
-                </div>
-              </td>
-              <td className="p-2 text-center">
-                <div className="flex flex-col leading-tight">
-                  <span>{Math.round(salesmenSummary.avgS1Price).toLocaleString('da-DK')}</span>
-                  <span className="text-xs text-gray-500">{Math.round(salesmenSummary.sums.s1Price).toLocaleString('da-DK')}</span>
-                </div>
-              </td>
-              <td className="p-2 text-center">
-                <div className="flex flex-col leading-tight">
-                  <span>{Math.round(salesmenSummary.avgS1Avg).toLocaleString('da-DK')}</span>
-                  <span className="text-xs text-gray-500">{Math.round(salesmenSummary.overallS1Avg).toLocaleString('da-DK')}</span>
-                </div>
-              </td>
-              <td className="p-2 text-center">
-                <div className="flex flex-col leading-tight">
-                  <span>{Math.round(salesmenSummary.avgS2Qty).toLocaleString('da-DK')}</span>
-                  <span className="text-xs text-gray-500">{Math.round(salesmenSummary.sums.s2Qty).toLocaleString('da-DK')}</span>
-                </div>
-              </td>
-              <td className="p-2 text-center">
-                <div className="flex flex-col leading-tight">
-                  <span>{Math.round(salesmenSummary.avgS2Price).toLocaleString('da-DK')}</span>
-                  <span className="text-xs text-gray-500">{Math.round(salesmenSummary.sums.s2Price).toLocaleString('da-DK')}</span>
-                </div>
-              </td>
-              <td className="p-2 text-center">
-                <div className="flex flex-col leading-tight">
-                  <span>{Math.round(salesmenSummary.avgS2Avg).toLocaleString('da-DK')}</span>
-                  <span className="text-xs text-gray-500">{Math.round(salesmenSummary.overallS2Avg).toLocaleString('da-DK')}</span>
-                </div>
-              </td>
-              <td className="p-2 text-center">
-                <div className="flex flex-col leading-tight">
-                  <span>{salesmenSummary.avgQtyPct.toFixed(2)}%</span>
-                  <span className="text-xs text-gray-500">{salesmenSummary.overallQtyPct.toFixed(2)}%</span>
-                </div>
-              </td>
-              <td className="p-2 text-center">
-                <div className="flex flex-col leading-tight">
-                  <span>{salesmenSummary.avgPricePct.toFixed(2)}%</span>
-                  <span className="text-xs text-gray-500">{salesmenSummary.overallPricePct.toFixed(2)}%</span>
-                </div>
-              </td>
+              <td className="p-2">{Math.round(salesmenSummary.sums.notVisited).toLocaleString('da-DK')}</td>
+              <td className="p-2">{salesmenSummary.overallVisitedPct.toFixed(1)}%</td>
+              <td className="p-2 text-center">{Math.round(salesmenSummary.sums.s1Qty).toLocaleString('da-DK')}</td>
+              <td className="p-2 text-center">{Math.round(salesmenSummary.sums.s1Price).toLocaleString('da-DK')}</td>
+              <td className="p-2 text-center">{Math.round(salesmenSummary.overallS1Avg).toLocaleString('da-DK')}</td>
+              <td className="p-2 text-center">{Math.round(salesmenSummary.sums.s2Qty).toLocaleString('da-DK')}</td>
+              <td className="p-2 text-center">{Math.round(salesmenSummary.sums.s2Price).toLocaleString('da-DK')}</td>
+              <td className="p-2 text-center">{Math.round(salesmenSummary.overallS2Avg).toLocaleString('da-DK')}</td>
+              <td className="p-2 text-center">{salesmenSummary.overallQtyPct.toFixed(2)}%</td>
+              <td className="p-2 text-center">{salesmenSummary.overallPricePct.toFixed(2)}%</td>
             </tr>
           </tbody>
         </table>
@@ -1058,17 +1008,17 @@ export default function OverviewPage() {
             <div className="mt-2 inline-flex rounded-md border bg-white p-0.5 text-xs">
               <button
                 type="button"
-                onClick={() => setCalcTab('visited')}
-                className={'rounded px-3 py-1.5 ' + (calcTab === 'visited' ? 'bg-slate-900 text-white' : 'text-slate-700 hover:bg-slate-50')}
-              >
-                Visited
-              </button>
-              <button
-                type="button"
                 onClick={() => setCalcTab('visited_incl')}
                 className={'rounded px-3 py-1.5 ' + (calcTab === 'visited_incl' ? 'bg-slate-900 text-white' : 'text-slate-700 hover:bg-slate-50')}
               >
                 Visited + Nulled
+              </button>
+              <button
+                type="button"
+                onClick={() => setCalcTab('visited')}
+                className={'rounded px-3 py-1.5 ' + (calcTab === 'visited' ? 'bg-slate-900 text-white' : 'text-slate-700 hover:bg-slate-50')}
+              >
+                Visited
               </button>
             </div>
             <div className="mt-2 text-xs text-gray-600">

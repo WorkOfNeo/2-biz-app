@@ -45,7 +45,7 @@ export default function StatisticsGeneralPage() {
     return data as { id: string; kind: string; title: string | null; path: string; public_url: string | null; meta: any; created_at: string } | null;
   }, { refreshInterval: 10000 });
   const [activePerson, setActivePerson] = useState<string>('');
-  const [calcTab, setCalcTab] = useState<'visited' | 'visited_incl'>('visited');
+  const [calcTab, setCalcTab] = useState<'visited' | 'visited_incl'>('visited_incl');
   const [indexBasisModal, setIndexBasisModal] = useState<{ mode: 'visited' | 'visited_incl'; rows: any[] } | null>(null);
   const [showSave, setShowSave] = useState(false);
   const [updating, setUpdating] = useState(false);
@@ -2027,17 +2027,17 @@ export default function StatisticsGeneralPage() {
                             <div className="inline-flex rounded-md border bg-white p-0.5 text-xs">
                               <button
                                 type="button"
-                                onClick={() => setCalcTab('visited')}
-                                className={'rounded px-3 py-1.5 ' + (calcTab === 'visited' ? 'bg-slate-900 text-white' : 'text-slate-700 hover:bg-slate-50')}
-                              >
-                                Visited
-                              </button>
-                              <button
-                                type="button"
                                 onClick={() => setCalcTab('visited_incl')}
                                 className={'rounded px-3 py-1.5 ' + (calcTab === 'visited_incl' ? 'bg-slate-900 text-white' : 'text-slate-700 hover:bg-slate-50')}
                               >
                                 Visited + Nulled
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setCalcTab('visited')}
+                                className={'rounded px-3 py-1.5 ' + (calcTab === 'visited' ? 'bg-slate-900 text-white' : 'text-slate-700 hover:bg-slate-50')}
+                              >
+                                Visited
                               </button>
                             </div>
                           </div>
