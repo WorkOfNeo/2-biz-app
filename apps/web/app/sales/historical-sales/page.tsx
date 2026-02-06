@@ -489,6 +489,8 @@ export default function HistoricalSalesPage() {
     setParsedRows(prev => {
       const updated = [...prev];
       const row = updated[index];
+      if (!row) return prev;
+      
       row.matchedStyleNo = styleNo || null;
       
       // Reset color when style changes
@@ -498,7 +500,7 @@ export default function HistoricalSalesPage() {
       // Auto-select first color if available
       if (styleNo) {
         const colors = colorsByStyleNo.get(styleNo) || [];
-        if (colors.length > 0) {
+        if (colors.length > 0 && colors[0]) {
           row.matchedColor = colors[0];
           row.colorScore = 0.8;
         }
@@ -517,6 +519,8 @@ export default function HistoricalSalesPage() {
     setParsedRows(prev => {
       const updated = [...prev];
       const row = updated[index];
+      if (!row) return prev;
+      
       row.matchedColor = color || null;
       row.colorScore = color ? 1.0 : 0;
       
