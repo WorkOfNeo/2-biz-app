@@ -20,22 +20,26 @@ type SalesRow = {
   date: string;
   size: string;
   quantity: number;
+  order_type?: string | null;
+  order_channel?: string | null;
 };
 
-type WideRow = {
-  styleNo: string;      // Direct style number from "Style No" column
-  styleName: string;    // Style name from "Style Name" column (for fallback matching)
-  color: string;
-  dateRange: string;
-  sizes: Record<string, number>;
+type NarrowRow = {
+  styleNo: string;
+  styleName: string;
+  size: string;
+  quantity: number;
+  date: string;
+  orderType?: string;
+  orderChannel?: string;
 };
 
-type ParsedWideRow = WideRow & {
+type ParsedNarrowRow = NarrowRow & {
   matchedStyleNo: string | null;
   matchedColor: string | null;
   styleScore: number;
   colorScore: number;
-  matchNote: string | null;  // Explains how the match was made (e.g., "via alternative style")
+  matchNote: string | null;
   status: 'matched' | 'unmatched_style' | 'unmatched_color';
 };
 
@@ -51,8 +55,20 @@ type StyleColorRow = {
   color: string;
 };
 
-// Size columns we expect (can be flexible)
-const SIZE_COLUMNS = ['34', '36', '38', '40', '42', '44', '46'];
+type ColumnMapping = {
+  styleNo: string | null;
+  styleName: string | null;
+  size: string | null;
+  quantity: string | null;
+  date: string | null;
+  orderType: string | null;
+  orderChannel: string | null;
+};
+
+type RawFileData = {
+  headers: string[];
+  rows: Record<string, any>[];
+};
 
 // =====================================================
 // HARD-CODED STYLE/COLOR RULES
@@ -98,417 +114,215 @@ function checkHardcodedRules(styleName: string, color: string): string | null {
 }
 
 // Fuzzy matching helpers
-function normalizeText(s: string): string {
-  return s
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
+function fuzzyScore(a: string, b: string): number {
+  const aLower = a.toLowerCase().trim();
+  const bLower = b.toLowerCase().trim();
+  
+  if (aLower === bLower) return 1.0;
+  if (aLower.includes(bLower) || bLower.includes(aLower)) return 0.9;
+  
+  // Simple character overlap
+  const aSet = new Set(aLower.split(''));
+  const bSet = new Set(bLower.split(''));
+  const intersection = new Set([...aSet].filter(x => bSet.has(x)));
+  const union = new Set([...aSet, ...bSet]);
+  return intersection.size / union.size;
 }
 
-function tokenize(s: string): string[] {
-  return normalizeText(s).split(' ').filter(Boolean);
+// Parse date from various formats
+function parseDate(dateStr: string): string | null {
+  if (!dateStr) return null;
+  
+  const str = String(dateStr).trim();
+  
+  // Excel serial number (days since 1900-01-01)
+  if (/^\d{5}$/.test(str)) {
+    const serial = parseInt(str, 10);
+    const utc_days = Math.floor(serial - 25569);
+    const utc_value = utc_days * 86400;
+    const date = new Date(utc_value * 1000);
+    return date.toISOString().split('T')[0];
+  }
+  
+  // DD-MM-YYYY or DD/MM/YYYY
+  const dmy = str.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);
+  if (dmy) {
+    const [, day, month, year] = dmy;
+    return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+  }
+  
+  // YYYY-MM-DD
+  const ymd = str.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
+  if (ymd) {
+    const [, year, month, day] = ymd;
+    return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+  }
+  
+  // Try standard Date parsing
+  const parsed = new Date(str);
+  if (!isNaN(parsed.getTime())) {
+    return parsed.toISOString().split('T')[0];
+  }
+  
+  return null;
 }
 
-// Extract just the color name without numeric prefixes (e.g., "807 Black" -> "black")
-function extractColorName(s: string): string {
-  const norm = normalizeText(s);
-  // Remove leading numbers and common prefixes
-  return norm.replace(/^\d+\s*/, '').trim();
-}
-
-function fuzzyScore(query: string, target: string): number {
-  const qNorm = normalizeText(query);
-  const tNorm = normalizeText(target);
-  if (qNorm === tNorm) return 1.0;
-  if (tNorm.includes(qNorm) || qNorm.includes(tNorm)) return 0.9;
-
-  const qTok = tokenize(query);
-  const tTok = tokenize(target);
-  if (qTok.length === 0 || tTok.length === 0) return 0;
-
-  let overlap = 0;
-  for (const qt of qTok) {
-    if (tTok.some((tt) => tt === qt || tt.includes(qt) || qt.includes(tt))) {
-      overlap++;
+// Auto-detect column mapping based on header names
+function autoDetectColumns(headers: string[]): ColumnMapping {
+  const mapping: ColumnMapping = {
+    styleNo: null,
+    styleName: null,
+    size: null,
+    quantity: null,
+    date: null,
+    orderType: null,
+    orderChannel: null,
+  };
+  
+  for (const header of headers) {
+    const lower = header.toLowerCase().trim();
+    
+    // Style No
+    if (!mapping.styleNo && /^style[\s_-]?no\.?$|^style[\s_-]?number$/i.test(header)) {
+      mapping.styleNo = header;
+    }
+    
+    // Style Name
+    if (!mapping.styleName && /^style[\s_-]?name$/i.test(header)) {
+      mapping.styleName = header;
+    }
+    
+    // Size
+    if (!mapping.size && /^size$/i.test(header)) {
+      mapping.size = header;
+    }
+    
+    // Quantity
+    if (!mapping.quantity && /^qty$|^quantity$/i.test(header)) {
+      mapping.quantity = header;
+    }
+    
+    // Date
+    if (!mapping.date && /^date$/i.test(header)) {
+      mapping.date = header;
+    }
+    
+    // Order Type
+    if (!mapping.orderType && /^order[\s_-]?type$/i.test(header)) {
+      mapping.orderType = header;
+    }
+    
+    // Order Channel
+    if (!mapping.orderChannel && /^order[\s_-]?channel$/i.test(header)) {
+      mapping.orderChannel = header;
     }
   }
-  return overlap / Math.max(qTok.length, tTok.length);
+  
+  return mapping;
 }
-
-// Enhanced color matching: handles cases like "Black" -> "807 Black"
-function colorFuzzyScore(query: string, target: string): number {
-  const qNorm = normalizeText(query);
-  const tNorm = normalizeText(target);
-  
-  // Exact match
-  if (qNorm === tNorm) return 1.0;
-  
-  // Target contains query (e.g., "807 black" contains "black")
-  if (tNorm.includes(qNorm)) return 0.95;
-  
-  // Query contains target
-  if (qNorm.includes(tNorm)) return 0.9;
-  
-  // Extract color names without numeric prefixes and compare
-  const qColor = extractColorName(query);
-  const tColor = extractColorName(target);
-  
-  if (qColor && tColor) {
-    if (qColor === tColor) return 0.92;
-    if (tColor.includes(qColor) || qColor.includes(tColor)) return 0.85;
-  }
-  
-  // Token-based matching
-  const qTok = tokenize(query);
-  const tTok = tokenize(target);
-  if (qTok.length === 0 || tTok.length === 0) return 0;
-
-  let overlap = 0;
-  for (const qt of qTok) {
-    // Skip numeric tokens for color matching
-    if (/^\d+$/.test(qt)) continue;
-    if (tTok.some((tt) => tt === qt || tt.includes(qt) || qt.includes(tt))) {
-      overlap++;
-    }
-  }
-  
-  // Only count non-numeric query tokens
-  const nonNumericQTok = qTok.filter(t => !/^\d+$/.test(t));
-  if (nonNumericQTok.length === 0) return 0;
-  
-  return (overlap / nonNumericQTok.length) * 0.8;
-}
-
-function bestMatch(query: string, candidates: string[]): { match: string | null; score: number } {
-  let best: string | null = null;
-  let bestScore = 0;
-  for (const c of candidates) {
-    const score = fuzzyScore(query, c);
-    if (score > bestScore) {
-      bestScore = score;
-      best = c;
-    }
-  }
-  return { match: best, score: bestScore };
-}
-
-function bestColorMatch(query: string, candidates: string[]): { match: string | null; score: number } {
-  let best: string | null = null;
-  let bestScore = 0;
-  for (const c of candidates) {
-    const score = colorFuzzyScore(query, c);
-    if (score > bestScore) {
-      bestScore = score;
-      best = c;
-    }
-  }
-  return { match: best, score: bestScore };
-}
-
-// Tab type for the UI
-type TabId = 'upload' | 'browse' | 'analytics';
 
 export default function HistoricalSalesPage() {
   const supabase = createClientComponentClient();
   
-  // Active tab
-  const [activeTab, setActiveTab] = useState<TabId>('upload');
-  
-  // Wide format upload state
-  const [wideRows, setWideRows] = useState<WideRow[]>([]);
-  const [parsedRows, setParsedRows] = useState<ParsedWideRow[]>([]);
-  const [detectedSizes, setDetectedSizes] = useState<string[]>([]);
+  // State
+  const [activeTab, setActiveTab] = useState<'upload' | 'browse' | 'analytics'>('upload');
+  const [rawFileData, setRawFileData] = useState<RawFileData | null>(null);
+  const [columnMapping, setColumnMapping] = useState<ColumnMapping | null>(null);
+  const [parsedRows, setParsedRows] = useState<ParsedNarrowRow[]>([]);
   const [uploading, setUploading] = useState(false);
-  const [uploadResult, setUploadResult] = useState<{ success: boolean; message: string } | null>(null);
   const [uploadProgress, setUploadProgress] = useState({ current: 0, total: 0 });
-  
-  // Reset state
-  const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [uploadResult, setUploadResult] = useState<{ success: boolean; message: string } | null>(null);
   const [resetting, setResetting] = useState(false);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
   
-  // Browse state
-  const [styleInput, setStyleInput] = useState('');
-  const [colorInput, setColorInput] = useState('');
-  const [dateFrom, setDateFrom] = useState('');
-  const [dateTo, setDateTo] = useState('');
-  const [salesData, setSalesData] = useState<SalesRow[]>([]);
-  const [salesCount, setSalesCount] = useState<number | null>(null);
-  const [salesLoading, setSalesLoading] = useState(false);
-  const [salesError, setSalesError] = useState<string | null>(null);
-
-  // Batch update modal state
-  const [batchUpdateModal, setBatchUpdateModal] = useState<{
-    show: boolean;
-    rowIndex: number;
-    newStyleNo: string;
-    similarRowIndexes: number[];
-  } | null>(null);
-
-  // Add color modal state
+  // Modal states
   const [addColorModal, setAddColorModal] = useState<{
     show: boolean;
     rowIndex: number;
-    styleNo: string;
-    styleId: string;
+    styleNo: string | null;
+    styleId: string | null;
     originalColor: string;
   } | null>(null);
   const [newColorName, setNewColorName] = useState('');
-  const [addingColor, setAddingColor] = useState(false);
-
-  // Fetch all styles (paginate; Supabase default limit is 1000)
-  const { data: styles } = useSWR('historical-sales:styles', async () => {
-    const PAGE = 1000;
-    const all: StyleRow[] = [];
-    let from = 0;
-    while (true) {
-      const { data } = await supabase
+  const [savingColor, setSavingColor] = useState(false);
+  
+  // Fetch styles and colors
+  const { data: styles, error: stylesError } = useSWR<StyleRow[]>(
+    'styles',
+    async () => {
+      const { data, error } = await supabase
         .from('styles')
         .select('id, style_no, style_name')
-        .order('style_no')
-        .range(from, from + PAGE - 1);
-      const chunk = (data ?? []) as StyleRow[];
-      all.push(...chunk);
-      if (chunk.length < PAGE) break;
-      from += PAGE;
+        .order('style_no');
+      if (error) throw error;
+      return data || [];
     }
-    return all;
-  });
-
-  // Fetch all style colors (paginate; Supabase default limit is 1000)
-  const { data: styleColors, mutate: mutateStyleColors } = useSWR('historical-sales:style-colors', async () => {
-    const PAGE = 1000;
-    const all: StyleColorRow[] = [];
-    let from = 0;
-    while (true) {
-      const { data } = await supabase
+  );
+  
+  const { data: styleColors, error: styleColorsError } = useSWR<StyleColorRow[]>(
+    'style_colors',
+    async () => {
+      const { data, error } = await supabase
         .from('style_colors')
         .select('id, style_id, color')
-        .order('color')
-        .range(from, from + PAGE - 1);
-      const chunk = (data ?? []) as StyleColorRow[];
-      all.push(...chunk);
-      if (chunk.length < PAGE) break;
-      from += PAGE;
+        .order('color');
+      if (error) throw error;
+      return data || [];
     }
-    return all;
-  });
-
-  // Parsed style numbers for browse
-  const parsedStyleNos = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          styleInput
-            .split(/[\s,;\n]+/)
-            .map((s) => s.trim())
-            .filter(Boolean)
-        )
-      ),
-    [styleInput]
   );
-
-  // Create a map of style_no -> available colors for the color dropdown
+  
+  // Fetch sales data for browse tab
+  const { data: salesData = [], mutate: mutateSales } = useSWR<SalesRow[]>(
+    activeTab === 'browse' ? 'historical_sales' : null,
+    async () => {
+      const { data, error } = await supabase
+        .from('historical_sales')
+        .select('style_no, color, date, size, quantity, order_type, order_channel')
+        .order('date', { ascending: false })
+        .order('style_no')
+        .limit(500);
+      if (error) throw error;
+      return data || [];
+    }
+  );
+  
+  // Get sales count
+  const { data: salesCount } = useSWR<number>(
+    activeTab === 'browse' ? 'historical_sales_count' : null,
+    async () => {
+      const { count, error } = await supabase
+        .from('historical_sales')
+        .select('*', { count: 'exact', head: true });
+      if (error) throw error;
+      return count || 0;
+    }
+  );
+  
+  // Create maps for matching
   const colorsByStyleNo = useMemo(() => {
     const map = new Map<string, string[]>();
     if (!styles || !styleColors) return map;
     
-    styleColors.forEach(sc => {
-      const style = styles.find(s => s.id === sc.style_id);
-      if (style) {
-        const existing = map.get(style.style_no) || [];
-        if (!existing.includes(sc.color)) {
-          existing.push(sc.color);
-        }
-        map.set(style.style_no, existing);
-      }
-    });
-    
-    // Sort colors alphabetically for each style
-    map.forEach((colors, styleNo) => {
-      map.set(styleNo, colors.sort());
-    });
-    
+    for (const style of styles) {
+      const colors = styleColors
+        .filter(sc => sc.style_id === style.id)
+        .map(sc => sc.color);
+      map.set(style.style_no, colors);
+    }
     return map;
   }, [styles, styleColors]);
-
-  // Function to update a row's matched color
-  function updateRowColor(rowIndex: number, newColor: string) {
-    setParsedRows(prev => prev.map((row, idx) => {
-      if (idx !== rowIndex) return row;
-      
-      const nowMatched = newColor !== '';
-      
-      return {
-        ...row,
-        matchedColor: newColor || null,
-        colorScore: newColor ? 1.0 : 0, // Manual selection = perfect match
-        matchNote: newColor ? 'Manually selected' : null,
-        status: !row.matchedStyleNo ? 'unmatched_style' : 
-                nowMatched ? 'matched' : 'unmatched_color'
-      };
-    }));
-  }
-
-  // Function to update a row's matched style number
-  function updateRowStyleNo(rowIndex: number, newStyleNo: string) {
-    const currentRow = parsedRows[rowIndex];
-    if (!currentRow) return;
-
-    // Find similar rows (same original styleName/styleNo AND same color input)
-    const similarIndexes = parsedRows
-      .map((row, idx) => {
-        if (idx === rowIndex) return -1;
-        const sameStyle = (row.styleName === currentRow.styleName && row.styleName) ||
-                         (row.styleNo === currentRow.styleNo && row.styleNo);
-        const sameColor = row.color.toLowerCase() === currentRow.color.toLowerCase();
-        return sameStyle && sameColor ? idx : -1;
-      })
-      .filter(idx => idx !== -1);
-
-    if (similarIndexes.length > 0) {
-      // Show modal to ask about batch update
-      setBatchUpdateModal({
-        show: true,
-        rowIndex,
-        newStyleNo,
-        similarRowIndexes: similarIndexes
-      });
-    } else {
-      // No similar rows, just update this one
-      applyStyleChange(rowIndex, newStyleNo);
-    }
-  }
-
-  // Apply style change to a single row
-  function applyStyleChange(rowIndex: number, newStyleNo: string) {
-    setParsedRows(prev => prev.map((row, idx) => {
-      if (idx !== rowIndex) return row;
-      
-      // Get available colors for the new style
-      const availableColors = colorsByStyleNo.get(newStyleNo) || [];
-      
-      // Try to match the original color to the new style's colors
-      let matchedColor: string | null = null;
-      let colorScore = 0;
-      
-      // Try exact match first
-      const exactMatch = availableColors.find(c => c.toLowerCase() === row.color.toLowerCase());
-      if (exactMatch) {
-        matchedColor = exactMatch;
-        colorScore = 1.0;
-      } else if (availableColors.length > 0) {
-        // Try fuzzy match
-        const fuzzyResult = bestColorMatch(row.color, availableColors);
-        if (fuzzyResult.match && fuzzyResult.score >= 0.5) {
-          matchedColor = fuzzyResult.match;
-          colorScore = fuzzyResult.score;
-        }
-      }
-      
-      return {
-        ...row,
-        matchedStyleNo: newStyleNo || null,
-        matchedColor,
-        styleScore: 1.0, // Manual selection
-        colorScore,
-        matchNote: 'Style manually selected',
-        status: !newStyleNo ? 'unmatched_style' : 
-                !matchedColor ? 'unmatched_color' : 'matched'
-      };
-    }));
-  }
-
-  // Confirm batch style update
-  function confirmBatchStyleUpdate(updateAll: boolean) {
-    if (!batchUpdateModal) return;
-    
-    const { rowIndex, newStyleNo, similarRowIndexes } = batchUpdateModal;
-    
-    // Always update the main row
-    applyStyleChange(rowIndex, newStyleNo);
-    
-    // If user said yes, update all similar rows
-    if (updateAll) {
-      for (const idx of similarRowIndexes) {
-        applyStyleChange(idx, newStyleNo);
-      }
-    }
-    
-    setBatchUpdateModal(null);
-  }
-
-  // Add a new color to a style
-  async function addNewColorToStyle() {
-    if (!addColorModal || !newColorName.trim()) return;
-    
-    const { styleId, styleNo, rowIndex } = addColorModal;
-    const finalColorName = newColorName.trim();
-    
-    setAddingColor(true);
-    
-    try {
-      // Use API route to add color (bypasses RLS)
-      const response = await fetch('/api/historical-sales/add-color', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          style_id: styleId,
-          color: finalColorName
-        })
-      });
-      
-      const result = await response.json();
-      
-      if (!response.ok) {
-        setUploadResult({ success: false, message: `Failed to add color: ${result.error}` });
-        return;
-      }
-      
-      // Refresh style colors
-      await mutateStyleColors();
-      
-      // Update the row with the new color
-      setParsedRows(prev => prev.map((row, idx) => {
-        if (idx !== rowIndex) return row;
-        return {
-          ...row,
-          matchedColor: finalColorName,
-          colorScore: 1.0,
-          matchNote: `New color added`,
-          status: 'matched'
-        };
-      }));
-      
-      setUploadResult({ success: true, message: `Added color "${finalColorName}" to style ${styleNo}` });
-      setAddColorModal(null);
-      setNewColorName('');
-    } catch (err: any) {
-      setUploadResult({ success: false, message: `Failed to add color: ${err.message}` });
-    } finally {
-      setAddingColor(false);
-    }
-  }
-
-  // Open add color modal
-  function openAddColorModal(rowIndex: number) {
-    const row = parsedRows[rowIndex];
-    if (!row || !row.matchedStyleNo) return;
-    
-    const style = styles?.find(s => s.style_no === row.matchedStyleNo);
-    if (!style) return;
-    
-    setAddColorModal({
-      show: true,
-      rowIndex,
-      styleNo: row.matchedStyleNo,
-      styleId: style.id,
-      originalColor: row.color
-    });
-    setNewColorName(row.color); // Pre-fill with the original color name
-  }
-
-  // Parse Excel file (wide format)
+  
+  // Match stats
+  const matchStats = useMemo(() => {
+    const total = parsedRows.length;
+    const matched = parsedRows.filter(r => r.status === 'matched').length;
+    const unmatchedStyle = parsedRows.filter(r => r.status === 'unmatched_style').length;
+    const unmatchedColor = parsedRows.filter(r => r.status === 'unmatched_color').length;
+    return { total, matched, unmatchedStyle, unmatchedColor };
+  }, [parsedRows]);
+  
+  // Parse file - step 1: read file and detect columns
   const handleFileDrop = useCallback((files: File[]) => {
     const file = files[0];
     if (!file) return;
@@ -533,289 +347,115 @@ export default function HistoricalSalesPage() {
         const json: Record<string, any>[] = XLSX.utils.sheet_to_json(ws, { defval: '' });
         const headers = Object.keys(json[0] || {});
         
-        // Detect column mappings - look for style columns
-        // "Style No" = direct style number lookup
-        // "Style Name" = style name for fallback/alternative matching
-        // If only one "Style" column exists, we'll try it as both
-        let styleNoCol = headers.find(h => /^style[\s_-]?no\.?$|^style[\s_-]?number$/i.test(h));
-        let styleNameCol = headers.find(h => /^style[\s_-]?name$/i.test(h));
-        
-        // If neither specific column found, look for any "style" column
-        if (!styleNoCol && !styleNameCol) {
-          const styleCol = headers.find(h => /style/i.test(h));
-          if (styleCol) {
-            // We'll use this column as a "style identifier" - could be either no or name
-            styleNameCol = styleCol; // Use as style name for flexible matching
-          }
-        }
-        
-        let colorCol = headers.find(h => /^color$|^colour$/i.test(h));
-        let dateCol = headers.find(h => /date[\s_-]?(to[\s_-]?from)?|period|range/i.test(h));
-        
-        // Detect size columns (numeric headers or known sizes)
-        const sizeCols = headers.filter(h => {
-          const trimmed = h.trim();
-          // Check for numeric size
-          if (/^\d{2}$/.test(trimmed)) return true;
-          // Check for size names
-          if (/^(xs|s|m|l|xl|xxl|xxxl|one[\s_-]?size)$/i.test(trimmed)) return true;
-          return false;
-        });
-        
-        if ((!styleNoCol && !styleNameCol) || !colorCol) {
-          setUploadResult({ 
-            success: false, 
-            message: `Could not detect required columns. Found: ${headers.join(', ')}. Need: Style No (or Style Name), Color, and size columns (34, 36, etc.)` 
-          });
+        if (headers.length === 0) {
+          setUploadResult({ success: false, message: 'No columns found in file' });
           return;
         }
         
-        setDetectedSizes(sizeCols);
+        // Auto-detect columns
+        const detected = autoDetectColumns(headers);
         
-        console.log('[Historical Sales] Column detection:', { styleNoCol, styleNameCol, colorCol, dateCol, sizeCols, headers });
-        
-        // Parse rows into wide format
-        const rows: WideRow[] = json.map(row => {
-          const sizes: Record<string, number> = {};
-          for (const sizeCol of sizeCols) {
-            const val = row[sizeCol];
-            const num = typeof val === 'number' ? val : parseInt(String(val), 10);
-            if (!isNaN(num) && num > 0) {
-              sizes[sizeCol.trim()] = num;
-            }
-          }
-          
-          // Get the raw style identifier - could be a number or a name
-          const styleNoValue = styleNoCol ? String(row[styleNoCol] ?? '').trim() : '';
-          const styleNameValue = styleNameCol ? String(row[styleNameCol] ?? '').trim() : '';
-          
-          return {
-            styleNo: styleNoValue,
-            styleName: styleNameValue,
-            color: String(row[colorCol!] ?? '').trim(),
-            dateRange: dateCol ? String(row[dateCol] ?? '').trim() : '',
-            sizes
-          };
-        }).filter(r => (r.styleNo || r.styleName) && r.color && Object.keys(r.sizes).length > 0);
-        
-        setWideRows(rows);
+        setRawFileData({ headers, rows: json });
+        setColumnMapping(detected);
         setUploadResult(null);
-        
-        // Now match styles and colors
-        if (styles && styleColors) {
-          matchRows(rows, styles, styleColors);
-        }
-      } catch (err: any) {
-        setUploadResult({ success: false, message: `Error parsing file: ${err.message}` });
+        setParsedRows([]);
+      } catch (error) {
+        console.error('[Historical Sales] File read error:', error);
+        setUploadResult({ success: false, message: `Error reading file: ${error}` });
       }
     };
     reader.readAsArrayBuffer(file);
-  }, [styles, styleColors]);
-
-  // Match rows to styles and colors
-  function matchRows(rows: WideRow[], allStyles: StyleRow[], allColors: StyleColorRow[]) {
-    // Build lookup maps
-    const styleNoMap = new Map<string, StyleRow>();  // style_no (lowercase) -> StyleRow
-    const stylesByName = new Map<string, StyleRow[]>(); // style_name (lowercase) -> StyleRow[]
+  }, []);
+  
+  // Step 2: Parse rows after column mapping is confirmed
+  const parseRowsWithMapping = useCallback(() => {
+    if (!rawFileData || !columnMapping || !styles) return;
     
-    allStyles.forEach(s => {
-      styleNoMap.set(s.style_no.toLowerCase(), s);
-      if (s.style_name) {
-        const nameLower = s.style_name.toLowerCase();
-        const existing = stylesByName.get(nameLower) || [];
-        existing.push(s);
-        stylesByName.set(nameLower, existing);
-      }
-    });
+    const { styleNo, styleName, size, quantity, date, orderType, orderChannel } = columnMapping;
     
-    // Build color lookup: style_id -> colors[]
-    const colorsByStyleId = new Map<string, string[]>();
-    allColors.forEach(c => {
-      const existing = colorsByStyleId.get(c.style_id) || [];
-      existing.push(c.color);
-      colorsByStyleId.set(c.style_id, existing);
-    });
+    // Validate required columns
+    if (!styleNo || !styleName || !size || !quantity || !date) {
+      setUploadResult({
+        success: false,
+        message: 'Please map all required columns: Style No, Style Name, Size, Quantity, and Date'
+      });
+      return;
+    }
     
-    // Helper to get colors for a style
-    const getColorsForStyle = (style: StyleRow): string[] => {
-      return colorsByStyleId.get(style.id) || [];
-    };
-    
-    // Helper to try matching a color against a style's available colors
-    const tryMatchColor = (inputColor: string, availableColors: string[]): { match: string | null; score: number } => {
-      if (availableColors.length === 0) return { match: null, score: 0 };
+    // Parse rows
+    const rows: NarrowRow[] = rawFileData.rows.map(row => {
+      const parsedDate = parseDate(row[date]);
+      const qty = typeof row[quantity] === 'number' ? row[quantity] : parseInt(String(row[quantity] || '0'), 10);
       
-      // Try exact match first
-      const exactColor = availableColors.find(c => c.toLowerCase() === inputColor.toLowerCase());
-      if (exactColor) return { match: exactColor, score: 1.0 };
-      
-      // Try fuzzy match
-      return bestColorMatch(inputColor, availableColors);
-    };
+      return {
+        styleNo: String(row[styleNo] || '').trim(),
+        styleName: String(row[styleName] || '').trim(),
+        size: String(row[size] || '').trim(),
+        quantity: isNaN(qty) ? 0 : qty,
+        date: parsedDate || '',
+        orderType: orderType ? String(row[orderType] || '').trim() : undefined,
+        orderChannel: orderChannel ? String(row[orderChannel] || '').trim() : undefined,
+      };
+    }).filter(r => r.styleNo && r.styleName && r.size && r.quantity > 0 && r.date);
     
-    // Helper to try matching a style identifier (could be style_no or style_name)
-    const tryFindStyle = (identifier: string): StyleRow | null => {
-      if (!identifier) return null;
-      const lower = identifier.toLowerCase();
-      
-      // Try as style_no first (exact)
-      const byNo = styleNoMap.get(lower);
-      if (byNo) return byNo;
-      
-      // Try as style_name (exact)
-      const byName = stylesByName.get(lower);
-      if (byName && byName.length > 0) return byName[0]!;
-      
-      return null;
-    };
-    
-    const parsed: ParsedWideRow[] = rows.map(row => {
+    // Match each row against styles and colors
+    const parsed: ParsedNarrowRow[] = rows.map(row => {
       let matchedStyleNo: string | null = null;
       let matchedColor: string | null = null;
       let styleScore = 0;
       let colorScore = 0;
       let matchNote: string | null = null;
       
-      // STEP 0: Check HARD-CODED RULES first (highest priority)
-      const styleIdentifier = row.styleName || row.styleNo;
-      const hardcodedStyleNo = checkHardcodedRules(styleIdentifier, row.color);
-      
-      if (hardcodedStyleNo) {
-        // Found a hard-coded rule! Try to find this style and its color
-        const hardcodedStyle = styleNoMap.get(hardcodedStyleNo.toLowerCase());
-        if (hardcodedStyle) {
-          matchedStyleNo = hardcodedStyle.style_no;
-          styleScore = 1.0;
-          matchNote = `Rule: -> ${hardcodedStyleNo}`;
-          
-          // Try to match color for this style
-          const colors = getColorsForStyle(hardcodedStyle);
-          const colorResult = tryMatchColor(row.color, colors);
-          if (colorResult.match && colorResult.score >= 0.5) {
-            matchedColor = colorResult.match;
-            colorScore = colorResult.score;
-          }
-        } else {
-          // Hard-coded style_no not found in database - DON'T use it, let normal matching try
-          matchNote = `Rule ${hardcodedStyleNo} NOT IN DB!`;
-          console.warn(`[Historical Sales] Hard-coded rule style_no "${hardcodedStyleNo}" not found in database!`);
-          // Don't set matchedStyleNo - let it fall through to normal matching
-        }
-      }
-      
-      // If hard-coded rule didn't fully match, continue with normal matching
-      if (!matchedStyleNo || !matchedColor) {
-        // Combine styleNo and styleName for matching - try both as identifiers
-        const identifiersToTry = [row.styleNo, row.styleName].filter(Boolean);
+      // Try exact match on style_no first
+      const exactStyleMatch = styles.find(s => s.style_no.toLowerCase() === row.styleNo.toLowerCase());
+      if (exactStyleMatch) {
+        matchedStyleNo = exactStyleMatch.style_no;
+        styleScore = 1.0;
+        matchNote = 'Exact style no match';
+      } else {
+        // Try fuzzy match on style_name
+        let bestMatch: StyleRow | null = null;
+        let bestScore = 0;
         
-        // STEP 1: Try direct matching with any identifier
-        if (!matchedStyleNo) {
-          for (const identifier of identifiersToTry) {
-            const directMatch = tryFindStyle(identifier);
-            if (directMatch) {
-              matchedStyleNo = directMatch.style_no;
-              styleScore = 1.0;
-              
-              // Try to match color for this style
-              const colors = getColorsForStyle(directMatch);
-              const colorResult = tryMatchColor(row.color, colors);
-              if (colorResult.match && colorResult.score >= 0.5) {
-                matchedColor = colorResult.match;
-                colorScore = colorResult.score;
-                break; // Found a complete match!
-              }
-            }
+        for (const style of styles) {
+          if (!style.style_name) continue;
+          const score = fuzzyScore(row.styleName, style.style_name);
+          if (score > bestScore && score >= 0.7) {
+            bestScore = score;
+            bestMatch = style;
           }
+        }
+        
+        if (bestMatch) {
+          matchedStyleNo = bestMatch.style_no;
+          styleScore = bestScore;
+          matchNote = `Fuzzy match (${Math.round(bestScore * 100)}%)`;
         }
       }
       
-      // STEP 2: If we matched a style but not the color, search ALL styles with the same name for the color
-      if (matchedStyleNo && !matchedColor) {
-        const styleName = row.styleName || row.styleNo;
-        if (styleName) {
-          const nameLower = styleName.toLowerCase();
-          
-          // Get all styles that might match this name
-          const alternativeStyles = stylesByName.get(nameLower) || [];
-          
-          // Also check styles where style_no matches the input (different products with same number)
-          const byNoStyles = allStyles.filter(s => 
-            s.style_no.toLowerCase() === nameLower || 
-            (s.style_name && s.style_name.toLowerCase() === nameLower)
-          );
-          
-          const allAlternatives = [...new Map([...alternativeStyles, ...byNoStyles].map(s => [s.id, s])).values()];
-          
-          // Check each alternative style for the color
-          for (const altStyle of allAlternatives) {
-            if (altStyle.style_no === matchedStyleNo) continue; // Skip the one we already tried
-            
-            const colors = getColorsForStyle(altStyle);
-            const colorResult = tryMatchColor(row.color, colors);
-            
-            if (colorResult.match && colorResult.score >= 0.5) {
-              // Found the color on an alternative style!
-              matchedStyleNo = altStyle.style_no;
-              matchedColor = colorResult.match;
-              colorScore = colorResult.score;
-              matchNote = `Color found on ${altStyle.style_no}`;
-              break;
-            }
+      // Match color (from size column in original data, we'll extract from styleName for now)
+      // For narrow format, we need to determine color somehow
+      // Let's check if there's a color in the hardcoded rules
+      if (matchedStyleNo) {
+        const colors = colorsByStyleNo.get(matchedStyleNo) || [];
+        
+        // Try to extract color from styleName or check hardcoded rules
+        const hardcodedStyleNo = checkHardcodedRules(row.styleName, row.size);
+        if (hardcodedStyleNo && hardcodedStyleNo === matchedStyleNo) {
+          // The size might actually be indicating a color in the old format
+          // For now, let's just pick the first color if available
+          if (colors.length > 0) {
+            matchedColor = colors[0];
+            colorScore = 1.0;
           }
+        } else if (colors.length > 0) {
+          matchedColor = colors[0];
+          colorScore = 0.8;
+          matchNote = (matchNote || '') + ' (auto-selected first color)';
         }
       }
       
-      // STEP 3: If still no style match, try fuzzy matching
-      if (!matchedStyleNo) {
-        const searchTerm = row.styleName || row.styleNo;
-        if (searchTerm && allStyles.length > 0) {
-          // Try fuzzy match on style_name
-          const styleNames = allStyles.filter(s => s.style_name).map(s => s.style_name!);
-          const { match: fuzzyName, score } = bestMatch(searchTerm, styleNames);
-          
-          if (fuzzyName && score >= 0.6) {
-            const matchedStyle = allStyles.find(s => s.style_name === fuzzyName);
-            if (matchedStyle) {
-              matchedStyleNo = matchedStyle.style_no;
-              styleScore = score;
-              
-              // Try color match
-              const colors = getColorsForStyle(matchedStyle);
-              const colorResult = tryMatchColor(row.color, colors);
-              if (colorResult.match && colorResult.score >= 0.5) {
-                matchedColor = colorResult.match;
-                colorScore = colorResult.score;
-              }
-              matchNote = `Fuzzy: "${fuzzyName}" (${Math.round(score * 100)}%)`;
-            }
-          }
-          
-          // Also try fuzzy match on style_no
-          if (!matchedStyleNo) {
-            const styleNos = allStyles.map(s => s.style_no);
-            const { match: fuzzyNo, score: noScore } = bestMatch(searchTerm, styleNos);
-            
-            if (fuzzyNo && noScore >= 0.7) {
-              const matchedStyle = allStyles.find(s => s.style_no === fuzzyNo);
-              if (matchedStyle) {
-                matchedStyleNo = matchedStyle.style_no;
-                styleScore = noScore;
-                
-                // Try color match
-                const colors = getColorsForStyle(matchedStyle);
-                const colorResult = tryMatchColor(row.color, colors);
-                if (colorResult.match && colorResult.score >= 0.5) {
-                  matchedColor = colorResult.match;
-                  colorScore = colorResult.score;
-                }
-                matchNote = `Fuzzy style no (${Math.round(noScore * 100)}%)`;
-              }
-            }
-          }
-        }
-      }
-      
-      const status: ParsedWideRow['status'] = 
+      const status: 'matched' | 'unmatched_style' | 'unmatched_color' =
         !matchedStyleNo ? 'unmatched_style' :
         !matchedColor ? 'unmatched_color' :
         'matched';
@@ -827,228 +467,213 @@ export default function HistoricalSalesPage() {
         styleScore,
         colorScore,
         matchNote,
-        status
+        status,
       };
-    });
-    
-    console.log('[Historical Sales] Matching complete:', {
-      total: parsed.length,
-      matched: parsed.filter(r => r.status === 'matched').length,
-      unmatchedStyle: parsed.filter(r => r.status === 'unmatched_style').length,
-      unmatchedColor: parsed.filter(r => r.status === 'unmatched_color').length,
-      sampleRows: parsed.slice(0, 3).map(r => ({
-        styleNo: r.styleNo,
-        styleName: r.styleName,
-        color: r.color,
-        matchedStyleNo: r.matchedStyleNo,
-        matchedColor: r.matchedColor,
-        status: r.status,
-        note: r.matchNote
-      }))
     });
     
     setParsedRows(parsed);
-  }
-
-  // Re-match when styles/colors load
-  React.useEffect(() => {
-    if (wideRows.length > 0 && styles && styleColors) {
-      matchRows(wideRows, styles, styleColors);
+    setUploadResult({ success: true, message: `Parsed ${parsed.length} rows successfully` });
+  }, [rawFileData, columnMapping, styles, colorsByStyleNo]);
+  
+  // Update column mapping
+  const updateColumnMapping = useCallback((field: keyof ColumnMapping, value: string | null) => {
+    setColumnMapping(prev => prev ? { ...prev, [field]: value } : null);
+  }, []);
+  
+  // Update matched style/color for a row
+  const updateRowStyleNo = useCallback((index: number, styleNo: string) => {
+    setParsedRows(prev => {
+      const updated = [...prev];
+      const row = updated[index];
+      row.matchedStyleNo = styleNo || null;
+      
+      // Reset color when style changes
+      row.matchedColor = null;
+      row.colorScore = 0;
+      
+      // Auto-select first color if available
+      if (styleNo) {
+        const colors = colorsByStyleNo.get(styleNo) || [];
+        if (colors.length > 0) {
+          row.matchedColor = colors[0];
+          row.colorScore = 0.8;
+        }
+      }
+      
+      // Update status
+      row.status = !row.matchedStyleNo ? 'unmatched_style' :
+                   !row.matchedColor ? 'unmatched_color' :
+                   'matched';
+      
+      return updated;
+    });
+  }, [colorsByStyleNo]);
+  
+  const updateRowColor = useCallback((index: number, color: string) => {
+    setParsedRows(prev => {
+      const updated = [...prev];
+      const row = updated[index];
+      row.matchedColor = color || null;
+      row.colorScore = color ? 1.0 : 0;
+      
+      // Update status
+      row.status = !row.matchedStyleNo ? 'unmatched_style' :
+                   !row.matchedColor ? 'unmatched_color' :
+                   'matched';
+      
+      return updated;
+    });
+  }, []);
+  
+  // Add new color to a style
+  const openAddColorModal = (rowIndex: number) => {
+    const row = parsedRows[rowIndex];
+    if (!row.matchedStyleNo) return;
+    
+    const style = styles?.find(s => s.style_no === row.matchedStyleNo);
+    if (!style) return;
+    
+    setAddColorModal({
+      show: true,
+      rowIndex,
+      styleNo: row.matchedStyleNo,
+      styleId: style.id,
+      originalColor: row.styleName // Use styleName as color hint
+    });
+    setNewColorName('');
+  };
+  
+  const saveNewColor = async () => {
+    if (!addColorModal || !newColorName.trim()) return;
+    
+    setSavingColor(true);
+    try {
+      const { error } = await supabase
+        .from('style_colors')
+        .insert({
+          style_id: addColorModal.styleId,
+          color: newColorName.trim()
+        });
+      
+      if (error) throw error;
+      
+      // Update the row with the new color
+      updateRowColor(addColorModal.rowIndex, newColorName.trim());
+      
+      // Close modal
+      setAddColorModal(null);
+      setNewColorName('');
+      
+      // Refresh colors
+      // Note: In a real app, you'd want to mutate the SWR cache here
+    } catch (error) {
+      console.error('[Historical Sales] Error adding color:', error);
+      alert('Failed to add color');
+    } finally {
+      setSavingColor(false);
     }
-  }, [wideRows, styles, styleColors]);
-
-  // Upload matched rows
-  async function uploadMatchedRows() {
+  };
+  
+  // Upload matched rows to database
+  const uploadMatchedRows = async () => {
     const matchedRows = parsedRows.filter(r => r.status === 'matched');
-    if (matchedRows.length === 0) {
-      setUploadResult({ success: false, message: 'No matched rows to upload' });
-      return;
-    }
+    if (matchedRows.length === 0) return;
     
     setUploading(true);
     setUploadProgress({ current: 0, total: matchedRows.length });
-    setUploadResult(null);
     
     try {
-      // Convert wide rows to tall format for API
-      const tallRows: Array<{
-        style_no: string;
-        color: string;
-        date: string;
-        size: string;
-        quantity: number;
-      }> = [];
+      const batchSize = 50;
+      let uploaded = 0;
       
-      for (const row of matchedRows) {
-        for (const [size, qty] of Object.entries(row.sizes)) {
-          tallRows.push({
-            style_no: row.matchedStyleNo!,
-            color: row.matchedColor!,
-            date: row.dateRange || new Date().toISOString().split('T')[0]!,
-            size,
-            quantity: qty
+      for (let i = 0; i < matchedRows.length; i += batchSize) {
+        const batch = matchedRows.slice(i, i + batchSize);
+        const records = batch.map(row => ({
+          style_no: row.matchedStyleNo!,
+          color: row.matchedColor!,
+          date: row.date,
+          size: row.size,
+          quantity: row.quantity,
+          order_type: row.orderType || null,
+          order_channel: row.orderChannel || null,
+        }));
+        
+        const { error } = await supabase
+          .from('historical_sales')
+          .upsert(records, {
+            onConflict: 'style_no,color,date,size',
+            ignoreDuplicates: false
           });
-        }
-      }
-
-      // Upload in batches
-      const batchSize = 500;
-      let successCount = 0;
-      let errorCount = 0;
-      const errors: string[] = [];
-      
-      for (let i = 0; i < tallRows.length; i += batchSize) {
-        const batch = tallRows.slice(i, i + batchSize);
-
-        const response = await fetch('/api/historical-sales/upload', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ rows: batch })
-        });
-
-        const result = await response.json();
         
-        console.log('[Historical Sales Upload] Batch response:', response.status, result);
+        if (error) throw error;
         
-        if (response.ok) {
-          successCount += result.successCount || batch.length;
-          errorCount += result.errorCount || 0;
-          if (result.errors) {
-            errors.push(...result.errors.slice(0, 10));
-          }
-        } else {
-          errorCount += batch.length;
-          // Include more details in the error
-          const errorDetails = result.errors?.slice(0, 5).join('; ') || result.error || 'Batch upload failed';
-          errors.push(`Batch failed (${response.status}): ${errorDetails}`);
-        }
-        
-        setUploadProgress({ current: Math.min(i + batchSize, tallRows.length), total: tallRows.length });
+        uploaded += batch.length;
+        setUploadProgress({ current: uploaded, total: matchedRows.length });
       }
       
-      if (errorCount === 0) {
-        setUploadResult({ 
-          success: true, 
-          message: `Successfully uploaded ${successCount} records from ${matchedRows.length} style/color combinations` 
-        });
-      } else {
-        setUploadResult({ 
-          success: successCount > 0, 
-          message: `Uploaded ${successCount} records, ${errorCount} errors.\n\nErrors:\n${errors.slice(0, 10).join('\n')}` 
-        });
-      }
-    } catch (err: any) {
-      setUploadResult({ success: false, message: `Upload failed: ${err.message}` });
+      setUploadResult({
+        success: true,
+        message: `Successfully uploaded ${matchedRows.length} rows to database`
+      });
+      
+      // Reset after successful upload
+      setTimeout(() => {
+        setRawFileData(null);
+        setColumnMapping(null);
+        setParsedRows([]);
+      }, 2000);
+      
+      // Refresh sales data
+      mutateSales();
+    } catch (error) {
+      console.error('[Historical Sales] Upload error:', error);
+      setUploadResult({
+        success: false,
+        message: `Upload failed: ${error}`
+      });
     } finally {
       setUploading(false);
     }
-  }
-
-  // Browse historical sales
-  async function fetchSalesData() {
-    setSalesError(null);
-    if (parsedStyleNos.length === 0) {
-      setSalesError('Enter at least one style number.');
-      return;
-    }
-    setSalesLoading(true);
-    try {
-      const payload: any = {
-        style_nos: parsedStyleNos,
-        start_date: dateFrom || undefined,
-        end_date: dateTo || undefined
-      };
-      if (colorInput.trim()) {
-        payload.colors = [colorInput.trim()];
-      }
-      const res = await fetch('/api/historical-sales/list', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      const json = await res.json();
-      if (!res.ok) {
-        setSalesError(json.error || 'Failed to fetch sales data');
-        setSalesData([]);
-        setSalesCount(null);
-        return;
-      }
-      setSalesData(json.data || []);
-      setSalesCount(typeof json.count === 'number' ? json.count : null);
-    } catch (err: any) {
-      setSalesError(err.message || 'Failed to fetch sales data');
-    } finally {
-      setSalesLoading(false);
-    }
-  }
-
-  // Export to CSV
-  function exportToCSV() {
-    if (salesData.length === 0) return;
-    
-    const headers = ['Style', 'Color', 'Date', 'Size', 'Quantity'];
-    const csvRows = [
-      headers.join(','),
-      ...salesData.map(row => [
-        `"${row.style_no}"`,
-        `"${row.color}"`,
-        row.date,
-        `"${row.size}"`,
-        row.quantity
-      ].join(','))
-    ];
-    
-    const blob = new Blob([csvRows.join('\n')], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `historical-sales-${new Date().toISOString().split('T')[0]}.csv`;
-    link.click();
-    URL.revokeObjectURL(url);
-  }
-
-  // Stats for parsed rows
-  const matchStats = useMemo(() => {
-    const matched = parsedRows.filter(r => r.status === 'matched').length;
-    const unmatchedStyle = parsedRows.filter(r => r.status === 'unmatched_style').length;
-    const unmatchedColor = parsedRows.filter(r => r.status === 'unmatched_color').length;
-    return { matched, unmatchedStyle, unmatchedColor, total: parsedRows.length };
-  }, [parsedRows]);
-
+  };
+  
   // Reset all historical sales data
-  async function resetHistoricalSales() {
-    if (!showResetConfirm) {
-      setShowResetConfirm(true);
-      return;
-    }
-    
+  const resetHistoricalSales = async () => {
     setResetting(true);
     try {
-      const response = await fetch('/api/historical-sales/reset', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ confirm: 'RESET_ALL_HISTORICAL_SALES' })
-      });
+      const { error } = await supabase
+        .from('historical_sales')
+        .delete()
+        .neq('style_no', '');
       
-      const result = await response.json();
+      if (error) throw error;
       
-      if (response.ok) {
-        setUploadResult({ success: true, message: result.message || 'All historical sales data deleted' });
-        setSalesData([]);
-        setSalesCount(null);
-      } else {
-        setUploadResult({ success: false, message: result.error || 'Failed to reset data' });
-      }
-    } catch (err: any) {
-      setUploadResult({ success: false, message: `Reset failed: ${err.message}` });
+      setShowResetConfirm(false);
+      mutateSales();
+      alert('All historical sales data has been deleted');
+    } catch (error) {
+      console.error('[Historical Sales] Reset error:', error);
+      alert('Failed to reset data');
     } finally {
       setResetting(false);
-      setShowResetConfirm(false);
     }
-  }
-
+  };
+  
+  // Filter sales data by search query
+  const filteredSalesData = useMemo(() => {
+    if (!searchQuery.trim()) return salesData;
+    const query = searchQuery.toLowerCase();
+    return salesData.filter(row =>
+      row.style_no.toLowerCase().includes(query) ||
+      row.color.toLowerCase().includes(query) ||
+      row.size.toLowerCase().includes(query) ||
+      row.date.includes(query) ||
+      (row.order_type && row.order_type.toLowerCase().includes(query)) ||
+      (row.order_channel && row.order_channel.toLowerCase().includes(query))
+    );
+  }, [salesData, searchQuery]);
+  
   // Tab button component
-  const TabButton = ({ id, label }: { id: TabId; label: string }) => (
+  const TabButton = ({ id, label }: { id: 'upload' | 'browse' | 'analytics'; label: string }) => (
     <button
       onClick={() => setActiveTab(id)}
       className={`px-4 py-2 text-sm font-medium rounded-t-lg border-b-2 transition-colors ${
@@ -1060,7 +685,7 @@ export default function HistoricalSalesPage() {
       {label}
     </button>
   );
-
+  
   return (
     <div className="p-4 space-y-4 max-w-7xl mx-auto">
       <div className="flex items-start justify-between">
@@ -1068,7 +693,7 @@ export default function HistoricalSalesPage() {
           <div className="text-xs text-slate-500">Sales</div>
           <h1 className="text-2xl font-semibold">Historical Sales Data</h1>
           <p className="text-sm text-slate-600 mt-1">
-            Upload and analyze historical sales data. Monthly totals are automatically expanded into daily rows.
+            Upload and analyze historical sales data. One row per size.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -1113,14 +738,11 @@ export default function HistoricalSalesPage() {
       {activeTab === 'upload' && (
         <Card className="border-[#C5D5CA]">
           <CardHeader>
-            <CardTitle>Upload Historical Sales (Wide Format)</CardTitle>
+            <CardTitle>Upload Historical Sales (Narrow Format)</CardTitle>
             <CardDescription>
-              Upload an Excel file with columns: <strong>Style Name</strong>, <strong>Color</strong>, 
-              size columns (<strong>34, 36, 38, 40, 42, 44, 46</strong>), and optional <strong>Date to-from</strong>.
-              <br />
-              <span className="text-amber-600 font-medium">
-                Monthly totals (e.g., 01-01-2025 - 31-01-2025) are automatically split into daily rows.
-              </span>
+              Upload an Excel file with one row per size. Required columns: <strong>Style No</strong>, <strong>Style Name</strong>, 
+              <strong>Size</strong>, <strong>Qty</strong>, <strong>Date</strong>.
+              Optional: <strong>Order Type</strong>, <strong>Order Channel</strong>.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -1138,57 +760,181 @@ export default function HistoricalSalesPage() {
               </div>
             </Dropzone>
 
-            {/* Detected sizes */}
-            {detectedSizes.length > 0 && (
-              <div className="flex items-center gap-2 text-sm">
-                <span className="text-slate-600">Detected sizes:</span>
-                {detectedSizes.map(size => (
-                  <Badge key={size} className="bg-slate-100">{size}</Badge>
-                ))}
+            {/* Column Mapping UI */}
+            {rawFileData && columnMapping && (
+              <div className="space-y-4 p-4 bg-slate-50 rounded-lg border">
+                <div className="flex items-center justify-between">
+                  <h3 className="font-medium">Map Columns</h3>
+                  <Button
+                    onClick={parseRowsWithMapping}
+                    size="sm"
+                    className="bg-[#8FA894] hover:bg-[#8FA894]/90"
+                  >
+                    Parse Rows
+                  </Button>
+                </div>
+                
+                <div className="grid grid-cols-2 gap-4">
+                  {/* Style No */}
+                  <div>
+                    <label className="text-sm font-medium text-slate-700">
+                      Style No <span className="text-red-600">*</span>
+                    </label>
+                    <select
+                      value={columnMapping.styleNo || ''}
+                      onChange={(e) => updateColumnMapping('styleNo', e.target.value || null)}
+                      className="w-full mt-1 text-sm px-3 py-2 rounded border border-slate-300 focus:outline-none focus:ring-1 focus:ring-[#8FA894]"
+                    >
+                      <option value="">— Select column —</option>
+                      {rawFileData.headers.map(h => (
+                        <option key={h} value={h}>{h}</option>
+                      ))}
+                    </select>
+                  </div>
+                  
+                  {/* Style Name */}
+                  <div>
+                    <label className="text-sm font-medium text-slate-700">
+                      Style Name <span className="text-red-600">*</span>
+                    </label>
+                    <select
+                      value={columnMapping.styleName || ''}
+                      onChange={(e) => updateColumnMapping('styleName', e.target.value || null)}
+                      className="w-full mt-1 text-sm px-3 py-2 rounded border border-slate-300 focus:outline-none focus:ring-1 focus:ring-[#8FA894]"
+                    >
+                      <option value="">— Select column —</option>
+                      {rawFileData.headers.map(h => (
+                        <option key={h} value={h}>{h}</option>
+                      ))}
+                    </select>
+                  </div>
+                  
+                  {/* Size */}
+                  <div>
+                    <label className="text-sm font-medium text-slate-700">
+                      Size <span className="text-red-600">*</span>
+                    </label>
+                    <select
+                      value={columnMapping.size || ''}
+                      onChange={(e) => updateColumnMapping('size', e.target.value || null)}
+                      className="w-full mt-1 text-sm px-3 py-2 rounded border border-slate-300 focus:outline-none focus:ring-1 focus:ring-[#8FA894]"
+                    >
+                      <option value="">— Select column —</option>
+                      {rawFileData.headers.map(h => (
+                        <option key={h} value={h}>{h}</option>
+                      ))}
+                    </select>
+                  </div>
+                  
+                  {/* Quantity */}
+                  <div>
+                    <label className="text-sm font-medium text-slate-700">
+                      Quantity <span className="text-red-600">*</span>
+                    </label>
+                    <select
+                      value={columnMapping.quantity || ''}
+                      onChange={(e) => updateColumnMapping('quantity', e.target.value || null)}
+                      className="w-full mt-1 text-sm px-3 py-2 rounded border border-slate-300 focus:outline-none focus:ring-1 focus:ring-[#8FA894]"
+                    >
+                      <option value="">— Select column —</option>
+                      {rawFileData.headers.map(h => (
+                        <option key={h} value={h}>{h}</option>
+                      ))}
+                    </select>
+                  </div>
+                  
+                  {/* Date */}
+                  <div>
+                    <label className="text-sm font-medium text-slate-700">
+                      Date <span className="text-red-600">*</span>
+                    </label>
+                    <select
+                      value={columnMapping.date || ''}
+                      onChange={(e) => updateColumnMapping('date', e.target.value || null)}
+                      className="w-full mt-1 text-sm px-3 py-2 rounded border border-slate-300 focus:outline-none focus:ring-1 focus:ring-[#8FA894]"
+                    >
+                      <option value="">— Select column —</option>
+                      {rawFileData.headers.map(h => (
+                        <option key={h} value={h}>{h}</option>
+                      ))}
+                    </select>
+                  </div>
+                  
+                  {/* Order Type (Optional) */}
+                  <div>
+                    <label className="text-sm font-medium text-slate-700">
+                      Order Type <span className="text-slate-400">(optional)</span>
+                    </label>
+                    <select
+                      value={columnMapping.orderType || ''}
+                      onChange={(e) => updateColumnMapping('orderType', e.target.value || null)}
+                      className="w-full mt-1 text-sm px-3 py-2 rounded border border-slate-300 focus:outline-none focus:ring-1 focus:ring-[#8FA894]"
+                    >
+                      <option value="">— Select column —</option>
+                      {rawFileData.headers.map(h => (
+                        <option key={h} value={h}>{h}</option>
+                      ))}
+                    </select>
+                  </div>
+                  
+                  {/* Order Channel (Optional) */}
+                  <div>
+                    <label className="text-sm font-medium text-slate-700">
+                      Order Channel <span className="text-slate-400">(optional)</span>
+                    </label>
+                    <select
+                      value={columnMapping.orderChannel || ''}
+                      onChange={(e) => updateColumnMapping('orderChannel', e.target.value || null)}
+                      className="w-full mt-1 text-sm px-3 py-2 rounded border border-slate-300 focus:outline-none focus:ring-1 focus:ring-[#8FA894]"
+                    >
+                      <option value="">— Select column —</option>
+                      {rawFileData.headers.map(h => (
+                        <option key={h} value={h}>{h}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
               </div>
             )}
 
-            {/* Matching stats */}
+            {/* Parsed rows table */}
             {parsedRows.length > 0 && (
-              <div className="border rounded-lg p-4 bg-slate-50 space-y-3">
-                <div className="flex items-center justify-between">
-                  <h3 className="font-medium text-sm">Matching Results</h3>
-                  <span className="text-sm text-slate-500">{matchStats.total} rows parsed</span>
-                </div>
-                
-                <div className="flex gap-4">
+              <div className="space-y-4">
+                <div className="flex items-center gap-4 p-3 bg-blue-50 rounded-md border border-blue-200">
                   <div className="flex items-center gap-2">
-                    <CheckCircle className="h-4 w-4 text-green-600" />
-                    <span className="text-sm">{matchStats.matched} matched</span>
+                    <Badge className="bg-green-100 text-green-800">
+                      {matchStats.matched} Matched
+                    </Badge>
+                    {matchStats.unmatchedStyle > 0 && (
+                      <Badge className="bg-red-100 text-red-800">
+                        {matchStats.unmatchedStyle} No Style
+                      </Badge>
+                    )}
+                    {matchStats.unmatchedColor > 0 && (
+                      <Badge className="bg-yellow-100 text-yellow-800">
+                        {matchStats.unmatchedColor} No Color
+                      </Badge>
+                    )}
                   </div>
-                  {matchStats.unmatchedStyle > 0 && (
-                    <div className="flex items-center gap-2">
-                      <AlertCircle className="h-4 w-4 text-red-500" />
-                      <span className="text-sm">{matchStats.unmatchedStyle} style not found</span>
-                    </div>
-                  )}
-                  {matchStats.unmatchedColor > 0 && (
-                    <div className="flex items-center gap-2">
-                      <AlertCircle className="h-4 w-4 text-yellow-500" />
-                      <span className="text-sm">{matchStats.unmatchedColor} color not found — <em className="text-slate-500">select from dropdown</em></span>
-                    </div>
-                  )}
+                  <span className="text-sm text-slate-600">
+                    Review and fix any unmatched rows below before uploading
+                  </span>
                 </div>
 
-                {/* Preview table - scrollable, shows all rows */}
-                <div className="max-h-[500px] overflow-auto border rounded bg-white">
-                  <table className="min-w-full text-xs">
+                <div className="max-h-96 overflow-auto border rounded-lg">
+                  <table className="w-full text-sm">
                     <thead className="bg-slate-50 sticky top-0">
                       <tr>
-                        <th className="p-2 text-left border-b">Status</th>
-                        <th className="p-2 text-left border-b">Style No</th>
-                        <th className="p-2 text-left border-b">Style Name</th>
-                        <th className="p-2 text-left border-b">Matched Style</th>
-                        <th className="p-2 text-left border-b">Color Input</th>
-                        <th className="p-2 text-left border-b">Matched Color <span className="font-normal text-slate-400">(editable)</span></th>
-                        <th className="p-2 text-left border-b">Date Range</th>
-                        <th className="p-2 text-right border-b">Qty</th>
-                        <th className="p-2 text-left border-b">Note</th>
+                        <th className="p-2 text-left border-b font-medium">Status</th>
+                        <th className="p-2 text-left border-b font-medium">Style No (File)</th>
+                        <th className="p-2 text-left border-b font-medium">Style Name (File)</th>
+                        <th className="p-2 text-left border-b font-medium">Matched Style</th>
+                        <th className="p-2 text-left border-b font-medium">Matched Color</th>
+                        <th className="p-2 text-left border-b font-medium">Size</th>
+                        <th className="p-2 text-right border-b font-medium">Qty</th>
+                        <th className="p-2 text-left border-b font-medium">Date</th>
+                        <th className="p-2 text-left border-b font-medium">Order Type</th>
+                        <th className="p-2 text-left border-b font-medium">Order Channel</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1196,7 +942,7 @@ export default function HistoricalSalesPage() {
                         <tr key={idx} className={row.status !== 'matched' ? 'bg-red-50' : ''}>
                           <td className="p-2 border-b">
                             {row.status === 'matched' ? (
-                              <Badge className="bg-green-100 text-green-800 text-[10px]">OK</Badge>
+                              <Badge className="bg-green-100 text-green-800 text-[10px]">Matched</Badge>
                             ) : row.status === 'unmatched_style' ? (
                               <Badge className="bg-red-100 text-red-800 text-[10px]">No Style</Badge>
                             ) : (
@@ -1222,11 +968,7 @@ export default function HistoricalSalesPage() {
                                 </option>
                               ))}
                             </select>
-                            {row.styleScore < 1 && row.styleScore >= 0.7 && (
-                              <span className="text-[10px] text-slate-400 ml-1">({Math.round(row.styleScore * 100)}%)</span>
-                            )}
                           </td>
-                          <td className="p-2 border-b">{row.color}</td>
                           <td className="p-2 border-b">
                             {row.matchedStyleNo ? (
                               <div className="flex items-center gap-1">
@@ -1255,17 +997,12 @@ export default function HistoricalSalesPage() {
                             ) : (
                               <span className="text-slate-400">—</span>
                             )}
-                            {row.colorScore < 1 && row.colorScore >= 0.5 && row.matchedColor && (
-                              <span className="text-[10px] text-slate-400 ml-1">auto</span>
-                            )}
                           </td>
-                          <td className="p-2 border-b text-slate-600 text-[10px]">{row.dateRange || '—'}</td>
-                          <td className="p-2 border-b text-right font-mono">
-                            {Object.values(row.sizes).reduce((a, b) => a + b, 0)}
-                          </td>
-                          <td className="p-2 border-b text-[10px] text-slate-500 max-w-[150px]">
-                            {row.matchNote || (row.colorScore < 1 && row.colorScore >= 0.5 ? 'Fuzzy color match' : '')}
-                          </td>
+                          <td className="p-2 border-b font-mono text-xs">{row.size}</td>
+                          <td className="p-2 border-b text-right font-mono">{row.quantity}</td>
+                          <td className="p-2 border-b text-slate-600 text-[10px]">{row.date || '—'}</td>
+                          <td className="p-2 border-b text-[10px]">{row.orderType || '—'}</td>
+                          <td className="p-2 border-b text-[10px]">{row.orderChannel || '—'}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -1312,41 +1049,6 @@ export default function HistoricalSalesPage() {
         </Card>
       )}
 
-      {/* Batch Style Update Modal */}
-      {batchUpdateModal?.show && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="bg-white rounded-lg shadow-xl p-6 max-w-md w-full mx-4">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold">Update Similar Rows?</h3>
-              <button 
-                onClick={() => setBatchUpdateModal(null)}
-                className="p-1 hover:bg-slate-100 rounded"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-            <p className="text-sm text-slate-600 mb-4">
-              Found <strong>{batchUpdateModal.similarRowIndexes.length}</strong> more rows with the same 
-              style/color combination. Do you want to update them all to use <strong>{batchUpdateModal.newStyleNo}</strong>?
-            </p>
-            <div className="flex gap-3 justify-end">
-              <Button
-                variant="outline"
-                onClick={() => confirmBatchStyleUpdate(false)}
-              >
-                No, just this one
-              </Button>
-              <Button
-                onClick={() => confirmBatchStyleUpdate(true)}
-                className="bg-[#8FA894] hover:bg-[#8FA894]/90"
-              >
-                Yes, update all {batchUpdateModal.similarRowIndexes.length + 1}
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Add Color Modal */}
       {addColorModal?.show && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
@@ -1354,54 +1056,34 @@ export default function HistoricalSalesPage() {
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold">Add New Color</h3>
               <button 
-                onClick={() => { setAddColorModal(null); setNewColorName(''); }}
+                onClick={() => setAddColorModal(null)}
                 className="p-1 hover:bg-slate-100 rounded"
               >
                 <X className="h-5 w-5" />
               </button>
             </div>
             <p className="text-sm text-slate-600 mb-4">
-              Add a new color to style <strong>{addColorModal.styleNo}</strong>.
+              Add a new color to style <strong>{addColorModal.styleNo}</strong>
             </p>
-            <div className="space-y-3">
-              <div>
-                <label className="text-xs font-medium text-slate-700">Original color from file</label>
-                <div className="text-sm text-slate-500 bg-slate-50 px-3 py-2 rounded border">
-                  {addColorModal.originalColor}
-                </div>
-              </div>
-              <div>
-                <label className="text-xs font-medium text-slate-700">New color name</label>
-                <Input
-                  value={newColorName}
-                  onChange={(e) => setNewColorName(e.target.value)}
-                  placeholder="e.g., Black, Navy Blue"
-                />
-              </div>
-            </div>
-            <div className="flex gap-3 justify-end mt-4">
+            <Input
+              value={newColorName}
+              onChange={(e) => setNewColorName(e.target.value)}
+              placeholder="Enter color name"
+              className="mb-4"
+            />
+            <div className="flex gap-3 justify-end">
               <Button
                 variant="outline"
-                onClick={() => { setAddColorModal(null); setNewColorName(''); }}
+                onClick={() => setAddColorModal(null)}
               >
                 Cancel
               </Button>
               <Button
-                onClick={addNewColorToStyle}
-                disabled={!newColorName.trim() || addingColor}
+                onClick={saveNewColor}
+                disabled={savingColor || !newColorName.trim()}
                 className="bg-[#8FA894] hover:bg-[#8FA894]/90"
               >
-                {addingColor ? (
-                  <>
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    Adding...
-                  </>
-                ) : (
-                  <>
-                    <Plus className="h-4 w-4 mr-2" />
-                    Add Color
-                  </>
-                )}
+                {savingColor ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Add Color'}
               </Button>
             </div>
           </div>
@@ -1414,88 +1096,50 @@ export default function HistoricalSalesPage() {
           <CardHeader>
             <CardTitle>Browse Historical Sales</CardTitle>
             <CardDescription>
-              Select style(s), optional color, and a date range to view stored sales entries.
+              View and search uploaded historical sales data
             </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-3">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <label className="text-xs font-medium text-slate-700">Style number(s)</label>
-                <textarea
-                  className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm h-24"
-                  placeholder="One or more style numbers, separated by comma, space, or newline"
-                  value={styleInput}
-                  onChange={(e) => setStyleInput(e.target.value)}
-                />
-                <div className="text-[11px] text-slate-500">
-                  Parsed styles: {parsedStyleNos.length}
-                </div>
-              </div>
-              <div className="grid grid-cols-1 gap-3">
-                <div className="space-y-1">
-                  <label className="text-xs font-medium text-slate-700">Color (optional)</label>
-                  <Input
-                    placeholder="Exact color name"
-                    value={colorInput}
-                    onChange={(e) => setColorInput(e.target.value)}
-                  />
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <div className="space-y-1">
-                    <label className="text-xs font-medium text-slate-700">From date</label>
-                    <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-xs font-medium text-slate-700">To date</label>
-                    <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
-                  </div>
-                </div>
-                <div className="flex gap-2">
-                  <Button onClick={fetchSalesData} disabled={salesLoading || parsedStyleNos.length === 0}>
-                    {salesLoading ? 'Loading...' : 'Fetch Sales'}
-                  </Button>
-                  {salesData.length > 0 && (
-                    <Button variant="outline" onClick={exportToCSV}>
-                      <Download className="h-4 w-4 mr-2" />
-                      Export CSV
-                    </Button>
-                  )}
-                </div>
-              </div>
+          <CardContent className="space-y-4">
+            <div className="flex items-center gap-2">
+              <Search className="h-4 w-4 text-slate-400" />
+              <Input
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search by style, color, size, date, order type, or channel..."
+                className="flex-1"
+              />
             </div>
 
-            {salesError && (
-              <div className="p-3 rounded-md text-sm bg-red-50 text-red-900 border border-red-200">
-                {salesError}
-              </div>
-            )}
-
-            <div className="border rounded-md overflow-hidden">
+            <div className="max-h-[600px] overflow-auto border rounded-lg">
               <Table>
-                <TableHeader>
+                <TableHeader className="bg-slate-50 sticky top-0">
                   <TableRow>
-                    <TableHead>Style</TableHead>
+                    <TableHead>Style No</TableHead>
                     <TableHead>Color</TableHead>
-                    <TableHead>Date</TableHead>
                     <TableHead>Size</TableHead>
-                    <TableHead className="text-right">Qty</TableHead>
+                    <TableHead className="text-right">Quantity</TableHead>
+                    <TableHead>Date</TableHead>
+                    <TableHead>Order Type</TableHead>
+                    <TableHead>Order Channel</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {salesData.length === 0 ? (
+                  {filteredSalesData.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={5} className="text-center text-slate-500">
-                        {salesLoading ? 'Loading sales...' : 'No data yet'}
+                      <TableCell colSpan={7} className="text-center text-slate-500">
+                        No data found
                       </TableCell>
                     </TableRow>
                   ) : (
-                    salesData.map((row, idx) => (
-                      <TableRow key={`${row.style_no}-${row.color}-${row.date}-${row.size}-${idx}`}>
-                        <TableCell>{row.style_no}</TableCell>
+                    filteredSalesData.map((row, idx) => (
+                      <TableRow key={idx}>
+                        <TableCell className="font-mono text-xs">{row.style_no}</TableCell>
                         <TableCell>{row.color}</TableCell>
-                        <TableCell>{row.date}</TableCell>
-                        <TableCell>{row.size}</TableCell>
-                        <TableCell className="text-right">{row.quantity}</TableCell>
+                        <TableCell className="font-mono">{row.size}</TableCell>
+                        <TableCell className="text-right font-mono">{row.quantity}</TableCell>
+                        <TableCell className="text-slate-600 text-xs">{row.date}</TableCell>
+                        <TableCell className="text-xs">{row.order_type || '—'}</TableCell>
+                        <TableCell className="text-xs">{row.order_channel || '—'}</TableCell>
                       </TableRow>
                     ))
                   )}
@@ -1503,8 +1147,8 @@ export default function HistoricalSalesPage() {
               </Table>
             </div>
             <div className="text-xs text-slate-600 flex items-center gap-2">
-              <span>Rows shown: {salesData.length}</span>
-              {salesCount !== null && <span className="text-slate-500">| Total matched: {salesCount}</span>}
+              <span>Rows shown: {filteredSalesData.length}</span>
+              {salesCount !== null && <span className="text-slate-500">| Total: {salesCount}</span>}
               <span className="text-slate-500">Limit 500 per query</span>
             </div>
           </CardContent>
@@ -1513,7 +1157,17 @@ export default function HistoricalSalesPage() {
 
       {/* Analytics Tab */}
       {activeTab === 'analytics' && (
-        <AnalyticsTab styles={styles || []} />
+        <Card>
+          <CardHeader>
+            <CardTitle>Analytics</CardTitle>
+            <CardDescription>
+              View trends and insights from historical sales data
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-slate-600">Analytics coming soon...</p>
+          </CardContent>
+        </Card>
       )}
 
       {/* Format Guide - Always visible at bottom */}
@@ -1526,86 +1180,80 @@ export default function HistoricalSalesPage() {
         </CardHeader>
         <CardContent className="space-y-4 text-sm">
           <div className="p-3 bg-[#8FA894]/10 rounded-lg border border-[#8FA894]/30">
-            <strong className="text-[#4A6B52]">Why daily storage matters:</strong>
+            <strong className="text-[#4A6B52]">New Format: One Row Per Size</strong>
             <p className="text-slate-600 mt-1">
-              Data is stored per day so we can calculate accurate weekly sales rates and size distributions. 
-              When you upload a month of data, it gets split evenly across days. This enables:
+              The historical sales import now uses a narrow format where each size has its own row.
+              This provides more flexibility and allows tracking of order type and channel.
             </p>
-            <ul className="list-disc list-inside mt-2 text-slate-600">
-              <li>Accurate weekly rate calculations for NOOS call-off suggestions</li>
-              <li>Historical size pressure analysis for purchase orders</li>
-              <li>Trend analysis in the Analytics tab</li>
-            </ul>
           </div>
 
           <div>
             <strong>File Format (.xlsx, .xls, .csv):</strong>
             <ul className="list-disc list-inside mt-1 text-slate-600">
-              <li><strong>Style Name</strong> or <strong>Style No</strong> - Fuzzy-matched to system styles</li>
-              <li><strong>Color</strong> - Fuzzy-matched to the style's available colors</li>
-              <li><strong>Size columns</strong> - Use numeric headers (34, 36, 38, 40, 42, 44, 46) or letter sizes (S, M, L, XL)</li>
-              <li><strong>Date to-from</strong> (optional) - Single date or date range</li>
+              <li><strong>Style No</strong> - Direct style number (required)</li>
+              <li><strong>Style Name</strong> - Style name for matching (required)</li>
+              <li><strong>Size</strong> - Size value (34, 36, 38, S, M, L, etc.) (required)</li>
+              <li><strong>Qty</strong> - Quantity sold (required)</li>
+              <li><strong>Date</strong> - Single date (not date range) (required)</li>
+              <li><strong>Order Type</strong> - Type of order (optional)</li>
+              <li><strong>Order Channel</strong> - Sales channel (optional)</li>
             </ul>
           </div>
           
           <div>
-            <strong>Date Handling:</strong>
+            <strong>Date Format:</strong>
             <ul className="list-disc list-inside mt-1 text-slate-600">
-              <li>Single date: <code className="bg-slate-100 px-1 rounded">15-01-2025</code> creates 1 row per size</li>
-              <li>Date range: <code className="bg-slate-100 px-1 rounded">01-01-2025 - 31-01-2025</code> creates 31 rows per size (quantity split evenly)</li>
               <li>Supported formats: DD-MM-YYYY, YYYY-MM-DD, DD/MM/YYYY, Excel serial numbers</li>
+              <li>Example: <code className="bg-slate-100 px-1 rounded">15-01-2025</code></li>
             </ul>
           </div>
 
           <div>
-            <strong>Example (Wide Format):</strong>
+            <strong>Example (Narrow Format):</strong>
             <div className="mt-2 overflow-x-auto">
               <table className="text-xs border">
                 <thead className="bg-slate-50">
                   <tr>
+                    <th className="p-2 border">Style No</th>
                     <th className="p-2 border">Style Name</th>
-                    <th className="p-2 border">Color</th>
-                    <th className="p-2 border">34</th>
-                    <th className="p-2 border">36</th>
-                    <th className="p-2 border">38</th>
-                    <th className="p-2 border">40</th>
-                    <th className="p-2 border">42</th>
-                    <th className="p-2 border">44</th>
-                    <th className="p-2 border">46</th>
-                    <th className="p-2 border">Date to-from</th>
+                    <th className="p-2 border">Size</th>
+                    <th className="p-2 border">Qty</th>
+                    <th className="p-2 border">Date</th>
+                    <th className="p-2 border">Order Type</th>
+                    <th className="p-2 border">Order Channel</th>
                   </tr>
                 </thead>
                 <tbody>
                   <tr>
+                    <td className="p-2 border">1234567-N</td>
                     <td className="p-2 border">SUMMER BLAZER</td>
-                    <td className="p-2 border">NAVY BLUE</td>
+                    <td className="p-2 border">34</td>
                     <td className="p-2 border">5</td>
-                    <td className="p-2 border">8</td>
-                    <td className="p-2 border">12</td>
-                    <td className="p-2 border">15</td>
-                    <td className="p-2 border">10</td>
-                    <td className="p-2 border">6</td>
-                    <td className="p-2 border">3</td>
-                    <td className="p-2 border">01-01-2025 - 31-01-2025</td>
+                    <td className="p-2 border">15-01-2025</td>
+                    <td className="p-2 border">Retail</td>
+                    <td className="p-2 border">Online</td>
                   </tr>
                   <tr>
-                    <td className="p-2 border">WINTER COAT</td>
-                    <td className="p-2 border">BLACK</td>
-                    <td className="p-2 border">3</td>
-                    <td className="p-2 border">5</td>
+                    <td className="p-2 border">1234567-N</td>
+                    <td className="p-2 border">SUMMER BLAZER</td>
+                    <td className="p-2 border">36</td>
                     <td className="p-2 border">8</td>
-                    <td className="p-2 border">10</td>
-                    <td className="p-2 border">7</td>
-                    <td className="p-2 border">4</td>
-                    <td className="p-2 border">2</td>
                     <td className="p-2 border">15-01-2025</td>
+                    <td className="p-2 border">Retail</td>
+                    <td className="p-2 border">Online</td>
+                  </tr>
+                  <tr>
+                    <td className="p-2 border">1234567-N</td>
+                    <td className="p-2 border">SUMMER BLAZER</td>
+                    <td className="p-2 border">38</td>
+                    <td className="p-2 border">12</td>
+                    <td className="p-2 border">15-01-2025</td>
+                    <td className="p-2 border">Wholesale</td>
+                    <td className="p-2 border">Store</td>
                   </tr>
                 </tbody>
               </table>
             </div>
-            <p className="text-xs text-slate-500 mt-2">
-              The first row above will create 31 days x 7 sizes = 217 database rows (with quantity per size divided by 31).
-            </p>
           </div>
 
           <div>
@@ -1619,1250 +1267,6 @@ export default function HistoricalSalesPage() {
           </div>
         </CardContent>
       </Card>
-    </div>
-  );
-}
-
-// ==================== Analytics Tab Component ====================
-type TimeseriesPoint = {
-  date: string;
-  total: number;
-  byColor?: Record<string, number>;
-  /** Display label for x-axis when aggregated (e.g. "Jan 24", "U1 '24") */
-  label?: string;
-};
-
-type MatrixData = {
-  sizes: string[];
-  colors: string[];
-  cells: Record<string, Record<string, number>>;
-  totals: {
-    byColor: Record<string, number>;
-    bySize: Record<string, number>;
-    grand: number;
-  };
-};
-
-type PeriodMatrixRow = {
-  style_no: string;
-  color: string;
-  size: string;
-  byPeriod: Record<string, number>;
-  total: number;
-};
-
-type PeriodMatrixResponse = {
-  periods: string[];
-  rows: PeriodMatrixRow[];
-};
-
-type TopStyle = {
-  style_no: string;
-  style_name: string | null;
-  total: number;
-  colorCount: number;
-  topColor: string;
-};
-
-function AnalyticsTab({ styles }: { styles: StyleRow[] }) {
-  // Multi-style selector
-  const [selectedStyleNos, setSelectedStyleNos] = useState<string[]>([]);
-  const [styleSearch, setStyleSearch] = useState('');
-  
-  // Date range
-  const [analyticsDateFrom, setAnalyticsDateFrom] = useState(() => {
-    const d = new Date();
-    d.setMonth(d.getMonth() - 3);
-    return d.toISOString().split('T')[0];
-  });
-  const [analyticsDateTo, setAnalyticsDateTo] = useState(() => {
-    return new Date().toISOString().split('T')[0];
-  });
-  
-  // Available colors (loaded for selected styles + date range)
-  const [availableColors, setAvailableColors] = useState<string[]>([]);
-  const [byStyleColors, setByStyleColors] = useState<Record<string, string[]>>({});
-  const [selectedColors, setSelectedColors] = useState<Set<string>>(new Set());
-  const [colorsLoading, setColorsLoading] = useState(false);
-
-  // Chart series color overrides (user-picked)
-  const COLOR_OVERRIDES_STORAGE_KEY = 'historical-sales:chart-color-overrides';
-  const [seriesColorOverrides, setSeriesColorOverrides] = useState<Record<string, string>>({});
-  React.useEffect(() => {
-    try {
-      const raw = localStorage.getItem(COLOR_OVERRIDES_STORAGE_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (parsed && typeof parsed === 'object') {
-          setSeriesColorOverrides(parsed);
-        }
-      }
-    } catch {
-      // ignore
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-  React.useEffect(() => {
-    try {
-      localStorage.setItem(COLOR_OVERRIDES_STORAGE_KEY, JSON.stringify(seriesColorOverrides));
-    } catch {
-      // ignore
-    }
-  }, [seriesColorOverrides]);
-  
-  // Data states
-  const [timeseriesData, setTimeseriesData] = useState<TimeseriesPoint[]>([]);
-  const [matrixDataByStyle, setMatrixDataByStyle] = useState<Record<string, MatrixData>>({});
-  const [periodMatrix, setPeriodMatrix] = useState<PeriodMatrixResponse | null>(null);
-  const [topStyles, setTopStyles] = useState<TopStyle[]>([]);
-  const [analyticsLoading, setAnalyticsLoading] = useState(false);
-  const [kpis, setKpis] = useState<{ totalUnits: number; avgPerDay: number; colors: string[]; daysInPeriod: number } | null>(null);
-  
-  // Top styles loading
-  const [topStylesLoading, setTopStylesLoading] = useState(false);
-
-  // Aggregate by Month | Week | Day (default Month)
-  type AggregationLevel = 'month' | 'week' | 'day';
-  const [aggregationLevel, setAggregationLevel] = useState<AggregationLevel>('month');
-
-  // Refs for PDF export (page layout groupings)
-  const exportPageRefs = useRef<(HTMLDivElement | null)[]>([]);
-  const exportPageIndexRef = useRef(0);
-  const [exportingPdf, setExportingPdf] = useState(false);
-
-  async function exportChartsToPdf() {
-    const pages = exportPageRefs.current.filter(Boolean) as HTMLDivElement[];
-    if (pages.length === 0) return;
-    setExportingPdf(true);
-    try {
-      const html2canvas = (await import('html2canvas')).default;
-      const { jsPDF } = await import('jspdf');
-      const pdf = new jsPDF('p', 'mm', 'a4');
-      const pageW = pdf.getPageWidth();
-      const pageH = pdf.getPageHeight();
-      const margin = 0.95;
-      const maxW = pageW * margin;
-      const maxH = pageH * margin;
-      for (let i = 0; i < pages.length; i++) {
-        const el = pages[i];
-        if (!el) continue;
-        const canvas = await html2canvas(el, { scale: 2, useCORS: true, logging: false });
-        const img = canvas.toDataURL('image/png');
-        if (i > 0) pdf.addPage();
-        const imgW = canvas.width;
-        const imgH = canvas.height;
-        let widthMM = maxW;
-        let heightMM = maxW * (imgH / imgW);
-        if (heightMM > maxH) {
-          heightMM = maxH;
-          widthMM = maxH * (imgW / imgH);
-        }
-        pdf.addImage(img, 'PNG', (pageW - widthMM) / 2, (pageH - heightMM) / 2, widthMM, heightMM);
-      }
-      pdf.save(`historical-sales-analytics-${analyticsDateFrom}-${analyticsDateTo}.pdf`);
-    } catch (err) {
-      console.error('PDF export failed:', err);
-    } finally {
-      setExportingPdf(false);
-    }
-  }
-
-  const aggregateTimeseries = useCallback((points: TimeseriesPoint[], level: AggregationLevel): TimeseriesPoint[] => {
-    if (points.length === 0) return [];
-    if (level === 'day') {
-      return points.map(p => ({ ...p, label: undefined }));
-    }
-    const getPeriodKey = (dateStr: string): string => {
-      if (level === 'month') return dateStr.slice(0, 7);
-      const d = new Date(dateStr);
-      const jan1 = new Date(d.getFullYear(), 0, 1);
-      const weekNo = Math.ceil((((d.getTime() - jan1.getTime()) / 86400000) + jan1.getDay() + 1) / 7);
-      return `${d.getFullYear()}-W${String(weekNo).padStart(2, '0')}`;
-    };
-    const getDisplayLabel = (periodKey: string): string => {
-      if (level === 'month') {
-        const [y, m] = periodKey.split('-');
-        const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-        return `${monthNames[parseInt(m || '1', 10) - 1]} ${(y || '').slice(2)}`;
-      }
-      const [y, w] = periodKey.split('-W');
-      return `U${parseInt(w || '0', 10)} '${(y || '').slice(2)}`;
-    };
-    const buckets = new Map<string, { total: number; byColor: Record<string, number> }>();
-    for (const p of points) {
-      const key = getPeriodKey(p.date);
-      if (!buckets.has(key)) buckets.set(key, { total: 0, byColor: {} });
-      const b = buckets.get(key)!;
-      b.total += p.total;
-      for (const [color, qty] of Object.entries(p.byColor || {})) {
-        b.byColor[color] = (b.byColor[color] || 0) + qty;
-      }
-    }
-    return Array.from(buckets.entries())
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([periodKey, { total, byColor }]) => ({
-        date: periodKey,
-        total,
-        byColor,
-        label: getDisplayLabel(periodKey)
-      }));
-  }, []);
-
-  // Aggregate timeseries by selected level (UI)
-  const aggregatedTimeseriesData = useMemo(() => {
-    return aggregateTimeseries(timeseriesData, aggregationLevel);
-  }, [timeseriesData, aggregationLevel, aggregateTimeseries]);
-
-  // Export is always per month (per requirements)
-  const exportTimeseriesMonthly = useMemo(() => {
-    return aggregateTimeseries(timeseriesData, 'month');
-  }, [timeseriesData, aggregateTimeseries]);
-
-  const resolveSeriesColor = (seriesName: string, index: number) => {
-    return seriesColorOverrides?.[seriesName] ?? getColorForName(seriesName, index);
-  };
-
-  const clearSeriesOverride = (seriesName: string) => {
-    setSeriesColorOverrides(prev => {
-      if (!prev[seriesName]) return prev;
-      const next = { ...prev };
-      delete next[seriesName];
-      return next;
-    });
-  };
-
-  // Filtered styles for dropdown
-  const filteredStyles = useMemo(() => {
-    if (!styleSearch.trim()) return styles.slice(0, 50);
-    const search = styleSearch.toLowerCase();
-    return styles
-      .filter(s => !selectedStyleNos.includes(s.style_no))
-      .filter(s => 
-        s.style_no.toLowerCase().includes(search) ||
-        (s.style_name && s.style_name.toLowerCase().includes(search))
-      )
-      .slice(0, 50);
-  }, [styles, styleSearch, selectedStyleNos]);
-
-  // Load top styles on mount
-  React.useEffect(() => {
-    loadTopStyles();
-  }, [analyticsDateFrom, analyticsDateTo]);
-
-  async function loadTopStyles() {
-    setTopStylesLoading(true);
-    try {
-      const res = await fetch('/api/historical-sales/top-styles', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          startDate: analyticsDateFrom,
-          endDate: analyticsDateTo,
-          limit: 10
-        })
-      });
-      const json = await res.json();
-      if (res.ok && json.styles) {
-        setTopStyles(json.styles);
-      }
-    } catch (err) {
-      console.error('Failed to load top styles:', err);
-    } finally {
-      setTopStylesLoading(false);
-    }
-  }
-
-  // Load available colors for selected styles
-  async function loadAvailableColors() {
-    if (selectedStyleNos.length === 0) return;
-    setColorsLoading(true);
-    try {
-      const res = await fetch('/api/historical-sales/available-colors', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          style_nos: selectedStyleNos,
-          startDate: analyticsDateFrom,
-          endDate: analyticsDateTo
-        })
-      });
-      const json = await res.json();
-      if (res.ok) {
-        setAvailableColors(json.colors || []);
-        setByStyleColors(json.byStyle || {});
-        setSelectedColors(new Set(json.colors || []));
-      }
-    } catch (err) {
-      console.error('Failed to load available colors:', err);
-    } finally {
-      setColorsLoading(false);
-    }
-  }
-
-  function toggleColor(color: string) {
-    setSelectedColors(prev => {
-      const next = new Set(prev);
-      if (next.has(color)) next.delete(color);
-      else next.add(color);
-      return next;
-    });
-  }
-
-  function selectAllColors() {
-    setSelectedColors(new Set(availableColors));
-  }
-
-  function deselectAllColors() {
-    setSelectedColors(new Set());
-  }
-
-  // Load analytics data for selected style(s) and colors
-  async function loadAnalytics() {
-    if (selectedStyleNos.length === 0) return;
-    
-    const colorsFilter = selectedColors.size > 0 ? Array.from(selectedColors) : undefined;
-    
-    setAnalyticsLoading(true);
-    try {
-      const allPointsByDate = new Map<string, { total: number; byColor: Record<string, number> }>();
-      let totalUnits = 0;
-      let daysInPeriod = 0;
-      const allColorsSet = new Set<string>();
-      const matrices: Record<string, MatrixData> = {};
-
-      for (const style_no of selectedStyleNos) {
-        // Timeseries
-        const tsRes = await fetch('/api/historical-sales/timeseries', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            style_no,
-            startDate: analyticsDateFrom,
-            endDate: analyticsDateTo,
-            colors: colorsFilter
-          })
-        });
-        const tsJson = await tsRes.json();
-        
-        if (tsRes.ok && tsJson.points) {
-          totalUnits += tsJson.totalUnits || 0;
-          daysInPeriod = Math.max(daysInPeriod, tsJson.daysInPeriod || 0);
-          (tsJson.colors || []).forEach((c: string) => allColorsSet.add(c));
-          
-          for (const p of tsJson.points) {
-            if (!allPointsByDate.has(p.date)) {
-              allPointsByDate.set(p.date, { total: 0, byColor: {} });
-            }
-            const entry = allPointsByDate.get(p.date)!;
-            entry.total += p.total;
-            for (const [color, qty] of Object.entries(p.byColor || {})) {
-              entry.byColor[color] = (entry.byColor[color] || 0) + (qty as number);
-            }
-          }
-        }
-
-        // Matrix per style
-        const matrixRes = await fetch('/api/historical-sales/matrix', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            style_no,
-            startDate: analyticsDateFrom,
-            endDate: analyticsDateTo,
-            colors: colorsFilter
-          })
-        });
-        const matrixJson = await matrixRes.json();
-        if (matrixRes.ok && matrixJson) {
-          matrices[style_no] = matrixJson;
-        }
-      }
-
-      // Period bucketed size/color table across selected styles
-      try {
-        const periodRes = await fetch('/api/historical-sales/period-matrix', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            style_nos: selectedStyleNos,
-            startDate: analyticsDateFrom,
-            endDate: analyticsDateTo,
-            aggregation: aggregationLevel,
-            colors: colorsFilter
-          })
-        });
-        const periodJson = await periodRes.json();
-        if (periodRes.ok) {
-          setPeriodMatrix(periodJson as PeriodMatrixResponse);
-        } else {
-          setPeriodMatrix(null);
-          console.error('Failed to load period matrix:', periodJson?.error || periodJson);
-        }
-      } catch (err) {
-        setPeriodMatrix(null);
-        console.error('Failed to load period matrix:', err);
-      }
-
-      const mergedPoints = Array.from(allPointsByDate.entries())
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([date, entry]) => ({ date, ...entry }));
-
-      setTimeseriesData(mergedPoints);
-      setMatrixDataByStyle(matrices);
-      setKpis({
-        totalUnits,
-        avgPerDay: daysInPeriod > 0 ? Math.round((totalUnits / daysInPeriod) * 100) / 100 : 0,
-        colors: Array.from(allColorsSet).sort(),
-        daysInPeriod
-      });
-    } catch (err) {
-      console.error('Failed to load analytics:', err);
-    } finally {
-      setAnalyticsLoading(false);
-    }
-  }
-
-  // Best period (day/week/month depending on aggregation)
-  const bestPeriod = useMemo(() => {
-    if (aggregatedTimeseriesData.length === 0) return null;
-    const first = aggregatedTimeseriesData[0];
-    if (!first) return null;
-    return aggregatedTimeseriesData.reduce((max, p) => p.total > max.total ? p : max, first);
-  }, [aggregatedTimeseriesData]);
-
-  const selectedStyles = useMemo(
-    () => selectedStyleNos.map(no => styles.find(s => s.style_no === no)).filter(Boolean) as StyleRow[],
-    [selectedStyleNos, styles]
-  );
-
-  return (
-    <div className="space-y-4">
-      {/* Controls */}
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-lg">Sales Analytics</CardTitle>
-          <CardDescription>
-            Select one or more styles, load available colors, then load analytics
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            {/* Multi-style selector */}
-            <div className="md:col-span-2 space-y-1">
-              <label className="text-xs font-medium text-slate-700">Styles</label>
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-                <Input
-                  placeholder="Search and add style(s)..."
-                  value={styleSearch}
-                  onChange={(e) => setStyleSearch(e.target.value)}
-                  className="pl-9"
-                />
-              </div>
-              {styleSearch && (
-                <div className="absolute z-10 mt-1 w-full max-w-md bg-white border rounded-lg shadow-lg max-h-48 overflow-auto">
-                  {filteredStyles.map(s => (
-                    <button
-                      key={s.id}
-                      onClick={() => {
-                        if (!selectedStyleNos.includes(s.style_no)) {
-                          setSelectedStyleNos(prev => [...prev, s.style_no]);
-                        }
-                        setStyleSearch('');
-                      }}
-                      className="w-full text-left px-3 py-2 hover:bg-slate-50 text-sm"
-                    >
-                      <span className="font-mono">{s.style_no}</span>
-                      {s.style_name && <span className="text-slate-500 ml-2">{s.style_name}</span>}
-                    </button>
-                  ))}
-                </div>
-              )}
-              {selectedStyleNos.length > 0 && (
-                <div className="flex flex-wrap gap-2 mt-2">
-                  {selectedStyleNos.map(no => {
-                    const s = styles.find(x => x.style_no === no);
-                    return (
-                      <Badge
-                        key={no}
-                        className="bg-[#8FA894]/20 text-[#4A6B52] font-mono pr-1"
-                      >
-                        {no}
-                        <button
-                          onClick={() => setSelectedStyleNos(prev => prev.filter(n => n !== no))}
-                          className="ml-1.5 rounded hover:bg-[#8FA894]/30 p-0.5"
-                        >
-                          <X className="h-3 w-3" />
-                        </button>
-                      </Badge>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-            
-            {/* Date range */}
-            <div className="space-y-1">
-              <label className="text-xs font-medium text-slate-700">From</label>
-              <Input 
-                type="date" 
-                value={analyticsDateFrom}
-                onChange={(e) => setAnalyticsDateFrom(e.target.value)}
-              />
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs font-medium text-slate-700">To</label>
-              <Input 
-                type="date" 
-                value={analyticsDateTo}
-                onChange={(e) => setAnalyticsDateTo(e.target.value)}
-              />
-            </div>
-          </div>
-          
-          {/* Load available colors */}
-          <div className="mt-4 flex flex-wrap items-center gap-2">
-            <Button
-              variant="outline"
-              onClick={loadAvailableColors}
-              disabled={selectedStyleNos.length === 0 || colorsLoading}
-            >
-              {colorsLoading ? (
-                <>
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Loading...
-                </>
-              ) : (
-                'Load available colors'
-              )}
-            </Button>
-            {availableColors.length > 0 && (
-              <span className="text-sm text-slate-500">
-                {availableColors.length} color(s) with data in period
-              </span>
-            )}
-          </div>
-
-          {/* Color checkboxes */}
-          {availableColors.length > 0 && (
-            <div className="mt-4 p-3 bg-slate-50 rounded-lg border">
-              <div className="flex items-center justify-between mb-2">
-                <label className="text-xs font-medium text-slate-700">Colors to include in analytics</label>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={selectAllColors}
-                    className="text-xs text-[#8FA894] hover:underline"
-                  >
-                    Select all
-                  </button>
-                  <span className="text-slate-300">|</span>
-                  <button
-                    type="button"
-                    onClick={deselectAllColors}
-                    className="text-xs text-slate-500 hover:underline"
-                  >
-                    Deselect all
-                  </button>
-                </div>
-              </div>
-              <div className="flex flex-wrap gap-x-4 gap-y-1 max-h-32 overflow-y-auto">
-                {availableColors.map(color => (
-                  <label key={color} className="flex items-center gap-1.5 text-sm cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={selectedColors.has(color)}
-                      onChange={() => toggleColor(color)}
-                      className="rounded border-slate-300 text-[#8FA894] focus:ring-[#8FA894]"
-                    />
-                    <span>{color}</span>
-                  </label>
-                ))}
-              </div>
-              {byStyleColors && Object.keys(byStyleColors).length > 1 && (
-                <p className="text-xs text-slate-500 mt-2">
-                  By style: {Object.entries(byStyleColors).map(([no, cols]) => `${no} (${cols.length})`).join(', ')}
-                </p>
-              )}
-            </div>
-          )}
-
-          {/* Series color overrides */}
-          {kpis && kpis.colors.length > 0 && (
-            <div className="mt-4 p-3 bg-white rounded-lg border">
-              <div className="flex items-center justify-between mb-2">
-                <label className="text-xs font-medium text-slate-700">Chart colors (editable)</label>
-                <button
-                  type="button"
-                  onClick={() => setSeriesColorOverrides({})}
-                  className="text-xs text-slate-500 hover:underline"
-                >
-                  Reset all
-                </button>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-48 overflow-auto">
-                {kpis.colors.map((colorName, index) => {
-                  const value = resolveSeriesColor(colorName, index);
-                  const hasOverride = Boolean(seriesColorOverrides[colorName]);
-                  return (
-                    <div key={colorName} className="flex items-center gap-2">
-                      <input
-                        type="color"
-                        value={value}
-                        onChange={(e) => {
-                          const hex = e.target.value;
-                          setSeriesColorOverrides(prev => ({ ...prev, [colorName]: hex }));
-                        }}
-                        className="h-7 w-9 p-0 border border-slate-200 rounded"
-                        aria-label={`Pick color for ${colorName}`}
-                      />
-                      <div className="flex-1 min-w-0">
-                        <div className="text-sm truncate" title={colorName}>{colorName}</div>
-                        <div className="text-[11px] text-slate-500 font-mono">{value}</div>
-                      </div>
-                      {hasOverride && (
-                        <button
-                          type="button"
-                          onClick={() => clearSeriesOverride(colorName)}
-                          className="text-xs text-slate-500 hover:underline"
-                        >
-                          clear
-                        </button>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-              <p className="text-xs text-slate-500 mt-2">
-                These colors apply to “Sales by Color Over Time” (and any other color-series charts) and will be saved in this browser.
-              </p>
-            </div>
-          )}
-          
-          <div className="mt-4 flex flex-wrap items-center gap-4">
-            <Button 
-              onClick={loadAnalytics}
-              disabled={selectedStyleNos.length === 0 || analyticsLoading}
-              className="bg-[#8FA894] hover:bg-[#8FA894]/90"
-            >
-              {analyticsLoading ? (
-                <>
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Loading...
-                </>
-              ) : (
-                'Load Analytics'
-              )}
-            </Button>
-            <div className="flex items-center gap-2">
-              <label className="text-xs font-medium text-slate-700">Aggregate by</label>
-              <select
-                value={aggregationLevel}
-                onChange={(e) => setAggregationLevel(e.target.value as AggregationLevel)}
-                className="text-sm border border-slate-300 rounded px-2 py-1.5 bg-white"
-              >
-                <option value="month">Month</option>
-                <option value="week">Week</option>
-                <option value="day">Day</option>
-              </select>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Top Styles Quick Pick */}
-      {selectedStyleNos.length === 0 && (
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base flex items-center gap-2">
-              <TrendingUp className="h-4 w-4" />
-              Top Selling Styles ({analyticsDateFrom} to {analyticsDateTo})
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {topStylesLoading ? (
-              <div className="flex items-center justify-center py-8">
-                <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
-              </div>
-            ) : topStyles.length === 0 ? (
-              <p className="text-sm text-slate-500 text-center py-4">No sales data in this period</p>
-            ) : (
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
-                {topStyles.map((style, idx) => (
-                  <button
-                    key={style.style_no}
-                    onClick={() => {
-                      if (!selectedStyleNos.includes(style.style_no)) {
-                        setSelectedStyleNos(prev => [...prev, style.style_no]);
-                      }
-                    }}
-                    className="p-3 border rounded-lg hover:border-[#8FA894] hover:bg-[#8FA894]/5 text-left transition-colors"
-                  >
-                    <div className="text-xs text-slate-400">#{idx + 1}</div>
-                    <div className="font-mono text-sm font-medium truncate">{style.style_no}</div>
-                    {style.style_name && (
-                      <div className="text-xs text-slate-500 truncate">{style.style_name}</div>
-                    )}
-                    <div className="text-lg font-bold text-[#8FA894] mt-1">
-                      {style.total.toLocaleString('da-DK')}
-                    </div>
-                    <div className="text-xs text-slate-400">{style.colorCount} colors</div>
-                  </button>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      )}
-
-      {/* KPI Tiles */}
-      {kpis && selectedStyleNos.length > 0 && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <Card>
-            <CardContent className="pt-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-slate-500">Total Units</p>
-                  <p className="text-2xl font-bold">{kpis.totalUnits.toLocaleString('da-DK')}</p>
-                </div>
-                <BarChart3 className="h-8 w-8 text-slate-300" />
-              </div>
-            </CardContent>
-          </Card>
-          
-          <Card>
-            <CardContent className="pt-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-slate-500">Avg/Day</p>
-                  <p className="text-2xl font-bold">{kpis.avgPerDay.toLocaleString('da-DK')}</p>
-                </div>
-                <Calendar className="h-8 w-8 text-slate-300" />
-              </div>
-            </CardContent>
-          </Card>
-          
-          <Card>
-            <CardContent className="pt-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-slate-500">Best {aggregationLevel === 'month' ? 'Month' : aggregationLevel === 'week' ? 'Week' : 'Day'}</p>
-                  <p className="text-2xl font-bold">
-                    {bestPeriod ? bestPeriod.total.toLocaleString('da-DK') : '—'}
-                  </p>
-                  {bestPeriod && (
-                    <p className="text-xs text-slate-400">{bestPeriod.label ?? bestPeriod.date}</p>
-                  )}
-                </div>
-                <TrendingUp className="h-8 w-8 text-green-300" />
-              </div>
-            </CardContent>
-          </Card>
-          
-          <Card>
-            <CardContent className="pt-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-slate-500">Colors</p>
-                  <p className="text-2xl font-bold">{kpis.colors.length}</p>
-                </div>
-                <div className="flex -space-x-1">
-                  {kpis.colors.slice(0, 4).map((_, i) => (
-                    <div 
-                      key={i}
-                      className="w-6 h-6 rounded-full border-2 border-white"
-                      style={{ backgroundColor: resolveSeriesColor(kpis.colors[i]!, i) }}
-                    />
-                  ))}
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      )}
-
-      {/* Charts */}
-      {aggregatedTimeseriesData.length > 0 && selectedStyleNos.length > 0 && (
-        <>
-          <div className="flex justify-end mb-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={exportChartsToPdf}
-              disabled={exportingPdf}
-              className="gap-2"
-            >
-              {exportingPdf ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileDown className="h-4 w-4" />}
-              {exportingPdf ? 'Exporting...' : 'Export to PDF'}
-            </Button>
-          </div>
-
-          <div style={{ breakInside: 'avoid', pageBreakInside: 'avoid' } as any}>
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-base">Sales Trend by {aggregationLevel === 'month' ? 'Month' : aggregationLevel === 'week' ? 'Week' : 'Day'}</CardTitle>
-                <CardDescription>
-                  Units sold {selectedStyleNos.length > 1 ? `(${selectedStyleNos.length} styles combined)` : `for ${selectedStyleNos[0]}`}
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <DailyLineChart data={aggregatedTimeseriesData} height={300} />
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* Color Mix */}
-          {kpis && kpis.colors.length > 0 && (
-            <div style={{ breakInside: 'avoid', pageBreakInside: 'avoid' } as any}>
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-base">Sales by Color Over Time</CardTitle>
-                  <CardDescription>
-                    Stacked view — all {kpis.colors.length} colors
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <StackedAreaByColor
-                    data={aggregatedTimeseriesData}
-                    colors={kpis.colors}
-                    maxColors={50}
-                    height={300}
-                    colorOverrides={seriesColorOverrides}
-                  />
-                </CardContent>
-              </Card>
-            </div>
-          )}
-        </>
-      )}
-
-      {/* Size Matrix - one per style when multiple */}
-      {Object.keys(matrixDataByStyle).length > 0 && selectedStyleNos.length > 0 && (
-        <>
-          {Object.entries(matrixDataByStyle).map(([styleNo, matrixData]) => (
-            <div key={styleNo} style={{ breakInside: 'avoid', pageBreakInside: 'avoid' } as any}>
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-base">Size/Color Matrix — {styleNo}</CardTitle>
-                  <CardDescription>Total units sold by color and size</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="overflow-x-auto">
-                    <table className="min-w-full text-sm">
-                      <thead>
-                        <tr className="bg-slate-50">
-                          <th className="p-2 text-left border font-medium">Color</th>
-                          {matrixData.sizes.map(size => (
-                            <th key={size} className="p-2 text-center border font-medium">{size}</th>
-                          ))}
-                          <th className="p-2 text-right border font-medium bg-slate-100">Total</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {matrixData.colors.map(color => {
-                          const rowTotal = matrixData.totals.byColor[color] || 0;
-                          const formatPct = (pct: number) => {
-                            const rounded = Math.round(pct * 10) / 10;
-                            return Number.isInteger(rounded) ? `${rounded.toFixed(0)}%` : `${rounded.toFixed(1)}%`;
-                          };
-                          return (
-                            <tr key={color} className="hover:bg-slate-50">
-                              <td className="p-2 border font-medium">{color}</td>
-                              {matrixData.sizes.map(size => {
-                                const value = matrixData.cells[color]?.[size] || 0;
-                                const maxValue = Math.max(...Object.values(matrixData.totals.bySize), 1);
-                                const intensity = maxValue > 0 ? value / maxValue : 0;
-                                const pct = rowTotal > 0 ? (value / rowTotal) * 100 : 0;
-                                return (
-                                  <td
-                                    key={size}
-                                    className="p-2 text-center border tabular-nums"
-                                    style={{
-                                      backgroundColor: value > 0 ? `rgba(143, 168, 148, ${0.1 + intensity * 0.5})` : undefined
-                                    }}
-                                  >
-                                    {value > 0 ? (
-                                      <div className="leading-tight">
-                                        <div>{value.toLocaleString('da-DK')}</div>
-                                        <div className="text-[10px] text-slate-600">{formatPct(pct)}</div>
-                                      </div>
-                                    ) : (
-                                      '—'
-                                    )}
-                                  </td>
-                                );
-                              })}
-                              <td className="p-2 text-right border font-medium bg-slate-50 tabular-nums">
-                                {rowTotal.toLocaleString('da-DK')}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                        <tr className="bg-slate-100 font-medium">
-                          <td className="p-2 border">Total</td>
-                          {matrixData.sizes.map(size => (
-                            <td key={size} className="p-2 text-center border tabular-nums">
-                              {(matrixData.totals.bySize[size] || 0).toLocaleString('da-DK')}
-                            </td>
-                          ))}
-                          <td className="p-2 text-right border font-bold tabular-nums text-[#8FA894]">
-                            {matrixData.totals.grand.toLocaleString('da-DK')}
-                          </td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-          ))}
-        </>
-      )}
-
-      {/* Size Distribution Bar - one per style when multiple */}
-      {Object.keys(matrixDataByStyle).length > 0 && selectedStyleNos.length > 0 && (
-        <>
-          {Object.entries(matrixDataByStyle).map(([styleNo, matrixData]) => (
-            <div key={styleNo} style={{ breakInside: 'avoid', pageBreakInside: 'avoid' } as any}>
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-base">Size Distribution — {styleNo}</CardTitle>
-                  <CardDescription>Total units by size (all colors combined)</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <SizeDistributionBar 
-                    sizes={matrixData.sizes}
-                    totals={matrixData.totals.bySize}
-                    height={250}
-                  />
-                </CardContent>
-              </Card>
-            </div>
-          ))}
-        </>
-      )}
-
-      {/* Period table: style/color/size by aggregation (month/week/day) */}
-      {periodMatrix && periodMatrix.periods.length > 0 && periodMatrix.rows.length > 0 && (
-        <div style={{ breakInside: 'avoid', pageBreakInside: 'avoid' } as any}>
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-base">
-                Sales per {aggregationLevel === 'month' ? 'Month' : aggregationLevel === 'week' ? 'Week' : 'Day'} — Style/Color/Size
-              </CardTitle>
-              <CardDescription>
-                Same underlying data as the Size/Color Matrix, bucketed by the current aggregation.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="overflow-auto border rounded">
-                <table className="min-w-full text-xs">
-                  <thead className="bg-slate-50 sticky top-0 z-10">
-                    <tr>
-                      <th className="p-2 text-left border font-medium sticky left-0 bg-slate-50 z-20">Style</th>
-                      <th className="p-2 text-left border font-medium sticky left-[84px] bg-slate-50 z-20">Color</th>
-                      <th className="p-2 text-left border font-medium sticky left-[260px] bg-slate-50 z-20">Size</th>
-                      <th className="p-2 text-right border font-medium sticky left-[320px] bg-slate-50 z-20">Total</th>
-                      {periodMatrix.periods.map(p => (
-                        <th key={p} className="p-2 text-right border font-medium whitespace-nowrap">{p}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {periodMatrix.rows.map((row, idx) => (
-                      <tr key={`${row.style_no}|${row.color}|${row.size}|${idx}`} className="hover:bg-slate-50">
-                        <td className="p-2 border font-mono sticky left-0 bg-white z-10 whitespace-nowrap">{row.style_no}</td>
-                        <td className="p-2 border sticky left-[84px] bg-white z-10 whitespace-nowrap max-w-[180px] truncate" title={row.color}>
-                          {row.color}
-                        </td>
-                        <td className="p-2 border font-mono sticky left-[260px] bg-white z-10 whitespace-nowrap">{row.size}</td>
-                        <td className="p-2 border text-right font-medium sticky left-[320px] bg-white z-10 tabular-nums">
-                          {row.total.toLocaleString('da-DK')}
-                        </td>
-                        {periodMatrix.periods.map(p => {
-                          const v = row.byPeriod?.[p] || 0;
-                          return (
-                            <td key={p} className="p-2 border text-right tabular-nums">
-                              {v > 0 ? v.toLocaleString('da-DK') : '—'}
-                            </td>
-                          );
-                        })}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <div className="text-xs text-slate-500 mt-2">
-                Rows: {periodMatrix.rows.length.toLocaleString('da-DK')} • Periods: {periodMatrix.periods.length}
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      )}
-
-      {/* Offscreen export pages (captured into PDF) */}
-      {selectedStyleNos.length > 0 && exportTimeseriesMonthly.length > 0 && kpis && (
-        <div className="fixed left-[-10000px] top-0">
-          {(() => {
-            exportPageRefs.current = [];
-            exportPageIndexRef.current = 0;
-            const capturePage = (el: HTMLDivElement | null) => {
-              if (el) exportPageRefs.current[exportPageIndexRef.current++] = el;
-            };
-            const a4Px = { width: 794, minHeight: 1123 };
-
-            return (
-              <>
-                {/* Page 1: Title + Colors + Trends */}
-                <div
-                  ref={capturePage}
-                  className="bg-white p-6"
-                  style={a4Px}
-                >
-                  <div className="text-center">
-                    <div className="text-xl font-semibold">Historical Sales Analytics</div>
-                    <div className="text-sm text-slate-600 mt-1">
-                      {analyticsDateFrom} → {analyticsDateTo}
-                      {selectedStyleNos.length > 0 ? ` • ${selectedStyleNos.join(', ')}` : ''}
-                    </div>
-                  </div>
-
-                  {/* Colors attached */}
-                  <div className="mt-4">
-                    <div className="text-sm font-medium text-slate-800 mb-2">Colors attached</div>
-                    <div className="flex flex-wrap gap-2">
-                      {kpis.colors.map((c, i) => (
-                        <div key={c} className="flex items-center gap-2 border rounded-full px-3 py-1">
-                          <span
-                            className="inline-block w-3 h-3 rounded-full border"
-                            style={{ backgroundColor: resolveSeriesColor(c, i) }}
-                          />
-                          <span className="text-xs text-slate-700">{c}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Sales Trend per Month */}
-                  <div className="mt-4" style={{ breakInside: 'avoid', pageBreakInside: 'avoid' } as any}>
-                    <Card>
-                      <CardHeader className="pb-2">
-                        <CardTitle className="text-base">Sales Trend per Month</CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        <DailyLineChart data={exportTimeseriesMonthly} height={260} />
-                      </CardContent>
-                    </Card>
-                  </div>
-
-                  {/* Sales by Color Over Time */}
-                  <div className="mt-4" style={{ breakInside: 'avoid', pageBreakInside: 'avoid' } as any}>
-                    <Card>
-                      <CardHeader className="pb-2">
-                        <CardTitle className="text-base">Sales by Color Over Time</CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        <StackedAreaByColor
-                          data={exportTimeseriesMonthly}
-                          colors={kpis.colors}
-                          maxColors={50}
-                          height={260}
-                          colorOverrides={seriesColorOverrides}
-                        />
-                      </CardContent>
-                    </Card>
-                  </div>
-                </div>
-
-                {/* Page 2+: Matrix + Size Distribution (per style) */}
-                {Object.entries(matrixDataByStyle).map(([styleNo, matrixData]) => (
-                  <div
-                    key={styleNo}
-                    ref={capturePage}
-                    className="bg-white p-6"
-                    style={a4Px}
-                  >
-                    <div className="text-center mb-3">
-                      <div className="text-lg font-semibold">Size/Color Matrix + Size Distribution</div>
-                      <div className="text-sm text-slate-600 mt-1">{styleNo}</div>
-                    </div>
-
-                    <div style={{ breakInside: 'avoid', pageBreakInside: 'avoid' } as any}>
-                      <Card>
-                        <CardHeader className="pb-2">
-                          <CardTitle className="text-base">Size/Color Matrix</CardTitle>
-                        </CardHeader>
-                        <CardContent>
-                          <div className="overflow-x-auto">
-                            <table className="min-w-full text-xs">
-                              <thead>
-                                <tr className="bg-slate-50">
-                                  <th className="p-2 text-left border font-medium">Color</th>
-                                  {matrixData.sizes.map(size => (
-                                    <th key={size} className="p-2 text-center border font-medium">{size}</th>
-                                  ))}
-                                  <th className="p-2 text-right border font-medium bg-slate-100">Total</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {matrixData.colors.map(color => {
-                                  const rowTotal = matrixData.totals.byColor[color] || 0;
-                                  const formatPct = (pct: number) => {
-                                    const rounded = Math.round(pct * 10) / 10;
-                                    return Number.isInteger(rounded) ? `${rounded.toFixed(0)}%` : `${rounded.toFixed(1)}%`;
-                                  };
-                                  return (
-                                    <tr key={color}>
-                                      <td className="p-2 border font-medium">{color}</td>
-                                      {matrixData.sizes.map(size => {
-                                        const value = matrixData.cells[color]?.[size] || 0;
-                                        const pct = rowTotal > 0 ? (value / rowTotal) * 100 : 0;
-                                        return (
-                                          <td key={size} className="p-2 text-center border tabular-nums">
-                                            {value > 0 ? (
-                                              <div className="leading-tight">
-                                                <div>{value.toLocaleString('da-DK')}</div>
-                                                <div className="text-[10px] text-slate-600">{formatPct(pct)}</div>
-                                              </div>
-                                            ) : (
-                                              '—'
-                                            )}
-                                          </td>
-                                        );
-                                      })}
-                                      <td className="p-2 text-right border font-medium bg-slate-50 tabular-nums">
-                                        {rowTotal.toLocaleString('da-DK')}
-                                      </td>
-                                    </tr>
-                                  );
-                                })}
-                                <tr className="bg-slate-100 font-medium">
-                                  <td className="p-2 border">Total</td>
-                                  {matrixData.sizes.map(size => (
-                                    <td key={size} className="p-2 text-center border tabular-nums">
-                                      {(matrixData.totals.bySize[size] || 0).toLocaleString('da-DK')}
-                                    </td>
-                                  ))}
-                                  <td className="p-2 text-right border font-bold tabular-nums text-[#8FA894]">
-                                    {matrixData.totals.grand.toLocaleString('da-DK')}
-                                  </td>
-                                </tr>
-                              </tbody>
-                            </table>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    </div>
-
-                    <div className="mt-4" style={{ breakInside: 'avoid', pageBreakInside: 'avoid' } as any}>
-                      <Card>
-                        <CardHeader className="pb-2">
-                          <CardTitle className="text-base">Size Distribution</CardTitle>
-                        </CardHeader>
-                        <CardContent>
-                          <SizeDistributionBar
-                            sizes={matrixData.sizes}
-                            totals={matrixData.totals.bySize}
-                            height={260}
-                          />
-                        </CardContent>
-                      </Card>
-                    </div>
-                  </div>
-                ))}
-
-                {/* Period table pages (chunked so it isn't cut off) */}
-                {periodMatrix && periodMatrix.periods.length > 0 && periodMatrix.rows.length > 0 && (() => {
-                  const periodLabel =
-                    aggregationLevel === 'month' ? 'Month' : aggregationLevel === 'week' ? 'Week' : 'Day';
-                  const periods = periodMatrix.periods;
-                  const allRows = periodMatrix.rows;
-
-                  // Heuristic: more period columns => fewer rows per page
-                  const rowsPerPage =
-                    periods.length <= 6 ? 28 :
-                    periods.length <= 10 ? 22 :
-                    periods.length <= 16 ? 16 :
-                    12;
-
-                  const chunks: PeriodMatrixRow[][] = [];
-                  for (let i = 0; i < allRows.length; i += rowsPerPage) {
-                    chunks.push(allRows.slice(i, i + rowsPerPage));
-                  }
-
-                  return chunks.map((chunk, pageIndex) => (
-                    <div
-                      key={`period-matrix-${pageIndex}`}
-                      ref={capturePage}
-                      className="bg-white p-6"
-                      style={a4Px}
-                    >
-                      <div className="text-center mb-3">
-                        <div className="text-lg font-semibold">Sales per {periodLabel} — Style/Color/Size</div>
-                        <div className="text-sm text-slate-600 mt-1">
-                          {analyticsDateFrom} → {analyticsDateTo}
-                          {chunks.length > 1 ? ` • page ${pageIndex + 1}/${chunks.length}` : ''}
-                        </div>
-                      </div>
-
-                      <Card>
-                        <CardContent className="pt-4">
-                          <div className="overflow-hidden border rounded">
-                            <table className="min-w-full text-[10px]">
-                              <thead className="bg-slate-50">
-                                <tr>
-                                  <th className="p-1.5 text-left border font-medium">Style</th>
-                                  <th className="p-1.5 text-left border font-medium">Color</th>
-                                  <th className="p-1.5 text-left border font-medium">Size</th>
-                                  <th className="p-1.5 text-right border font-medium">Total</th>
-                                  {periods.map(p => (
-                                    <th key={p} className="p-1.5 text-right border font-medium whitespace-nowrap">{p}</th>
-                                  ))}
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {chunk.map((row, idx) => (
-                                  <tr key={`${row.style_no}|${row.color}|${row.size}|${pageIndex}|${idx}`}>
-                                    <td className="p-1.5 border font-mono whitespace-nowrap">{row.style_no}</td>
-                                    <td className="p-1.5 border whitespace-nowrap max-w-[240px] truncate" title={row.color}>{row.color}</td>
-                                    <td className="p-1.5 border font-mono whitespace-nowrap">{row.size}</td>
-                                    <td className="p-1.5 border text-right font-medium tabular-nums">{row.total.toLocaleString('da-DK')}</td>
-                                    {periods.map(p => {
-                                      const v = row.byPeriod?.[p] || 0;
-                                      return (
-                                        <td key={p} className="p-1.5 border text-right tabular-nums">
-                                          {v > 0 ? v.toLocaleString('da-DK') : '—'}
-                                        </td>
-                                      );
-                                    })}
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </div>
-                          <div className="text-[10px] text-slate-500 mt-2">
-                            Rows shown: {chunk.length.toLocaleString('da-DK')} • Total rows: {allRows.length.toLocaleString('da-DK')}
-                          </div>
-                        </CardContent>
-                      </Card>
-                    </div>
-                  ));
-                })()}
-              </>
-            );
-          })()}
-        </div>
-      )}
-
-      {/* No data message */}
-      {selectedStyleNos.length > 0 && !analyticsLoading && aggregatedTimeseriesData.length === 0 && (
-        <Card>
-          <CardContent className="py-12 text-center text-slate-500">
-            <p>No sales data found for {selectedStyleNos.join(', ')} in the selected date range.</p>
-            <p className="text-sm mt-2">Try adjusting the date range, loading available colors, or selecting different styles.</p>
-          </CardContent>
-        </Card>
-      )}
     </div>
   );
 }
