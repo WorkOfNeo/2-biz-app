@@ -130,18 +130,23 @@ function fuzzyScore(a: string, b: string): number {
 }
 
 // Parse date from various formats
-function parseDate(dateStr: string): string | null {
-  if (!dateStr) return null;
+function parseDate(dateStr: string | number): string | null {
+  if (!dateStr && dateStr !== 0) return null;
   
   const str = String(dateStr).trim();
   
-  // Excel serial number (days since 1900-01-01)
-  if (/^\d{5}$/.test(str)) {
-    const serial = parseInt(str, 10);
-    const utc_days = Math.floor(serial - 25569);
-    const utc_value = utc_days * 86400;
-    const date = new Date(utc_value * 1000);
-    return date.toISOString().split('T')[0] || null;
+  // Excel serial number (days since 1900-01-01) - can have decimals for time
+  // Check if it's a number (could be 5-6 digits, with or without decimals)
+  if (/^\d+\.?\d*$/.test(str)) {
+    const serial = parseFloat(str);
+    // Excel serial numbers for dates are typically in range 1 (1900-01-01) to 60000+ (2164+)
+    // Only treat as serial if it's a reasonable date number
+    if (serial > 1 && serial < 100000) {
+      const utc_days = Math.floor(serial - 25569);
+      const utc_value = utc_days * 86400;
+      const date = new Date(utc_value * 1000);
+      return date.toISOString().split('T')[0] || null;
+    }
   }
   
   // DD-MM-YYYY or DD/MM/YYYY
