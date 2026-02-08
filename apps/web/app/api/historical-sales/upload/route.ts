@@ -8,6 +8,8 @@ type UploadRow = {
   date: string; // Can be single date or range like "2025-01-01 to 2025-01-31"
   size: string;
   quantity: number;
+  order_type?: string;
+  order_channel?: string;
 };
 
 type ProcessedRow = {
@@ -17,6 +19,8 @@ type ProcessedRow = {
   date: string; // Single date (YYYY-MM-DD)
   size: string;
   quantity: number;
+  order_type?: string | null;
+  order_channel?: string | null;
 };
 
 // Parse a single date string into YYYY-MM-DD format
@@ -301,7 +305,9 @@ export async function POST(req: Request) {
             color: finalColor, // Use fuzzy-matched color if available
             date,
             size: row.size,
-            quantity: qtyPerDay + remainderAdjustment // Distribute remainder (supports negatives)
+            quantity: qtyPerDay + remainderAdjustment, // Distribute remainder (supports negatives)
+            order_type: row.order_type || null,
+            order_channel: row.order_channel || null,
           });
         });
       } catch (err: any) {

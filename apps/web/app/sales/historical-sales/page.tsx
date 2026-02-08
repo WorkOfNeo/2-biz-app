@@ -699,7 +699,7 @@ export default function HistoricalSalesPage() {
     }
   };
   
-  // Upload matched rows to database
+  // Upload matched rows to backend API for processing
   const uploadMatchedRows = async () => {
     const matchedRows = parsedRows.filter(r => r.status === 'matched');
     if (matchedRows.length === 0) return;
@@ -708,48 +708,59 @@ export default function HistoricalSalesPage() {
     setUploadProgress({ current: 0, total: matchedRows.length });
     
     try {
-      const batchSize = 500; // Increased from 50 for better performance
-      let uploaded = 0;
+      console.log('[Historical Sales] Sending', matchedRows.length, 'rows to backend API');
       
-      for (let i = 0; i < matchedRows.length; i += batchSize) {
-        const batch = matchedRows.slice(i, i + batchSize);
-        const records = batch.map(row => ({
-          style_no: row.matchedStyleNo!,
-          color: row.matchedColor!,
-          date: row.date,
-          size: row.size,
-          quantity: row.quantity,
-          order_type: row.orderType || null,
-          order_channel: row.orderChannel || null,
-        }));
-        
-        const { error } = await supabase
-          .from('historical_sales')
-          .upsert(records, {
-            onConflict: 'style_no,color,date,size',
-            ignoreDuplicates: false
-          });
-        
-        if (error) throw error;
-        
-        uploaded += batch.length;
-        setUploadProgress({ current: uploaded, total: matchedRows.length });
-        
-        // Allow UI to update between batches
-        await new Promise(resolve => setTimeout(resolve, 0));
+      // Prepare rows for backend API
+      const rows = matchedRows.map(row => ({
+        style_no: row.matchedStyleNo!,
+        color: row.matchedColor!,
+        date: row.date,
+        size: row.size,
+        quantity: row.quantity,
+        order_type: row.orderType || undefined,
+        order_channel: row.orderChannel || undefined,
+      }));
+      
+      // Send to backend API - it will handle all the batching and processing
+      const response = await fetch('/api/historical-sales/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rows }),
+      });
+      
+      const result = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(result.error || 'Upload failed');
       }
+      
+      console.log('[Historical Sales] Backend upload result:', result);
+      
+      // Update progress to show completion
+      setUploadProgress({ current: matchedRows.length, total: matchedRows.length });
+      
+      const successMsg = [
+        `✅ Successfully uploaded ${result.successCount} rows`,
+        result.fuzzyMatchCount > 0 ? `  • ${result.fuzzyMatchCount} colors fuzzy-matched` : '',
+        result.errorCount > 0 ? `  • ${result.errorCount} errors (see console)` : '',
+      ].filter(Boolean).join('\n');
       
       setUploadResult({
         success: true,
-        message: `Successfully uploaded ${matchedRows.length} rows to database`
+        message: successMsg
       });
+      
+      if (result.errors && result.errors.length > 0) {
+        console.warn('[Historical Sales] Upload errors:', result.errors);
+      }
       
       // Reset after successful upload
       setTimeout(() => {
         setRawFileData(null);
         setColumnMapping(null);
         setParsedRows([]);
-      }, 2000);
+        setUploadResult(null);
+      }, 3000);
       
       // Refresh sales data
       mutateSales();
@@ -757,7 +768,7 @@ export default function HistoricalSalesPage() {
       console.error('[Historical Sales] Upload error:', error);
       setUploadResult({
         success: false,
-        message: `Upload failed: ${error}`
+        message: `Upload failed: ${error instanceof Error ? error.message : String(error)}`
       });
     } finally {
       setUploading(false);
@@ -1195,19 +1206,23 @@ export default function HistoricalSalesPage() {
                       {uploading ? (
                         <>
                           <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                          Uploading... ({uploadProgress.current}/{uploadProgress.total})
+                          Processing on backend...
                         </>
                       ) : (
                         `Upload ${matchStats.matched} Matched Rows`
                       )}
                     </Button>
-                    {matchStats.matched < matchStats.total && (
+                    {uploading ? (
+                      <span className="text-xs text-slate-600">
+                        Backend processing {matchStats.matched.toLocaleString()} rows. This may take a few minutes for large datasets...
+                      </span>
+                    ) : matchStats.matched < matchStats.total ? (
                       <span className="text-xs text-slate-500">
-                      {matchStats.unmatchedColor > 0 
-                        ? 'Fix unmatched colors in the dropdown above, or they will be skipped'
-                        : 'Unmatched style rows will be skipped'}
-                    </span>
-                  )}
+                        {matchStats.unmatchedColor > 0 
+                          ? 'Fix unmatched colors in the dropdown above, or they will be skipped'
+                          : 'Unmatched style rows will be skipped'}
+                      </span>
+                    ) : null}
                   </div>
                   
                   {/* Upload Progress Bar */}
