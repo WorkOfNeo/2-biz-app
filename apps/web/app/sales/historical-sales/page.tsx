@@ -378,9 +378,9 @@ export default function HistoricalSalesPage() {
     reader.readAsArrayBuffer(file);
   }, []);
   
-  // Step 2: Parse rows after column mapping is confirmed
+  // Step 2: Send raw data to backend for processing
   const parseRowsWithMapping = useCallback(async () => {
-    if (!rawFileData || !columnMapping || !styles) return;
+    if (!rawFileData || !columnMapping) return;
     
     const { styleNo, styleName, size, quantity, date, orderType, orderChannel } = columnMapping;
     
@@ -393,27 +393,77 @@ export default function HistoricalSalesPage() {
       return;
     }
     
-    console.log('[Historical Sales] Starting parse with column mapping:', { styleNo, styleName, size, quantity, date, orderType, orderChannel });
-    console.log('[Historical Sales] Total rows in file:', rawFileData.rows.length);
-    console.log('[Historical Sales] First 3 rows sample:', rawFileData.rows.slice(0, 3));
+    console.log('[Historical Sales] Sending raw data to backend:', { 
+      totalRows: rawFileData.rows.length,
+      columnMapping 
+    });
     
     setParsing(true);
-    setParsingProgress({ current: 0, total: rawFileData.rows.length, phase: 'Parsing rows...' });
+    setParsingProgress({ current: 0, total: rawFileData.rows.length, phase: 'Sending to backend...' });
     
     try {
-      // Phase 1: Parse raw data into structured rows
-      const rows: NarrowRow[] = [];
-      const rawBatchSize = 1000;
-      const filterStats = {
-        total: 0,
-        noStyleNo: 0,
-        noStyleName: 0,
-        noSize: 0,
-        zeroQty: 0,
-        noDate: 0,
-      };
+      // Send raw data to backend for processing
+      const response = await fetch('/api/historical-sales/upload-raw', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          rows: rawFileData.rows,
+          columnMapping: {
+            styleNo,
+            styleName,
+            size,
+            quantity,
+            date,
+            orderType,
+            orderChannel,
+          },
+        }),
+      });
       
-      for (let i = 0; i < rawFileData.rows.length; i += rawBatchSize) {
+      const result = await response.json();
+      
+      if (!response.ok) {
+        if (result.sampleValidation) {
+          // Sample validation failed - show detailed errors
+          console.error('[Historical Sales] Sample validation failed:', result.sampleValidation);
+          throw new Error(result.message || 'Sample validation failed');
+        }
+        throw new Error(result.error || 'Backend processing failed');
+      }
+      
+      console.log('[Historical Sales] Backend processing complete:', result);
+      
+      // Show success message
+      const successMsg = [
+        `✅ Successfully processed and uploaded!`,
+        `  • Total rows in file: ${result.stats.total.toLocaleString()}`,
+        `  • Parsed valid rows: ${result.stats.parsed.toLocaleString()}`,
+        `  • Matched and inserted: ${result.inserted.toLocaleString()}`,
+        result.stats.unmatchedStyle > 0 ? `  • Unmatched styles: ${result.stats.unmatchedStyle.toLocaleString()}` : '',
+        result.stats.unmatchedColor > 0 ? `  • Unmatched colors: ${result.stats.unmatchedColor.toLocaleString()}` : '',
+        result.stats.filteredInvalid > 0 ? `  • Invalid/filtered: ${result.stats.filteredInvalid.toLocaleString()}` : '',
+        `  • Processing time: ${result.duration}`,
+      ].filter(Boolean).join('\n');
+      
+      setUploadResult({ success: true, message: successMsg });
+      setParsedRows([]); // Clear parsed rows since we're done
+      
+      // Reset after successful upload
+      setTimeout(() => {
+        setRawFileData(null);
+        setColumnMapping(null);
+        setParsedRows([]);
+        setUploadResult(null);
+      }, 5000);
+      
+      // Refresh sales data
+      mutateSales();
+      
+      // OLD CODE REMOVED - backend now handles everything
+      if (false) {
+        const rows: NarrowRow[] = [];
+        const rawBatchSize = 1000;
+        for (let i = 0; i < rawFileData.rows.length; i += rawBatchSize) {
         const batch = rawFileData.rows.slice(i, i + rawBatchSize);
         
         const batchRows = batch.map((row, batchIdx) => {
@@ -585,16 +635,20 @@ export default function HistoricalSalesPage() {
         sampleParsedRows: parsed.slice(0, 3),
       });
       
-      setParsedRows(parsed);
-      setUploadResult({ success: true, message: `Parsed ${parsed.length} rows successfully (${matchedCount} matched, ${unmatchedStyleCount} unmatched style, ${unmatchedColorCount} unmatched color)` });
+          // This entire section is now handled by backend
+        }
+      }
     } catch (error) {
-      console.error('[Historical Sales] Parsing error:', error);
-      setUploadResult({ success: false, message: `Parsing failed: ${error}` });
+      console.error('[Historical Sales] Backend processing error:', error);
+      setUploadResult({ 
+        success: false, 
+        message: `Processing failed: ${error instanceof Error ? error.message : String(error)}\n\nCheck Railway logs for details.` 
+      });
     } finally {
       setParsing(false);
       setParsingProgress({ current: 0, total: 0, phase: '' });
     }
-  }, [rawFileData, columnMapping, styles, colorsByStyleNo]);
+  }, [rawFileData, columnMapping, mutateSales]);
   
   // Update column mapping
   const updateColumnMapping = useCallback((field: keyof ColumnMapping, value: string | null) => {
@@ -699,81 +753,7 @@ export default function HistoricalSalesPage() {
     }
   };
   
-  // Upload matched rows to backend API for processing
-  const uploadMatchedRows = async () => {
-    const matchedRows = parsedRows.filter(r => r.status === 'matched');
-    if (matchedRows.length === 0) return;
-    
-    setUploading(true);
-    setUploadProgress({ current: 0, total: matchedRows.length });
-    
-    try {
-      console.log('[Historical Sales] Sending', matchedRows.length, 'rows to backend API');
-      
-      // Prepare rows for backend API
-      const rows = matchedRows.map(row => ({
-        style_no: row.matchedStyleNo!,
-        color: row.matchedColor!,
-        date: row.date,
-        size: row.size,
-        quantity: row.quantity,
-        order_type: row.orderType || undefined,
-        order_channel: row.orderChannel || undefined,
-      }));
-      
-      // Send to backend API - it will handle all the batching and processing
-      const response = await fetch('/api/historical-sales/upload', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rows }),
-      });
-      
-      const result = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(result.error || 'Upload failed');
-      }
-      
-      console.log('[Historical Sales] Backend upload result:', result);
-      
-      // Update progress to show completion
-      setUploadProgress({ current: matchedRows.length, total: matchedRows.length });
-      
-      const successMsg = [
-        `✅ Successfully uploaded ${result.successCount} rows`,
-        result.fuzzyMatchCount > 0 ? `  • ${result.fuzzyMatchCount} colors fuzzy-matched` : '',
-        result.errorCount > 0 ? `  • ${result.errorCount} errors (see console)` : '',
-      ].filter(Boolean).join('\n');
-      
-      setUploadResult({
-        success: true,
-        message: successMsg
-      });
-      
-      if (result.errors && result.errors.length > 0) {
-        console.warn('[Historical Sales] Upload errors:', result.errors);
-      }
-      
-      // Reset after successful upload
-      setTimeout(() => {
-        setRawFileData(null);
-        setColumnMapping(null);
-        setParsedRows([]);
-        setUploadResult(null);
-      }, 3000);
-      
-      // Refresh sales data
-      mutateSales();
-    } catch (error) {
-      console.error('[Historical Sales] Upload error:', error);
-      setUploadResult({
-        success: false,
-        message: `Upload failed: ${error instanceof Error ? error.message : String(error)}`
-      });
-    } finally {
-      setUploading(false);
-    }
-  };
+  // No longer needed - backend handles everything directly
   
   // Reset all historical sales data
   const resetHistoricalSales = async () => {
@@ -919,10 +899,10 @@ export default function HistoricalSalesPage() {
                     {parsing ? (
                       <>
                         <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                        Parsing... ({parsingProgress.current}/{parsingProgress.total})
+                        Processing on backend...
                       </>
                     ) : (
-                      'Parse Rows'
+                      'Upload & Process'
                     )}
                   </Button>
                 </div>
