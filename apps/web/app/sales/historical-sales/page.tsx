@@ -399,54 +399,93 @@ export default function HistoricalSalesPage() {
     });
     
     setParsing(true);
-    setParsingProgress({ current: 0, total: rawFileData.rows.length, phase: 'Sending to backend...' });
+    setParsingProgress({ current: 0, total: rawFileData.rows.length, phase: 'Uploading in chunks...' });
     
     try {
-      // Send raw data to backend for processing
-      const response = await fetch('/api/historical-sales/upload-raw', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          rows: rawFileData.rows,
-          columnMapping: {
-            styleNo,
-            styleName,
-            size,
-            quantity,
-            date,
-            orderType,
-            orderChannel,
-          },
-        }),
-      });
+      // Send data in chunks to avoid 413 Content Too Large errors
+      const CHUNK_SIZE = 5000; // 5k rows per chunk
+      const totalRows = rawFileData.rows.length;
+      const totalChunks = Math.ceil(totalRows / CHUNK_SIZE);
       
-      const result = await response.json();
+      let totalInserted = 0;
+      let combinedStats = {
+        total: 0,
+        parsed: 0,
+        matched: 0,
+        unmatchedStyle: 0,
+        unmatchedColor: 0,
+        filteredInvalid: 0,
+      };
       
-      if (!response.ok) {
-        if (result.sampleValidation) {
-          // Sample validation failed - show detailed errors
-          console.error('[Historical Sales] Sample validation failed:', result.sampleValidation);
-          throw new Error(result.message || 'Sample validation failed');
+      console.log(`[Historical Sales] Uploading ${totalRows} rows in ${totalChunks} chunks of ${CHUNK_SIZE} rows each`);
+      
+      for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+        const start = chunkIndex * CHUNK_SIZE;
+        const end = Math.min(start + CHUNK_SIZE, totalRows);
+        const chunk = rawFileData.rows.slice(start, end);
+        
+        setParsingProgress({ 
+          current: end, 
+          total: totalRows, 
+          phase: `Processing chunk ${chunkIndex + 1}/${totalChunks}...` 
+        });
+        
+        console.log(`[Historical Sales] Uploading chunk ${chunkIndex + 1}/${totalChunks} (rows ${start}-${end})`);
+        
+        const response = await fetch('/api/historical-sales/upload-raw', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            rows: chunk,
+            columnMapping: {
+              styleNo,
+              styleName,
+              size,
+              quantity,
+              date,
+              orderType,
+              orderChannel,
+            },
+          }),
+        });
+        
+        const result = await response.json();
+        
+        if (!response.ok) {
+          if (result.sampleValidation) {
+            console.error('[Historical Sales] Sample validation failed:', result.sampleValidation);
+            throw new Error(result.message || 'Sample validation failed');
+          }
+          throw new Error(result.error || `Chunk ${chunkIndex + 1} failed`);
         }
-        throw new Error(result.error || 'Backend processing failed');
+        
+        console.log(`[Historical Sales] Chunk ${chunkIndex + 1}/${totalChunks} complete:`, result);
+        
+        // Accumulate stats
+        totalInserted += result.inserted || 0;
+        combinedStats.total += result.stats.total || 0;
+        combinedStats.parsed += result.stats.parsed || 0;
+        combinedStats.matched += result.stats.matched || 0;
+        combinedStats.unmatchedStyle += result.stats.unmatchedStyle || 0;
+        combinedStats.unmatchedColor += result.stats.unmatchedColor || 0;
+        combinedStats.filteredInvalid += result.stats.filteredInvalid || 0;
       }
       
-      console.log('[Historical Sales] Backend processing complete:', result);
+      console.log('[Historical Sales] All chunks complete:', { totalInserted, combinedStats });
       
       // Show success message
       const successMsg = [
         `✅ Successfully processed and uploaded!`,
-        `  • Total rows in file: ${result.stats.total.toLocaleString()}`,
-        `  • Parsed valid rows: ${result.stats.parsed.toLocaleString()}`,
-        `  • Matched and inserted: ${result.inserted.toLocaleString()}`,
-        result.stats.unmatchedStyle > 0 ? `  • Unmatched styles: ${result.stats.unmatchedStyle.toLocaleString()}` : '',
-        result.stats.unmatchedColor > 0 ? `  • Unmatched colors: ${result.stats.unmatchedColor.toLocaleString()}` : '',
-        result.stats.filteredInvalid > 0 ? `  • Invalid/filtered: ${result.stats.filteredInvalid.toLocaleString()}` : '',
-        `  • Processing time: ${result.duration}`,
+        `  • Total rows in file: ${combinedStats.total.toLocaleString()}`,
+        `  • Parsed valid rows: ${combinedStats.parsed.toLocaleString()}`,
+        `  • Matched and inserted: ${totalInserted.toLocaleString()}`,
+        combinedStats.unmatchedStyle > 0 ? `  • Unmatched styles: ${combinedStats.unmatchedStyle.toLocaleString()}` : '',
+        combinedStats.unmatchedColor > 0 ? `  • Unmatched colors: ${combinedStats.unmatchedColor.toLocaleString()}` : '',
+        combinedStats.filteredInvalid > 0 ? `  • Invalid/filtered: ${combinedStats.filteredInvalid.toLocaleString()}` : '',
       ].filter(Boolean).join('\n');
       
       setUploadResult({ success: true, message: successMsg });
-      setParsedRows([]); // Clear parsed rows since we're done
+      setParsedRows([]);
       
       // Reset after successful upload
       setTimeout(() => {
