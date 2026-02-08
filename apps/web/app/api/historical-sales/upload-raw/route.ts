@@ -289,13 +289,35 @@ export async function POST(req: Request) {
       }, { status: 400 });
     }
     
+    // Deduplicate records by aggregating quantities for the same style/color/date/size
+    console.log('[Historical Sales Upload Raw] Deduplicating records...');
+    const dedupeMap = new Map<string, typeof processedRecords[0]>();
+    
+    for (const record of processedRecords) {
+      const key = `${record.style_no}|${record.color}|${record.date}|${record.size}`;
+      const existing = dedupeMap.get(key);
+      
+      if (existing) {
+        // Sum quantities for duplicates
+        existing.quantity += record.quantity;
+        // Keep first order_type and order_channel if they exist
+        if (!existing.order_type && record.order_type) existing.order_type = record.order_type;
+        if (!existing.order_channel && record.order_channel) existing.order_channel = record.order_channel;
+      } else {
+        dedupeMap.set(key, { ...record });
+      }
+    }
+    
+    const dedupedRecords = Array.from(dedupeMap.values());
+    console.log('[Historical Sales Upload Raw] Deduplicated', processedRecords.length, 'records to', dedupedRecords.length, 'unique records');
+    
     // Insert in batches
-    console.log('[Historical Sales Upload Raw] Inserting', processedRecords.length, 'records...');
+    console.log('[Historical Sales Upload Raw] Inserting', dedupedRecords.length, 'records...');
     const batchSize = 500;
     let inserted = 0;
     
-    for (let i = 0; i < processedRecords.length; i += batchSize) {
-      const batch = processedRecords.slice(i, i + batchSize);
+    for (let i = 0; i < dedupedRecords.length; i += batchSize) {
+      const batch = dedupedRecords.slice(i, i + batchSize);
       
       const { error: insertError } = await supabase
         .from('historical_sales')
@@ -317,7 +339,7 @@ export async function POST(req: Request) {
       
       // Log progress every 10 batches
       if (Math.floor(i / batchSize) % 10 === 0) {
-        console.log(`[Historical Sales Upload Raw] Inserted ${inserted}/${processedRecords.length} records`);
+        console.log(`[Historical Sales Upload Raw] Inserted ${inserted}/${dedupedRecords.length} records`);
       }
     }
     
