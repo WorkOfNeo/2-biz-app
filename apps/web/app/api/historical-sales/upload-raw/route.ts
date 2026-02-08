@@ -2,6 +2,10 @@ import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 
+// Configure route to accept larger payloads
+export const maxDuration = 60; // 60 seconds max execution time
+export const dynamic = 'force-dynamic';
+
 type RawRow = Record<string, any>;
 
 type ColumnMapping = {
