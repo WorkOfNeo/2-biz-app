@@ -144,6 +144,8 @@ export async function POST(req: Request) {
     
     for (let i = 0; i < sampleSize; i++) {
       const raw = rawRows[i];
+      if (!raw) continue;
+      
       const parsedDate = parseDate(raw[columnMapping.date]);
       const qty = typeof raw[columnMapping.quantity] === 'number' 
         ? raw[columnMapping.quantity] 
@@ -191,6 +193,7 @@ export async function POST(req: Request) {
     
     for (let i = 0; i < rawRows.length; i++) {
       const raw = rawRows[i];
+      if (!raw) continue;
       
       // Parse row
       const parsedDate = parseDate(raw[columnMapping.date]);
