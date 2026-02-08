@@ -141,48 +141,8 @@ export async function POST(req: Request) {
       }
     });
     
-    // Process first 10 rows as validation
-    console.log('[Historical Sales Upload Raw] Validating first 10 rows...');
-    const sampleSize = Math.min(10, rawRows.length);
-    const sampleValidation = [];
-    
-    for (let i = 0; i < sampleSize; i++) {
-      const raw = rawRows[i];
-      if (!raw) continue;
-      
-      const parsedDate = parseDate(raw[columnMapping.date]);
-      const qty = typeof raw[columnMapping.quantity] === 'number' 
-        ? raw[columnMapping.quantity] 
-        : parseInt(String(raw[columnMapping.quantity] || '0'), 10);
-      
-      sampleValidation.push({
-        index: i,
-        styleNo: String(raw[columnMapping.styleNo] || '').trim(),
-        styleName: String(raw[columnMapping.styleName] || '').trim(),
-        size: String(raw[columnMapping.size] || '').trim(),
-        quantity: qty,
-        date: parsedDate,
-        hasStyleNo: !!String(raw[columnMapping.styleNo] || '').trim(),
-        hasStyleName: !!String(raw[columnMapping.styleName] || '').trim(),
-        hasSize: !!String(raw[columnMapping.size] || '').trim(),
-        validQuantity: !isNaN(qty) && qty > 0,
-        validDate: !!parsedDate,
-      });
-    }
-    
-    const sampleErrors = sampleValidation.filter(s => 
-      !s.hasStyleNo || !s.hasStyleName || !s.hasSize || !s.validQuantity || !s.validDate
-    );
-    
-    if (sampleErrors.length > 0) {
-      return NextResponse.json({
-        error: 'Sample validation failed',
-        sampleValidation,
-        message: `${sampleErrors.length}/${sampleSize} sample rows failed validation. Fix these issues before uploading.`,
-      }, { status: 400 });
-    }
-    
-    console.log('[Historical Sales Upload Raw] Sample validation passed, processing all rows...');
+    // No sample validation - just process all rows and skip invalid ones
+    console.log('[Historical Sales Upload Raw] Processing all rows (will skip invalid)...');
     
     // Parse and match all rows
     const processedRecords: any[] = [];
