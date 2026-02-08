@@ -403,7 +403,7 @@ export default function HistoricalSalesPage() {
     
     try {
       // Send data in chunks to avoid 413 Content Too Large errors
-      const CHUNK_SIZE = 5000; // 5k rows per chunk
+      const CHUNK_SIZE = 1000; // 1k rows per chunk (safer for large payloads)
       const totalRows = rawFileData.rows.length;
       const totalChunks = Math.ceil(totalRows / CHUNK_SIZE);
       
