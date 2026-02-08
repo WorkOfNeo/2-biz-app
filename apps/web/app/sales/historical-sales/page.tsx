@@ -388,6 +388,10 @@ export default function HistoricalSalesPage() {
       return;
     }
     
+    console.log('[Historical Sales] Starting parse with column mapping:', { styleNo, styleName, size, quantity, date, orderType, orderChannel });
+    console.log('[Historical Sales] Total rows in file:', rawFileData.rows.length);
+    console.log('[Historical Sales] First 3 rows sample:', rawFileData.rows.slice(0, 3));
+    
     setParsing(true);
     setParsingProgress({ current: 0, total: rawFileData.rows.length, phase: 'Parsing rows...' });
     
@@ -395,15 +399,23 @@ export default function HistoricalSalesPage() {
       // Phase 1: Parse raw data into structured rows
       const rows: NarrowRow[] = [];
       const rawBatchSize = 1000;
+      const filterStats = {
+        total: 0,
+        noStyleNo: 0,
+        noStyleName: 0,
+        noSize: 0,
+        zeroQty: 0,
+        noDate: 0,
+      };
       
       for (let i = 0; i < rawFileData.rows.length; i += rawBatchSize) {
         const batch = rawFileData.rows.slice(i, i + rawBatchSize);
         
-        const batchRows = batch.map(row => {
+        const batchRows = batch.map((row, batchIdx) => {
           const parsedDate = parseDate(row[date]);
           const qty = typeof row[quantity] === 'number' ? row[quantity] : parseInt(String(row[quantity] || '0'), 10);
           
-          return {
+          const parsed = {
             styleNo: String(row[styleNo] || '').trim(),
             styleName: String(row[styleName] || '').trim(),
             size: String(row[size] || '').trim(),
@@ -412,9 +424,39 @@ export default function HistoricalSalesPage() {
             orderType: orderType ? String(row[orderType] || '').trim() : undefined,
             orderChannel: orderChannel ? String(row[orderChannel] || '').trim() : undefined,
           };
-        }).filter(r => r.styleNo && r.styleName && r.size && r.quantity > 0 && r.date);
+          
+          // Log first 5 rows for debugging
+          if (i + batchIdx < 5) {
+            console.log(`[Historical Sales] Row ${i + batchIdx} parsed:`, {
+              raw: row,
+              parsed,
+              willBeFiltered: !parsed.styleNo || !parsed.styleName || !parsed.size || parsed.quantity <= 0 || !parsed.date,
+              filterReasons: {
+                styleNo: !parsed.styleNo ? `MISSING (value: "${row[styleNo]}")` : 'OK',
+                styleName: !parsed.styleName ? `MISSING (value: "${row[styleName]}")` : 'OK',
+                size: !parsed.size ? `MISSING (value: "${row[size]}")` : 'OK',
+                quantity: parsed.quantity <= 0 ? `INVALID (raw: "${row[quantity]}", parsed: ${parsed.quantity})` : 'OK',
+                date: !parsed.date ? `FAILED (raw: "${row[date]}", parsed: "${parsedDate}")` : 'OK',
+              }
+            });
+          }
+          
+          return parsed;
+        });
         
-        rows.push(...batchRows);
+        // Track filter reasons
+        batchRows.forEach(r => {
+          filterStats.total++;
+          if (!r.styleNo) filterStats.noStyleNo++;
+          if (!r.styleName) filterStats.noStyleName++;
+          if (!r.size) filterStats.noSize++;
+          if (r.quantity <= 0) filterStats.zeroQty++;
+          if (!r.date) filterStats.noDate++;
+        });
+        
+        const filteredBatchRows = batchRows.filter(r => r.styleNo && r.styleName && r.size && r.quantity > 0 && r.date);
+        
+        rows.push(...filteredBatchRows);
         setParsingProgress({ 
           current: Math.min(i + rawBatchSize, rawFileData.rows.length), 
           total: rawFileData.rows.length, 
@@ -423,6 +465,20 @@ export default function HistoricalSalesPage() {
         
         // Allow UI to update
         await new Promise(resolve => setTimeout(resolve, 0));
+      }
+      
+      console.log('[Historical Sales] Filter statistics:', filterStats);
+      console.log('[Historical Sales] Valid rows after filtering:', rows.length);
+      
+      if (rows.length === 0) {
+        const issues = [];
+        if (filterStats.noStyleNo > 0) issues.push(`${filterStats.noStyleNo} rows missing Style No`);
+        if (filterStats.noStyleName > 0) issues.push(`${filterStats.noStyleName} rows missing Style Name`);
+        if (filterStats.noSize > 0) issues.push(`${filterStats.noSize} rows missing Size`);
+        if (filterStats.zeroQty > 0) issues.push(`${filterStats.zeroQty} rows with zero/invalid Quantity`);
+        if (filterStats.noDate > 0) issues.push(`${filterStats.noDate} rows with invalid Date`);
+        
+        throw new Error(`No valid rows found!\n\nProblems:\n${issues.join('\n')}\n\nCheck browser console (F12) for detailed row-by-row analysis.`);
       }
       
       // Phase 2: Match against styles and colors
@@ -512,8 +568,20 @@ export default function HistoricalSalesPage() {
         await new Promise(resolve => setTimeout(resolve, 0));
       }
       
+      const matchedCount = parsed.filter(r => r.status === 'matched').length;
+      const unmatchedStyleCount = parsed.filter(r => r.status === 'unmatched_style').length;
+      const unmatchedColorCount = parsed.filter(r => r.status === 'unmatched_color').length;
+      
+      console.log('[Historical Sales] Matching complete:', {
+        totalRows: parsed.length,
+        matched: matchedCount,
+        unmatchedStyle: unmatchedStyleCount,
+        unmatchedColor: unmatchedColorCount,
+        sampleParsedRows: parsed.slice(0, 3),
+      });
+      
       setParsedRows(parsed);
-      setUploadResult({ success: true, message: `Parsed ${parsed.length} rows successfully (${parsed.filter(r => r.status === 'matched').length} matched)` });
+      setUploadResult({ success: true, message: `Parsed ${parsed.length} rows successfully (${matchedCount} matched, ${unmatchedStyleCount} unmatched style, ${unmatchedColorCount} unmatched color)` });
     } catch (error) {
       console.error('[Historical Sales] Parsing error:', error);
       setUploadResult({ success: false, message: `Parsing failed: ${error}` });
@@ -819,7 +887,13 @@ export default function HistoricalSalesPage() {
             {rawFileData && columnMapping && (
               <div className="space-y-4 p-4 bg-slate-50 rounded-lg border">
                 <div className="flex items-center justify-between">
-                  <h3 className="font-medium">Map Columns</h3>
+                  <div>
+                    <h3 className="font-medium">Map Columns</h3>
+                    <p className="text-xs text-slate-500 mt-1">
+                      Found {rawFileData.headers.length} columns, {rawFileData.rows.length} rows. 
+                      Open browser console (F12) to see detailed parsing logs.
+                    </p>
+                  </div>
                   <Button
                     onClick={parseRowsWithMapping}
                     size="sm"
@@ -849,6 +923,22 @@ export default function HistoricalSalesPage() {
                         className="h-full bg-[#8FA894] transition-all duration-300"
                         style={{ width: `${(parsingProgress.current / parsingProgress.total) * 100}%` }}
                       />
+                    </div>
+                  </div>
+                )}
+                
+                {/* Parse Result - show errors immediately */}
+                {uploadResult && !parsedRows.length && (
+                  <div className={`p-4 rounded-md text-sm whitespace-pre-wrap font-mono ${
+                    uploadResult.success ? 'bg-green-50 text-green-900 border-2 border-green-300' : 'bg-red-50 text-red-900 border-2 border-red-300'
+                  }`}>
+                    <div className="flex items-start gap-2">
+                      {uploadResult.success ? (
+                        <CheckCircle className="h-5 w-5 flex-shrink-0 mt-0.5" />
+                      ) : (
+                        <AlertCircle className="h-5 w-5 flex-shrink-0 mt-0.5" />
+                      )}
+                      <div className="flex-1">{uploadResult.message}</div>
                     </div>
                   </div>
                 )}
