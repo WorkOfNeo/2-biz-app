@@ -573,7 +573,7 @@ export default function HomePage() {
     <div className="min-h-screen p-4">
       <div className="max-w-7xl mx-auto">
         <div className="mb-4">
-          <h1 className="text-2xl font-semibold">Hej{name ? ` ${name}` : ''}.</h1>
+          <h1 className="text-2xl font-semibold">Hej*{name ? ` ${name}` : ''}.</h1>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
