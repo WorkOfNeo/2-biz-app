@@ -135,6 +135,16 @@ export async function scrapeCustomers(ctx: Ctx) {
     await saveResult(job.id, 'scrape_customers', resultData);
     await log(job.id, 'info', 'STEP:result_saved');
     
+    // Clear note: scrape only creates a preview — apply step writes to DB
+    if (diff.new.length > 0 || diff.updated.length > 0) {
+      await log(job.id, 'info', 'STEP:preview_ready_NOT_applied', {
+        message: `⚠️  Preview saved with ${diff.new.length} new + ${diff.updated.length} updated customers. NOT yet written to database. Go to /settings/customers/scrape and click "Apply Changes" to commit.`,
+        preview_id: preview?.id,
+        new_customers: diff.new.map((c: any) => `${c.account} — ${c.company}`),
+        updated_customers: diff.updated.map((c: any) => `${c.customer_id} — ${c.company}`)
+      });
+    }
+    
     await setJobSucceeded(job.id);
     await log(job.id, 'info', 'STEP:job_succeeded');
   } catch (e: any) {
@@ -392,13 +402,32 @@ export async function applyCustomerScrapePreview(ctx: Omit<Ctx, 'page' | 'findFi
       await log(job.id, 'error', 'STEP:mark_applied_failed', { error: markError.message });
     }
     
+    // Summary logs
+    if (newInserted > 0) {
+      await log(job.id, 'info', 'STEP:created_customers', {
+        message: `✅ Created ${newInserted} new customer(s) in database:`,
+        created: newDetails.filter(d => d.status === 'ok').map(d => `${d.account} — ${d.company}`)
+      });
+    }
+    if (updatedOk > 0) {
+      await log(job.id, 'info', 'STEP:updated_customers', {
+        message: `✅ Updated ${updatedOk} customer(s) in database:`,
+        updated: updateDetails.filter(d => d.status === 'ok').map(d => `${d.customer_id} — ${d.company}`)
+      });
+    }
+    if (newFailed > 0 || updatedFailed > 0) {
+      await log(job.id, 'error', 'STEP:apply_failures', {
+        message: `❌ ${newFailed} insert(s) failed, ${updatedFailed} update(s) failed`,
+        failed_inserts: newDetails.filter(d => d.status === 'failed'),
+        failed_updates: updateDetails.filter(d => d.status === 'failed')
+      });
+    }
+    
     await log(job.id, 'info', 'STEP:apply_complete', {
       new_inserted: newInserted,
       new_failed: newFailed,
       updated_ok: updatedOk,
-      updated_failed: updatedFailed,
-      new_details: newDetails,
-      update_details: updateDetails
+      updated_failed: updatedFailed
     });
     
     await saveResult(job.id, 'apply_customer_preview', {

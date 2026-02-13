@@ -154,6 +154,18 @@ export async function POST(req: Request) {
       console.error('[Apply] Failed to mark preview as applied:', markError.message);
     }
     
+    // Clear summary logs
+    if (newInserted > 0) {
+      const createdList = updates.filter((u: any) => u.type === 'new').map((u: any) => `  ${u.account} — ${u.company}`).join('\n');
+      console.log(`[Apply] ✅ Created ${newInserted} customer(s):\n${createdList}`);
+    }
+    if (updatedCount > 0) {
+      const updatedList = updates.filter((u: any) => u.type === 'updated').map((u: any) => `  ${u.customer_id} — ${u.company}`).join('\n');
+      console.log(`[Apply] ✅ Updated ${updatedCount} customer(s):\n${updatedList}`);
+    }
+    if (errors.length > 0) {
+      console.error(`[Apply] ❌ ${errors.length} operation(s) failed:`, JSON.stringify(errors, null, 2));
+    }
     console.log(`[Apply] Complete — new: ${newInserted}/${diffData.new.length}, updated: ${updatedCount}/${diffData.updated.length}, errors: ${errors.length}`);
     
     return NextResponse.json({ 
