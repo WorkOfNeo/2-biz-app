@@ -107,6 +107,20 @@ export async function scrapeCustomers(ctx: Ctx) {
     
     await log(job.id, 'info', 'STEP:preview_stored', { preview_id: preview?.id });
     
+    // Log details of new customers found
+    if (diff.new.length > 0) {
+      await log(job.id, 'info', 'STEP:new_customers_detail', {
+        customers: diff.new.map((c: any) => ({ account: c.account, company: c.company, city: c.city, country: c.country }))
+      });
+    }
+    
+    // Log details of updated customers
+    if (diff.updated.length > 0) {
+      await log(job.id, 'info', 'STEP:updated_customers_detail', {
+        customers: diff.updated.map((c: any) => ({ id: c.id, customer_id: c.customer_id, company: c.company, changes: c.changes }))
+      });
+    }
+    
     const resultData = {
       preview_id: preview?.id,
       scraped: rows.length,
@@ -270,8 +284,15 @@ export async function applyCustomerScrapePreview(ctx: Omit<Ctx, 'page' | 'findFi
     }
     
     // Apply new customers
+    let newInserted = 0;
+    let newFailed = 0;
+    const newDetails: { account: string; company: string; status: string; error?: string }[] = [];
+    
     for (const r of diffData.new) {
-      if (!r.account) continue;
+      if (!r.account) {
+        await log(job.id, 'info', 'STEP:apply_skip_no_account', { company: r.company });
+        continue;
+      }
       
       let salesperson_id: string | null = null;
       const spName = String(r.sales_person || '').trim();
@@ -280,7 +301,7 @@ export async function applyCustomerScrapePreview(ctx: Omit<Ctx, 'page' | 'findFi
         salesperson_id = salespersonByName.get(key) || null;
       }
       
-      await supabase.from('customers').insert({
+      const { error: insertError } = await supabase.from('customers').insert({
         customer_id: r.account,
         company: r.company,
         city: r.city,
@@ -290,15 +311,31 @@ export async function applyCustomerScrapePreview(ctx: Omit<Ctx, 'page' | 'findFi
         orders_link: r.orders_link,
         spy_id: r.spy_id,
         salesperson_id,
-        inactive: false // New customers are always active
+        inactive: false
       });
+      
+      if (insertError) {
+        newFailed++;
+        newDetails.push({ account: r.account, company: r.company || '', status: 'failed', error: insertError.message });
+        await log(job.id, 'error', 'STEP:apply_insert_failed', { account: r.account, company: r.company, error: insertError.message });
+      } else {
+        newInserted++;
+        newDetails.push({ account: r.account, company: r.company || '', status: 'ok' });
+        await log(job.id, 'info', 'STEP:apply_inserted', { account: r.account, company: r.company });
+      }
     }
     
     // Apply updates
+    let updatedOk = 0;
+    let updatedFailed = 0;
+    const updateDetails: { id: string; customer_id: string; company: string; status: string; error?: string }[] = [];
+    
     for (const updated of diffData.updated) {
-      // Find the corresponding scraped row
       const scrapedRow = scrapedData.find((r: any) => r.account === updated.customer_id);
-      if (!scrapedRow) continue;
+      if (!scrapedRow) {
+        await log(job.id, 'info', 'STEP:apply_update_skip_no_match', { id: updated.id, customer_id: updated.customer_id });
+        continue;
+      }
       
       let salesperson_id: string | null = null;
       const spName = String(scrapedRow.sales_person || '').trim();
@@ -307,7 +344,7 @@ export async function applyCustomerScrapePreview(ctx: Omit<Ctx, 'page' | 'findFi
         salesperson_id = salespersonByName.get(key) || null;
       }
       
-      await supabase.from('customers').update({
+      const { error: updateError } = await supabase.from('customers').update({
         company: scrapedRow.company,
         city: scrapedRow.city,
         country: scrapedRow.country,
@@ -316,32 +353,63 @@ export async function applyCustomerScrapePreview(ctx: Omit<Ctx, 'page' | 'findFi
         orders_link: scrapedRow.orders_link,
         spy_id: scrapedRow.spy_id,
         salesperson_id,
-        inactive: false // Reactivate if customer reappears in SPY
+        inactive: false
       }).eq('id', updated.id);
+      
+      if (updateError) {
+        updatedFailed++;
+        updateDetails.push({ id: updated.id, customer_id: updated.customer_id, company: updated.company || '', status: 'failed', error: updateError.message });
+        await log(job.id, 'error', 'STEP:apply_update_failed', { id: updated.id, customer_id: updated.customer_id, error: updateError.message });
+      } else {
+        updatedOk++;
+        updateDetails.push({ id: updated.id, customer_id: updated.customer_id, company: updated.company || '', status: 'ok' });
+      }
     }
+    
+    await log(job.id, 'info', 'STEP:apply_updates_done', { ok: updatedOk, failed: updatedFailed });
     
     // Mark orphaned customers as inactive (instead of deleting)
     if (diffData.orphaned.length > 0) {
       const orphanedIds = diffData.orphaned.map(c => c.id);
-      await supabase
+      const { error: orphanError } = await supabase
         .from('customers')
         .update({ inactive: true })
         .in('id', orphanedIds);
-      await log(job.id, 'info', 'STEP:orphaned_marked_inactive', { count: orphanedIds.length });
+      if (orphanError) {
+        await log(job.id, 'error', 'STEP:orphaned_mark_failed', { count: orphanedIds.length, error: orphanError.message });
+      } else {
+        await log(job.id, 'info', 'STEP:orphaned_marked_inactive', { count: orphanedIds.length });
+      }
     }
     
     // Mark preview as applied
-    await supabase
+    const { error: markError } = await supabase
       .from('customer_scrape_previews')
       .update({ applied_at: new Date().toISOString() })
       .eq('id', previewId);
     
-    await log(job.id, 'info', 'STEP:apply_complete');
+    if (markError) {
+      await log(job.id, 'error', 'STEP:mark_applied_failed', { error: markError.message });
+    }
+    
+    await log(job.id, 'info', 'STEP:apply_complete', {
+      new_inserted: newInserted,
+      new_failed: newFailed,
+      updated_ok: updatedOk,
+      updated_failed: updatedFailed,
+      new_details: newDetails,
+      update_details: updateDetails
+    });
+    
     await saveResult(job.id, 'apply_customer_preview', {
       preview_id: previewId,
-      new_applied: diffData.new.length,
-      updated_applied: diffData.updated.length,
-      orphaned_marked_inactive: diffData.orphaned.length
+      new_inserted: newInserted,
+      new_failed: newFailed,
+      updated_ok: updatedOk,
+      updated_failed: updatedFailed,
+      orphaned_marked_inactive: diffData.orphaned.length,
+      new_details: newDetails,
+      update_details: updateDetails
     });
     
     await setJobSucceeded(job.id);

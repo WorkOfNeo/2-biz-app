@@ -43,12 +43,20 @@ export async function POST(req: Request) {
     }
     
     const updates: any[] = [];
+    const errors: any[] = [];
     
-    // Batch insert new customers
+    // Insert new customers one by one so we can track individual failures
+    let newInserted = 0;
+    let newFailed = 0;
+    
     if (diffData.new.length > 0) {
-      const newCustomerRecords = [];
+      console.log(`[Apply] Inserting ${diffData.new.length} new customers...`);
+      
       for (const r of diffData.new) {
-        if (!r.account) continue;
+        if (!r.account) {
+          console.log(`[Apply] Skipping customer without account: ${r.company}`);
+          continue;
+        }
         
         let salesperson_id: string | null = null;
         const spName = String(r.sales_person || '').trim();
@@ -57,7 +65,7 @@ export async function POST(req: Request) {
           salesperson_id = salespersonByName.get(key) || null;
         }
         
-        newCustomerRecords.push({
+        const record = {
           customer_id: r.account,
           company: r.company,
           city: r.city,
@@ -66,26 +74,41 @@ export async function POST(req: Request) {
           priority: r.priority,
           orders_link: r.orders_link,
           spy_id: r.spy_id,
-          salesperson_id
-        });
+          salesperson_id,
+          inactive: false
+        };
         
-        updates.push({ type: 'new', company: r.company || r.account });
+        const { error: insertError } = await supabase.from('customers').insert(record);
+        
+        if (insertError) {
+          newFailed++;
+          const errInfo = { type: 'insert', account: r.account, company: r.company, error: insertError.message };
+          errors.push(errInfo);
+          console.error(`[Apply] INSERT FAILED: ${r.account} (${r.company}):`, insertError.message);
+        } else {
+          newInserted++;
+          updates.push({ type: 'new', account: r.account, company: r.company || r.account });
+          console.log(`[Apply] INSERTED: ${r.account} — ${r.company}`);
+        }
       }
       
-      // Insert all at once
-      const { error: insertError } = await supabase.from('customers').insert(newCustomerRecords);
-      if (insertError) {
-        console.error('Batch insert error:', insertError);
-        throw new Error(`Failed to insert new customers: ${insertError.message}`);
-      }
+      console.log(`[Apply] New customers: ${newInserted} inserted, ${newFailed} failed`);
     }
     
     // Update existing customers one by one (each has different ID)
     let updatedCount = 0;
+    let updateFailed = 0;
+    
+    if (diffData.updated.length > 0) {
+      console.log(`[Apply] Updating ${diffData.updated.length} customers...`);
+    }
+    
     for (const updated of diffData.updated) {
-      // Find the corresponding scraped row
       const scrapedRow = scrapedData.find((r: any) => r.account === updated.customer_id);
-      if (!scrapedRow) continue;
+      if (!scrapedRow) {
+        console.log(`[Apply] UPDATE SKIP: No scraped row for ${updated.customer_id} (${updated.company})`);
+        continue;
+      }
       
       let salesperson_id: string | null = null;
       const spName = String(scrapedRow.sales_person || '').trim();
@@ -102,28 +125,47 @@ export async function POST(req: Request) {
         priority: scrapedRow.priority,
         orders_link: scrapedRow.orders_link,
         spy_id: scrapedRow.spy_id,
-        salesperson_id
+        salesperson_id,
+        inactive: false
       }).eq('id', updated.id);
       
-      if (!updateError) {
+      if (updateError) {
+        updateFailed++;
+        const errInfo = { type: 'update', id: updated.id, customer_id: updated.customer_id, company: updated.company, error: updateError.message };
+        errors.push(errInfo);
+        console.error(`[Apply] UPDATE FAILED: ${updated.customer_id} (${updated.company}):`, updateError.message);
+      } else {
         updatedCount++;
-        updates.push({ type: 'updated', company: scrapedRow.company || updated.customer_id });
+        updates.push({ type: 'updated', customer_id: updated.customer_id, company: scrapedRow.company || updated.customer_id, changes: updated.changes?.length || 0 });
       }
     }
     
+    if (diffData.updated.length > 0) {
+      console.log(`[Apply] Updates: ${updatedCount} ok, ${updateFailed} failed`);
+    }
+    
     // Mark preview as applied
-    await supabase
+    const { error: markError } = await supabase
       .from('customer_scrape_previews')
       .update({ applied_at: new Date().toISOString() })
       .eq('id', previewId);
     
+    if (markError) {
+      console.error('[Apply] Failed to mark preview as applied:', markError.message);
+    }
+    
+    console.log(`[Apply] Complete — new: ${newInserted}/${diffData.new.length}, updated: ${updatedCount}/${diffData.updated.length}, errors: ${errors.length}`);
+    
     return NextResponse.json({ 
       success: true,
       applied: {
-        new: diffData.new.length,
-        updated: updatedCount
+        new_inserted: newInserted,
+        new_failed: newFailed,
+        updated: updatedCount,
+        update_failed: updateFailed
       },
-      updates
+      updates,
+      errors: errors.length > 0 ? errors : undefined
     });
   } catch (e: any) {
     console.error('Apply preview error:', e);
