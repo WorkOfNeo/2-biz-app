@@ -88,44 +88,141 @@ export async function scrapeCustomers(ctx: Ctx) {
       no_account_count: diff.noAccount.length
     });
     
-    // Step 4: Store preview
+    // Step 4: Auto-apply new + updated customers to the database
+    // Get salesperson mapping for inserts/updates
+    const { data: spAll } = await supabase.from('salespersons').select('id, name');
+    const salespersonByName = new Map<string, string>();
+    for (const sp of (spAll ?? []) as any[]) {
+      const key = String(sp.name || '').trim().toLowerCase();
+      if (key) salespersonByName.set(key, sp.id as string);
+    }
+    
+    // Insert new customers
+    let newInserted = 0;
+    let newFailed = 0;
+    const createdList: string[] = [];
+    
+    if (diff.new.length > 0) {
+      await log(job.id, 'info', 'STEP:inserting_new_customers', { count: diff.new.length });
+      
+      for (const r of diff.new) {
+        if (!r.account) continue;
+        
+        let salesperson_id: string | null = null;
+        const spName = String(r.sales_person || '').trim();
+        if (spName) salesperson_id = salespersonByName.get(spName.toLowerCase()) || null;
+        
+        const { error: insertError } = await supabase.from('customers').insert({
+          customer_id: r.account,
+          company: r.company,
+          city: r.city,
+          country: r.country,
+          phone: r.phone,
+          priority: r.priority,
+          orders_link: r.orders_link,
+          spy_id: r.spy_id,
+          salesperson_id,
+          inactive: false
+        });
+        
+        if (insertError) {
+          newFailed++;
+          await log(job.id, 'error', 'STEP:insert_failed', { account: r.account, company: r.company, error: insertError.message });
+        } else {
+          newInserted++;
+          createdList.push(`${r.account} — ${r.company}`);
+        }
+      }
+      
+      if (newInserted > 0) {
+        await log(job.id, 'info', 'STEP:created_customers', {
+          message: `✅ Created ${newInserted} new customer(s) in database:`,
+          created: createdList
+        });
+      }
+      if (newFailed > 0) {
+        await log(job.id, 'error', 'STEP:insert_failures', { message: `❌ ${newFailed} insert(s) failed` });
+      }
+    }
+    
+    // Update changed customers
+    let updatedOk = 0;
+    let updatedFailed = 0;
+    const updatedList: string[] = [];
+    
+    if (diff.updated.length > 0) {
+      await log(job.id, 'info', 'STEP:updating_customers', { count: diff.updated.length });
+      
+      for (const updated of diff.updated) {
+        const scrapedRow = rows.find((r: any) => r.account === updated.customer_id);
+        if (!scrapedRow) continue;
+        
+        let salesperson_id: string | null = null;
+        const spName = String(scrapedRow.sales_person || '').trim();
+        if (spName) salesperson_id = salespersonByName.get(spName.toLowerCase()) || null;
+        
+        const { error: updateError } = await supabase.from('customers').update({
+          company: scrapedRow.company,
+          city: scrapedRow.city,
+          country: scrapedRow.country,
+          phone: scrapedRow.phone,
+          priority: scrapedRow.priority,
+          orders_link: scrapedRow.orders_link,
+          spy_id: scrapedRow.spy_id,
+          salesperson_id,
+          inactive: false
+        }).eq('id', updated.id);
+        
+        if (updateError) {
+          updatedFailed++;
+          await log(job.id, 'error', 'STEP:update_failed', { id: updated.id, customer_id: updated.customer_id, error: updateError.message });
+        } else {
+          updatedOk++;
+          updatedList.push(`${updated.customer_id} — ${updated.company}`);
+        }
+      }
+      
+      if (updatedOk > 0) {
+        await log(job.id, 'info', 'STEP:updated_customers', {
+          message: `✅ Updated ${updatedOk} customer(s) in database:`,
+          updated: updatedList
+        });
+      }
+      if (updatedFailed > 0) {
+        await log(job.id, 'error', 'STEP:update_failures', { message: `❌ ${updatedFailed} update(s) failed` });
+      }
+    }
+    
+    // Step 5: Store preview (for audit + orphaned review)
     await log(job.id, 'info', 'STEP:storing_preview');
     const { data: preview, error: previewError } = await supabase
       .from('customer_scrape_previews')
       .insert({
         job_id: job.id,
         scraped_data: rows,
-        diff_data: diff
+        diff_data: diff,
+        // Mark as applied since we just did it
+        applied_at: new Date().toISOString()
       })
       .select('id')
       .single();
     
     if (previewError) {
       await log(job.id, 'error', 'STEP:preview_insert_error', { error: previewError.message });
-      throw previewError;
+      // Don't throw — customers are already written, preview is just for audit
     }
     
     await log(job.id, 'info', 'STEP:preview_stored', { preview_id: preview?.id });
     
-    // Log details of new customers found
-    if (diff.new.length > 0) {
-      await log(job.id, 'info', 'STEP:new_customers_detail', {
-        customers: diff.new.map((c: any) => ({ account: c.account, company: c.company, city: c.city, country: c.country }))
-      });
-    }
-    
-    // Log details of updated customers
-    if (diff.updated.length > 0) {
-      await log(job.id, 'info', 'STEP:updated_customers_detail', {
-        customers: diff.updated.map((c: any) => ({ id: c.id, customer_id: c.customer_id, company: c.company, changes: c.changes }))
-      });
-    }
-    
     const resultData = {
       preview_id: preview?.id,
       scraped: rows.length,
-      new: diff.new.length,
-      updated: diff.updated.length,
+      new_found: diff.new.length,
+      new_created: newInserted,
+      new_failed: newFailed,
+      updated_found: diff.updated.length,
+      updated_applied: updatedOk,
+      updated_failed: updatedFailed,
       unchanged: diff.unchanged.length,
       orphaned: diff.orphaned.length,
       noAccount: diff.noAccount.length
@@ -133,15 +230,12 @@ export async function scrapeCustomers(ctx: Ctx) {
     
     await log(job.id, 'info', 'STEP:saving_result', resultData);
     await saveResult(job.id, 'scrape_customers', resultData);
-    await log(job.id, 'info', 'STEP:result_saved');
     
-    // Clear note: scrape only creates a preview — apply step writes to DB
-    if (diff.new.length > 0 || diff.updated.length > 0) {
-      await log(job.id, 'info', 'STEP:preview_ready_NOT_applied', {
-        message: `⚠️  Preview saved with ${diff.new.length} new + ${diff.updated.length} updated customers. NOT yet written to database. Go to /settings/customers/scrape and click "Apply Changes" to commit.`,
-        preview_id: preview?.id,
-        new_customers: diff.new.map((c: any) => `${c.account} — ${c.company}`),
-        updated_customers: diff.updated.map((c: any) => `${c.customer_id} — ${c.company}`)
+    // Note about orphaned if any
+    if (diff.orphaned.length > 0) {
+      await log(job.id, 'info', 'STEP:orphaned_need_review', {
+        message: `⚠️  ${diff.orphaned.length} orphaned customer(s) found (in DB but not in SPY). Review at /settings/customers/scrape to mark inactive.`,
+        orphaned: diff.orphaned.slice(0, 20).map((c: any) => `${c.customer_id} — ${c.company || '(no name)'}`)
       });
     }
     
