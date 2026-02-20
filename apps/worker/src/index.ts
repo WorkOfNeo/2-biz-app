@@ -2110,6 +2110,9 @@ async function runJob(job: JobRow) {
           const accountNo = (r.account || '').trim();
           const customerName = (r.customer || '').trim();
           const country = (r.country || '').trim();
+          // Check if scraped salesperson column indicates multiple salespeople
+          const scrapedSalesperson = (r.salesperson || '').trim();
+          const hasMultipleSalespeople = scrapedSalesperson.includes(',') || /more than \d+/i.test(scrapedSalesperson);
           // Collect SPY customer ID for style details (when toggle enabled)
           if (r.spyCustomerId && accountNo) {
             styleDetailsCustomerMap.set(r.spyCustomerId, accountNo);
@@ -2135,9 +2138,15 @@ async function runJob(job: JobRow) {
             continue;
           }
           if (existingRow) {
+            // Build update object: exclude salesperson fields if multiple salespeople detected
+            const updateData: any = { qty, price, currency: currency || null, customer_id: customerUuid, customer_name: customerName || null };
+            if (!hasMultipleSalespeople) {
+              updateData.salesperson_id = salespersonId;
+              updateData.salesperson_name = sp.name;
+            }
             const { error: updErr } = await supabase
               .from('sales_stats')
-              .update({ qty, price, currency: currency || null, customer_id: customerUuid, customer_name: customerName || null, salesperson_id: salespersonId, salesperson_name: sp.name })
+              .update(updateData)
               .eq('id', (existingRow as any).id);
             if (updErr) throw updErr;
             updatedCount++;
@@ -2152,12 +2161,15 @@ async function runJob(job: JobRow) {
             customer_id: customerUuid,
             customer_name: customerName || null,
             city: null,
-            salesperson_id: salespersonId,
-            salesperson_name: sp.name,
             qty,
             price,
             currency: currency || null
           };
+          // Only set salesperson fields if not multiple salespeople
+          if (!hasMultipleSalespeople) {
+            insertRow.salesperson_id = salespersonId;
+            insertRow.salesperson_name = sp.name;
+          }
             const { error: insErr } = await supabase.from('sales_stats').insert(insertRow);
             if (insErr) throw insErr;
             createdCount++;

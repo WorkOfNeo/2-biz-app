@@ -110,7 +110,11 @@ export async function scrapeCustomers(ctx: Ctx) {
         
         let salesperson_id: string | null = null;
         const spName = String(r.sales_person || '').trim();
-        if (spName) salesperson_id = salespersonByName.get(spName.toLowerCase()) || null;
+        // Only set salesperson if not multiple (contains comma or "MORE THAN X")
+        const hasMultipleSalespeople = spName.includes(',') || /more than \d+/i.test(spName);
+        if (spName && !hasMultipleSalespeople) {
+          salesperson_id = salespersonByName.get(spName.toLowerCase()) || null;
+        }
         
         const { error: insertError } = await supabase.from('customers').insert({
           customer_id: r.account,
@@ -157,11 +161,12 @@ export async function scrapeCustomers(ctx: Ctx) {
         const scrapedRow = rows.find((r: any) => r.account === updated.customer_id);
         if (!scrapedRow) continue;
         
-        let salesperson_id: string | null = null;
         const spName = String(scrapedRow.sales_person || '').trim();
-        if (spName) salesperson_id = salespersonByName.get(spName.toLowerCase()) || null;
+        // Check if multiple salespeople (contains comma or "MORE THAN X")
+        const hasMultipleSalespeople = spName.includes(',') || /more than \d+/i.test(spName);
         
-        const { error: updateError } = await supabase.from('customers').update({
+        // Build update object
+        const updateData: any = {
           company: scrapedRow.company,
           city: scrapedRow.city,
           country: scrapedRow.country,
@@ -169,9 +174,17 @@ export async function scrapeCustomers(ctx: Ctx) {
           priority: scrapedRow.priority,
           orders_link: scrapedRow.orders_link,
           spy_id: scrapedRow.spy_id,
-          salesperson_id,
           inactive: false
-        }).eq('id', updated.id);
+        };
+        
+        // Only update salesperson if single salesperson detected
+        if (!hasMultipleSalespeople) {
+          let salesperson_id: string | null = null;
+          if (spName) salesperson_id = salespersonByName.get(spName.toLowerCase()) || null;
+          updateData.salesperson_id = salesperson_id;
+        }
+        
+        const { error: updateError } = await supabase.from('customers').update(updateData).eq('id', updated.id);
         
         if (updateError) {
           updatedFailed++;
