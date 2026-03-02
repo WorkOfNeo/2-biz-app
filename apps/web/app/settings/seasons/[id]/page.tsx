@@ -923,7 +923,8 @@ export default function SeasonDetailPage() {
       }
 
       // Upsert records into target season (overwrite conflicts)
-      const targetRecords = records.map(r => ({ ...r, season_id: moveToSeasonId }));
+      // Strip id and created_at so Postgres generates new primary keys
+      const targetRecords = records.map(({ id: _id, created_at: _ca, ...rest }) => ({ ...rest, season_id: moveToSeasonId }));
       const { error: upsertError } = await supabase
         .from('sales_stats')
         .upsert(targetRecords, { onConflict: 'season_id,account_no' });
