@@ -28,8 +28,6 @@ body { @apply bg-white text-gray-900; }
     opacity: 1;
     transform: translateY(0);
   }
-}
-
-.animate-fade-in {
+}.animate-fade-in {
   animation: fade-in 0.4s ease-out forwards;
 }

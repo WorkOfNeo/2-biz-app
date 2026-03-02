@@ -37,6 +37,12 @@ interface SendOutPayload {
   phase?: SendOutPhase;
   styleNos?: string[];
   seasonId?: string | null;
+  // Bulletproof tracking
+  scrapeJobId?: string;
+  stockScrapeJobId?: string;
+  scrapeCompletedAt?: string;
+  exportJobIds?: string[];
+  exportCompletedAt?: string;
 }
 
 type LogFn = (jobId: string, level: 'info' | 'error', msg: string, data?: Record<string, any>) => Promise<void>;
@@ -152,48 +158,80 @@ export async function runManualSendoutPipeline(
       }
     }
 
-    // Enqueue scrape_statistics
-    await supabase.from('jobs').insert({
-      type: 'scrape_statistics',
-      payload: {
-        toggles: { deep: true },
-        requestedBy: 'manual_sendout_pipeline',
-        pipelineRootJobId,
-        seasonId,
-      },
-      status: 'queued',
-      max_attempts: 3,
-      queue: 'default',
-      priority: 100,
-    });
-
-    // Enqueue update_style_stock if we have stock lists
-    if (styleNos.length > 0) {
-      await supabase.from('jobs').insert({
-        type: 'update_style_stock',
+    // Enqueue scrape_statistics and track its ID
+    const { data: scrapeJob, error: scrapeInsertErr } = await supabase
+      .from('jobs')
+      .insert({
+        type: 'scrape_statistics',
         payload: {
-          styleNos,
+          toggles: { deep: true },
           requestedBy: 'manual_sendout_pipeline',
           pipelineRootJobId,
-          mode: 'selected',
+          seasonId,
         },
         status: 'queued',
         max_attempts: 3,
-        queue: 'stock',
-        priority: 200,
-      });
+        queue: 'default',
+        priority: 100,
+      })
+      .select('id')
+      .single();
+
+    if (scrapeInsertErr) {
+      await setJobFailedOrRequeue(job, `Failed to enqueue scrape_statistics: ${scrapeInsertErr.message}`);
+      return;
+    }
+
+    const scrapeJobId = (scrapeJob as any)?.id;
+
+    // Enqueue update_style_stock if we have stock lists and track its ID
+    let stockScrapeJobId: string | undefined;
+    if (styleNos.length > 0) {
+      const { data: stockJob, error: stockInsertErr } = await supabase
+        .from('jobs')
+        .insert({
+          type: 'update_style_stock',
+          payload: {
+            styleNos,
+            requestedBy: 'manual_sendout_pipeline',
+            pipelineRootJobId,
+            mode: 'selected',
+          },
+          status: 'queued',
+          max_attempts: 3,
+          queue: 'stock',
+          priority: 200,
+        })
+        .select('id')
+        .single();
+
+      if (stockInsertErr) {
+        await setJobFailedOrRequeue(job, `Failed to enqueue update_style_stock: ${stockInsertErr.message}`);
+        return;
+      }
+
+      stockScrapeJobId = (stockJob as any)?.id;
     }
 
     await log(job.id, 'info', 'SENDOUT:scrapes_enqueued', {
       statsEnqueued: true,
       stockStylesCount: styleNos.length,
+      scrapeJobId,
+      stockScrapeJobId,
     });
 
     // Update payload with derived data and move to next phase
     await supabase
       .from('jobs')
       .update({
-        payload: { ...payload, phase: 'waiting_scrapes', styleNos, seasonId },
+        payload: {
+          ...payload,
+          phase: 'waiting_scrapes',
+          styleNos,
+          seasonId,
+          scrapeJobId,
+          stockScrapeJobId,
+        },
       })
       .eq('id', job.id);
 
@@ -203,14 +241,18 @@ export async function runManualSendoutPipeline(
 
   // ========== PHASE: waiting_scrapes ==========
   if (currentPhase === 'waiting_scrapes') {
-    // Check scrape_statistics
-    const { data: statsJobs } = await supabase
-      .from('jobs')
-      .select('id, status')
-      .eq('type', 'scrape_statistics')
-      .contains('payload', { pipelineRootJobId });
+    // Check scrape_statistics using tracked job ID for precision
+    const scrapeJobId = payload.scrapeJobId;
+    if (!scrapeJobId) {
+      await setJobFailedOrRequeue(job, 'Missing scrapeJobId in payload');
+      return;
+    }
 
-    const statsJob = (statsJobs ?? [])[0] as any | undefined;
+    const { data: statsJob } = await supabase
+      .from('jobs')
+      .select('id, status, finished_at')
+      .eq('id', scrapeJobId)
+      .maybeSingle();
 
     if (!statsJob || statsJob.status === 'queued' || statsJob.status === 'running') {
       await requeueWithDelay('waiting_scrapes', 'scrape_statistics still running');
@@ -222,16 +264,18 @@ export async function runManualSendoutPipeline(
       return;
     }
 
-    // Check update_style_stock if applicable
-    const styleNos = payload.styleNos || [];
-    if (styleNos.length > 0) {
-      const { data: stockJobs } = await supabase
-        .from('jobs')
-        .select('id, status')
-        .eq('type', 'update_style_stock')
-        .contains('payload', { pipelineRootJobId });
+    // Capture the completion timestamp for bulletproof export verification
+    const scrapeCompletedAt = (statsJob as any).finished_at || new Date().toISOString();
 
-      const stockRootJob = (stockJobs ?? [])[0] as any | undefined;
+    // Check update_style_stock if applicable using tracked job ID
+    const stockScrapeJobId = payload.stockScrapeJobId;
+    const styleNos = payload.styleNos || [];
+    if (styleNos.length > 0 && stockScrapeJobId) {
+      const { data: stockRootJob } = await supabase
+        .from('jobs')
+        .select('id, status, finished_at')
+        .eq('id', stockScrapeJobId)
+        .maybeSingle();
 
       if (!stockRootJob) {
         await requeueWithDelay('waiting_scrapes', 'update_style_stock not found yet');
@@ -269,7 +313,16 @@ export async function runManualSendoutPipeline(
       }
     }
 
-    await log(job.id, 'info', 'SENDOUT:scrapes_complete', {});
+    await log(job.id, 'info', 'SENDOUT:scrapes_complete', { scrapeCompletedAt });
+
+    // Update payload with completion timestamp
+    await supabase
+      .from('jobs')
+      .update({
+        payload: { ...payload, phase: 'enqueue_exports', scrapeCompletedAt },
+      })
+      .eq('id', job.id);
+
     await requeueWithDelay('enqueue_exports', 'Moving to export phase');
     return;
   }
@@ -278,63 +331,104 @@ export async function runManualSendoutPipeline(
   if (currentPhase === 'enqueue_exports') {
     await log(job.id, 'info', 'SENDOUT:enqueue_exports', {});
 
+    const exportJobIds: string[] = [];
+
     // Enqueue export_overview for general salesmen PDFs (needed for personal PDFs)
     if (payload.include.generalCombined || payload.salespersonIds.length > 0) {
-      await supabase.from('jobs').insert({
-        type: 'export_overview',
-        payload: {
-          mode: 'general_salesmen_react_pdf',
-          requestedBy: 'manual_sendout_pipeline',
-          pipelineRootJobId,
-        },
-        status: 'queued',
-        max_attempts: 3,
-      });
+      const { data: exportJob } = await supabase
+        .from('jobs')
+        .insert({
+          type: 'export_overview',
+          payload: {
+            mode: 'general_salesmen_react_pdf',
+            requestedBy: 'manual_sendout_pipeline',
+            pipelineRootJobId,
+          },
+          status: 'queued',
+          max_attempts: 3,
+        })
+        .select('id')
+        .single();
+      if (exportJob?.id) exportJobIds.push((exportJob as any).id);
     }
 
     // Countries PDF
     if (payload.include.countries) {
-      await supabase.from('jobs').insert({
-        type: 'export_overview',
-        payload: {
-          mode: 'countries_react_pdf',
-          requestedBy: 'manual_sendout_pipeline',
-          pipelineRootJobId,
-        },
-        status: 'queued',
-        max_attempts: 3,
-      });
+      const { data: exportJob } = await supabase
+        .from('jobs')
+        .insert({
+          type: 'export_overview',
+          payload: {
+            mode: 'countries_react_pdf',
+            requestedBy: 'manual_sendout_pipeline',
+            pipelineRootJobId,
+          },
+          status: 'queued',
+          max_attempts: 3,
+        })
+        .select('id')
+        .single();
+      if (exportJob?.id) exportJobIds.push((exportJob as any).id);
     }
 
     // Overview PDF
     if (payload.include.overview) {
-      await supabase.from('jobs').insert({
-        type: 'export_overview',
-        payload: {
-          mode: 'overview_react_pdf',
-          requestedBy: 'manual_sendout_pipeline',
-          pipelineRootJobId,
-        },
-        status: 'queued',
-        max_attempts: 3,
-      });
+      const { data: exportJob } = await supabase
+        .from('jobs')
+        .insert({
+          type: 'export_overview',
+          payload: {
+            mode: 'overview_react_pdf',
+            requestedBy: 'manual_sendout_pipeline',
+            pipelineRootJobId,
+          },
+          status: 'queued',
+          max_attempts: 3,
+        })
+        .select('id')
+        .single();
+      if (exportJob?.id) exportJobIds.push((exportJob as any).id);
     }
 
     // Top styles
     if (payload.include.top15Salesmen || payload.include.top15Overall) {
-      await supabase.from('jobs').insert({
-        type: 'scrape_top_styles',
-        payload: { requestedBy: 'manual_sendout_pipeline', pipelineRootJobId },
-        status: 'queued',
-        max_attempts: 3,
-      });
-      await supabase.from('jobs').insert({
-        type: 'export_top_styles',
-        payload: { requestedBy: 'manual_sendout_pipeline', pipelineRootJobId },
-        status: 'queued',
-        max_attempts: 3,
-      });
+      const { data: scrapeTopJob } = await supabase
+        .from('jobs')
+        .insert({
+          type: 'scrape_top_styles',
+          payload: { requestedBy: 'manual_sendout_pipeline', pipelineRootJobId },
+          status: 'queued',
+          max_attempts: 3,
+        })
+        .select('id')
+        .single();
+      if (scrapeTopJob?.id) exportJobIds.push((scrapeTopJob as any).id);
+
+      const { data: exportTopJob } = await supabase
+        .from('jobs')
+        .insert({
+          type: 'export_top_styles',
+          payload: { requestedBy: 'manual_sendout_pipeline', pipelineRootJobId },
+          status: 'queued',
+          max_attempts: 3,
+        })
+        .select('id')
+        .single();
+      if (exportTopJob?.id) exportJobIds.push((exportTopJob as any).id);
     }
+
+    await log(job.id, 'info', 'SENDOUT:export_jobs_enqueued', {
+      exportJobIds,
+      count: exportJobIds.length,
+    });
+
+    // Update payload with tracked export job IDs
+    await supabase
+      .from('jobs')
+      .update({
+        payload: { ...payload, phase: 'waiting_exports', exportJobIds },
+      })
+      .eq('id', job.id);
 
     await requeueWithDelay('waiting_exports', 'Exports enqueued');
     return;
@@ -342,22 +436,64 @@ export async function runManualSendoutPipeline(
 
   // ========== PHASE: waiting_exports ==========
   if (currentPhase === 'waiting_exports') {
-    const { data: subJobs } = await supabase
-      .from('jobs')
-      .select('id, type, status')
-      .contains('payload', { pipelineRootJobId });
+    const exportJobIds = payload.exportJobIds || [];
 
-    const exportJobTypes = ['export_overview', 'scrape_top_styles', 'export_top_styles'];
-    const pendingExports = ((subJobs ?? []) as any[]).filter(
-      (j) => exportJobTypes.includes(j.type) && (j.status === 'queued' || j.status === 'running')
-    );
-
-    if (pendingExports.length > 0) {
-      await requeueWithDelay('waiting_exports', `Waiting for ${pendingExports.length} exports`);
+    if (exportJobIds.length === 0) {
+      // No exports to wait for, move on
+      await log(job.id, 'info', 'SENDOUT:no_exports_to_wait_for', {});
+      await supabase
+        .from('jobs')
+        .update({
+          payload: { ...payload, phase: 'send_emails', exportCompletedAt: new Date().toISOString() },
+        })
+        .eq('id', job.id);
+      await requeueWithDelay('send_emails', 'Moving to email phase');
       return;
     }
 
-    await log(job.id, 'info', 'SENDOUT:exports_complete', {});
+    // Check each tracked export job by ID (bulletproof)
+    const { data: exportJobs } = await supabase
+      .from('jobs')
+      .select('id, type, status, finished_at')
+      .in('id', exportJobIds);
+
+    const jobs = (exportJobs ?? []) as any[];
+    const pending = jobs.filter((j) => j.status === 'queued' || j.status === 'running');
+    const failed = jobs.filter((j) => j.status === 'failed' || j.status === 'cancelled');
+
+    if (failed.length > 0) {
+      await setJobFailedOrRequeue(
+        job,
+        `Export job(s) failed: ${failed.map((j) => `${j.type} (${j.id})`).join(', ')}`
+      );
+      return;
+    }
+
+    if (pending.length > 0) {
+      await requeueWithDelay('waiting_exports', `Waiting for ${pending.length}/${exportJobIds.length} exports`);
+      return;
+    }
+
+    // All export jobs completed successfully
+    const latestFinishedAt = jobs
+      .map((j) => j.finished_at)
+      .filter(Boolean)
+      .sort()
+      .reverse()[0] || new Date().toISOString();
+
+    await log(job.id, 'info', 'SENDOUT:exports_complete', {
+      exportJobIds,
+      exportCompletedAt: latestFinishedAt,
+    });
+
+    // Update payload with completion timestamp
+    await supabase
+      .from('jobs')
+      .update({
+        payload: { ...payload, phase: 'send_emails', exportCompletedAt: latestFinishedAt },
+      })
+      .eq('id', job.id);
+
     await requeueWithDelay('send_emails', 'Moving to email phase');
     return;
   }
@@ -383,13 +519,24 @@ export async function runManualSendoutPipeline(
       return;
     }
 
-    // Gather export URLs - look at recent exports (1 hour if scraped, otherwise look broader)
-    const lookbackMs = payload.scrapeFirst ? 60 * 60 * 1000 : 7 * 24 * 60 * 60 * 1000; // 1 hour or 7 days
-    const lookbackTime = new Date(Date.now() - lookbackMs).toISOString();
-    
+    // Gather export URLs - BULLETPROOF: use completion timestamp if scraped
+    let lookbackTime: string;
+    if (payload.scrapeFirst && payload.scrapeCompletedAt) {
+      // Use scrape completion time as cutoff to ensure we only use fresh exports
+      lookbackTime = payload.scrapeCompletedAt;
+      await log(job.id, 'info', 'SENDOUT:using_fresh_exports', {
+        scrapeCompletedAt: payload.scrapeCompletedAt,
+        exportCompletedAt: payload.exportCompletedAt,
+      });
+    } else {
+      // Fallback to time-based lookback (7 days)
+      const lookbackMs = 7 * 24 * 60 * 60 * 1000;
+      lookbackTime = new Date(Date.now() - lookbackMs).toISOString();
+    }
+
     const { data: recentExports } = await supabase
       .from('exports')
-      .select('kind, public_url, meta')
+      .select('kind, public_url, meta, created_at')
       .gte('created_at', lookbackTime)
       .order('created_at', { ascending: false });
 

@@ -157,6 +157,15 @@ interface JobStatus {
   started_at: string | null;
   finished_at: string | null;
   error: string | null;
+  payload?: {
+    phase?: string;
+    scrapeFirst?: boolean;
+    scrapeJobId?: string;
+    stockScrapeJobId?: string;
+    scrapeCompletedAt?: string;
+    exportJobIds?: string[];
+    exportCompletedAt?: string;
+  };
 }
 
 function formatElapsedTime(startedAt: string | null): string {
@@ -168,6 +177,75 @@ function formatElapsedTime(startedAt: string | null): string {
   const mins = Math.floor(elapsed / 60);
   const secs = elapsed % 60;
   return `${mins}m ${secs}s`;
+}
+
+// Helper to get current phase info and progress
+function getPhaseInfo(job: JobStatus): {
+  phase: string;
+  phaseLabel: string;
+  progress: number;
+  estimatedTotal: number;
+  eta: string;
+} {
+  const phase = job.payload?.phase || 'init';
+  const scrapeFirst = job.payload?.scrapeFirst || false;
+  
+  // Phase definitions with estimated durations (in seconds)
+  const phases = scrapeFirst
+    ? [
+        { id: 'init', label: 'Initializing', duration: 5 },
+        { id: 'waiting_scrapes', label: 'Scraping data', duration: 120 },
+        { id: 'enqueue_exports', label: 'Preparing exports', duration: 5 },
+        { id: 'waiting_exports', label: 'Generating PDFs', duration: 90 },
+        { id: 'send_emails', label: 'Sending emails', duration: 10 },
+        { id: 'done', label: 'Complete', duration: 0 },
+      ]
+    : [
+        { id: 'init', label: 'Initializing', duration: 5 },
+        { id: 'send_emails', label: 'Sending emails', duration: 10 },
+        { id: 'done', label: 'Complete', duration: 0 },
+      ];
+
+  const currentPhaseIndex = phases.findIndex((p) => p.id === phase);
+  const validIndex = currentPhaseIndex >= 0 ? currentPhaseIndex : 0;
+  const currentPhase = phases[validIndex]!;
+  
+  // Calculate total estimated time
+  const totalEstimated = phases.reduce((sum, p) => sum + p.duration, 0);
+  
+  // Calculate elapsed time up to current phase
+  const elapsedPhases = phases.slice(0, validIndex);
+  const elapsedEstimated = elapsedPhases.reduce((sum, p) => sum + p.duration, 0);
+  
+  // Progress percentage (0-100)
+  const progress = totalEstimated > 0 
+    ? Math.round((elapsedEstimated / totalEstimated) * 100)
+    : 0;
+  
+  // Calculate ETA based on elapsed time and progress
+  const startTime = job.started_at || job.created_at;
+  const elapsedMs = Date.now() - new Date(startTime).getTime();
+  const elapsedSec = Math.floor(elapsedMs / 1000);
+  
+  let eta = '';
+  if (job.status === 'running' && progress > 0 && progress < 100) {
+    const estimatedTotalSec = (elapsedSec / progress) * 100;
+    const remainingSec = Math.max(0, Math.round(estimatedTotalSec - elapsedSec));
+    if (remainingSec < 60) {
+      eta = `~${remainingSec}s`;
+    } else {
+      const mins = Math.floor(remainingSec / 60);
+      eta = `~${mins}m`;
+    }
+  }
+  
+  return {
+    phase: currentPhase.id,
+    phaseLabel: currentPhase.label,
+    progress,
+    estimatedTotal: totalEstimated,
+    eta,
+  };
 }
 
 function formatLastRunTime(completedAt: string | null): string {
@@ -1212,7 +1290,7 @@ export default function StatisticsDashboardPage() {
     try {
       const { data, error } = await supabase
         .from('jobs')
-        .select('id, type, status, created_at, started_at, finished_at, error')
+        .select('id, type, status, created_at, started_at, finished_at, error, payload')
         .eq('id', jobId)
         .maybeSingle();
       if (error) return;
@@ -2003,36 +2081,99 @@ export default function StatisticsDashboardPage() {
                 </div>
               </div>
 
-              {/* Live status card */}
-              {sendOutLastJobId && sendOutJob && (
-                <div className="rounded-md border bg-slate-50 p-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="text-sm font-medium text-slate-900">Send out status</div>
-                    <Badge className="bg-white">
-                      {sendOutJob.status}
-                    </Badge>
+              {/* Live status card with phase tracking and ETA */}
+              {sendOutLastJobId && sendOutJob && (() => {
+                const phaseInfo = getPhaseInfo(sendOutJob);
+                const isActive = sendOutJob.status === 'queued' || sendOutJob.status === 'running';
+                const scrapeFirst = sendOutJob.payload?.scrapeFirst || false;
+                
+                return (
+                  <div className="rounded-md border bg-slate-50 p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="text-sm font-medium text-slate-900">Send out status</div>
+                      <Badge 
+                        className={`${
+                          sendOutJob.status === 'succeeded' 
+                            ? 'bg-green-100 text-green-800 border-green-200' 
+                            : sendOutJob.status === 'failed'
+                            ? 'bg-red-100 text-red-800 border-red-200'
+                            : 'bg-blue-100 text-blue-800 border-blue-200'
+                        }`}
+                      >
+                        {sendOutJob.status}
+                      </Badge>
+                    </div>
+
+                    {/* Phase progress bar */}
+                    {isActive && scrapeFirst && (
+                      <div className="mt-3">
+                        <div className="flex items-center justify-between text-xs mb-1">
+                          <span className="text-slate-700 font-medium">{phaseInfo.phaseLabel}</span>
+                          <span className="text-slate-500">{phaseInfo.progress}%</span>
+                        </div>
+                        <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
+                          <div 
+                            className="h-full bg-blue-600 transition-all duration-500 ease-out"
+                            style={{ width: `${phaseInfo.progress}%` }}
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Stats grid */}
+                    <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                      <div>
+                        <div className="text-[11px] text-slate-500 mb-0.5">Queued</div>
+                        <div className="font-mono text-slate-700">{formatLastRunTime(sendOutJob.created_at)}</div>
+                      </div>
+                      <div>
+                        <div className="text-[11px] text-slate-500 mb-0.5">Elapsed</div>
+                        <div className="font-mono text-slate-700">{sendOutElapsed || '—'}</div>
+                      </div>
+                      {isActive && phaseInfo.eta && (
+                        <div>
+                          <div className="text-[11px] text-slate-500 mb-0.5">ETA</div>
+                          <div className="font-mono text-blue-700 font-medium">{phaseInfo.eta}</div>
+                        </div>
+                      )}
+                      <div>
+                        <div className="text-[11px] text-slate-500 mb-0.5">Job ID</div>
+                        <div className="font-mono text-slate-700">{sendOutJob.id.slice(0, 8)}…</div>
+                      </div>
+                    </div>
+
+                    {/* Current phase detail (only for scrapeFirst) */}
+                    {isActive && scrapeFirst && (
+                      <div className="mt-3 flex items-center gap-2 text-xs">
+                        <div className="flex items-center gap-1.5 text-slate-600">
+                          <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                          <span>
+                            {phaseInfo.phase === 'waiting_scrapes' && 'Fetching fresh data from sources...'}
+                            {phaseInfo.phase === 'enqueue_exports' && 'Setting up PDF generation...'}
+                            {phaseInfo.phase === 'waiting_exports' && 'Creating PDF documents...'}
+                            {phaseInfo.phase === 'send_emails' && 'Preparing emails...'}
+                            {phaseInfo.phase === 'init' && 'Starting pipeline...'}
+                          </span>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Success message */}
+                    {sendOutJob.status === 'succeeded' && (
+                      <div className="mt-3 text-xs text-green-700 bg-green-50 border border-green-200 rounded px-2 py-1.5">
+                        ✓ Send out completed successfully
+                      </div>
+                    )}
+
+                    {/* Error message */}
+                    {sendOutJob.status === 'failed' && sendOutJob.error && (
+                      <div className="mt-3 text-xs text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1.5">
+                        ✗ {sendOutJob.error}
+                      </div>
+                    )}
                   </div>
-                  <div className="mt-2 grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs text-slate-600">
-                    <div>
-                      <div className="text-[11px] text-slate-500">Queued</div>
-                      <div className="font-mono">{formatLastRunTime(sendOutJob.created_at)}</div>
-                    </div>
-                    <div>
-                      <div className="text-[11px] text-slate-500">Elapsed</div>
-                      <div className="font-mono">{sendOutElapsed || '—'}</div>
-                    </div>
-                    <div>
-                      <div className="text-[11px] text-slate-500">Job</div>
-                      <div className="font-mono">{sendOutJob.id.slice(0, 8)}…</div>
-                    </div>
-                  </div>
-                  {sendOutJob.status === 'failed' && sendOutJob.error && (
-                    <div className="mt-2 text-xs text-red-700">
-                      {sendOutJob.error}
-                    </div>
-                  )}
-                </div>
-              )}
+                );
+              })()}
             </CardContent>
           </Card>
 

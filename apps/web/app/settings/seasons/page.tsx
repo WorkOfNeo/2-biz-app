@@ -116,7 +116,7 @@ export default function SeasonsSettingsPage() {
             <label className="text-sm text-gray-600">Season 1</label>
             <select className="mt-1 w-full rounded-md border px-2 py-1.5 text-sm" value={s1} onChange={(e) => setS1(e.target.value)}>
               <option value="">—</option>
-              {(seasons ?? []).map((s) => (
+              {(seasons ?? []).filter((s: any) => !s.hidden).map((s) => (
                 <option key={s.id} value={s.id}>{s.name} {s.year ?? ''}</option>
               ))}
             </select>
@@ -126,7 +126,7 @@ export default function SeasonsSettingsPage() {
             <label className="text-sm text-gray-600">Season 2</label>
             <select className="mt-1 w-full rounded-md border px-2 py-1.5 text-sm" value={s2} onChange={(e) => setS2(e.target.value)}>
               <option value="">—</option>
-              {(seasons ?? []).map((s) => (
+              {(seasons ?? []).filter((s: any) => !s.hidden).map((s) => (
                 <option key={s.id} value={s.id}>{s.name} {s.year ?? ''}</option>
               ))}
             </select>

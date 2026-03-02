@@ -87,8 +87,8 @@ export default function SeasonDetailPage() {
 
   // Fetch all seasons for move target selection
   const { data: allSeasons } = useSWR('seasons:all', async () => {
-    const { data } = await supabase.from('seasons').select('id, name, year').order('created_at', { ascending: false });
-    return (data ?? []) as { id: string; name: string; year: number | null }[];
+    const { data } = await supabase.from('seasons').select('id, name, year, hidden').order('created_at', { ascending: false });
+    return (data ?? []) as { id: string; name: string; year: number | null; hidden?: boolean | null }[];
   });
 
   const [localRates, setLocalRates] = useState<Record<string, number>>({});
@@ -1761,7 +1761,7 @@ export default function SeasonDetailPage() {
                 }}
               >
                 <option value="">Select season...</option>
-                {(allSeasons ?? []).filter(s => s.id !== id).map(s => (
+                {(allSeasons ?? []).filter(s => s.id !== id && !s.hidden).map(s => (
                   <option key={s.id} value={s.id}>{s.name}{s.year ? ` (${s.year})` : ''}</option>
                 ))}
               </select>

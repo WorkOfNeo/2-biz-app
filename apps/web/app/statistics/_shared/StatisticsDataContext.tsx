@@ -12,6 +12,7 @@ export type Season = {
   is_frozen?: boolean | null;
   frozen_at?: string | null;
   frozen_by?: string | null;
+  hidden?: boolean | null;
 };
 export type SeasonCompareSetting = { id: string; key: string; value: { s1?: string; s2?: string } } | null;
 export type Salesperson = { id: string; name: string; currency?: string | null; sort_index?: number | null };
@@ -111,7 +112,8 @@ export function StatisticsDataProvider({ children }: { children: React.ReactNode
     async () => {
       const { data, error } = await supabase
         .from('seasons')
-        .select('id, name, year, is_current, is_frozen, frozen_at, frozen_by')
+        .select('id, name, year, is_current, is_frozen, frozen_at, frozen_by, hidden')
+        .eq('hidden', false)
         .order('created_at', { ascending: false });
       if (error) throw new Error(error.message);
       return (data ?? []) as Season[];
