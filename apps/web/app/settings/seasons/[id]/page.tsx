@@ -73,9 +73,9 @@ export default function SeasonDetailPage() {
 
   // Fetch customers for matching
   const { data: customers } = useSWR('customers:all', async () => {
-    const { data, error } = await supabase.from('customers').select('customer_id, company, city');
+    const { data, error } = await supabase.from('customers').select('customer_id, company, city, salesperson_id');
     if (error) throw new Error(error.message);
-    return (data ?? []) as Customer[];
+    return (data ?? []) as Array<Customer & { salesperson_id?: string | null }>;
   });
 
   // Fetch salespersons for clear data section
@@ -136,6 +136,9 @@ export default function SeasonDetailPage() {
     notInDb: Array<{ name: string; city: string; qty: number; price: number; bestMatch: string | null; matchedCustomerId: string | null }>;
     notInExcel: Array<{ name: string; city: string; qty: number; price: number; customerId: string }>;
   } | null>(null);
+  
+  // State for managing notInDb row mappings: Map<rowIndex, { status: 'accepted' | 'declined' | 'skip', manualCustomerId?: string }>
+  const [notInDbMappings, setNotInDbMappings] = useState<Map<number, { status: 'accepted' | 'declined' | 'skip'; manualCustomerId?: string }>>(new Map());
 
   // Move records state
   const [moveToSeasonId, setMoveToSeasonId] = useState<string>('');
@@ -514,6 +517,7 @@ export default function SeasonDetailPage() {
 
     setIsComparing(true);
     setCompareResults(null);
+    setNotInDbMappings(new Map()); // Clear previous mappings
 
     try {
       // Parse tab-separated input (expects: Name\tCity\tQty\tPrice per line)
@@ -720,19 +724,79 @@ export default function SeasonDetailPage() {
     }
   }
 
+  // Handle accepting auto-matched customer
+  function handleAcceptMatch(rowIndex: number) {
+    setNotInDbMappings(prev => {
+      const next = new Map(prev);
+      next.set(rowIndex, { status: 'accepted' });
+      return next;
+    });
+  }
+
+  // Handle declining auto-matched customer
+  function handleDeclineMatch(rowIndex: number) {
+    setNotInDbMappings(prev => {
+      const next = new Map(prev);
+      next.set(rowIndex, { status: 'declined' });
+      return next;
+    });
+  }
+
+  // Handle manual customer mapping
+  function handleManualMapping(rowIndex: number, customerId: string | null) {
+    setNotInDbMappings(prev => {
+      const next = new Map(prev);
+      if (customerId) {
+        next.set(rowIndex, { status: 'declined', manualCustomerId: customerId });
+      } else {
+        // If cleared, set to skip
+        next.set(rowIndex, { status: 'skip' });
+      }
+      return next;
+    });
+  }
+
   // Add missing entries: insert Excel data for entries not in DB
   async function addMissingEntries() {
     if (!id || !compareSalespersonId || !compareResults?.notInDb.length) return;
 
-    // Only add entries that have a matched customer ID
-    const entriesToAdd = compareResults.notInDb.filter(e => e.matchedCustomerId);
+    // Build list of entries to add based on mappings
+    const entriesToAdd: Array<{ name: string; city: string; qty: number; price: number; customerId: string }> = [];
+    
+    compareResults.notInDb.forEach((e, index) => {
+      const mapping = notInDbMappings.get(index);
+      
+      // If accepted (or no mapping and has matchedCustomerId), use the auto-matched customer
+      if (mapping?.status === 'accepted' || (!mapping && e.matchedCustomerId)) {
+        if (e.matchedCustomerId) {
+          entriesToAdd.push({
+            name: e.name,
+            city: e.city,
+            qty: e.qty,
+            price: e.price,
+            customerId: e.matchedCustomerId
+          });
+        }
+      }
+      // If declined with manual mapping, use the manual customer
+      else if (mapping?.status === 'declined' && mapping.manualCustomerId) {
+        entriesToAdd.push({
+          name: e.name,
+          city: e.city,
+          qty: e.qty,
+          price: e.price,
+          customerId: mapping.manualCustomerId
+        });
+      }
+      // Skip if status is 'skip' or declined without manual mapping
+    });
 
     if (entriesToAdd.length === 0) {
-      alert('No entries with matched customers to add. Entries need at least 65% confidence match to be added.');
+      alert('No entries to add. Please accept auto-matched entries or manually map declined entries.');
       return;
     }
 
-    if (!confirm(`Add ${entriesToAdd.length} new entries to the database?\n\nThese are entries from Excel that were matched to customers but don't exist in the DB yet.`)) {
+    if (!confirm(`Add ${entriesToAdd.length} new entries to the database?\n\nThis includes accepted auto-matches and manually mapped entries.`)) {
       return;
     }
 
@@ -742,7 +806,7 @@ export default function SeasonDetailPage() {
     try {
       const rowsToInsert = entriesToAdd.map(e => ({
         season_id: id,
-        account_no: e.matchedCustomerId,
+        account_no: e.customerId,
         customer_name: e.name,
         city: e.city,
         qty: e.qty,
@@ -763,7 +827,8 @@ export default function SeasonDetailPage() {
         message: `Added ${entriesToAdd.length} entries from Excel`
       });
 
-      // Re-run comparison to show updated state
+      // Clear mappings and re-run comparison
+      setNotInDbMappings(new Map());
       await runComparison();
     } catch (err: any) {
       console.error('[addMissingEntries] Error:', err);
@@ -1018,6 +1083,18 @@ export default function SeasonDetailPage() {
   }, [matchResults, matched, review, unmatched, overrides]);
 
   const canImport = matchResults && importableCount > 0;
+
+  // Prepare customer items for the compare salesperson (filtered by salesperson)
+  const compareCustomerItems = useMemo(() => {
+    if (!customers || !compareSalespersonId) return [];
+    return customers
+      .filter(c => c.salesperson_id === compareSalespersonId)
+      .map(c => ({
+        value: c.customer_id,
+        label: c.company || c.customer_id,
+        description: c.city || undefined
+      }));
+  }, [customers, compareSalespersonId]);
 
   const selectClass = 'h-9 w-full rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-offset-2';
 
@@ -1611,34 +1688,50 @@ export default function SeasonDetailPage() {
                     Not in DB ({compareResults.notInDb.length}) — in Excel but not found in database
                   </summary>
                   <div className="px-3 py-2 border-b bg-amber-50/50 flex flex-wrap items-center gap-2">
-                    {compareResults.notInDb.filter(e => e.matchedCustomerId).length > 0 && (
-                      <>
-                        <Button
-                          size="sm"
-                          onClick={addMissingEntries}
-                          disabled={isFixing}
-                          className="bg-amber-600 hover:bg-amber-700 text-white"
-                        >
-                          {isFixing ? 'Adding...' : `Add Matched (${compareResults.notInDb.filter(e => e.matchedCustomerId).length})`}
-                        </Button>
-                        <span className="text-xs text-amber-700 mr-4">Add entries with matched customers</span>
-                      </>
-                    )}
-                    {compareResults.notInDb.filter(e => !e.matchedCustomerId).length > 0 && (
-                      <>
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          onClick={addToOldEntries}
-                          disabled={isFixing}
-                        >
-                          {isFixing ? 'Adding...' : `Add to "Z. ÆLDRE POSTERINGER" (${compareResults.notInDb.filter(e => !e.matchedCustomerId).length})`}
-                        </Button>
-                        <span className="text-xs text-slate-600">Collect unmatched as old entries</span>
-                      </>
-                    )}
+                    {(() => {
+                      const acceptedCount = compareResults.notInDb.filter((e, i) => {
+                        const mapping = notInDbMappings.get(i);
+                        return (mapping?.status === 'accepted' || (!mapping && e.matchedCustomerId)) ||
+                               (mapping?.status === 'declined' && mapping.manualCustomerId);
+                      }).length;
+                      
+                      return acceptedCount > 0 ? (
+                        <>
+                          <Button
+                            size="sm"
+                            onClick={addMissingEntries}
+                            disabled={isFixing}
+                            className="bg-amber-600 hover:bg-amber-700 text-white"
+                          >
+                            {isFixing ? 'Adding...' : `Add Selected (${acceptedCount})`}
+                          </Button>
+                          <span className="text-xs text-amber-700 mr-4">Add accepted auto-matches and manual mappings</span>
+                        </>
+                      ) : null;
+                    })()}
+                    {(() => {
+                      const unmatchedSkippedCount = compareResults.notInDb.filter((e, i) => {
+                        const mapping = notInDbMappings.get(i);
+                        return (!e.matchedCustomerId && !mapping?.manualCustomerId) || 
+                               (mapping?.status === 'skip');
+                      }).length;
+                      
+                      return unmatchedSkippedCount > 0 && (
+                        <>
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={addToOldEntries}
+                            disabled={isFixing}
+                          >
+                            {isFixing ? 'Adding...' : `Add to "Z. ÆLDRE POSTERINGER" (${unmatchedSkippedCount})`}
+                          </Button>
+                          <span className="text-xs text-slate-600">Collect unmatched/skipped as old entries</span>
+                        </>
+                      );
+                    })()}
                   </div>
-                  <div className="max-h-48 overflow-auto">
+                  <div className="max-h-96 overflow-auto">
                     <table className="w-full text-xs">
                       <thead className="bg-slate-50 sticky top-0">
                         <tr>
@@ -1646,25 +1739,119 @@ export default function SeasonDetailPage() {
                           <th className="text-left p-1.5 border-b font-medium text-slate-600">City</th>
                           <th className="text-right p-1.5 border-b font-medium text-slate-600">Qty</th>
                           <th className="text-right p-1.5 border-b font-medium text-slate-600">Price</th>
-                          <th className="text-left p-1.5 border-b font-medium text-slate-600">Best Match</th>
+                          <th className="text-left p-1.5 border-b font-medium text-slate-600 min-w-[180px]">Auto Match</th>
+                          <th className="text-left p-1.5 border-b font-medium text-slate-600 min-w-[220px]">Manual Mapping</th>
+                          <th className="text-center p-1.5 border-b font-medium text-slate-600">Actions</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {compareResults.notInDb.map((r, i) => (
-                          <tr key={i} className={r.matchedCustomerId ? 'bg-green-50 hover:bg-green-100' : 'hover:bg-slate-50'}>
-                            <td className="p-1.5 border-b font-medium text-amber-700">{r.name}</td>
-                            <td className="p-1.5 border-b">{r.city}</td>
-                            <td className="p-1.5 border-b text-right">{r.qty}</td>
-                            <td className="p-1.5 border-b text-right">{r.price.toLocaleString()}</td>
-                            <td className="p-1.5 border-b">
-                              {r.matchedCustomerId ? (
-                                <span className="text-green-700">{r.bestMatch} ✓</span>
-                              ) : (
-                                <span className="text-slate-400">{r.bestMatch || '—'}</span>
+                        {compareResults.notInDb.map((r, i) => {
+                          const mapping = notInDbMappings.get(i);
+                          const isAccepted = mapping?.status === 'accepted';
+                          const isDeclined = mapping?.status === 'declined' || mapping?.status === 'skip';
+                          const hasManualMapping = mapping?.manualCustomerId;
+                          const isSkipped = mapping?.status === 'skip';
+                          
+                          return (
+                            <tr 
+                              key={i} 
+                              className={cn(
+                                'hover:bg-slate-50',
+                                isAccepted && 'bg-green-50',
+                                isDeclined && !hasManualMapping && 'bg-slate-50',
+                                hasManualMapping && 'bg-blue-50'
                               )}
-                            </td>
-                          </tr>
-                        ))}
+                            >
+                              <td className="p-1.5 border-b font-medium text-amber-700">{r.name}</td>
+                              <td className="p-1.5 border-b">{r.city}</td>
+                              <td className="p-1.5 border-b text-right">{r.qty}</td>
+                              <td className="p-1.5 border-b text-right">{r.price.toLocaleString()}</td>
+                              <td className="p-1.5 border-b">
+                                {r.matchedCustomerId ? (
+                                  <div className="flex items-center gap-1">
+                                    <span className={cn('text-xs', isAccepted ? 'text-green-700 font-medium' : 'text-slate-600')}>
+                                      {r.bestMatch}
+                                    </span>
+                                    {isAccepted && <span className="text-green-600">✓</span>}
+                                    {isDeclined && <span className="text-red-600">✕</span>}
+                                  </div>
+                                ) : (
+                                  <span className="text-slate-400 text-xs">{r.bestMatch || 'No match found'}</span>
+                                )}
+                              </td>
+                              <td className="p-1.5 border-b">
+                                {isDeclined && (
+                                  <SearchSelect
+                                    items={compareCustomerItems}
+                                    value={mapping?.manualCustomerId || ''}
+                                    onChange={(val) => handleManualMapping(i, val || null)}
+                                    placeholder="Select customer..."
+                                    clearable
+                                  />
+                                )}
+                              </td>
+                              <td className="p-1.5 border-b">
+                                <div className="flex items-center justify-center gap-1">
+                                  {r.matchedCustomerId && !isAccepted && !isDeclined && (
+                                    <>
+                                      <button
+                                        onClick={() => handleAcceptMatch(i)}
+                                        className="rounded p-1 hover:bg-green-100 text-green-600"
+                                        title="Accept auto-match"
+                                      >
+                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                        </svg>
+                                      </button>
+                                      <button
+                                        onClick={() => handleDeclineMatch(i)}
+                                        className="rounded p-1 hover:bg-red-100 text-red-600"
+                                        title="Decline and map manually"
+                                      >
+                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                        </svg>
+                                      </button>
+                                    </>
+                                  )}
+                                  {!r.matchedCustomerId && !isDeclined && (
+                                    <button
+                                      onClick={() => handleDeclineMatch(i)}
+                                      className="rounded px-2 py-1 text-xs bg-slate-100 hover:bg-slate-200 text-slate-700"
+                                      title="Map manually"
+                                    >
+                                      Map
+                                    </button>
+                                  )}
+                                  {isSkipped && (
+                                    <span className="text-slate-400 text-xs" title="Skipped">
+                                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
+                                      </svg>
+                                    </span>
+                                  )}
+                                  {(isAccepted || hasManualMapping) && (
+                                    <button
+                                      onClick={() => {
+                                        setNotInDbMappings(prev => {
+                                          const next = new Map(prev);
+                                          next.delete(i);
+                                          return next;
+                                        });
+                                      }}
+                                      className="rounded p-1 hover:bg-slate-100 text-slate-500"
+                                      title="Reset"
+                                    >
+                                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                      </svg>
+                                    </button>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
