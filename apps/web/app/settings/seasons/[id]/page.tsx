@@ -143,6 +143,11 @@ export default function SeasonDetailPage() {
   const [moveResult, setMoveResult] = useState<{ success: boolean; message: string } | null>(null);
   const [moveConfirmStep, setMoveConfirmStep] = useState(false);
 
+  // Clear all season records state
+  const [isClearingAll, setIsClearingAll] = useState(false);
+  const [clearAllResult, setClearAllResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [clearAllConfirmStep, setClearAllConfirmStep] = useState(false);
+
   useEffect(() => {
     if (rates?.value) {
       setLocalRates(rates.value);
@@ -932,12 +937,14 @@ export default function SeasonDetailPage() {
       if (upsertError) throw new Error(upsertError.message);
 
       // Delete from current season
-      const { error: deleteError } = await supabase
+      const { data: deleted, error: deleteError } = await supabase
         .from('sales_stats')
         .delete()
-        .eq('season_id', id);
+        .eq('season_id', id)
+        .select('id');
 
       if (deleteError) throw new Error(deleteError.message);
+      console.log('[moveRecordsToSeason] Deleted', deleted?.length ?? 0, 'records from source season');
 
       const targetSeason = allSeasons?.find(s => s.id === moveToSeasonId);
       const targetName = targetSeason ? `${targetSeason.name}${targetSeason.year ? ` (${targetSeason.year})` : ''}` : moveToSeasonId;
@@ -952,6 +959,34 @@ export default function SeasonDetailPage() {
       setMoveResult({ success: false, message: err?.message || 'Failed to move records' });
     } finally {
       setIsMoving(false);
+    }
+  }
+
+  // Clear ALL sales_stats for this season
+  async function clearAllSeasonRecords() {
+    if (!id) return;
+
+    setIsClearingAll(true);
+    setClearAllResult(null);
+
+    try {
+      const { data: deleted, error } = await supabase
+        .from('sales_stats')
+        .delete()
+        .eq('season_id', id)
+        .select('id');
+
+      if (error) throw new Error(error.message);
+
+      const count = deleted?.length ?? 0;
+      setClearAllResult({ success: true, message: `Deleted ${count} records from this season` });
+      setClearAllConfirmStep(false);
+      console.log('[clearAllSeasonRecords] Deleted', count, 'records from season', id);
+    } catch (err: any) {
+      console.error('[clearAllSeasonRecords] Error:', err);
+      setClearAllResult({ success: false, message: err?.message || 'Failed to clear records' });
+    } finally {
+      setIsClearingAll(false);
     }
   }
 
@@ -1760,6 +1795,67 @@ export default function SeasonDetailPage() {
                 : 'border-red-200 bg-red-50 text-red-700'
             )}>
               {moveResult.message}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Clear All Season Records */}
+      <Card className="border-red-200">
+        <CardHeader>
+          <div>
+            <CardTitle>Clear All Season Records</CardTitle>
+            <CardDescription className="mt-0.5">
+              Delete all sales statistics records for this season. This action cannot be undone.
+            </CardDescription>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center gap-3">
+            {!clearAllConfirmStep ? (
+              <Button
+                variant="outline"
+                onClick={() => { setClearAllConfirmStep(true); setClearAllResult(null); }}
+                disabled={isClearingAll}
+                className="border-red-300 text-red-700 hover:bg-red-50"
+              >
+                Clear All Records
+              </Button>
+            ) : (
+              <>
+                <Button
+                  variant="destructive"
+                  onClick={clearAllSeasonRecords}
+                  disabled={isClearingAll}
+                >
+                  {isClearingAll ? 'Clearing...' : 'Yes, Delete All'}
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => setClearAllConfirmStep(false)}
+                  disabled={isClearingAll}
+                >
+                  Cancel
+                </Button>
+              </>
+            )}
+          </div>
+
+          {clearAllConfirmStep && (
+            <div className="rounded-md bg-red-50 border border-red-200 px-3 py-2.5 text-sm text-red-800">
+              <span className="font-medium">Warning:</span> This will permanently delete ALL sales statistics records for{' '}
+              <span className="font-semibold">{season?.name}</span>. This action cannot be undone.
+            </div>
+          )}
+
+          {clearAllResult && (
+            <div className={cn(
+              'rounded-md border px-3 py-2 text-sm',
+              clearAllResult.success
+                ? 'border-green-200 bg-green-50 text-green-700'
+                : 'border-red-200 bg-red-50 text-red-700'
+            )}>
+              {clearAllResult.message}
             </div>
           )}
         </CardContent>
