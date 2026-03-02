@@ -87,8 +87,8 @@ export default function SeasonDetailPage() {
 
   // Fetch all seasons for move target selection
   const { data: allSeasons } = useSWR('seasons:all', async () => {
-    const { data } = await supabase.from('seasons').select('id, name').order('created_at', { ascending: false });
-    return (data ?? []) as { id: string; name: string }[];
+    const { data } = await supabase.from('seasons').select('id, name, year').order('created_at', { ascending: false });
+    return (data ?? []) as { id: string; name: string; year: number | null }[];
   });
 
   const [localRates, setLocalRates] = useState<Record<string, number>>({});
@@ -938,7 +938,8 @@ export default function SeasonDetailPage() {
 
       if (deleteError) throw new Error(deleteError.message);
 
-      const targetName = allSeasons?.find(s => s.id === moveToSeasonId)?.name ?? moveToSeasonId;
+      const targetSeason = allSeasons?.find(s => s.id === moveToSeasonId);
+      const targetName = targetSeason ? `${targetSeason.name}${targetSeason.year ? ` (${targetSeason.year})` : ''}` : moveToSeasonId;
       setMoveResult({
         success: true,
         message: `Successfully moved ${records.length} records to "${targetName}"`
@@ -1709,7 +1710,7 @@ export default function SeasonDetailPage() {
               >
                 <option value="">Select season...</option>
                 {(allSeasons ?? []).filter(s => s.id !== id).map(s => (
-                  <option key={s.id} value={s.id}>{s.name}</option>
+                  <option key={s.id} value={s.id}>{s.name}{s.year ? ` (${s.year})` : ''}</option>
                 ))}
               </select>
             </div>
@@ -1745,7 +1746,7 @@ export default function SeasonDetailPage() {
           {moveConfirmStep && moveToSeasonId && (
             <div className="rounded-md bg-amber-50 border border-amber-200 px-3 py-2.5 text-sm text-amber-800">
               <span className="font-medium">Warning:</span> This will move ALL sales statistics records from this season to{' '}
-              <span className="font-semibold">{allSeasons?.find(s => s.id === moveToSeasonId)?.name}</span>.
+              <span className="font-semibold">{(() => { const t = allSeasons?.find(s => s.id === moveToSeasonId); return t ? `${t.name}${t.year ? ` (${t.year})` : ''}` : ''; })()}</span>.
               Records for the same customer already in the target season will be overwritten. This action cannot be undone.
             </div>
           )}
