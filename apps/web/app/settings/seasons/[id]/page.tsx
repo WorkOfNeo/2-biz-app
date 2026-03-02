@@ -970,18 +970,34 @@ export default function SeasonDetailPage() {
     setClearAllResult(null);
 
     try {
-      const { data: deleted, error } = await supabase
+      // First, get count of records to delete
+      const { count: recordCount, error: countError } = await supabase
+        .from('sales_stats')
+        .select('*', { count: 'exact', head: true })
+        .eq('season_id', id);
+
+      if (countError) throw new Error(countError.message);
+
+      console.log('[clearAllSeasonRecords] Found', recordCount, 'records for season', id);
+
+      if (recordCount === 0) {
+        setClearAllResult({ success: true, message: 'No records found for this season' });
+        setClearAllConfirmStep(false);
+        setIsClearingAll(false);
+        return;
+      }
+
+      // Now delete all records
+      const { error: deleteError } = await supabase
         .from('sales_stats')
         .delete()
-        .eq('season_id', id)
-        .select('id');
+        .eq('season_id', id);
 
-      if (error) throw new Error(error.message);
+      if (deleteError) throw new Error(deleteError.message);
 
-      const count = deleted?.length ?? 0;
-      setClearAllResult({ success: true, message: `Deleted ${count} records from this season` });
+      setClearAllResult({ success: true, message: `Deleted ${recordCount} records from this season` });
       setClearAllConfirmStep(false);
-      console.log('[clearAllSeasonRecords] Deleted', count, 'records from season', id);
+      console.log('[clearAllSeasonRecords] Successfully deleted', recordCount, 'records from season', id);
     } catch (err: any) {
       console.error('[clearAllSeasonRecords] Error:', err);
       setClearAllResult({ success: false, message: err?.message || 'Failed to clear records' });
