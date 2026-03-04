@@ -133,7 +133,7 @@ export default function SeasonDetailPage() {
   const [compareResults, setCompareResults] = useState<{
     matches: Array<{ name: string; city: string; excelQty: number; excelPrice: number; dbQty: number; dbPrice: number; customerId: string }>;
     mismatches: Array<{ name: string; city: string; excelQty: number; excelPrice: number; dbQty: number; dbPrice: number; customerId: string; qtyDiff: number; priceDiff: number }>;
-    notInDb: Array<{ name: string; city: string; qty: number; price: number; bestMatch: string | null; matchedCustomerId: string | null }>;
+    notInDb: Array<{ name: string; city: string; qty: number; price: number; bestMatch: string | null; matchedCustomerId: string | null; suggestedCustomerId?: string | null }>;
     notInExcel: Array<{ name: string; city: string; qty: number; price: number; customerId: string }>;
   } | null>(null);
   
@@ -641,7 +641,8 @@ export default function SeasonDetailPage() {
             qty: excel.qty,
             price: excel.price,
             bestMatch: match?.bestMatch ? `${match.bestMatch.company} (${Math.round(match.confidence * 100)}%)` : null,
-            matchedCustomerId: (match?.bestMatch && match.confidence >= 0.65) ? match.bestMatch.customerId : null
+            matchedCustomerId: (match?.bestMatch && match.confidence >= 0.65) ? match.bestMatch.customerId : null,
+            suggestedCustomerId: match?.bestMatch?.customerId || null // Store suggestion even if confidence is low
           });
         }
       }
@@ -733,6 +734,23 @@ export default function SeasonDetailPage() {
     });
   }
 
+  // Bulk accept all suggestions
+  function handleBulkAcceptSuggestions() {
+    if (!compareResults?.notInDb) return;
+    
+    setNotInDbMappings(prev => {
+      const next = new Map(prev);
+      compareResults.notInDb.forEach((e, i) => {
+        // Only accept if there's a suggestion and it hasn't been declined or manually mapped
+        const existing = prev.get(i);
+        if (!existing && (e.matchedCustomerId || e.suggestedCustomerId)) {
+          next.set(i, { status: 'accepted' });
+        }
+      });
+      return next;
+    });
+  }
+
   // Handle declining auto-matched customer
   function handleDeclineMatch(rowIndex: number) {
     setNotInDbMappings(prev => {
@@ -766,17 +784,28 @@ export default function SeasonDetailPage() {
     compareResults.notInDb.forEach((e, index) => {
       const mapping = notInDbMappings.get(index);
       
-      // If accepted (or no mapping and has matchedCustomerId), use the auto-matched customer
-      if (mapping?.status === 'accepted' || (!mapping && e.matchedCustomerId)) {
-        if (e.matchedCustomerId) {
+      // If accepted, use the matched/suggested customer
+      if (mapping?.status === 'accepted') {
+        const customerId = e.matchedCustomerId || e.suggestedCustomerId;
+        if (customerId) {
           entriesToAdd.push({
             name: e.name,
             city: e.city,
             qty: e.qty,
             price: e.price,
-            customerId: e.matchedCustomerId
+            customerId: customerId
           });
         }
+      }
+      // If no mapping and has matchedCustomerId (high confidence auto-match), use it
+      else if (!mapping && e.matchedCustomerId) {
+        entriesToAdd.push({
+          name: e.name,
+          city: e.city,
+          qty: e.qty,
+          price: e.price,
+          customerId: e.matchedCustomerId
+        });
       }
       // If declined with manual mapping, use the manual customer
       else if (mapping?.status === 'declined' && mapping.manualCustomerId) {
@@ -1691,23 +1720,51 @@ export default function SeasonDetailPage() {
                     {(() => {
                       const acceptedCount = compareResults.notInDb.filter((e, i) => {
                         const mapping = notInDbMappings.get(i);
-                        return (mapping?.status === 'accepted' || (!mapping && e.matchedCustomerId)) ||
-                               (mapping?.status === 'declined' && mapping.manualCustomerId);
+                        // Count accepted suggestions
+                        if (mapping?.status === 'accepted' && (e.matchedCustomerId || e.suggestedCustomerId)) return true;
+                        // Count high-confidence auto-matches that weren't explicitly declined
+                        if (!mapping && e.matchedCustomerId) return true;
+                        // Count manual mappings
+                        if (mapping?.status === 'declined' && mapping.manualCustomerId) return true;
+                        return false;
                       }).length;
                       
-                      return acceptedCount > 0 ? (
+                      const suggestionsCount = compareResults.notInDb.filter((e, i) => {
+                        const mapping = notInDbMappings.get(i);
+                        return !mapping && (e.matchedCustomerId || e.suggestedCustomerId);
+                      }).length;
+                      
+                      return (
                         <>
-                          <Button
-                            size="sm"
-                            onClick={addMissingEntries}
-                            disabled={isFixing}
-                            className="bg-amber-600 hover:bg-amber-700 text-white"
-                          >
-                            {isFixing ? 'Adding...' : `Add Selected (${acceptedCount})`}
-                          </Button>
-                          <span className="text-xs text-amber-700 mr-4">Add accepted auto-matches and manual mappings</span>
+                          {suggestionsCount > 0 && (
+                            <>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={handleBulkAcceptSuggestions}
+                                disabled={isFixing}
+                                className="border-green-300 text-green-700 hover:bg-green-50"
+                              >
+                                Accept All Suggestions ({suggestionsCount})
+                              </Button>
+                              <div className="w-px h-6 bg-slate-300" />
+                            </>
+                          )}
+                          {acceptedCount > 0 && (
+                            <>
+                              <Button
+                                size="sm"
+                                onClick={addMissingEntries}
+                                disabled={isFixing}
+                                className="bg-amber-600 hover:bg-amber-700 text-white"
+                              >
+                                {isFixing ? 'Adding...' : `Add Selected (${acceptedCount})`}
+                              </Button>
+                              <span className="text-xs text-amber-700 mr-4">Add accepted suggestions and manual mappings</span>
+                            </>
+                          )}
                         </>
-                      ) : null;
+                      );
                     })()}
                     {(() => {
                       const unmatchedSkippedCount = compareResults.notInDb.filter((e, i) => {
@@ -1767,16 +1824,20 @@ export default function SeasonDetailPage() {
                               <td className="p-1.5 border-b text-right">{r.qty}</td>
                               <td className="p-1.5 border-b text-right">{r.price.toLocaleString()}</td>
                               <td className="p-1.5 border-b">
-                                {r.matchedCustomerId ? (
+                                {r.bestMatch ? (
                                   <div className="flex items-center gap-1">
-                                    <span className={cn('text-xs', isAccepted ? 'text-green-700 font-medium' : 'text-slate-600')}>
+                                    <span className={cn(
+                                      'text-xs',
+                                      isAccepted ? 'text-green-700 font-medium' : 
+                                      r.matchedCustomerId ? 'text-slate-600' : 'text-amber-600'
+                                    )}>
                                       {r.bestMatch}
                                     </span>
                                     {isAccepted && <span className="text-green-600">✓</span>}
                                     {isDeclined && <span className="text-red-600">✕</span>}
                                   </div>
                                 ) : (
-                                  <span className="text-slate-400 text-xs">{r.bestMatch || 'No match found'}</span>
+                                  <span className="text-slate-400 text-xs">No match found</span>
                                 )}
                               </td>
                               <td className="p-1.5 border-b">
@@ -1792,12 +1853,12 @@ export default function SeasonDetailPage() {
                               </td>
                               <td className="p-1.5 border-b">
                                 <div className="flex items-center justify-center gap-1">
-                                  {r.matchedCustomerId && !isAccepted && !isDeclined && (
+                                  {r.bestMatch && !isAccepted && !isDeclined && (
                                     <>
                                       <button
                                         onClick={() => handleAcceptMatch(i)}
                                         className="rounded p-1 hover:bg-green-100 text-green-600"
-                                        title="Accept auto-match"
+                                        title="Accept suggestion"
                                       >
                                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
@@ -1812,9 +1873,16 @@ export default function SeasonDetailPage() {
                                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                                         </svg>
                                       </button>
+                                      <button
+                                        onClick={() => handleDeclineMatch(i)}
+                                        className="rounded px-2 py-1 text-xs bg-slate-100 hover:bg-slate-200 text-slate-700"
+                                        title="Map manually"
+                                      >
+                                        Map
+                                      </button>
                                     </>
                                   )}
-                                  {!r.matchedCustomerId && !isDeclined && (
+                                  {!r.bestMatch && !isDeclined && (
                                     <button
                                       onClick={() => handleDeclineMatch(i)}
                                       className="rounded px-2 py-1 text-xs bg-slate-100 hover:bg-slate-200 text-slate-700"
