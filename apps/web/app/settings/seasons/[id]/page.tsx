@@ -825,7 +825,38 @@ export default function SeasonDetailPage() {
       return;
     }
 
-    if (!confirm(`Add ${entriesToAdd.length} new entries to the database?\n\nThis includes accepted auto-matches and manually mapped entries.`)) {
+    // Detect and merge duplicates (same customerId)
+    const mergedByCustomerId = new Map<string, { name: string; city: string; qty: number; price: number; count: number }>();
+    
+    for (const entry of entriesToAdd) {
+      const existing = mergedByCustomerId.get(entry.customerId);
+      if (existing) {
+        // Merge: sum qty and price
+        existing.qty += entry.qty;
+        existing.price += entry.price;
+        existing.count += 1;
+      } else {
+        mergedByCustomerId.set(entry.customerId, {
+          name: entry.name,
+          city: entry.city,
+          qty: entry.qty,
+          price: entry.price,
+          count: 1
+        });
+      }
+    }
+
+    const mergedCount = mergedByCustomerId.size;
+    const originalCount = entriesToAdd.length;
+    const hasDuplicates = originalCount > mergedCount;
+
+    const confirmMsg = hasDuplicates
+      ? `Found ${originalCount} entries mapping to ${mergedCount} unique customers.\n\n` +
+        `Duplicates will be merged (qty and price summed).\n\n` +
+        `Continue?`
+      : `Add ${originalCount} new entries to the database?\n\nThis includes accepted auto-matches and manually mapped entries.`;
+
+    if (!confirm(confirmMsg)) {
       return;
     }
 
@@ -833,13 +864,13 @@ export default function SeasonDetailPage() {
     setFixResult(null);
 
     try {
-      const rowsToInsert = entriesToAdd.map(e => ({
+      const rowsToInsert = Array.from(mergedByCustomerId.entries()).map(([customerId, data]) => ({
         season_id: id,
-        account_no: e.customerId,
-        customer_name: e.name,
-        city: e.city,
-        qty: e.qty,
-        price: e.price,
+        account_no: customerId,
+        customer_name: data.name,
+        city: data.city,
+        qty: data.qty,
+        price: data.price,
         salesperson_id: compareSalespersonId,
         currency: 'DKK',
         frozen: false
@@ -851,9 +882,13 @@ export default function SeasonDetailPage() {
 
       if (error) throw new Error(error.message);
 
+      const resultMsg = hasDuplicates
+        ? `Added ${mergedCount} unique customers (merged ${originalCount} entries)`
+        : `Added ${originalCount} entries from Excel`;
+
       setFixResult({
         success: true,
-        message: `Added ${entriesToAdd.length} entries from Excel`
+        message: resultMsg
       });
 
       // Clear mappings and re-run comparison
