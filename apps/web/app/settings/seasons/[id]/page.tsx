@@ -579,7 +579,7 @@ export default function SeasonDetailPage() {
 
       type MatchEntry = { name: string; city: string; excelQty: number; excelPrice: number; dbQty: number; dbPrice: number; customerId: string };
       type MismatchEntry = MatchEntry & { qtyDiff: number; priceDiff: number };
-      type NotInDbEntry = { name: string; city: string; qty: number; price: number; bestMatch: string | null; matchedCustomerId: string | null };
+      type NotInDbEntry = { name: string; city: string; qty: number; price: number; bestMatch: string | null; matchedCustomerId: string | null; suggestedCustomerId?: string | null };
       type NotInExcelEntry = { name: string; city: string; qty: number; price: number; customerId: string };
 
       const matches: MatchEntry[] = [];
