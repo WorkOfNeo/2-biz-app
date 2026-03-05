@@ -355,7 +355,7 @@ function ScrapesTab() {
     setSaving(schedule.id);
     try {
       const res = await fetch('/api/admin/scrape-schedules', {
-        method: 'PUT',
+        method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id: schedule.id, enabled: !schedule.enabled }),
       });
@@ -398,7 +398,7 @@ function ScrapesTab() {
       }
       
       const res = await fetch('/api/admin/scrape-schedules', {
-        method: 'PUT',
+        method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           id: schedule.id,

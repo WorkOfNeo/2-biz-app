@@ -41,7 +41,7 @@ export async function GET() {
   }
 }
 
-export async function PUT(req: Request) {
+export async function PATCH(req: Request) {
   try {
     const body = await req.json();
     const { id, enabled, hours, days_of_week, config } = body;
@@ -70,7 +70,7 @@ export async function PUT(req: Request) {
     if (days_of_week !== undefined) updateData.days_of_week = days_of_week;
     if (config !== undefined) updateData.config = config;
     
-    console.log('[scrape-schedules] PUT - Updating schedule:', { id, updateData });
+    console.log('[scrape-schedules] PATCH - Updating schedule:', { id, updateData });
     
     const { data, error } = await supabase
       .from('scrape_schedules')
@@ -80,7 +80,7 @@ export async function PUT(req: Request) {
       .single();
     
     if (error) {
-      console.error('[scrape-schedules] PUT error:', error);
+      console.error('[scrape-schedules] PATCH error:', error);
       if (error.message.includes('scrape_schedules') || error.code === '42P01') {
         return NextResponse.json({ 
           error: 'Table does not exist. Run SQL migration 117_scrape_schedules.sql first.' 
@@ -89,10 +89,10 @@ export async function PUT(req: Request) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
     
-    console.log('[scrape-schedules] PUT - Success:', data);
+    console.log('[scrape-schedules] PATCH - Success:', data);
     return NextResponse.json({ schedule: data });
   } catch (e: any) {
-    console.error('[scrape-schedules] PUT exception:', e);
+    console.error('[scrape-schedules] PATCH exception:', e);
     return NextResponse.json({ error: e?.message || 'Internal error' }, { status: 500 });
   }
 }
