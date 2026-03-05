@@ -359,10 +359,15 @@ function ScrapesTab() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id: schedule.id, enabled: !schedule.enabled }),
       });
-      if (!res.ok) throw new Error('Failed to update');
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        const errorMsg = errorData.error || 'Failed to update';
+        throw new Error(errorMsg);
+      }
       await fetchSchedules();
     } catch (e: any) {
-      alert('Failed to update schedule');
+      console.error('[toggleEnabled] Error:', e);
+      alert(`Failed to update schedule: ${e?.message || 'Unknown error'}`);
     } finally {
       setSaving(null);
     }
@@ -402,11 +407,16 @@ function ScrapesTab() {
           config,
         }),
       });
-      if (!res.ok) throw new Error('Failed to update');
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        const errorMsg = errorData.error || 'Failed to update';
+        throw new Error(errorMsg);
+      }
       await fetchSchedules();
       cancelEdit();
     } catch (e: any) {
-      alert('Failed to save schedule');
+      console.error('[saveEdit] Error:', e);
+      alert(`Failed to save schedule: ${e?.message || 'Unknown error'}`);
     } finally {
       setSaving(null);
     }

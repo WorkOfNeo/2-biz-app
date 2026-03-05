@@ -57,6 +57,11 @@ export async function PUT(req: Request) {
       }, { status: 400 });
     }
     
+    if (!supabaseServiceKey) {
+      console.error('[scrape-schedules] SUPABASE_SERVICE_ROLE_KEY is not set');
+      return NextResponse.json({ error: 'Service configuration error' }, { status: 500 });
+    }
+    
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
     
     const updateData: Record<string, any> = {};
@@ -64,6 +69,8 @@ export async function PUT(req: Request) {
     if (Array.isArray(hours)) updateData.hours = hours;
     if (days_of_week !== undefined) updateData.days_of_week = days_of_week;
     if (config !== undefined) updateData.config = config;
+    
+    console.log('[scrape-schedules] PUT - Updating schedule:', { id, updateData });
     
     const { data, error } = await supabase
       .from('scrape_schedules')
@@ -73,6 +80,7 @@ export async function PUT(req: Request) {
       .single();
     
     if (error) {
+      console.error('[scrape-schedules] PUT error:', error);
       if (error.message.includes('scrape_schedules') || error.code === '42P01') {
         return NextResponse.json({ 
           error: 'Table does not exist. Run SQL migration 117_scrape_schedules.sql first.' 
@@ -81,8 +89,10 @@ export async function PUT(req: Request) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
     
+    console.log('[scrape-schedules] PUT - Success:', data);
     return NextResponse.json({ schedule: data });
   } catch (e: any) {
+    console.error('[scrape-schedules] PUT exception:', e);
     return NextResponse.json({ error: e?.message || 'Internal error' }, { status: 500 });
   }
 }
