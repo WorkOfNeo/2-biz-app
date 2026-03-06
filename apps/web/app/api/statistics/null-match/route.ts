@@ -20,64 +20,72 @@ export async function POST(req: Request) {
       .map((c, i) => `${i}: ${c.name} (${c.account_no})`)
       .join('\n');
 
-    const systemMessage = `Du er assistent for det skandinaviske modeengrosfirma 2-Biz.
+    const systemMessage = `You are a customer name matcher for a Scandinavian fashion wholesale company.
+Your ONLY job is to match customer names from input lines to a customer list, and classify a null action.
 
-KRITISK REGEL — MÅ ALDRIG BRYDES:
-Feltet "comment_da" skal ALTID skrives på DANSK, uanset hvilket sprog inputtet er på.
-Hvis inputtet er på svensk → oversæt til dansk.
-Hvis inputtet er på norsk → oversæt til dansk.
-Hvis inputtet er på engelsk → oversæt til dansk.
-Skriv ALDRIG svensk, norsk eller engelsk i "comment_da". Kun og udelukkende dansk.
-Hvis der ikke er nogen note i inputlinjen, sæt "comment_da" til en tom streng "".`;
+COMMENT RULE — NEVER BREAK THIS:
+The "comment_da" field must ALWAYS be written in Danish, regardless of the input language.
+Translate Swedish, Norwegian, and English notes into Danish. Never output Swedish, Norwegian, or English in "comment_da".
+If there is no note, set "comment_da" to an empty string "".`;
 
-    const userPrompt = `Salgsmedarbejdere har skrevet kundenoter på dansk, svensk, norsk eller engelsk.
-Hver inputlinje repræsenterer én kunde, typisk i formatet:
-  "[Kundenavn] [valgfrit: 0] [valgfrit: årsag/note]"
+    const userPrompt = `Each input line is a customer that should be NULLED in our system.
+The format is typically: "[Customer name] [optional: 0] [optional: reason/note]"
+The "0" is just a separator token — ignore it when extracting the name.
 
-"0" efter kundenavnet er et separatortegn — ignorer det.
+YOUR TASK FOR EACH LINE:
+1. Extract the customer name from the beginning of the line (everything before "0" or the note text)
+2. Find the best fuzzy match in the customer list below. Be generous — match abbreviations, partial names, word reordering, minor typos, and name variations. A name like "Centrum" should match "Centrum ApS" at 90%+.
+3. Set null_action — DEFAULT IS "nulled". Only change it if the note explicitly says otherwise:
+   - "permanently_closed" ONLY IF: the note says the store is closing/closed/sold permanently (stänger, stängt, lukker, lukket, stenger, closed, slutter)
+   - "none" ONLY IF: the note clearly says they might buy in the future (kanske köper, planerar köpa, overvejer, måske køber, ny ejer der vil købe)
+   - "nulled" IN ALL OTHER CASES — including when there is no note, when "0" is the only marker, or when the note mentions unpaid invoices, stopped buying, hasn't ordered in years, etc.
+4. Write comment_da in DANISH. Translate from Swedish/Norwegian/English if needed. Empty string if no note.
 
-Opgave per linje:
-1. Udtræk kundenavnet (alt før "0" eller noteteksten)
-2. Fuzzy-match mod kundelisten (forkortelser, stavefejl, delvist navn, omordning)
-3. Bestem null_action:
-   - "permanently_closed": butikken lukker/er lukket/solgt uden fortsættelse af køb
-   - "nulled": stopper køb, har ikke handlet i årevis, vil ikke købe, ubetalte fakturaer uden fremtidig intention
-   - "none": uklar situation, mulighed for fremtidige køb, ny ejer overvejer, rent informativ note
-4. Skriv comment_da på DANSK (oversæt fra svensk/norsk/engelsk). Tom streng hvis ingen note.
+Examples of null_action decisions:
+- "Centrum" → nulled (no note, default)
+- "Centrum 0" → nulled ("0" is a null marker)
+- "Centrum 0 många obetalda fakturor" → nulled (unpaid invoices)
+- "Modecompaniet stängt" → permanently_closed
+- "Mode Eva 0 nya ägare som planerar att köpa 2-Biz till hösten" → none (planning to buy)
+- "Melio 0 slutar köpa 2-Biz" → nulled (stops buying)
+- "Kanada Damshop stänger butiken" → permanently_closed
 
-Oversættelseseksempler (HUSK: altid til dansk):
+Translation examples for comment_da (always Danish output):
 - "stänger butiken" → "Lukker butikken"
 - "slutar köpa 2-Biz" → "Stopper med at købe 2-Biz"
 - "har inte handlat på flera år" → "Har ikke handlet i flere år"
-- "skall sälja butiken i höst men kanske köper lite på early autumn" → "Skal sælge butikken til efteråret, men køber måske lidt til early autumn"
+- "många obetalda fakturor" → "Mange ubetalte fakturaer"
+- "skall sälja butiken i höst men kanske köper lite" → "Skal sælge butikken til efteråret, men køber måske lidt"
 - "nya ägare som planerar att köpa 2-Biz till hösten" → "Nye ejere som planlægger at købe 2-Biz til efteråret"
-- "closing the store" → "Lukker butikken"
 - "har sålt butiken till annan ägare" → "Har solgt butikken til ny ejer"
+- "closing the store" → "Lukker butikken"
+- "vill ej köpa 2-Biz" → "Vil ikke købe 2-Biz"
 
-Null-handling nøgleord:
-- permanently_closed: stänger, stängt, lukker, lukket, slutter, stenger, closed, säljer butiken (uden fortsættelse), stänger butiken
-- nulled: slutar köpa, vill ej köpa, vil ikke kjøpe, har ikke handlet, har inte handlat, obetalda fakturor, ubetalte fakturaer, slutar, "0" (som enkelt tegn/ord), "null", "nullet", "nul" — disse ord i noten betyder eksplicit at kunden skal nulles
-- none: kanske köper, planerar att köpa, nya ägare planerar, ny ejer overvejer, måske, muligens
+CONFIDENCE SCORING — be generous, these are real business customers:
+- 95-100: exact match or match with only legal suffix difference (ApS, AB, A/S, GmbH)
+- 80-94: strong match — abbreviation, one word different, word order swapped
+- 65-79: probable match — partial name, one word missing, minor variation
+- 40-64: uncertain — could be the right customer but ambiguous
+- 0-39: no reasonable match — set account_no and name to null
 
-Kundeliste (indeks: navn (kontonummer)):
+Customer list:
 ${customerList}
 
-Inputlinjer:
+Input lines to process:
 ${inputs.map((n, i) => `${i}: ${n}`).join('\n')}
 
-Returner JSON med "matches"-array. Hvert element:
+Return a JSON object with a "matches" array. Each element:
 {
-  "input": "<original inputlinje>",
-  "extracted_name": "<udtrukket kundenavn>",
-  "account_no": "<kontonummer eller null>",
-  "name": "<matchet kundenavn eller null>",
+  "input": "<original input line>",
+  "extracted_name": "<customer name extracted from the line>",
+  "account_no": "<account_no from the list, or null if no match>",
+  "name": "<matched customer name from the list, or null>",
   "confidence": <0-100>,
   "null_action": "permanently_closed" | "nulled" | "none",
-  "comment_da": "<note på DANSK eller tom streng>"
+  "comment_da": "<note translated to Danish, or empty string>"
 }
 
-Confidence: 90-100 eksakt, 70-89 stærk, 50-69 mulig, 0-49 ingen match (account_no/name = null).
-Kun gyldigt JSON.`;
+Return only valid JSON.`;
 
     const response = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
