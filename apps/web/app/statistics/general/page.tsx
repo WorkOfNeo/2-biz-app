@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo, useRef, type ReactNode } from 'react';
 import useSWR from 'swr';
 import { supabase } from '../../../lib/supabaseClient';
 import Link from 'next/link';
-import { Menu, EyeOff, Trash2, Ban, MessageCircle, RefreshCw, Layers } from 'lucide-react';
+import { Menu, EyeOff, Trash2, Ban, MessageCircle, RefreshCw, Layers, Info } from 'lucide-react';
 import { SearchSelect } from '../../../components/SearchSelect';
 import { ProgressBar } from '../../../components/ProgressBar';
 import { Modal } from '../../../components/Modal';
@@ -65,8 +65,8 @@ export default function StatisticsGeneralPage() {
     confidence: number;
     accepted: boolean;
     overrideAccountNo: string | null;
-    action: 'permanently_closed' | 'nulled' | 'add_comment';
-    comment: string;
+    nullAction: 'permanently_closed' | 'nulled' | 'none';
+    comment: string; // editable Danish comment
   };
   const [nullByInputMatching, setNullByInputMatching] = useState(false);
   const [nullByInputMatches, setNullByInputMatches] = useState<NullByInputMatch[] | null>(null);
@@ -2785,13 +2785,14 @@ export default function StatisticsGeneralPage() {
                           if (!m.accepted) continue;
                           const acc = m.overrideAccountNo ?? m.account_no;
                           if (!acc) continue;
-                          if (m.action === 'permanently_closed') {
+                          if (m.nullAction === 'permanently_closed') {
                             toPermClose.push(acc);
                             toNull.add(acc);
-                          } else if (m.action === 'nulled') {
+                          } else if (m.nullAction === 'nulled') {
                             toNull.add(acc);
-                          } else if (m.action === 'add_comment' && m.comment) {
-                            toComment.push({ account_no: acc, comment: m.comment });
+                          }
+                          if (m.comment.trim()) {
+                            toComment.push({ account_no: acc, comment: m.comment.trim() });
                           }
                         }
                         await saveOverrides({ nulled: Array.from(toNull), hidden: overrides?.value.hidden ?? [] });
@@ -2806,8 +2807,8 @@ export default function StatisticsGeneralPage() {
                             await supabase.from('customer_comments').insert({ customer_id: account_no, season_id: s1, comment, is_permanent: false });
                           }
                         }
-                        const nulledCount = nullByInputMatches.filter(m => m.accepted && m.action === 'nulled' && (m.overrideAccountNo ?? m.account_no)).length;
-                        setNullByInputResult(`Applied: ${toPermClose.length} permanently closed, ${nulledCount} nulled, ${toComment.length} comments saved.`);
+                        const nulledCount = nullByInputMatches.filter(m => m.accepted && m.nullAction === 'nulled' && (m.overrideAccountNo ?? m.account_no)).length;
+                        setNullByInputResult(`Udført: ${toPermClose.length} permanent lukket, ${nulledCount} nullet, ${toComment.length} kommentarer gemt.`);
                         setNullByInputMatches(null);
                         await refreshAll();
                       } catch (e: any) {
@@ -2847,8 +2848,8 @@ export default function StatisticsGeneralPage() {
                             confidence: m.confidence ?? 0,
                             accepted: (m.confidence ?? 0) >= 70,
                             overrideAccountNo: null,
-                            action: m.action ?? 'nulled',
-                            comment: m.comment ?? '',
+                            nullAction: m.null_action ?? 'nulled',
+                            comment: m.comment_da ?? '',
                           }))
                         );
                       } catch (e: any) {
@@ -2858,25 +2859,64 @@ export default function StatisticsGeneralPage() {
                       }
                     }}
                   >
-                    {nullByInputMatching ? 'Matching…' : 'Match with AI'}
+                    {nullByInputMatching ? 'Matcher…' : 'Match med AI'}
                   </button>
                 </div>
               )}
             >
-              {nullByInputMatches ? (
+              {nullByInputMatching ? (
+                /* ── Loading animation ── */
+                (() => {
+                  const lines = nullByInputText.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+                  return (
+                    <div className="flex flex-col items-center gap-6 py-10 select-none">
+                      <div className="flex gap-2">
+                        {[0, 1, 2].map(i => (
+                          <div
+                            key={i}
+                            className="h-3 w-3 rounded-full bg-slate-800"
+                            style={{ animation: 'bounce 1.1s infinite', animationDelay: `${i * 0.18}s` }}
+                          />
+                        ))}
+                      </div>
+                      <div className="text-center space-y-1">
+                        <div className="text-sm font-semibold text-slate-800">Matcher kunder med AI...</div>
+                        <div className="text-xs text-gray-400">{lines.length} {lines.length === 1 ? 'linje' : 'linjer'} analyseres</div>
+                      </div>
+                      <div className="w-full max-w-sm space-y-2">
+                        {lines.slice(0, 7).map((line, i) => (
+                          <div
+                            key={i}
+                            className="flex items-center gap-2.5 rounded-md bg-gray-50 px-3 py-2 text-xs text-gray-500"
+                            style={{ animation: 'pulse 2s cubic-bezier(0.4,0,0.6,1) infinite', animationDelay: `${i * 0.12}s` }}
+                          >
+                            <div className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-slate-300" />
+                            <span className="truncate">{line}</span>
+                          </div>
+                        ))}
+                        {lines.length > 7 && (
+                          <div className="text-center text-xs text-gray-400">+{lines.length - 7} mere...</div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()
+              ) : nullByInputMatches ? (
+                /* ── Review table ── */
                 <div className="space-y-3">
-                  <div className="text-sm text-gray-600">
-                    Review AI suggestions. ≥70% confidence is pre-accepted (green). Adjust the match, action, or toggle acceptance per row before applying.
+                  <div className="text-sm text-gray-500">
+                    ≥70% sikkerhed er forudvalgt (grøn). Juster match, null-handling og kommentar per række inden du anvender.
                   </div>
                   <div className="overflow-auto max-h-[60vh]">
                     <table className="w-full text-sm border-collapse">
                       <thead>
-                        <tr className="bg-gray-50 border-b text-left">
-                          <th className="p-2 font-medium">Input / Note</th>
-                          <th className="p-2 font-medium">Matched Customer</th>
-                          <th className="p-2 font-medium w-52">Change Match</th>
-                          <th className="p-2 font-medium w-40">Action</th>
-                          <th className="p-2 font-medium text-center w-16">Accept</th>
+                        <tr className="bg-gray-50 border-b text-left text-xs">
+                          <th className="p-2 font-medium">Kunde</th>
+                          <th className="p-2 font-medium">Match</th>
+                          <th className="p-2 font-medium w-44">Skift match</th>
+                          <th className="p-2 font-medium w-36">Null-handling</th>
+                          <th className="p-2 font-medium w-44">Kommentar (DK)</th>
+                          <th className="p-2 font-medium text-center w-14">Anvend</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -2887,37 +2927,50 @@ export default function StatisticsGeneralPage() {
                             : conf >= 50
                             ? 'bg-yellow-100 text-yellow-800'
                             : 'bg-red-100 text-red-800';
-                          const actionBadgeClass =
-                            m.action === 'permanently_closed' ? 'bg-red-100 text-red-800' :
-                            m.action === 'nulled' ? 'bg-orange-100 text-orange-800' :
-                            'bg-blue-100 text-blue-800';
+                          const nullActionClass =
+                            m.nullAction === 'permanently_closed' ? 'bg-red-50 text-red-800 border-red-200' :
+                            m.nullAction === 'nulled' ? 'bg-orange-50 text-orange-800 border-orange-200' :
+                            'bg-gray-50 text-gray-600 border-gray-200';
                           const effectiveAccountNo = m.overrideAccountNo ?? m.account_no;
                           const effectiveName = m.overrideAccountNo
                             ? (rows ?? []).find((r) => r.account_no === m.overrideAccountNo)?.customer ?? m.overrideAccountNo
                             : m.name;
                           return (
-                            <tr key={idx} className={'border-b ' + (m.accepted ? '' : 'opacity-50')}>
-                              <td className="p-2 max-w-[200px]">
-                                <div className="font-medium text-xs">{m.extracted_name}</div>
-                                {m.comment && <div className="text-gray-400 text-xs mt-0.5 leading-snug">{m.comment}</div>}
+                            <tr key={idx} className={'border-b transition-opacity ' + (m.accepted ? '' : 'opacity-40')}>
+                              {/* Kunde + Årsag tooltip */}
+                              <td className="p-2">
+                                <div className="flex items-start gap-1">
+                                  <span className="font-medium text-xs leading-snug">{m.extracted_name}</span>
+                                  {m.comment && (
+                                    <div className="relative group flex-shrink-0 mt-px">
+                                      <Info className="h-3 w-3 text-gray-400 cursor-help" />
+                                      <div className="pointer-events-none absolute left-0 top-5 z-30 hidden group-hover:block w-52 rounded-md bg-slate-900 px-2.5 py-2 shadow-xl">
+                                        <div className="text-[10px] font-semibold text-slate-400 mb-1 uppercase tracking-wide">Årsag</div>
+                                        <div className="text-xs text-white leading-snug">{m.comment}</div>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
                               </td>
+                              {/* Matched customer */}
                               <td className="p-2">
                                 {effectiveAccountNo ? (
-                                  <div className="flex flex-col gap-0.5">
-                                    <div className="flex items-center gap-1.5">
-                                      <span className="font-medium">{effectiveName}</span>
+                                  <div className="space-y-0.5">
+                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                      <span className="font-medium text-xs">{effectiveName}</span>
                                       {m.overrideAccountNo ? (
-                                        <span className="text-xs rounded px-1.5 py-0.5 font-medium bg-blue-100 text-blue-800">overridden</span>
+                                        <span className="text-[10px] rounded px-1 py-0.5 font-medium bg-blue-100 text-blue-700">ændret</span>
                                       ) : (
-                                        <span className={'text-xs rounded px-1.5 py-0.5 font-medium ' + confBadgeClass}>{conf}%</span>
+                                        <span className={'text-[10px] rounded px-1 py-0.5 font-medium ' + confBadgeClass}>{conf}%</span>
                                       )}
                                     </div>
-                                    <div className="text-gray-400 text-xs">{effectiveAccountNo}</div>
+                                    <div className="text-[10px] text-gray-400">{effectiveAccountNo}</div>
                                   </div>
                                 ) : (
-                                  <span className="text-gray-400 italic text-xs">No match</span>
+                                  <span className="text-gray-400 italic text-xs">Ingen match</span>
                                 )}
                               </td>
+                              {/* Override select */}
                               <td className="p-2">
                                 <select
                                   className="w-full border rounded px-1.5 py-1 text-xs"
@@ -2931,7 +2984,7 @@ export default function StatisticsGeneralPage() {
                                     );
                                   }}
                                 >
-                                  <option value="">— none —</option>
+                                  <option value="">— ingen —</option>
                                   {(rows ?? [])
                                     .filter((r) => !r.isGroupTotal && r.account_no && r.customer !== '-')
                                     .map((r) => (
@@ -2941,24 +2994,42 @@ export default function StatisticsGeneralPage() {
                                     ))}
                                 </select>
                               </td>
+                              {/* Null action select */}
                               <td className="p-2">
                                 <select
-                                  className={'w-full border rounded px-1.5 py-1 text-xs font-medium ' + actionBadgeClass}
-                                  value={m.action}
+                                  className={'w-full border rounded px-1.5 py-1 text-xs font-medium ' + nullActionClass}
+                                  value={m.nullAction}
                                   onChange={(e) => {
-                                    const val = e.target.value as NullByInputMatch['action'];
+                                    const val = e.target.value as NullByInputMatch['nullAction'];
                                     setNullByInputMatches((prev) =>
                                       prev ? prev.map((x, i) =>
-                                        i === idx ? { ...x, action: val } : x
+                                        i === idx ? { ...x, nullAction: val } : x
                                       ) : prev
                                     );
                                   }}
                                 >
-                                  <option value="permanently_closed">Permanently closed</option>
-                                  <option value="nulled">Nulled</option>
-                                  <option value="add_comment">Add comment</option>
+                                  <option value="none">Ingen</option>
+                                  <option value="nulled">Nullet</option>
+                                  <option value="permanently_closed">Permanent lukket</option>
                                 </select>
                               </td>
+                              {/* Editable Danish comment */}
+                              <td className="p-2">
+                                <input
+                                  type="text"
+                                  className="w-full border rounded px-1.5 py-1 text-xs"
+                                  value={m.comment}
+                                  placeholder="Kommentar på dansk..."
+                                  onChange={(e) => {
+                                    setNullByInputMatches((prev) =>
+                                      prev ? prev.map((x, i) =>
+                                        i === idx ? { ...x, comment: e.target.value } : x
+                                      ) : prev
+                                    );
+                                  }}
+                                />
+                              </td>
+                              {/* Accept checkbox */}
                               <td className="p-2 text-center">
                                 <input
                                   type="checkbox"
@@ -2982,9 +3053,10 @@ export default function StatisticsGeneralPage() {
                   {nullByInputResult && <div className="text-sm text-green-700 font-medium">{nullByInputResult}</div>}
                 </div>
               ) : (
+                /* ── Input step ── */
                 <div className="space-y-2">
-                  <div className="text-sm text-gray-600">
-                    Paste the full message (one customer per line, in Danish/Swedish/Norwegian/English). The AI will extract names, fuzzy-match against the {(rows ?? []).filter((r) => !r.isGroupTotal).length} customers in the table, and suggest an action per customer.
+                  <div className="text-sm text-gray-500">
+                    Indsæt den fulde besked (én kunde per linje, på dansk/svensk/norsk/engelsk). AI udtrækker navne, fuzzy-matcher mod {(rows ?? []).filter((r) => !r.isGroupTotal).length} kunder i tabellen og foreslår handling og kommentar.
                   </div>
                   <textarea
                     className="w-full h-52 border rounded-md p-2 text-sm font-mono"
@@ -2992,7 +3064,7 @@ export default function StatisticsGeneralPage() {
                     onChange={(e) => setNullByInputText(e.target.value)}
                     placeholder={"Centrum 0 många obetalda fakturor\nModecompaniet stängt\nMode Eva 0 nya ägare planerar att köpa"}
                   />
-                  {nullByInputResult && <div className="text-sm">{nullByInputResult}</div>}
+                  {nullByInputResult && <div className="text-sm text-green-700">{nullByInputResult}</div>}
                 </div>
               )}
             </Modal>
