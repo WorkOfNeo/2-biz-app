@@ -2795,20 +2795,28 @@ export default function StatisticsGeneralPage() {
                             toComment.push({ account_no: acc, comment: m.comment.trim() });
                           }
                         }
+                        // Nulls always go first — must not be blocked by comment errors
                         await saveOverrides({ nulled: Array.from(toNull), hidden: overrides?.value.hidden ?? [] });
                         if (toPermClose.length > 0) {
-                          await supabase.from('customers').update({ permanently_closed: true, nulled: true }).in('customer_id', toPermClose);
+                          const { error: permErr } = await supabase.from('customers').update({ permanently_closed: true, nulled: true }).in('customer_id', toPermClose);
+                          if (permErr) console.error('[null-by-input] perm close error:', permErr);
                         }
+                        // Comments are saved independently — skip failures (e.g. account not in customers table)
+                        let commentsSaved = 0;
+                        let commentsSkipped = 0;
                         for (const { account_no, comment } of toComment) {
                           const { data: existing } = await supabase.from('customer_comments').select('id').eq('customer_id', account_no).eq('season_id', s1).maybeSingle();
                           if (existing) {
-                            await supabase.from('customer_comments').update({ comment }).eq('id', existing.id);
+                            const { error } = await supabase.from('customer_comments').update({ comment }).eq('id', existing.id);
+                            if (error) { commentsSkipped++; console.warn('[null-by-input] comment update skipped:', account_no, error.code); } else { commentsSaved++; }
                           } else {
-                            await supabase.from('customer_comments').insert({ customer_id: account_no, season_id: s1, comment, is_permanent: false });
+                            const { error } = await supabase.from('customer_comments').insert({ customer_id: account_no, season_id: s1, comment, is_permanent: false });
+                            if (error) { commentsSkipped++; console.warn('[null-by-input] comment insert skipped:', account_no, error.code); } else { commentsSaved++; }
                           }
                         }
                         const nulledCount = nullByInputMatches.filter(m => m.accepted && m.nullAction === 'nulled' && (m.overrideAccountNo ?? m.account_no)).length;
-                        setNullByInputResult(`Udført: ${toPermClose.length} permanent lukket, ${nulledCount} nullet, ${toComment.length} kommentarer gemt.`);
+                        const skippedNote = commentsSkipped > 0 ? ` (${commentsSkipped} kommentar${commentsSkipped > 1 ? 'er' : ''} sprunget over — kunden findes ikke i kundedatabasen)` : '';
+                        setNullByInputResult(`Udført: ${toPermClose.length} permanent lukket, ${nulledCount} nullet, ${commentsSaved} kommentarer gemt.${skippedNote}`);
                         setNullByInputMatches(null);
                         await refreshAll();
                       } catch (e: any) {

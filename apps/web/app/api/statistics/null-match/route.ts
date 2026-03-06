@@ -56,7 +56,7 @@ Oversættelseseksempler (HUSK: altid til dansk):
 
 Null-handling nøgleord:
 - permanently_closed: stänger, stängt, lukker, lukket, slutter, stenger, closed, säljer butiken (uden fortsættelse), stänger butiken
-- nulled: slutar köpa, vill ej köpa, vil ikke kjøpe, har ikke handlet, har inte handlat, obetalda fakturor, ubetalte fakturaer, slutar
+- nulled: slutar köpa, vill ej köpa, vil ikke kjøpe, har ikke handlet, har inte handlat, obetalda fakturor, ubetalte fakturaer, slutar, "0" (som enkelt tegn/ord), "null", "nullet", "nul" — disse ord i noten betyder eksplicit at kunden skal nulles
 - none: kanske köper, planerar att köpa, nya ägare planerar, ny ejer overvejer, måske, muligens
 
 Kundeliste (indeks: navn (kontonummer)):
