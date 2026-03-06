@@ -57,6 +57,16 @@ export default function StatisticsGeneralPage() {
   const [nullByInputOpen, setNullByInputOpen] = useState(false);
   const [nullByInputText, setNullByInputText] = useState('');
   const [nullByInputResult, setNullByInputResult] = useState<string | null>(null);
+  type NullByInputMatch = {
+    input: string;
+    account_no: string | null;
+    name: string | null;
+    confidence: number;
+    accepted: boolean;
+    overrideAccountNo: string | null;
+  };
+  const [nullByInputMatching, setNullByInputMatching] = useState(false);
+  const [nullByInputMatches, setNullByInputMatches] = useState<NullByInputMatch[] | null>(null);
   // PDF Export state
   const [pdfExporting, setPdfExporting] = useState(false);
   const [pdfExportJobId, setPdfExportJobId] = useState<string | null>(null);
@@ -2750,54 +2760,185 @@ export default function StatisticsGeneralPage() {
             {/* Null By Input modal */}
             <Modal
               open={nullByInputOpen}
-              onClose={() => setNullByInputOpen(false)}
+              onClose={() => { setNullByInputOpen(false); setNullByInputMatches(null); setNullByInputResult(null); }}
               title="Null Customers by Input"
-              footer={(
+              maxWidth={nullByInputMatches ? 'max-w-4xl' : 'max-w-2xl'}
+              footer={nullByInputMatches ? (
                 <div className="flex items-center gap-2">
-                  <button className="rounded border px-3 py-1.5 text-sm" onClick={() => setNullByInputOpen(false)}>Close</button>
+                  <button className="rounded border px-3 py-1.5 text-sm" onClick={() => setNullByInputMatches(null)}>← Back</button>
+                  <div className="flex-1 text-xs text-gray-500">
+                    {nullByInputMatches.filter(m => m.accepted).length} of {nullByInputMatches.length} selected
+                  </div>
+                  <button className="rounded border px-3 py-1.5 text-sm" onClick={() => { setNullByInputOpen(false); setNullByInputMatches(null); setNullByInputResult(null); }}>Close</button>
                   <button
                     className="inline-flex items-center rounded-md bg-slate-900 text-white px-3 py-1.5 text-sm hover:bg-slate-800 disabled:opacity-50"
                     onClick={async () => {
                       try {
                         if (!s1) { alert('Select Season 1 first'); return; }
-                        const names = nullByInputText.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
-                        const byName = new Map<string, string[]>();
-                        for (const r of (rows ?? []) as any[]) {
-                          const name = String(r.customer || '').trim().toLowerCase();
-                          if (!name) continue;
-                          const arr = byName.get(name) || [];
-                          arr.push(r.account_no);
-                          byName.set(name, arr);
-                        }
                         const toNull = new Set<string>(overrides?.value.nulled ?? []);
-                        const matched: string[] = [];
-                        const unmatched: string[] = [];
-                        for (const raw of names) {
-                          const key = raw.toLowerCase();
-                          const accounts = byName.get(key);
-                          if (accounts && accounts.length > 0) {
-                            for (const acc of accounts) toNull.add(acc);
-                            matched.push(`${raw} (${accounts.join(',')})`);
-                          } else {
-                            unmatched.push(raw);
-                          }
+                        for (const m of nullByInputMatches) {
+                          if (!m.accepted) continue;
+                          const acc = m.overrideAccountNo ?? m.account_no;
+                          if (acc) toNull.add(acc);
                         }
                         await saveOverrides({ nulled: Array.from(toNull), hidden: overrides?.value.hidden ?? [] });
-                        setNullByInputResult(`Matched: ${matched.length}. Unmatched: ${unmatched.length}${unmatched.length? ' → ' + unmatched.join(', ') : ''}`);
-                        console.log('[null-by-input] matched', matched, 'unmatched', unmatched);
+                        const count = nullByInputMatches.filter(m => m.accepted && (m.overrideAccountNo ?? m.account_no)).length;
+                        setNullByInputResult(`Applied: ${count} customers nulled.`);
+                        setNullByInputMatches(null);
                       } catch (e: any) {
-                        setNullByInputResult(e?.message || String(e));
+                        alert(e?.message || 'Failed to apply');
                       }
                     }}
                   >Apply</button>
                 </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <button className="rounded border px-3 py-1.5 text-sm" onClick={() => setNullByInputOpen(false)}>Close</button>
+                  <button
+                    className="inline-flex items-center rounded-md bg-slate-900 text-white px-3 py-1.5 text-sm hover:bg-slate-800 disabled:opacity-50"
+                    disabled={nullByInputMatching || !nullByInputText.trim()}
+                    onClick={async () => {
+                      if (!s1) { alert('Select Season 1 first'); return; }
+                      const inputs = nullByInputText.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+                      if (!inputs.length) return;
+                      const candidates = (rows ?? [])
+                        .filter((r) => !r.isGroupTotal && r.account_no && r.customer && r.customer !== '-')
+                        .map((r) => ({ account_no: r.account_no, name: r.customer }));
+                      setNullByInputMatching(true);
+                      try {
+                        const res = await fetch('/api/statistics/null-match', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ inputs, customers: candidates }),
+                        });
+                        const data = await res.json();
+                        if (!res.ok) throw new Error(data.error || 'Match failed');
+                        setNullByInputMatches(
+                          (data.matches ?? []).map((m: any) => ({
+                            input: m.input,
+                            account_no: m.account_no ?? null,
+                            name: m.name ?? null,
+                            confidence: m.confidence ?? 0,
+                            accepted: (m.confidence ?? 0) >= 70,
+                            overrideAccountNo: null,
+                          }))
+                        );
+                      } catch (e: any) {
+                        alert(e?.message || 'Failed to match');
+                      } finally {
+                        setNullByInputMatching(false);
+                      }
+                    }}
+                  >
+                    {nullByInputMatching ? 'Matching…' : 'Match with AI'}
+                  </button>
+                </div>
               )}
             >
-              <div className="space-y-2">
-                <div className="text-sm text-gray-600">Enter one customer name per line. Matching is case-insensitive against the Customer column shown in the table. Matches will be nulled for the selected Season 1.</div>
-                <textarea className="w-full h-48 border rounded-md p-2 text-sm" value={nullByInputText} onChange={(e) => setNullByInputText(e.target.value)} placeholder={"Customer A\nCustomer B"} />
-                {nullByInputResult && <div className="text-sm">{nullByInputResult}</div>}
-              </div>
+              {nullByInputMatches ? (
+                <div className="space-y-3">
+                  <div className="text-sm text-gray-600">
+                    Review AI suggestions. Rows with ≥70% confidence are pre-accepted (green). Change the mapped customer or toggle acceptance before applying.
+                  </div>
+                  <div className="overflow-auto max-h-[60vh]">
+                    <table className="w-full text-sm border-collapse">
+                      <thead>
+                        <tr className="bg-gray-50 border-b text-left">
+                          <th className="p-2 font-medium">Input</th>
+                          <th className="p-2 font-medium">AI Match</th>
+                          <th className="p-2 font-medium w-56">Override</th>
+                          <th className="p-2 font-medium text-center w-20">Accept</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {nullByInputMatches.map((m, idx) => {
+                          const conf = m.confidence;
+                          const badgeClass = conf >= 70
+                            ? 'bg-green-100 text-green-800'
+                            : conf >= 50
+                            ? 'bg-yellow-100 text-yellow-800'
+                            : 'bg-red-100 text-red-800';
+                          const effectiveAccountNo = m.overrideAccountNo ?? m.account_no;
+                          const effectiveName = m.overrideAccountNo
+                            ? (rows ?? []).find((r) => r.account_no === m.overrideAccountNo)?.customer ?? m.overrideAccountNo
+                            : m.name;
+                          return (
+                            <tr key={idx} className={'border-b ' + (m.accepted ? '' : 'opacity-50')}>
+                              <td className="p-2 font-medium">{m.input}</td>
+                              <td className="p-2">
+                                {effectiveAccountNo ? (
+                                  <div className="flex items-center gap-2">
+                                    <span>{effectiveName}</span>
+                                    {!m.overrideAccountNo && (
+                                      <span className={'text-xs rounded px-1.5 py-0.5 font-medium ' + badgeClass}>{conf}%</span>
+                                    )}
+                                    {m.overrideAccountNo && (
+                                      <span className="text-xs rounded px-1.5 py-0.5 font-medium bg-blue-100 text-blue-800">overridden</span>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <span className="text-gray-400 italic">No match</span>
+                                )}
+                              </td>
+                              <td className="p-2">
+                                <select
+                                  className="w-full border rounded px-1.5 py-1 text-xs"
+                                  value={m.overrideAccountNo ?? (m.account_no ?? '')}
+                                  onChange={(e) => {
+                                    const val = e.target.value || null;
+                                    setNullByInputMatches((prev) =>
+                                      prev ? prev.map((x, i) =>
+                                        i === idx ? { ...x, overrideAccountNo: val !== x.account_no ? val : null, accepted: true } : x
+                                      ) : prev
+                                    );
+                                  }}
+                                >
+                                  <option value="">— none —</option>
+                                  {(rows ?? [])
+                                    .filter((r) => !r.isGroupTotal && r.account_no && r.customer !== '-')
+                                    .map((r) => (
+                                      <option key={r.account_no} value={r.account_no}>
+                                        {r.customer} ({r.account_no})
+                                      </option>
+                                    ))}
+                                </select>
+                              </td>
+                              <td className="p-2 text-center">
+                                <input
+                                  type="checkbox"
+                                  checked={m.accepted}
+                                  onChange={(e) => {
+                                    setNullByInputMatches((prev) =>
+                                      prev ? prev.map((x, i) =>
+                                        i === idx ? { ...x, accepted: e.target.checked } : x
+                                      ) : prev
+                                    );
+                                  }}
+                                  className="h-4 w-4"
+                                />
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  {nullByInputResult && <div className="text-sm text-green-700 font-medium">{nullByInputResult}</div>}
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <div className="text-sm text-gray-600">
+                    Paste customer names (one per line). Click "Match with AI" to fuzzy-match against the {(rows ?? []).filter((r) => !r.isGroupTotal).length} customers currently in the table.
+                  </div>
+                  <textarea
+                    className="w-full h-48 border rounded-md p-2 text-sm"
+                    value={nullByInputText}
+                    onChange={(e) => setNullByInputText(e.target.value)}
+                    placeholder={"Customer A\nCustomer B"}
+                  />
+                  {nullByInputResult && <div className="text-sm">{nullByInputResult}</div>}
+                </div>
+              )}
             </Modal>
             {/* Import Statistic modal */}
             <Modal
