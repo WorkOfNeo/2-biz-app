@@ -59,11 +59,14 @@ export default function StatisticsGeneralPage() {
   const [nullByInputResult, setNullByInputResult] = useState<string | null>(null);
   type NullByInputMatch = {
     input: string;
+    extracted_name: string;
     account_no: string | null;
     name: string | null;
     confidence: number;
     accepted: boolean;
     overrideAccountNo: string | null;
+    action: 'permanently_closed' | 'nulled' | 'add_comment';
+    comment: string;
   };
   const [nullByInputMatching, setNullByInputMatching] = useState(false);
   const [nullByInputMatches, setNullByInputMatches] = useState<NullByInputMatch[] | null>(null);
@@ -2776,15 +2779,37 @@ export default function StatisticsGeneralPage() {
                       try {
                         if (!s1) { alert('Select Season 1 first'); return; }
                         const toNull = new Set<string>(overrides?.value.nulled ?? []);
+                        const toPermClose: string[] = [];
+                        const toComment: { account_no: string; comment: string }[] = [];
                         for (const m of nullByInputMatches) {
                           if (!m.accepted) continue;
                           const acc = m.overrideAccountNo ?? m.account_no;
-                          if (acc) toNull.add(acc);
+                          if (!acc) continue;
+                          if (m.action === 'permanently_closed') {
+                            toPermClose.push(acc);
+                            toNull.add(acc);
+                          } else if (m.action === 'nulled') {
+                            toNull.add(acc);
+                          } else if (m.action === 'add_comment' && m.comment) {
+                            toComment.push({ account_no: acc, comment: m.comment });
+                          }
                         }
                         await saveOverrides({ nulled: Array.from(toNull), hidden: overrides?.value.hidden ?? [] });
-                        const count = nullByInputMatches.filter(m => m.accepted && (m.overrideAccountNo ?? m.account_no)).length;
-                        setNullByInputResult(`Applied: ${count} customers nulled.`);
+                        if (toPermClose.length > 0) {
+                          await supabase.from('customers').update({ permanently_closed: true, nulled: true }).in('customer_id', toPermClose);
+                        }
+                        for (const { account_no, comment } of toComment) {
+                          const { data: existing } = await supabase.from('customer_comments').select('id').eq('customer_id', account_no).eq('season_id', s1).maybeSingle();
+                          if (existing) {
+                            await supabase.from('customer_comments').update({ comment }).eq('id', existing.id);
+                          } else {
+                            await supabase.from('customer_comments').insert({ customer_id: account_no, season_id: s1, comment, is_permanent: false });
+                          }
+                        }
+                        const nulledCount = nullByInputMatches.filter(m => m.accepted && m.action === 'nulled' && (m.overrideAccountNo ?? m.account_no)).length;
+                        setNullByInputResult(`Applied: ${toPermClose.length} permanently closed, ${nulledCount} nulled, ${toComment.length} comments saved.`);
                         setNullByInputMatches(null);
+                        await refreshAll();
                       } catch (e: any) {
                         alert(e?.message || 'Failed to apply');
                       }
@@ -2816,11 +2841,14 @@ export default function StatisticsGeneralPage() {
                         setNullByInputMatches(
                           (data.matches ?? []).map((m: any) => ({
                             input: m.input,
+                            extracted_name: m.extracted_name ?? m.input,
                             account_no: m.account_no ?? null,
                             name: m.name ?? null,
                             confidence: m.confidence ?? 0,
                             accepted: (m.confidence ?? 0) >= 70,
                             overrideAccountNo: null,
+                            action: m.action ?? 'nulled',
+                            comment: m.comment ?? '',
                           }))
                         );
                       } catch (e: any) {
@@ -2838,46 +2866,56 @@ export default function StatisticsGeneralPage() {
               {nullByInputMatches ? (
                 <div className="space-y-3">
                   <div className="text-sm text-gray-600">
-                    Review AI suggestions. Rows with ≥70% confidence are pre-accepted (green). Change the mapped customer or toggle acceptance before applying.
+                    Review AI suggestions. ≥70% confidence is pre-accepted (green). Adjust the match, action, or toggle acceptance per row before applying.
                   </div>
                   <div className="overflow-auto max-h-[60vh]">
                     <table className="w-full text-sm border-collapse">
                       <thead>
                         <tr className="bg-gray-50 border-b text-left">
-                          <th className="p-2 font-medium">Input</th>
-                          <th className="p-2 font-medium">AI Match</th>
-                          <th className="p-2 font-medium w-56">Override</th>
-                          <th className="p-2 font-medium text-center w-20">Accept</th>
+                          <th className="p-2 font-medium">Input / Note</th>
+                          <th className="p-2 font-medium">Matched Customer</th>
+                          <th className="p-2 font-medium w-52">Change Match</th>
+                          <th className="p-2 font-medium w-40">Action</th>
+                          <th className="p-2 font-medium text-center w-16">Accept</th>
                         </tr>
                       </thead>
                       <tbody>
                         {nullByInputMatches.map((m, idx) => {
                           const conf = m.confidence;
-                          const badgeClass = conf >= 70
+                          const confBadgeClass = conf >= 70
                             ? 'bg-green-100 text-green-800'
                             : conf >= 50
                             ? 'bg-yellow-100 text-yellow-800'
                             : 'bg-red-100 text-red-800';
+                          const actionBadgeClass =
+                            m.action === 'permanently_closed' ? 'bg-red-100 text-red-800' :
+                            m.action === 'nulled' ? 'bg-orange-100 text-orange-800' :
+                            'bg-blue-100 text-blue-800';
                           const effectiveAccountNo = m.overrideAccountNo ?? m.account_no;
                           const effectiveName = m.overrideAccountNo
                             ? (rows ?? []).find((r) => r.account_no === m.overrideAccountNo)?.customer ?? m.overrideAccountNo
                             : m.name;
                           return (
                             <tr key={idx} className={'border-b ' + (m.accepted ? '' : 'opacity-50')}>
-                              <td className="p-2 font-medium">{m.input}</td>
+                              <td className="p-2 max-w-[200px]">
+                                <div className="font-medium text-xs">{m.extracted_name}</div>
+                                {m.comment && <div className="text-gray-400 text-xs mt-0.5 leading-snug">{m.comment}</div>}
+                              </td>
                               <td className="p-2">
                                 {effectiveAccountNo ? (
-                                  <div className="flex items-center gap-2">
-                                    <span>{effectiveName}</span>
-                                    {!m.overrideAccountNo && (
-                                      <span className={'text-xs rounded px-1.5 py-0.5 font-medium ' + badgeClass}>{conf}%</span>
-                                    )}
-                                    {m.overrideAccountNo && (
-                                      <span className="text-xs rounded px-1.5 py-0.5 font-medium bg-blue-100 text-blue-800">overridden</span>
-                                    )}
+                                  <div className="flex flex-col gap-0.5">
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="font-medium">{effectiveName}</span>
+                                      {m.overrideAccountNo ? (
+                                        <span className="text-xs rounded px-1.5 py-0.5 font-medium bg-blue-100 text-blue-800">overridden</span>
+                                      ) : (
+                                        <span className={'text-xs rounded px-1.5 py-0.5 font-medium ' + confBadgeClass}>{conf}%</span>
+                                      )}
+                                    </div>
+                                    <div className="text-gray-400 text-xs">{effectiveAccountNo}</div>
                                   </div>
                                 ) : (
-                                  <span className="text-gray-400 italic">No match</span>
+                                  <span className="text-gray-400 italic text-xs">No match</span>
                                 )}
                               </td>
                               <td className="p-2">
@@ -2901,6 +2939,24 @@ export default function StatisticsGeneralPage() {
                                         {r.customer} ({r.account_no})
                                       </option>
                                     ))}
+                                </select>
+                              </td>
+                              <td className="p-2">
+                                <select
+                                  className={'w-full border rounded px-1.5 py-1 text-xs font-medium ' + actionBadgeClass}
+                                  value={m.action}
+                                  onChange={(e) => {
+                                    const val = e.target.value as NullByInputMatch['action'];
+                                    setNullByInputMatches((prev) =>
+                                      prev ? prev.map((x, i) =>
+                                        i === idx ? { ...x, action: val } : x
+                                      ) : prev
+                                    );
+                                  }}
+                                >
+                                  <option value="permanently_closed">Permanently closed</option>
+                                  <option value="nulled">Nulled</option>
+                                  <option value="add_comment">Add comment</option>
                                 </select>
                               </td>
                               <td className="p-2 text-center">
@@ -2928,13 +2984,13 @@ export default function StatisticsGeneralPage() {
               ) : (
                 <div className="space-y-2">
                   <div className="text-sm text-gray-600">
-                    Paste customer names (one per line). Click "Match with AI" to fuzzy-match against the {(rows ?? []).filter((r) => !r.isGroupTotal).length} customers currently in the table.
+                    Paste the full message (one customer per line, in Danish/Swedish/Norwegian/English). The AI will extract names, fuzzy-match against the {(rows ?? []).filter((r) => !r.isGroupTotal).length} customers in the table, and suggest an action per customer.
                   </div>
                   <textarea
-                    className="w-full h-48 border rounded-md p-2 text-sm"
+                    className="w-full h-52 border rounded-md p-2 text-sm font-mono"
                     value={nullByInputText}
                     onChange={(e) => setNullByInputText(e.target.value)}
-                    placeholder={"Customer A\nCustomer B"}
+                    placeholder={"Centrum 0 många obetalda fakturor\nModecompaniet stängt\nMode Eva 0 nya ägare planerar att köpa"}
                   />
                   {nullByInputResult && <div className="text-sm">{nullByInputResult}</div>}
                 </div>
