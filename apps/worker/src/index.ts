@@ -2017,6 +2017,17 @@ async function runJob(job: JobRow) {
       const perSalespersonCounts: Array<{ salesperson: string; created: number; updated: number; unchanged: number }> = [];
       // Collect SPY customer IDs for style details bulk download (when enabled)
       const styleDetailsCustomerMap: Map<string, string> = new Map(); // spyCustomerId -> accountNo
+
+      // Pre-fetch season_overrides once before the salesperson loop so we don't
+      // re-query the same app_settings row on every customer row that changes.
+      const seasonOverridesKey = `season_overrides:${targetSeasonId}`;
+      let seasonOverridesRow: { id: string; value: any } | null = null;
+      let seasonOverridesDirty = false;
+      try {
+        const { data: soRow } = await supabase.from('app_settings').select('id, value').eq('key', seasonOverridesKey).maybeSingle();
+        seasonOverridesRow = (soRow as any) || null;
+      } catch {}
+
       for (const sp of salespeople) {
         await ensureNotCancelled(job.id);
         processed++;
@@ -2191,22 +2202,18 @@ async function runJob(job: JobRow) {
                 await log(job.id, 'info', 'STEP:customer_unnulled', { account: accountNo, customer: customerName });
               }
               
-              // Also remove from seasonal overrides nulled list if present (even if not nulled in customers table)
-              if (targetSeasonId) {
+              // Also remove from seasonal overrides nulled list if present (even if not nulled in customers table).
+              // Uses the pre-fetched in-memory copy — no extra DB read per row.
+              if (targetSeasonId && seasonOverridesRow) {
                 try {
-                  const key = `season_overrides:${targetSeasonId}`;
-                  const { data: seasonOverrides } = await supabase.from('app_settings').select('id, value').eq('key', key).maybeSingle();
-                  if (seasonOverrides) {
-                    const val = (seasonOverrides.value as any) || {};
-                    const existingNulled: string[] = Array.isArray(val.nulled) ? val.nulled : [];
-                    const hidden: string[] = Array.isArray(val.hidden) ? val.hidden : [];
-                    // Remove this account from the nulled list
-                    const updatedNulled = existingNulled.filter((acc: string) => acc !== accountNo);
-                    if (updatedNulled.length !== existingNulled.length) {
-                      const next = { nulled: updatedNulled, hidden };
-                      await supabase.from('app_settings').update({ value: next }).eq('id', seasonOverrides.id as any);
-                      await log(job.id, 'info', 'STEP:customer_removed_from_seasonal_nulled', { account: accountNo, customer: customerName, wasNulledInTable: wasNulled });
-                    }
+                  const val = (seasonOverridesRow.value as any) || {};
+                  const existingNulled: string[] = Array.isArray(val.nulled) ? val.nulled : [];
+                  const hidden: string[] = Array.isArray(val.hidden) ? val.hidden : [];
+                  const updatedNulled = existingNulled.filter((acc: string) => acc !== accountNo);
+                  if (updatedNulled.length !== existingNulled.length) {
+                    seasonOverridesRow.value = { ...val, nulled: updatedNulled, hidden };
+                    seasonOverridesDirty = true;
+                    await log(job.id, 'info', 'STEP:customer_removed_from_seasonal_nulled', { account: accountNo, customer: customerName, wasNulledInTable: wasNulled });
                   }
                 } catch (e) {
                   // Non-critical, just log
@@ -2222,6 +2229,16 @@ async function runJob(job: JobRow) {
         totalRowsUpserted += upsertedForSp;
         await log(job.id, 'info', 'STEP:salesperson_done', { index: processed, total: salespeople.length, upserted: upsertedForSp, name: sp.name, rows: upsertedRowsForLog });
         perSalespersonCounts.push({ salesperson: sp.name, created: createdCount, updated: updatedCount, unchanged: unchangedCount });
+      }
+
+      // Flush season_overrides back to DB if any accounts were removed from the nulled list
+      if (seasonOverridesDirty && seasonOverridesRow) {
+        try {
+          await supabase.from('app_settings').update({ value: seasonOverridesRow.value }).eq('id', seasonOverridesRow.id as any);
+          await log(job.id, 'info', 'STEP:season_overrides_flushed', { key: seasonOverridesKey });
+        } catch (e: any) {
+          await log(job.id, 'info', 'STEP:season_overrides_flush_failed', { error: String(e) });
+        }
       }
 
       // After seasonal totals per salesperson, fetch invoiced list for the same season
@@ -2546,10 +2563,18 @@ async function runJob(job: JobRow) {
 
             try {
               // Fetch CSV content via page context (authenticated session)
+              // AbortController gives a 90s hard timeout so a slow/hung endpoint
+              // cannot stall the job indefinitely.
               const csvContent = await page.evaluate(async (url: string) => {
-                const resp = await fetch(url, { credentials: 'include' });
-                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-                return await resp.text();
+                const controller = new AbortController();
+                const timer = setTimeout(() => controller.abort(), 90_000);
+                try {
+                  const resp = await fetch(url, { credentials: 'include', signal: controller.signal });
+                  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                  return await resp.text();
+                } finally {
+                  clearTimeout(timer);
+                }
               }, downloadUrl.toString());
 
               if (!csvContent || csvContent.trim().length === 0) {
@@ -2654,31 +2679,21 @@ async function runJob(job: JobRow) {
 
           await log(job.id, 'info', 'STEP:style_details_complete', { totalRows: totalStyleRows });
 
-            // Record which customers were scraped (upsert to preserve first_scraped_at)
-            for (const accountNo of accountNosToScrape) {
-              const { data: existing } = await supabase
+            // Record which customers were scraped — single upsert instead of N select+insert/update round-trips.
+            // on_conflict on (season_id, account_no): update force_rescrape and set first_scraped_at only when inserting.
+            const scrapedAt = new Date().toISOString();
+            const trackingRows = accountNosToScrape.map((accountNo) => ({
+              season_id: targetSeasonId,
+              account_no: accountNo,
+              first_scraped_at: scrapedAt,
+              force_rescrape: false,
+            }));
+            if (trackingRows.length > 0) {
+              const { error: trackErr } = await supabase
                 .from('sales_style_details_scraped')
-                .select('id')
-                .eq('season_id', targetSeasonId)
-                .eq('account_no', accountNo)
-                .maybeSingle();
-              
-              if (existing) {
-                // Already exists - just reset force_rescrape flag
-                await supabase
-                  .from('sales_style_details_scraped')
-                  .update({ force_rescrape: false })
-                  .eq('id', existing.id);
-              } else {
-                // New record - insert with first_scraped_at
-                await supabase
-                  .from('sales_style_details_scraped')
-                  .insert({
-                    season_id: targetSeasonId,
-                    account_no: accountNo,
-                    first_scraped_at: new Date().toISOString(),
-                    force_rescrape: false
-                  });
+                .upsert(trackingRows, { onConflict: 'season_id,account_no', ignoreDuplicates: false });
+              if (trackErr) {
+                await log(job.id, 'error', 'STEP:style_details_tracking_error', { error: trackErr.message });
               }
             }
             await log(job.id, 'info', 'STEP:style_details_tracking_saved', { customersTracked: accountNosToScrape.length });
