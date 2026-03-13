@@ -192,8 +192,9 @@ async function handle(req: Request) {
       endDateObj.setHours(23, 59, 59, 999);
       if (now > endDateObj) {
         const idx = updatedSchedules.findIndex(s => s.id === schedule.id);
-        if (idx !== -1) {
-          updatedSchedules[idx] = { ...updatedSchedules[idx], enabled: false };
+        const existing = updatedSchedules[idx];
+        if (idx !== -1 && existing) {
+          updatedSchedules[idx] = { ...existing, enabled: false };
           if (debug) console.log(`[cron:email-schedules] Auto-disabled schedule "${schedule.name}" (end date passed)`);
         }
       }
