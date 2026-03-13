@@ -10,6 +10,7 @@
     { "path": "/api/cron/cleanup-job-logs", "schedule": "0 2 */14 * *" },
     { "path": "/api/cron/send-stock-list-schedules", "schedule": "*/5 * * * *" },
     { "path": "/api/cron/send-salesmen-schedules", "schedule": "*/5 * * * *" },
+    { "path": "/api/cron/send-email-schedules", "schedule": "*/5 * * * *" },
     { "path": "/api/cron/export-statistics-fixed", "schedule": "*/5 * * * *" },
     { "path": "/api/cron/weekly-style-refresh", "schedule": "*/5 * * * *" },
     { "path": "/api/cron/weekly-customer-sync", "schedule": "*/5 * * * *" }

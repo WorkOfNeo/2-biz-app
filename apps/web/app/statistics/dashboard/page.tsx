@@ -65,6 +65,28 @@ interface StatisticSchedule {
   overallRecipientsCsv?: string;
 }
 
+interface EmailSendSchedule {
+  id: string;
+  name: string;
+  enabled: boolean;
+  days: number[];
+  time: string;
+  scrapeFirst: boolean;
+  recipientType: 'salespersons' | 'email_list';
+  salespersonIds: string[];
+  emails: string[];
+  include: {
+    countries: boolean;
+    top15Salesmen: boolean;
+    top15Overall: boolean;
+    overview: boolean;
+    generalCombined: boolean;
+  };
+  stockLists: string[];
+  lastRun?: string;
+  createdAt: string;
+}
+
 
 function generateId(): string {
   return Math.random().toString(36).substring(2, 9);
@@ -800,6 +822,794 @@ function ScrapesTab() {
           </div>
         </CardContent>
       </Card>
+    </div>
+  );
+}
+
+// ============================================================================
+// EMAIL SCHEDULE TAB COMPONENT
+// ============================================================================
+
+function ScheduleTab() {
+  const [schedules, setSchedules] = React.useState<EmailSendSchedule[]>([]);
+  const [loading, setLoading] = React.useState(true);
+  const [wizardOpen, setWizardOpen] = React.useState(false);
+  const [wizardStep, setWizardStep] = React.useState(1);
+  const [editingSchedule, setEditingSchedule] = React.useState<EmailSendSchedule | null>(null);
+  const [saving, setSaving] = React.useState(false);
+  const [togglingId, setTogglingId] = React.useState<string | null>(null);
+  const [deletingId, setDeletingId] = React.useState<string | null>(null);
+
+  // Wizard form state - Step 1: When
+  const [wName, setWName] = React.useState('');
+  const [wDays, setWDays] = React.useState<Set<number>>(new Set([1])); // Mon default
+  const [wTime, setWTime] = React.useState('09:00');
+  const [wScrapeFirst, setWScrapeFirst] = React.useState(false);
+
+  // Wizard form state - Step 2: What
+  const [wRecipientType, setWRecipientType] = React.useState<'salespersons' | 'email_list'>('salespersons');
+  const [wSalespersons, setWSalespersons] = React.useState<Set<string>>(new Set());
+  const [wEmails, setWEmails] = React.useState<string[]>([]);
+  const [wIncludeCountries, setWIncludeCountries] = React.useState(true);
+  const [wIncludeTop15Salesmen, setWIncludeTop15Salesmen] = React.useState(true);
+  const [wIncludeTop15Overall, setWIncludeTop15Overall] = React.useState(false);
+  const [wIncludeOverview, setWIncludeOverview] = React.useState(false);
+  const [wIncludeGeneralCombined, setWIncludeGeneralCombined] = React.useState(false);
+  const [wStockLists, setWStockLists] = React.useState<Set<string>>(new Set());
+
+  // Load salespersons
+  const { data: salespersons } = useSWR('salespersons:list', async () => {
+    const { data, error } = await supabase.from('salespersons').select('id, name, email').order('sort_index', { ascending: true });
+    if (error) throw new Error(error.message);
+    return (data ?? []) as Array<{ id: string; name: string; email?: string | null }>;
+  });
+
+  // Load stock lists
+  const { data: stockListsAll } = useSWR('stock-lists:names', async () => {
+    const { data, error } = await supabase.from('stock_lists').select('id, name').order('name', { ascending: true });
+    if (error) throw new Error(error.message);
+    return (data ?? []) as Array<{ id: string; name: string }>;
+  });
+
+  // Load schedules from app_settings
+  const loadSchedules = React.useCallback(async () => {
+    try {
+      const { data } = await supabase.from('app_settings').select('id, value').eq('key', 'email_send_schedules').maybeSingle();
+      const val = ((data?.value as any) || {}) as { schedules?: EmailSendSchedule[] };
+      if (val.schedules) setSchedules(val.schedules);
+    } catch (e: any) {
+      console.error('Failed to load email send schedules:', e);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    loadSchedules();
+  }, [loadSchedules]);
+
+  // Save schedules to app_settings
+  const saveSchedules = async (updated: EmailSendSchedule[]) => {
+    const { data: existing } = await supabase.from('app_settings').select('id').eq('key', 'email_send_schedules').maybeSingle();
+    if (existing?.id) {
+      await supabase.from('app_settings').update({ value: { schedules: updated } }).eq('id', existing.id);
+    } else {
+      await supabase.from('app_settings').insert({ key: 'email_send_schedules', value: { schedules: updated } } as any);
+    }
+    setSchedules(updated);
+  };
+
+  const openNewSchedule = () => {
+    setEditingSchedule(null);
+    resetWizardForm();
+    setWizardStep(1);
+    setWizardOpen(true);
+  };
+
+  const openEditSchedule = (schedule: EmailSendSchedule) => {
+    setEditingSchedule(schedule);
+    setWName(schedule.name);
+    setWDays(new Set(schedule.days));
+    setWTime(schedule.time);
+    setWScrapeFirst(schedule.scrapeFirst);
+    setWRecipientType(schedule.recipientType);
+    setWSalespersons(new Set(schedule.salespersonIds));
+    setWEmails([...schedule.emails]);
+    setWIncludeCountries(schedule.include.countries);
+    setWIncludeTop15Salesmen(schedule.include.top15Salesmen);
+    setWIncludeTop15Overall(schedule.include.top15Overall);
+    setWIncludeOverview(schedule.include.overview);
+    setWIncludeGeneralCombined(schedule.include.generalCombined);
+    setWStockLists(new Set(schedule.stockLists));
+    setWizardStep(1);
+    setWizardOpen(true);
+  };
+
+  const resetWizardForm = () => {
+    setWName('');
+    setWDays(new Set([1]));
+    setWTime('09:00');
+    setWScrapeFirst(false);
+    setWRecipientType('salespersons');
+    setWSalespersons(new Set());
+    setWEmails([]);
+    setWIncludeCountries(true);
+    setWIncludeTop15Salesmen(true);
+    setWIncludeTop15Overall(false);
+    setWIncludeOverview(false);
+    setWIncludeGeneralCombined(false);
+    setWStockLists(new Set());
+  };
+
+  const handleSaveSchedule = async () => {
+    if (!wName.trim()) {
+      alert('Please enter a schedule name');
+      return;
+    }
+    if (wDays.size === 0) {
+      alert('Please select at least one day');
+      return;
+    }
+    if (wRecipientType === 'salespersons' && wSalespersons.size === 0) {
+      alert('Please select at least one salesperson');
+      return;
+    }
+    if (wRecipientType === 'email_list' && wEmails.length === 0) {
+      alert('Please add at least one email address');
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const newSchedule: EmailSendSchedule = {
+        id: editingSchedule?.id || generateId(),
+        name: wName.trim(),
+        enabled: editingSchedule?.enabled ?? true,
+        days: Array.from(wDays).sort((a, b) => a - b),
+        time: wTime,
+        scrapeFirst: wScrapeFirst,
+        recipientType: wRecipientType,
+        salespersonIds: Array.from(wSalespersons),
+        emails: wEmails,
+        include: {
+          countries: wIncludeCountries,
+          top15Salesmen: wIncludeTop15Salesmen,
+          top15Overall: wIncludeTop15Overall,
+          overview: wIncludeOverview,
+          generalCombined: wIncludeGeneralCombined,
+        },
+        stockLists: Array.from(wStockLists),
+        lastRun: editingSchedule?.lastRun,
+        createdAt: editingSchedule?.createdAt || new Date().toISOString(),
+      };
+
+      const updated = editingSchedule
+        ? schedules.map(s => s.id === editingSchedule.id ? newSchedule : s)
+        : [...schedules, newSchedule];
+
+      await saveSchedules(updated);
+      setWizardOpen(false);
+      resetWizardForm();
+    } catch (e: any) {
+      console.error('Failed to save schedule:', e);
+      alert(`Failed to save schedule: ${e?.message || 'Unknown error'}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const toggleScheduleEnabled = async (schedule: EmailSendSchedule) => {
+    setTogglingId(schedule.id);
+    try {
+      const updated = schedules.map(s => s.id === schedule.id ? { ...s, enabled: !s.enabled } : s);
+      await saveSchedules(updated);
+    } catch (e: any) {
+      console.error('Failed to toggle schedule:', e);
+      alert(`Failed to toggle schedule: ${e?.message || 'Unknown error'}`);
+    } finally {
+      setTogglingId(null);
+    }
+  };
+
+  const deleteSchedule = async (schedule: EmailSendSchedule) => {
+    if (!confirm(`Delete schedule "${schedule.name}"?`)) return;
+    setDeletingId(schedule.id);
+    try {
+      const updated = schedules.filter(s => s.id !== schedule.id);
+      await saveSchedules(updated);
+    } catch (e: any) {
+      console.error('Failed to delete schedule:', e);
+      alert(`Failed to delete schedule: ${e?.message || 'Unknown error'}`);
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  const runScheduleNow = async (schedule: EmailSendSchedule) => {
+    if (!confirm(`Run schedule "${schedule.name}" now?`)) return;
+    try {
+      const res = await fetch(`/api/cron/send-email-schedules?force=${schedule.id}`, { method: 'POST' });
+      if (!res.ok) throw new Error('Failed to trigger schedule');
+      const data = await res.json();
+      alert(data.message || 'Schedule triggered successfully');
+    } catch (e: any) {
+      console.error('Failed to run schedule:', e);
+      alert(`Failed to run schedule: ${e?.message || 'Unknown error'}`);
+    }
+  };
+
+  const formatDays = (days: number[]): string => {
+    if (days.length === 7) return 'Every day';
+    return days
+      .sort((a, b) => a - b)
+      .map(d => DAYS_OF_WEEK.find(day => day.value === d)?.label || '')
+      .filter(Boolean)
+      .join(', ');
+  };
+
+  const formatRecipients = (schedule: EmailSendSchedule): string => {
+    if (schedule.recipientType === 'salespersons') {
+      const count = schedule.salespersonIds.length;
+      return `${count} salesperson${count !== 1 ? 's' : ''}`;
+    } else {
+      const count = schedule.emails.length;
+      return `${count} email${count !== 1 ? 's' : ''}`;
+    }
+  };
+
+  const formatIncludes = (schedule: EmailSendSchedule): string[] => {
+    const items: string[] = [];
+    if (schedule.include.countries) items.push('Countries');
+    if (schedule.include.top15Salesmen) items.push('Top 15 Salesmen');
+    if (schedule.include.top15Overall) items.push('Top 15 Overall');
+    if (schedule.include.overview) items.push('Overview');
+    if (schedule.include.generalCombined) items.push('General Combined');
+    if (schedule.stockLists.length > 0) items.push(`${schedule.stockLists.length} stock list${schedule.stockLists.length !== 1 ? 's' : ''}`);
+    return items;
+  };
+
+  const canProceedToStep2 = () => {
+    return wName.trim() !== '' && wDays.size > 0;
+  };
+
+  const canProceedToStep3 = () => {
+    if (wRecipientType === 'salespersons' && wSalespersons.size === 0) return false;
+    if (wRecipientType === 'email_list' && wEmails.length === 0) return false;
+    return true;
+  };
+
+  if (loading) {
+    return (
+      <Card>
+        <CardContent className="py-12 text-center">
+          <div className="text-slate-400 text-sm">Loading schedules...</div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between">
+          <div>
+            <CardTitle>Email Send Schedules</CardTitle>
+            <CardDescription>Configure automated email send-outs with statistics and stock lists</CardDescription>
+          </div>
+          <Button size="sm" onClick={openNewSchedule}>
+            <Plus className="h-4 w-4 mr-1" />
+            New Schedule
+          </Button>
+        </CardHeader>
+        <CardContent>
+          {schedules.length === 0 ? (
+            <div className="text-center py-8 text-gray-500 text-sm">
+              No email send schedules configured yet. Create one to get started.
+            </div>
+          ) : (
+            <div className="rounded-md border overflow-hidden">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-[60px]">On/Off</TableHead>
+                    <TableHead className="w-[180px]">Name</TableHead>
+                    <TableHead className="w-[120px]">Recipients</TableHead>
+                    <TableHead className="w-[180px]">Schedule</TableHead>
+                    <TableHead className="w-[100px]">Scrape First</TableHead>
+                    <TableHead>Includes</TableHead>
+                    <TableHead className="w-[140px]">Last Run</TableHead>
+                    <TableHead className="w-[140px] text-right">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {schedules.map(schedule => (
+                    <TableRow key={schedule.id}>
+                      <TableCell>
+                        <button
+                          type="button"
+                          onClick={() => toggleScheduleEnabled(schedule)}
+                          disabled={togglingId === schedule.id}
+                          className={`relative inline-flex items-center h-5 w-9 rounded-full transition-colors ${
+                            schedule.enabled ? 'bg-slate-900' : 'bg-slate-200'
+                          } ${togglingId === schedule.id ? 'opacity-50' : ''}`}
+                        >
+                          <span
+                            className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+                              schedule.enabled ? 'translate-x-4' : 'translate-x-0.5'
+                            }`}
+                          />
+                        </button>
+                      </TableCell>
+                      <TableCell>
+                        <div className="font-medium text-sm">{schedule.name}</div>
+                        <div className="text-xs text-slate-500 capitalize">{schedule.recipientType.replace('_', ' ')}</div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="text-sm">{formatRecipients(schedule)}</div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          <Calendar className="h-4 w-4 text-slate-400" />
+                          <div className="text-sm">
+                            <div>{formatDays(schedule.days)}</div>
+                            <div className="text-xs text-slate-500">at {schedule.time}</div>
+                          </div>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        {schedule.scrapeFirst ? (
+                          <Badge className="bg-blue-100 text-blue-800 border-blue-200 text-xs">Yes</Badge>
+                        ) : (
+                          <Badge className="bg-slate-100 text-slate-600 border-slate-200 text-xs">No</Badge>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex flex-wrap gap-1">
+                          {formatIncludes(schedule).map((item, idx) => (
+                            <Badge key={idx} className="border border-slate-300 bg-white text-slate-700 text-xs">
+                              {item}
+                            </Badge>
+                          ))}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="text-xs text-slate-600">
+                          {formatLastRun(schedule.lastRun)}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => runScheduleNow(schedule)}
+                            title="Run now"
+                          >
+                            <Play className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => openEditSchedule(schedule)}
+                            title="Edit"
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => deleteSchedule(schedule)}
+                            disabled={deletingId === schedule.id}
+                            title="Delete"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Wizard Modal */}
+      <Sheet open={wizardOpen} onOpenChange={setWizardOpen}>
+        <SheetContent className="sm:max-w-[600px] overflow-y-auto">
+          <SheetHeader>
+            <SheetTitle>
+              {editingSchedule ? 'Edit Schedule' : 'New Schedule'} - Step {wizardStep} of 3
+            </SheetTitle>
+          </SheetHeader>
+
+          <div className="mt-6 space-y-6">
+            {/* Step indicators */}
+            <div className="flex items-center justify-between">
+              {[1, 2, 3].map(step => (
+                <div key={step} className="flex items-center">
+                  <div
+                    className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium ${
+                      wizardStep === step
+                        ? 'bg-blue-600 text-white'
+                        : wizardStep > step
+                        ? 'bg-green-600 text-white'
+                        : 'bg-slate-200 text-slate-600'
+                    }`}
+                  >
+                    {step}
+                  </div>
+                  {step < 3 && <div className="w-16 h-0.5 bg-slate-200 mx-2" />}
+                </div>
+              ))}
+            </div>
+
+            {/* Step 1: When */}
+            {wizardStep === 1 && (
+              <div className="space-y-4">
+                <h3 className="font-semibold text-slate-900">When to send?</h3>
+                
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">
+                    Schedule name <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={wName}
+                    onChange={e => setWName(e.target.value)}
+                    placeholder="e.g., Weekly Friday Report"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-md text-sm"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">
+                    Days <span className="text-red-500">*</span>
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    {DAYS_OF_WEEK.map(day => (
+                      <button
+                        key={day.value}
+                        type="button"
+                        onClick={() => {
+                          const newDays = new Set(wDays);
+                          if (newDays.has(day.value)) {
+                            newDays.delete(day.value);
+                          } else {
+                            newDays.add(day.value);
+                          }
+                          setWDays(newDays);
+                        }}
+                        className={`px-4 py-2 text-sm rounded border transition-colors ${
+                          wDays.has(day.value)
+                            ? 'bg-blue-600 text-white border-blue-600'
+                            : 'bg-white text-slate-700 border-slate-300 hover:border-blue-400'
+                        }`}
+                      >
+                        {day.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">
+                    Time (Copenhagen timezone) <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="time"
+                    value={wTime}
+                    onChange={e => setWTime(e.target.value)}
+                    className="px-3 py-2 border border-slate-300 rounded-md text-sm"
+                  />
+                </div>
+
+                <div className="flex items-start gap-3 p-3 bg-slate-50 rounded-md">
+                  <button
+                    type="button"
+                    onClick={() => setWScrapeFirst(!wScrapeFirst)}
+                    className={`relative inline-flex items-center h-5 w-9 rounded-full transition-colors ${
+                      wScrapeFirst ? 'bg-slate-900' : 'bg-slate-200'
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+                        wScrapeFirst ? 'translate-x-4' : 'translate-x-0.5'
+                      }`}
+                    />
+                  </button>
+                  <div>
+                    <div className="text-sm font-medium text-slate-700">Scrape before sending</div>
+                    <div className="text-xs text-slate-500 mt-0.5">
+                      Ensure data is fresh by scraping statistics and stock lists before sending emails
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex justify-end gap-2 pt-4">
+                  <Button variant="outline" onClick={() => setWizardOpen(false)}>
+                    Cancel
+                  </Button>
+                  <Button onClick={() => setWizardStep(2)} disabled={!canProceedToStep2()}>
+                    Next
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {/* Step 2: What to send */}
+            {wizardStep === 2 && (
+              <div className="space-y-4">
+                <h3 className="font-semibold text-slate-900">What to send?</h3>
+
+                {/* Recipient type selection */}
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">
+                    Recipient type <span className="text-red-500">*</span>
+                  </label>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setWRecipientType('salespersons')}
+                      className={`flex-1 px-4 py-2 text-sm rounded border transition-colors ${
+                        wRecipientType === 'salespersons'
+                          ? 'bg-blue-600 text-white border-blue-600'
+                          : 'bg-white text-slate-700 border-slate-300 hover:border-blue-400'
+                      }`}
+                    >
+                      Salespersons
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setWRecipientType('email_list')}
+                      className={`flex-1 px-4 py-2 text-sm rounded border transition-colors ${
+                        wRecipientType === 'email_list'
+                          ? 'bg-blue-600 text-white border-blue-600'
+                          : 'bg-white text-slate-700 border-slate-300 hover:border-blue-400'
+                      }`}
+                    >
+                      Email List
+                    </button>
+                  </div>
+                  <div className="mt-2 text-xs text-slate-500 bg-slate-50 p-2 rounded">
+                    Note: Each schedule can only use one recipient type. To send to both salespersons and an email list at the same time, create two separate schedules.
+                  </div>
+                </div>
+
+                {/* Recipients selection based on type */}
+                {wRecipientType === 'salespersons' ? (
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-2">
+                      Select salespersons <span className="text-red-500">*</span>
+                    </label>
+                    <div className="border border-slate-300 rounded-md p-3 max-h-[200px] overflow-y-auto space-y-2">
+                      {(salespersons ?? []).map(sp => (
+                        <label key={sp.id} className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={wSalespersons.has(sp.id)}
+                            onChange={() => {
+                              const newSet = new Set(wSalespersons);
+                              if (newSet.has(sp.id)) {
+                                newSet.delete(sp.id);
+                              } else {
+                                newSet.add(sp.id);
+                              }
+                              setWSalespersons(newSet);
+                            }}
+                            className="rounded"
+                          />
+                          <span className="text-sm">{sp.name}</span>
+                          {sp.email && <span className="text-xs text-slate-500">({sp.email})</span>}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-2">
+                      Email addresses <span className="text-red-500">*</span>
+                    </label>
+                    <EmailPillsInput
+                      value={wEmails}
+                      onChange={setWEmails}
+                      placeholder="Enter email addresses"
+                    />
+                  </div>
+                )}
+
+                {/* PDFs to include */}
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">
+                    Statistics PDFs to include
+                  </label>
+                  <div className="space-y-2">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={wIncludeCountries}
+                        onChange={() => setWIncludeCountries(!wIncludeCountries)}
+                        className="rounded"
+                      />
+                      <span className="text-sm">Countries</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={wIncludeTop15Salesmen}
+                        onChange={() => setWIncludeTop15Salesmen(!wIncludeTop15Salesmen)}
+                        className="rounded"
+                      />
+                      <span className="text-sm">Top 15 Salesmen</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={wIncludeTop15Overall}
+                        onChange={() => setWIncludeTop15Overall(!wIncludeTop15Overall)}
+                        className="rounded"
+                      />
+                      <span className="text-sm">Top 15 Overall</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={wIncludeOverview}
+                        onChange={() => setWIncludeOverview(!wIncludeOverview)}
+                        className="rounded"
+                      />
+                      <span className="text-sm">Overview</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={wIncludeGeneralCombined}
+                        onChange={() => setWIncludeGeneralCombined(!wIncludeGeneralCombined)}
+                        className="rounded"
+                      />
+                      <span className="text-sm">General Combined</span>
+                    </label>
+                  </div>
+                </div>
+
+                {/* Stock lists */}
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">
+                    Stock lists (optional)
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    {(stockListsAll ?? []).map(list => {
+                      const selected = wStockLists.has(list.name);
+                      return (
+                        <button
+                          key={list.id}
+                          type="button"
+                          onClick={() => {
+                            const newSet = new Set(wStockLists);
+                            if (selected) {
+                              newSet.delete(list.name);
+                            } else {
+                              newSet.add(list.name);
+                            }
+                            setWStockLists(newSet);
+                          }}
+                          className={`px-3 py-1.5 text-xs rounded-full border transition-colors ${
+                            selected
+                              ? 'bg-blue-600 text-white border-blue-600'
+                              : 'bg-white text-slate-700 border-slate-300 hover:border-blue-400'
+                          }`}
+                        >
+                          {list.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="flex justify-between gap-2 pt-4">
+                  <Button variant="outline" onClick={() => setWizardStep(1)}>
+                    Back
+                  </Button>
+                  <div className="flex gap-2">
+                    <Button variant="outline" onClick={() => setWizardOpen(false)}>
+                      Cancel
+                    </Button>
+                    <Button onClick={() => setWizardStep(3)} disabled={!canProceedToStep3()}>
+                      Next
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Step 3: Review */}
+            {wizardStep === 3 && (
+              <div className="space-y-4">
+                <h3 className="font-semibold text-slate-900">Review & Save</h3>
+
+                <div className="space-y-3 bg-slate-50 p-4 rounded-md text-sm">
+                  <div>
+                    <div className="font-medium text-slate-700">Schedule Name</div>
+                    <div className="text-slate-900">{wName}</div>
+                  </div>
+
+                  <div>
+                    <div className="font-medium text-slate-700">Schedule</div>
+                    <div className="text-slate-900">
+                      {formatDays(Array.from(wDays))} at {wTime} (Copenhagen time)
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="font-medium text-slate-700">Scrape Before Sending</div>
+                    <div className="text-slate-900">{wScrapeFirst ? 'Yes' : 'No'}</div>
+                  </div>
+
+                  <div>
+                    <div className="font-medium text-slate-700">Recipient Type</div>
+                    <div className="text-slate-900 capitalize">{wRecipientType.replace('_', ' ')}</div>
+                  </div>
+
+                  <div>
+                    <div className="font-medium text-slate-700">Recipients</div>
+                    <div className="text-slate-900">
+                      {wRecipientType === 'salespersons' ? (
+                        <div className="space-y-1">
+                          {Array.from(wSalespersons).map(id => {
+                            const sp = salespersons?.find(s => s.id === id);
+                            return <div key={id}>{sp?.name || id}</div>;
+                          })}
+                        </div>
+                      ) : (
+                        <div className="space-y-1">
+                          {wEmails.map((email, idx) => (
+                            <div key={idx}>{email}</div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="font-medium text-slate-700">Statistics PDFs</div>
+                    <div className="text-slate-900">
+                      {[
+                        wIncludeCountries && 'Countries',
+                        wIncludeTop15Salesmen && 'Top 15 Salesmen',
+                        wIncludeTop15Overall && 'Top 15 Overall',
+                        wIncludeOverview && 'Overview',
+                        wIncludeGeneralCombined && 'General Combined',
+                      ].filter(Boolean).join(', ') || 'None'}
+                    </div>
+                  </div>
+
+                  {wStockLists.size > 0 && (
+                    <div>
+                      <div className="font-medium text-slate-700">Stock Lists</div>
+                      <div className="text-slate-900">{Array.from(wStockLists).join(', ')}</div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex justify-between gap-2 pt-4">
+                  <Button variant="outline" onClick={() => setWizardStep(2)}>
+                    Back
+                  </Button>
+                  <div className="flex gap-2">
+                    <Button variant="outline" onClick={() => setWizardOpen(false)}>
+                      Cancel
+                    </Button>
+                    <Button onClick={handleSaveSchedule} disabled={saving}>
+                      {saving ? 'Saving...' : editingSchedule ? 'Update Schedule' : 'Create Schedule'}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }
@@ -1642,6 +2452,7 @@ export default function StatisticsDashboardPage() {
           <TabsTrigger value="mailing">Mailing</TabsTrigger>
           <TabsTrigger value="statistic">Statistic</TabsTrigger>
           <TabsTrigger value="scrapes">Scrapes</TabsTrigger>
+          <TabsTrigger value="schedule">Schedule</TabsTrigger>
         </TabsList>
 
         <TabsContent value="mailing" className="space-y-6">
@@ -2240,6 +3051,10 @@ export default function StatisticsDashboardPage() {
 
         <TabsContent value="scrapes">
           <ScrapesTab />
+        </TabsContent>
+
+        <TabsContent value="schedule">
+          <ScheduleTab />
         </TabsContent>
       </Tabs>
 
