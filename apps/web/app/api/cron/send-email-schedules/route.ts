@@ -326,23 +326,22 @@ async function handle(req: Request) {
           const templateParams: Record<string, string> = {};
           
           if (schedule.include.countries && countriesExport?.public_url) {
-            templateParams.countries_url = countriesExport.public_url;
+            templateParams.countries_pdf_url = countriesExport.public_url;
           }
           if (schedule.include.top15Salesmen && top15SalesmenExport?.public_url) {
-            templateParams.top_15_salesmen_url = top15SalesmenExport.public_url;
+            templateParams.top15_salesmen_pdf = top15SalesmenExport.public_url;
           }
           if (schedule.include.top15Overall && top15OverallExport?.public_url) {
-            templateParams.top_15_overall_url = top15OverallExport.public_url;
+            templateParams.top15_overall_pdf = top15OverallExport.public_url;
           }
           if (schedule.include.overview && overviewExport?.public_url) {
-            templateParams.overview_url = overviewExport.public_url;
+            templateParams.overview_pdf_url = overviewExport.public_url;
           }
           if (schedule.include.generalCombined && combinedPdfUrl) {
-            templateParams.general_combined_url = combinedPdfUrl;
+            templateParams.all_salesmen_pdf_url = combinedPdfUrl;
           }
           if (personalPdf?.publicUrl) {
-            templateParams.salesman_pdf_url = personalPdf.publicUrl;
-            templateParams.salesman_pdf_name = personalPdf.name || 'statistik.pdf';
+            templateParams.salesman_pdf = personalPdf.publicUrl;
           }
 
           // Add stock lists
@@ -352,18 +351,22 @@ async function handle(req: Request) {
             if (exp?.public_url) {
               templateParams[`stock_list_${stockIdx}_url`] = exp.public_url;
               templateParams[`stock_list_${stockIdx}_name`] = listName;
-              templateParams[`stock_list_${stockIdx}_filename`] = `${listName} - Lagerliste.pdf`;
               stockIdx++;
             }
           }
+
+          // Personalized greeting with first name
+          const toTitleCase = (str: string) => str.toLowerCase().split(' ').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
+          const firstName = sp.name ? toTitleCase(sp.name).split(' ')[0] : '';
+          const greeting = firstName ? `Hej ${firstName},` : 'Hej,';
 
           const { error: insertError } = await supabase.from('jobs').insert({
             type: 'send_email',
             payload: {
               recipient: sp.email,
               subject: 'Din statistik',
-              body: `Hej ${sp.name}, hermed din statistik`,
-              context: 'email_schedule',
+              body: `${greeting}\n\nHermed din statistik`,
+              context: 'salesmen_schedule',
               contextId: schedule.id,
               contextName: schedule.name,
               templateParams,
@@ -384,19 +387,19 @@ async function handle(req: Request) {
           const templateParams: Record<string, string> = {};
           
           if (schedule.include.countries && countriesExport?.public_url) {
-            templateParams.countries_url = countriesExport.public_url;
+            templateParams.countries_pdf_url = countriesExport.public_url;
           }
           if (schedule.include.top15Salesmen && top15SalesmenExport?.public_url) {
-            templateParams.top_15_salesmen_url = top15SalesmenExport.public_url;
+            templateParams.top15_salesmen_pdf = top15SalesmenExport.public_url;
           }
           if (schedule.include.top15Overall && top15OverallExport?.public_url) {
-            templateParams.top_15_overall_url = top15OverallExport.public_url;
+            templateParams.top15_overall_pdf = top15OverallExport.public_url;
           }
           if (schedule.include.overview && overviewExport?.public_url) {
-            templateParams.overview_url = overviewExport.public_url;
+            templateParams.overview_pdf_url = overviewExport.public_url;
           }
           if (schedule.include.generalCombined && combinedPdfUrl) {
-            templateParams.general_combined_url = combinedPdfUrl;
+            templateParams.all_salesmen_pdf_url = combinedPdfUrl;
           }
 
           // Add stock lists
@@ -406,7 +409,6 @@ async function handle(req: Request) {
             if (exp?.public_url) {
               templateParams[`stock_list_${stockIdx}_url`] = exp.public_url;
               templateParams[`stock_list_${stockIdx}_name`] = listName;
-              templateParams[`stock_list_${stockIdx}_filename`] = `${listName} - Lagerliste.pdf`;
               stockIdx++;
             }
           }
@@ -416,8 +418,8 @@ async function handle(req: Request) {
             payload: {
               recipient: email,
               subject: 'Statistik',
-              body: 'Hermed statistik',
-              context: 'email_schedule',
+              body: 'Hej,\n\nHermed statistik',
+              context: 'salesmen_schedule',
               contextId: schedule.id,
               contextName: schedule.name,
               templateParams,
