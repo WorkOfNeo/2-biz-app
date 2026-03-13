@@ -220,6 +220,25 @@ async function handle(req: Request) {
     if (!willRun) continue;
 
     if (schedule.scrapeFirst) {
+      // Check if a scrape_statistics job is already queued/running to avoid duplicate scrapes
+      const { data: runningScrapes } = await supabase
+        .from('jobs')
+        .select('id, status')
+        .eq('type', 'scrape_statistics')
+        .in('status', ['queued', 'running'])
+        .limit(1);
+
+      if (runningScrapes && runningScrapes.length > 0) {
+        if (debug) console.log(`[cron:email-schedules] Skipping "${schedule.name}" - scrape_statistics already running (job ${runningScrapes[0].id})`);
+        results.push({ 
+          scheduleId: schedule.id, 
+          scheduleName: schedule.name, 
+          queued: 0, 
+          error: 'Skipped: scrape already in progress. Will retry in next cycle.' 
+        });
+        continue;
+      }
+
       // Enqueue pipeline job (scrape -> export -> send)
       const { data: pipelineJob, error: insertError } = await supabase.from('jobs').insert({
         type: 'run_manual_sendout_pipeline',
