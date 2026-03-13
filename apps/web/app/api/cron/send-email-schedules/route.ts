@@ -14,6 +14,7 @@ interface EmailSendSchedule {
   days: number[];
   time: string;
   scrapeFirst: boolean;
+  endDate?: string;
   recipientType: 'salespersons' | 'email_list';
   salespersonIds: string[];
   emails: string[];
@@ -92,6 +93,15 @@ function checkSchedule(schedule: EmailSendSchedule, now: Date): ScheduleCheckRes
   if (!schedule.enabled) {
     result.reason = 'Schedule is disabled';
     return result;
+  }
+
+  if (schedule.endDate) {
+    const endDateObj = new Date(schedule.endDate);
+    endDateObj.setHours(23, 59, 59, 999);
+    if (now > endDateObj) {
+      result.reason = 'Schedule has passed its end date';
+      return result;
+    }
   }
 
   if (!schedule.days.includes(currentDay)) {
@@ -176,6 +186,19 @@ async function handle(req: Request) {
   }> = [];
 
   for (const schedule of schedules) {
+    // Auto-disable schedules that have passed their end date
+    if (schedule.enabled && schedule.endDate) {
+      const endDateObj = new Date(schedule.endDate);
+      endDateObj.setHours(23, 59, 59, 999);
+      if (now > endDateObj) {
+        const idx = updatedSchedules.findIndex(s => s.id === schedule.id);
+        if (idx !== -1) {
+          updatedSchedules[idx] = { ...updatedSchedules[idx], enabled: false };
+          if (debug) console.log(`[cron:email-schedules] Auto-disabled schedule "${schedule.name}" (end date passed)`);
+        }
+      }
+    }
+
     const check = checkSchedule(schedule, now);
     const willRun = (testMode && schedule.enabled) || forceId === schedule.id || check.shouldRun;
     
@@ -407,8 +430,9 @@ async function handle(req: Request) {
     }
   }
 
-  // Save updated schedules
-  if (results.length > 0 && settingsRow?.id) {
+  // Save updated schedules (if any ran or if any were auto-disabled)
+  const hasChanges = results.length > 0 || JSON.stringify(updatedSchedules) !== JSON.stringify(schedules);
+  if (hasChanges && settingsRow?.id) {
     await supabase
       .from('app_settings')
       .update({ value: { schedules: updatedSchedules } })
