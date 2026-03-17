@@ -76,6 +76,8 @@ interface EmailSendSchedule {
   recipientType: 'salespersons' | 'email_list';
   salespersonIds: string[];
   emails: string[];
+  emailSubject: string;
+  emailBody: string;
   include: {
     countries: boolean;
     top15Salesmen: boolean;
@@ -852,6 +854,8 @@ function ScheduleTab() {
   const [wRecipientType, setWRecipientType] = React.useState<'salespersons' | 'email_list'>('salespersons');
   const [wSalespersons, setWSalespersons] = React.useState<Set<string>>(new Set());
   const [wEmails, setWEmails] = React.useState<string[]>([]);
+  const [wEmailSubject, setWEmailSubject] = React.useState('Din statistik');
+  const [wEmailBody, setWEmailBody] = React.useState('Hermed statistik');
   const [wIncludeCountries, setWIncludeCountries] = React.useState(true);
   const [wIncludeTop15Salesmen, setWIncludeTop15Salesmen] = React.useState(true);
   const [wIncludeTop15Overall, setWIncludeTop15Overall] = React.useState(false);
@@ -918,6 +922,8 @@ function ScheduleTab() {
     setWRecipientType(schedule.recipientType);
     setWSalespersons(new Set(schedule.salespersonIds));
     setWEmails([...schedule.emails]);
+    setWEmailSubject(schedule.emailSubject);
+    setWEmailBody(schedule.emailBody);
     setWIncludeCountries(schedule.include.countries);
     setWIncludeTop15Salesmen(schedule.include.top15Salesmen);
     setWIncludeTop15Overall(schedule.include.top15Overall);
@@ -937,6 +943,8 @@ function ScheduleTab() {
     setWRecipientType('salespersons');
     setWSalespersons(new Set());
     setWEmails([]);
+    setWEmailSubject('Din statistik');
+    setWEmailBody('Hermed statistik');
     setWIncludeCountries(true);
     setWIncludeTop15Salesmen(true);
     setWIncludeTop15Overall(false);
@@ -962,6 +970,14 @@ function ScheduleTab() {
       alert('Please add at least one email address');
       return;
     }
+    if (!wEmailSubject.trim()) {
+      alert('Please enter an email subject');
+      return;
+    }
+    if (!wEmailBody.trim()) {
+      alert('Please enter an email message');
+      return;
+    }
 
     setSaving(true);
     try {
@@ -976,6 +992,8 @@ function ScheduleTab() {
         recipientType: wRecipientType,
         salespersonIds: Array.from(wSalespersons),
         emails: wEmails,
+        emailSubject: wEmailSubject.trim(),
+        emailBody: wEmailBody.trim(),
         include: {
           countries: wIncludeCountries,
           top15Salesmen: wIncludeTop15Salesmen,
@@ -1449,6 +1467,34 @@ function ScheduleTab() {
                   </div>
                 )}
 
+                {/* Email customization */}
+                <div className="space-y-3 border-t pt-4">
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">
+                      Email subject <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={wEmailSubject}
+                      onChange={e => setWEmailSubject(e.target.value)}
+                      placeholder="Din statistik"
+                      className="w-full px-3 py-2 border border-slate-300 rounded-md text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">
+                      Email message <span className="text-red-500">*</span>
+                    </label>
+                    <textarea
+                      value={wEmailBody}
+                      onChange={e => setWEmailBody(e.target.value)}
+                      placeholder="Hermed statistik"
+                      rows={3}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-md text-sm"
+                    />
+                  </div>
+                </div>
+
                 {/* PDFs to include */}
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-2">
@@ -1608,6 +1654,16 @@ function ScheduleTab() {
                         </div>
                       )}
                     </div>
+                  </div>
+
+                  <div>
+                    <div className="font-medium text-slate-700">Email Subject</div>
+                    <div className="text-slate-900">{wEmailSubject}</div>
+                  </div>
+
+                  <div>
+                    <div className="font-medium text-slate-700">Email Message</div>
+                    <div className="text-slate-900 whitespace-pre-wrap">{wEmailBody}</div>
                   </div>
 
                   <div>

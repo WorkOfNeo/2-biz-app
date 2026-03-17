@@ -18,6 +18,8 @@ interface EmailSendSchedule {
   recipientType: 'salespersons' | 'email_list';
   salespersonIds: string[];
   emails: string[];
+  emailSubject: string;
+  emailBody: string;
   include: {
     countries: boolean;
     top15Salesmen: boolean;
@@ -360,13 +362,14 @@ async function handle(req: Request) {
           const toTitleCase = (str: string) => str.toLowerCase().split(' ').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
           const firstName = sp.name ? toTitleCase(sp.name).split(' ')[0] : '';
           const greeting = firstName ? `Hej ${firstName},` : 'Hej,';
+          const personalizedBody = `${greeting}\n\n${schedule.emailBody}`;
 
           const { error: insertError } = await supabase.from('jobs').insert({
             type: 'send_email',
             payload: {
               recipient: sp.email,
-              subject: 'Din statistik',
-              body: `${greeting}\n\nHermed din statistik`,
+              subject: schedule.emailSubject,
+              body: personalizedBody,
               context: 'salesmen_schedule',
               contextId: schedule.id,
               contextName: schedule.name,
@@ -383,57 +386,56 @@ async function handle(req: Request) {
           }
         }
       } else {
-        // Email list recipient type
-        for (const email of schedule.emails) {
-          const templateParams: Record<string, string> = {};
-          
-          if (schedule.include.countries && countriesExport?.public_url) {
-            templateParams.countries_pdf_url = countriesExport.public_url;
-          }
-          if (schedule.include.top15Salesmen && top15SalesmenExport?.public_url) {
-            templateParams.top15_salesmen_pdf = top15SalesmenExport.public_url;
-          }
-          if (schedule.include.top15Overall && top15OverallExport?.public_url) {
-            templateParams.top15_overall_pdf = top15OverallExport.public_url;
-          }
-          if (schedule.include.overview && overviewExport?.public_url) {
-            templateParams.overview_pdf_url = overviewExport.public_url;
-          }
-          if (schedule.include.generalCombined && combinedPdfUrl) {
-            templateParams.all_salesmen_pdf_url = combinedPdfUrl;
-          }
+        // Email list recipient type - send ONE email to all recipients
+        const templateParams: Record<string, string> = {};
+        
+        if (schedule.include.countries && countriesExport?.public_url) {
+          templateParams.countries_pdf_url = countriesExport.public_url;
+        }
+        if (schedule.include.top15Salesmen && top15SalesmenExport?.public_url) {
+          templateParams.top15_salesmen_pdf = top15SalesmenExport.public_url;
+        }
+        if (schedule.include.top15Overall && top15OverallExport?.public_url) {
+          templateParams.top15_overall_pdf = top15OverallExport.public_url;
+        }
+        if (schedule.include.overview && overviewExport?.public_url) {
+          templateParams.overview_pdf_url = overviewExport.public_url;
+        }
+        if (schedule.include.generalCombined && combinedPdfUrl) {
+          templateParams.all_salesmen_pdf_url = combinedPdfUrl;
+        }
 
-          // Add stock lists
-          let stockIdx = 1;
-          for (const listName of schedule.stockLists) {
-            const exp = stockListByName.get(listName);
-            if (exp?.public_url) {
-              templateParams[`stock_list_${stockIdx}_url`] = exp.public_url;
-              templateParams[`stock_list_${stockIdx}_name`] = listName;
-              stockIdx++;
-            }
+        // Add stock lists
+        let stockIdx = 1;
+        for (const listName of schedule.stockLists) {
+          const exp = stockListByName.get(listName);
+          if (exp?.public_url) {
+            templateParams[`stock_list_${stockIdx}_url`] = exp.public_url;
+            templateParams[`stock_list_${stockIdx}_name`] = listName;
+            stockIdx++;
           }
+        }
 
-          const { error: insertError } = await supabase.from('jobs').insert({
-            type: 'send_email',
-            payload: {
-              recipient: email,
-              subject: 'Statistik',
-              body: 'Hej,\n\nHermed statistik',
-              context: 'salesmen_schedule',
-              contextId: schedule.id,
-              contextName: schedule.name,
-              templateParams,
-            },
-            status: 'queued',
-            queue: 'default',
-          });
+        // Create ONE job for all recipients
+        const { error: insertError } = await supabase.from('jobs').insert({
+          type: 'send_email',
+          payload: {
+            recipients: schedule.emails,
+            subject: schedule.emailSubject,
+            body: schedule.emailBody,
+            context: 'salesmen_schedule',
+            contextId: schedule.id,
+            contextName: schedule.name,
+            templateParams,
+          },
+          status: 'queued',
+          queue: 'default',
+        });
 
-          if (insertError) {
-            errors.push(`Failed to queue for ${email}: ${insertError.message}`);
-          } else {
-            queuedCount++;
-          }
+        if (insertError) {
+          errors.push(`Failed to queue for email list: ${insertError.message}`);
+        } else {
+          queuedCount++;
         }
       }
 
