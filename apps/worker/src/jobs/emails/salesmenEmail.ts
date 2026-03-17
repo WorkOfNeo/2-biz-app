@@ -9,7 +9,8 @@ import { sendEmailCore, type EmailResult, type LogFn } from './core.js';
  * Payload for salesmen emails (from cron job)
  */
 export interface SalesmenEmailPayload {
-  recipient: string;
+  recipient?: string;
+  recipients?: string[];
   subject: string;
   body: string;
   context?: string;
@@ -31,12 +32,14 @@ export async function sendSalesmenEmail(
   payload: SalesmenEmailPayload,
   log: LogFn
 ): Promise<EmailResult> {
-  const { recipient, subject, body, contextId, contextName, templateParams } = payload;
+  const { recipient, recipients, subject, body, contextId, contextName, templateParams } = payload;
   
   await log('info', `Processing salesmen statistics email for schedule "${contextName}"`, {
     scheduleId: contextId,
     scheduleName: contextName,
     recipient,
+    recipients,
+    recipientCount: recipients?.length || (recipient ? 1 : 0),
     hasSalesmanPdf: !!templateParams?.salesman_pdf,
     hasCountries: !!templateParams?.countries_pdf_url,
     hasTop15: !!templateParams?.top15_salesmen_pdf,
@@ -45,6 +48,7 @@ export async function sendSalesmenEmail(
   return sendEmailCore(
     {
       recipient,
+      recipients,
       subject,
       body,
       context: 'salesmen_schedule',
