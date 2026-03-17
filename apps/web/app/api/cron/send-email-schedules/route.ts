@@ -229,7 +229,8 @@ async function handle(req: Request) {
         .limit(1);
 
       if (runningScrapes && runningScrapes.length > 0) {
-        if (debug) console.log(`[cron:email-schedules] Skipping "${schedule.name}" - scrape_statistics already running (job ${runningScrapes[0].id})`);
+        const runningJobId = runningScrapes[0]?.id;
+        if (debug) console.log(`[cron:email-schedules] Skipping "${schedule.name}" - scrape_statistics already running (job ${runningJobId})`);
         results.push({ 
           scheduleId: schedule.id, 
           scheduleName: schedule.name, 
