@@ -285,10 +285,11 @@ export default function CountriesPage() {
         const qtyPct = row.s2Qty === 0 ? 0 : (row.s1Qty / row.s2Qty) * 100;
         const pricePct = row.s2PriceDkk === 0 ? 0 : (row.s1PriceDkk / row.s2PriceDkk) * 100;
         const cur = countryCurrency[c] || 'DKK';
-        const rates = { DKK: 1, ...(currencyRatesRow ?? {}) } as Record<string, number>;
-        const r = rates[cur] ?? 1;
-        const s1Local = row.s1PriceDkk / (r || 1);
-        const s2Local = row.s2PriceDkk / (r || 1);
+        const baseRatesForDisplay = { DKK: 1, ...(currencyRatesRow ?? {}) } as Record<string, number>;
+        const rateForS1 = { ...baseRatesForDisplay, ...(ratesS1 ?? {}) }[cur] ?? 1;
+        const rateForS2 = { ...baseRatesForDisplay, ...(ratesS2 ?? {}) }[cur] ?? 1;
+        const s1Local = row.s1PriceDkk / (rateForS1 || 1);
+        const s2Local = row.s2PriceDkk / (rateForS2 || 1);
         const spMap = byCountrySalespersons[c] || new Map<string, { s1Qty: number; s1PriceDkk: number; s2Qty: number; s2PriceDkk: number }>();
         const spNameById = new Map((salespersons ?? []).map((x) => [x.id, x.name]));
         const spRows = Array.from(spMap.entries()).map(([id, v]) => ({
@@ -309,8 +310,10 @@ export default function CountriesPage() {
               <div className="space-y-3 text-center">
                 <div className="font-medium">Omsætning</div>
                 <div className="text-sm text-gray-600">{getSeasonLabel(s1) || 'Season 1'} vs {getSeasonLabel(s2) || 'Season 2'}</div>
-                <div className="text-lg font-semibold">{Math.round(s1Local).toLocaleString('da-DK')} {cur} vs {Math.round(s2Local).toLocaleString('da-DK')} {cur}</div>
-                <div className="text-sm text-gray-600">{Math.round(row.s1PriceDkk).toLocaleString('da-DK')} DKK vs {Math.round(row.s2PriceDkk).toLocaleString('da-DK')} DKK</div>
+                <div className="text-lg font-semibold">{Math.round(row.s1PriceDkk).toLocaleString('da-DK')} DKK vs {Math.round(row.s2PriceDkk).toLocaleString('da-DK')} DKK</div>
+                {c !== 'Denmark' && (
+                  <div className="text-sm text-gray-600">{Math.round(s1Local).toLocaleString('da-DK')} {cur} vs {Math.round(s2Local).toLocaleString('da-DK')} {cur}</div>
+                )}
                 <Donut pct={pricePct} label={`Omsætning`} />
               </div>
             </div>
