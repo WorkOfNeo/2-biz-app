@@ -1044,9 +1044,9 @@ export async function exportOverview(ctx: Ctx) {
       const spNameById = new Map<string, string>();
       for (const p of (people ?? []) as any[]) spNameById.set(p.id as string, p.name as string);
       // Aggregation
-      const totals: Record<string, { s1Qty: number; s2Qty: number; s1Price: number; s2Price: number; s1PriceLocal: number; s2PriceLocal: number }> = {};
+      const totals: Record<string, { s1Qty: number; s2Qty: number; s1Price: number; s2Price: number }> = {};
       const perSp: Record<string, Map<string, { s1Qty: number; s1Price: number; s2Qty: number; s2Price: number }>> = {};
-      for (const c of countries) totals[c] = { s1Qty: 0, s2Qty: 0, s1Price: 0, s2Price: 0, s1PriceLocal: 0, s2PriceLocal: 0 };
+      for (const c of countries) totals[c] = { s1Qty: 0, s2Qty: 0, s1Price: 0, s2Price: 0 };
       // Stats rows (already have country via join; fall back to customers map)
       for (const r of (stats ?? []) as any[]) {
         const acc = String(r.account_no || '');
@@ -1061,14 +1061,14 @@ export async function exportOverview(ctx: Ctx) {
           if (excludedSet.has(acc)) continue;
         }
         let bucket = totals[ctry];
-        if (!bucket) { bucket = totals[ctry] = { s1Qty: 0, s2Qty: 0, s1Price: 0, s2Price: 0, s1PriceLocal: 0, s2PriceLocal: 0 }; }
+        if (!bucket) { bucket = totals[ctry] = { s1Qty: 0, s2Qty: 0, s1Price: 0, s2Price: 0 }; }
         const cur = (String(r.currency || 'DKK').toUpperCase());
         const rate1 = ({ ...globalRates, ...ratesS1 } as Record<string, number>)[cur] ?? 1;
         const rate2 = ({ ...globalRates, ...ratesS2 } as Record<string, number>)[cur] ?? 1;
         const price = Number(r.price || 0);
         const isNullS1 = acc ? (seasonalNulled.has(acc) || closedSet.has(acc) || nulledSet.has(acc)) : false;
-        if (r.season_id === s1) { if (!isNullS1) { bucket.s1Qty += Number(r.qty||0); bucket.s1Price += price * rate1; bucket.s1PriceLocal += price; } }
-        else if (r.season_id === s2) { bucket.s2Qty += Number(r.qty||0); bucket.s2Price += price * rate2; bucket.s2PriceLocal += price; }
+        if (r.season_id === s1) { if (!isNullS1) { bucket.s1Qty += Number(r.qty||0); bucket.s1Price += price * rate1; } }
+        else if (r.season_id === s2) { bucket.s2Qty += Number(r.qty||0); bucket.s2Price += price * rate2; }
         const spId = (customerSpById.get(acc) ?? null) as string | null;
         if (spId) {
           const m = (perSp[ctry] ||= new Map());
@@ -1089,15 +1089,15 @@ export async function exportOverview(ctx: Ctx) {
         const standardCountries = ['Denmark', 'Norway', 'Sweden', 'Finland'];
         if (!standardCountries.includes(ctry)) continue;
         let bucket = totals[ctry];
-        if (!bucket) { bucket = totals[ctry] = { s1Qty: 0, s2Qty: 0, s1Price: 0, s2Price: 0, s1PriceLocal: 0, s2PriceLocal: 0 }; }
+        if (!bucket) { bucket = totals[ctry] = { s1Qty: 0, s2Qty: 0, s1Price: 0, s2Price: 0 }; }
         const cur = (String(inv.currency || 'DKK').toUpperCase());
         const rate1 = ({ ...globalRates, ...ratesS1 } as Record<string, number>)[cur] ?? 1;
         const rate2 = ({ ...globalRates, ...ratesS2 } as Record<string, number>)[cur] ?? 1;
         const amount = Number(inv.amount || 0);
         const qty = Number(inv.qty || 0) || 0;
         const isNullS1 = seasonalNulled.has(acc) || closedSet.has(acc) || nulledSet.has(acc);
-        if (inv.season_id === s1) { if (!isNullS1) { bucket.s1Qty += qty; bucket.s1Price += amount * rate1; bucket.s1PriceLocal += amount; } }
-        else if (inv.season_id === s2) { bucket.s2Qty += qty; bucket.s2Price += amount * rate2; bucket.s2PriceLocal += amount; }
+        if (inv.season_id === s1) { if (!isNullS1) { bucket.s1Qty += qty; bucket.s1Price += amount * rate1; } }
+        else if (inv.season_id === s2) { bucket.s2Qty += qty; bucket.s2Price += amount * rate2; }
         const spId = (customerSpById.get(acc) ?? null) as string | null;
         if (spId) {
           const m = (perSp[ctry] ||= new Map());
@@ -1176,7 +1176,7 @@ export async function exportOverview(ctx: Ctx) {
       const s2Code = s2Info?.code || 'S2';
       // Build one horizontal section per country (all in single document/page flow)
       const sections = countries.map((cName) => {
-        const row = totals[cName] || { s1Qty: 0, s2Qty: 0, s1Price: 0, s2Price: 0, s1PriceLocal: 0, s2PriceLocal: 0 };
+        const row = totals[cName] || { s1Qty: 0, s2Qty: 0, s1Price: 0, s2Price: 0 };
         const qtyPct = row.s2Qty === 0 ? 0 : (row.s1Qty / row.s2Qty) * 100;
         const pricePct = row.s2Price === 0 ? 0 : (row.s1Price / row.s2Price) * 100;
         const spRows = Array.from((perSp[cName] || new Map()).entries()).map(([id, v]) => ({ id, name: spNameById.get(id) || '—', ...v }))
@@ -1214,7 +1214,13 @@ export async function exportOverview(ctx: Ctx) {
               React.createElement(Text, { style: countriesStyles.boxTitle }, 'Omsætning'),
               React.createElement(Text, { style: countriesStyles.boxNums }, `${fmt(row.s1Price)} DKK vs ${fmt(row.s2Price)} DKK`),
               ...(cName !== 'Denmark' ? [
-                React.createElement(Text, { style: [countriesStyles.boxNums, { color: '#64748b' }] }, `${fmt(row.s1PriceLocal)} ${countryCurrency[cName]} vs ${fmt(row.s2PriceLocal)} ${countryCurrency[cName]}`)
+                (() => {
+                  const cur = countryCurrency[cName] || 'DKK';
+                  const rate = ({ DKK: 1, ...globalRates } as Record<string, number>)[cur] ?? 1;
+                  const s1Local = row.s1Price / (rate || 1);
+                  const s2Local = row.s2Price / (rate || 1);
+                  return React.createElement(Text, { style: [countriesStyles.boxNums, { color: '#64748b' }] }, `${fmt(s1Local)} ${cur} vs ${fmt(s2Local)} ${cur}`);
+                })()
               ] : []),
               React.createElement(Donut as any, { pct: pricePct, label: 'Omsætning' })
             ),
