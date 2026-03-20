@@ -47,6 +47,7 @@ export default function CountriesPrintPage() {
   } = useStatisticsData();
 
   const countries = useMemo(() => ['Denmark', 'Norway', 'Sweden', 'Finland'], []);
+  const countryCurrency: Record<string, string> = useMemo(() => ({ Denmark: 'DKK', Norway: 'NOK', Sweden: 'SEK', Finland: 'EUR' }), []);
 
   function getSeasonLabel(seasonId: string | undefined) {
     if (!seasonId) return '';
@@ -81,7 +82,7 @@ export default function CountriesPrintPage() {
       if (!countries.includes(ctry)) continue;
 
       const bucket = out[ctry] || (out[ctry] = { s1Qty: 0, s2Qty: 0, s1PriceDkk: 0, s2PriceDkk: 0 });
-      const cur = String(r.currency || 'DKK').toUpperCase();
+      const cur = countryCurrency[ctry] || String(r.currency || 'DKK').toUpperCase();
       const rateS1 = { ...baseRates, ...(ratesS1 ?? {}) }[cur] ?? 1;
       const rateS2 = { ...baseRates, ...(ratesS2 ?? {}) }[cur] ?? 1;
       const price = Number(r.price || 0);
@@ -104,7 +105,7 @@ export default function CountriesPrintPage() {
       if (!countries.includes(ctry)) continue;
 
       const bucket = out[ctry] || (out[ctry] = { s1Qty: 0, s2Qty: 0, s1PriceDkk: 0, s2PriceDkk: 0 });
-      const cur = String(inv.currency || 'DKK').toUpperCase();
+      const cur = countryCurrency[ctry] || String(inv.currency || 'DKK').toUpperCase();
       const rateS1 = { ...baseRates, ...(ratesS1 ?? {}) }[cur] ?? 1;
       const rateS2 = { ...baseRates, ...(ratesS2 ?? {}) }[cur] ?? 1;
       const amount = Number(inv.amount || 0);
@@ -153,9 +154,20 @@ export default function CountriesPrintPage() {
                 <Donut pct={qtyPct} label="Stk" />
               </div>
               <div className="space-y-3">
-                <div className="font-medium">Omsætning (DKK)</div>
+                <div className="font-medium">Omsætning</div>
                 <div className="text-sm text-gray-600">{getSeasonLabel(s1) || 'Season 1'} vs {getSeasonLabel(s2) || 'Season 2'}</div>
-                <div className="text-lg font-semibold">{Math.round(row.s1PriceDkk).toLocaleString('da-DK')} vs {Math.round(row.s2PriceDkk).toLocaleString('da-DK')}</div>
+                <div className="text-lg font-semibold">{Math.round(row.s1PriceDkk).toLocaleString('da-DK')} DKK vs {Math.round(row.s2PriceDkk).toLocaleString('da-DK')} DKK</div>
+                {c !== 'Denmark' && (() => {
+                  const cur = countryCurrency[c] || 'DKK';
+                  const baseRatesForDisplay = { DKK: 1, ...(currencyRatesRow ?? {}) } as Record<string, number>;
+                  const rateForS1 = { ...baseRatesForDisplay, ...(ratesS1 ?? {}) }[cur] ?? 1;
+                  const rateForS2 = { ...baseRatesForDisplay, ...(ratesS2 ?? {}) }[cur] ?? 1;
+                  return (
+                    <div className="text-sm text-gray-600">
+                      {Math.round(row.s1PriceDkk / (rateForS1 || 1)).toLocaleString('da-DK')} {cur} vs {Math.round(row.s2PriceDkk / (rateForS2 || 1)).toLocaleString('da-DK')} {cur}
+                    </div>
+                  );
+                })()}
                 <Donut pct={pricePct} label="Omsætning" />
               </div>
             </div>
