@@ -1062,7 +1062,8 @@ export async function exportOverview(ctx: Ctx) {
         }
         let bucket = totals[ctry];
         if (!bucket) { bucket = totals[ctry] = { s1Qty: 0, s2Qty: 0, s1Price: 0, s2Price: 0 }; }
-        const cur = (String(r.currency || 'DKK').toUpperCase());
+        // Use country-based currency instead of row currency (row currency is often incorrectly set to DKK for foreign salespersons)
+        const cur = countryCurrency[ctry] || (String(r.currency || 'DKK').toUpperCase());
         const rate1 = ({ ...globalRates, ...ratesS1 } as Record<string, number>)[cur] ?? 1;
         const rate2 = ({ ...globalRates, ...ratesS2 } as Record<string, number>)[cur] ?? 1;
         const price = Number(r.price || 0);
@@ -1090,7 +1091,8 @@ export async function exportOverview(ctx: Ctx) {
         if (!standardCountries.includes(ctry)) continue;
         let bucket = totals[ctry];
         if (!bucket) { bucket = totals[ctry] = { s1Qty: 0, s2Qty: 0, s1Price: 0, s2Price: 0 }; }
-        const cur = (String(inv.currency || 'DKK').toUpperCase());
+        // Use country-based currency instead of row currency (row currency is often incorrectly set to DKK for foreign salespersons)
+        const cur = countryCurrency[ctry] || (String(inv.currency || 'DKK').toUpperCase());
         const rate1 = ({ ...globalRates, ...ratesS1 } as Record<string, number>)[cur] ?? 1;
         const rate2 = ({ ...globalRates, ...ratesS2 } as Record<string, number>)[cur] ?? 1;
         const amount = Number(inv.amount || 0);

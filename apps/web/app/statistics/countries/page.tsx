@@ -76,7 +76,8 @@ export default function CountriesPage() {
         if (closedCustomers?.setExcluded.has(acc)) continue;
       }
       const bucket = out[ctry] || (out[ctry] = { s1Qty: 0, s2Qty: 0, s1PriceDkk: 0, s2PriceDkk: 0 });
-      const cur = (String(r.currency || 'DKK').toUpperCase());
+      // Use country-based currency instead of row currency (row currency is often incorrectly set to DKK for foreign salespersons)
+      const cur = countryCurrency[ctry] || (String(r.currency || 'DKK').toUpperCase());
       const rateS1 = { ...baseRates, ...(ratesS1 ?? {}) }[cur] ?? 1;
       const rateS2 = { ...baseRates, ...(ratesS2 ?? {}) }[cur] ?? 1;
       const price = Number(r.price || 0);
@@ -97,7 +98,8 @@ export default function CountriesPage() {
       const standardCountries = ['Denmark', 'Norway', 'Sweden', 'Finland'];
       if (!standardCountries.includes(ctry)) continue;
       const bucket = out[ctry] || (out[ctry] = { s1Qty: 0, s2Qty: 0, s1PriceDkk: 0, s2PriceDkk: 0 });
-      const cur = (String(inv.currency || 'DKK').toUpperCase());
+      // Use country-based currency instead of row currency
+      const cur = countryCurrency[ctry] || (String(inv.currency || 'DKK').toUpperCase());
       const rateS1 = { ...baseRates, ...(ratesS1 ?? {}) }[cur] ?? 1;
       const rateS2 = { ...baseRates, ...(ratesS2 ?? {}) }[cur] ?? 1;
       const amount = Number(inv.amount || 0);
@@ -128,7 +130,7 @@ export default function CountriesPage() {
       }
       // Attribute to assigned salesperson first (customer table), even if the row is recorded under another salesperson.
       const spId = ((customerSpById.get(acc) ?? null) ?? (r.salesperson_id as string | null)) || '__unknown__';
-      const cur = (String(r.currency || 'DKK').toUpperCase());
+      const cur = countryCurrency[ctry] || (String(r.currency || 'DKK').toUpperCase());
       const rateS1 = { ...baseRates, ...(ratesS1 ?? {}) }[cur] ?? 1;
       const rateS2 = { ...baseRates, ...(ratesS2 ?? {}) }[cur] ?? 1;
       const price = Number(r.price || 0);
@@ -149,7 +151,7 @@ export default function CountriesPage() {
       const standardCountries = ['Denmark', 'Norway', 'Sweden', 'Finland'];
       if (!standardCountries.includes(ctry)) continue;
       const spId = (customerSpById.get(acc) ?? null) || '__unknown__';
-      const cur = (String(inv.currency || 'DKK').toUpperCase());
+      const cur = countryCurrency[ctry] || (String(inv.currency || 'DKK').toUpperCase());
       const rateS1 = { ...baseRates, ...(ratesS1 ?? {}) }[cur] ?? 1;
       const rateS2 = { ...baseRates, ...(ratesS2 ?? {}) }[cur] ?? 1;
       const amount = Number(inv.amount || 0);
