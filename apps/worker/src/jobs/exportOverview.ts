@@ -1216,9 +1216,10 @@ export async function exportOverview(ctx: Ctx) {
               ...(cName !== 'Denmark' ? [
                 (() => {
                   const cur = countryCurrency[cName] || 'DKK';
-                  const rate = ({ DKK: 1, ...globalRates } as Record<string, number>)[cur] ?? 1;
-                  const s1Local = row.s1Price / (rate || 1);
-                  const s2Local = row.s2Price / (rate || 1);
+                  const rateForS1 = ({ DKK: 1, ...globalRates, ...ratesS1 } as Record<string, number>)[cur] ?? 1;
+                  const rateForS2 = ({ DKK: 1, ...globalRates, ...ratesS2 } as Record<string, number>)[cur] ?? 1;
+                  const s1Local = row.s1Price / (rateForS1 || 1);
+                  const s2Local = row.s2Price / (rateForS2 || 1);
                   return React.createElement(Text, { style: [countriesStyles.boxNums, { color: '#64748b' }] }, `${fmt(s1Local)} ${cur} vs ${fmt(s2Local)} ${cur}`);
                 })()
               ] : []),
