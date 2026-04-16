@@ -2322,80 +2322,92 @@ async function runJob(job: JobRow) {
         await page!.waitForTimeout(2000);
         await log(job.id, 'info', 'STEP:invoiced_page_loaded', { url: invoicedUrl });
 
-        // Skip Select2 season selection — the Excel download contains ALL pre-orders
-        // and we filter by Season column client-side. Just wait for the page to fully load.
+        // Wait for the page (and its table/collection UUID) to be fully initialized
         try {
-          // Wait for networkidle so all JS/AJAX resources finish (up to 60s)
           await page!.waitForLoadState('networkidle', { timeout: 60_000 });
         } catch {
           await log(job.id, 'info', 'STEP:invoiced_networkidle_timeout');
         }
-        // Give the page a moment to render download toolbar
+        // Give JS a moment to finish initializing the table collection
         await page!.waitForTimeout(3000);
 
-        // Check if the download link is present (primary goal — table isn't required)
-        const hasDownloadLink = await page!.evaluate(() => !!document.querySelector('a[href*="DownloadExcel"]')).catch(() => false);
-        await log(job.id, 'info', 'STEP:invoiced_download_link_check', { hasDownloadLink });
+        // Extract the strCollectionUUID from the page HTML — this is the key identifier
+        // the backend uses to reference the current filtered result set. Pattern matches:
+        //   strCollectionUUID=abc123  (in URL)
+        //   'strCollectionUUID': 'abc123'  (in JS config)
+        //   data-collection-uuid="abc123"  (in data attribute)
+        //   table_uuid[]=abc123  (in URL, used as fallback since it maps to the collection)
+        const pageHtml = await page!.content().catch(() => '');
+        await log(job.id, 'info', 'STEP:invoiced_page_html_size', { bytes: pageHtml.length });
 
-        // If no download link yet, wait a bit longer and try again
-        if (!hasDownloadLink) {
-          await page!.waitForTimeout(5000);
-          const retry = await page!.evaluate(() => !!document.querySelector('a[href*="DownloadExcel"]')).catch(() => false);
-          await log(job.id, 'info', 'STEP:invoiced_download_link_retry', { hasDownloadLink: retry });
+        let collectionUuid: string | null = null;
+        const patterns = [
+          /strCollectionUUID[=:]\s*["']?([a-f0-9]{6,})/i,
+          /collection[_-]?uuid["'\s:=]+["']?([a-f0-9]{6,})/i,
+          /table_uuid(?:\[\])?[=:]\s*["']?([a-f0-9]{6,})/i,
+        ];
+        for (const pat of patterns) {
+          const m = pageHtml.match(pat);
+          if (m && m[1]) {
+            collectionUuid = m[1];
+            await log(job.id, 'info', 'STEP:invoiced_uuid_found', { uuid: collectionUuid, pattern: pat.source });
+            break;
+          }
         }
 
-        // Find the Excel download link on the page and extract the download URL
-        // Spy renders a download icon/link that triggers the Excel export
-        const xlsDownloadUrl = await page!.evaluate(() => {
-          // Look for the Excel download link (typically an <a> with href containing DownloadExcel)
-          const links = Array.from(document.querySelectorAll('a[href*="DownloadExcel"]'));
-          if (links.length > 0) return (links[0] as HTMLAnchorElement).href;
-          // Fallback: look for download button with data attributes
-          const btns = Array.from(document.querySelectorAll('[data-action*="DownloadExcel"], [data-url*="DownloadExcel"]'));
-          for (const btn of btns) {
-            const url = (btn as HTMLElement).getAttribute('data-url') || (btn as HTMLElement).getAttribute('href');
-            if (url) return url;
-          }
-          // Try: look for any link with "xls" or "excel" in href/text
-          const xlsLinks = Array.from(document.querySelectorAll('a[href*="xls"], a[href*="Excel"], a[href*="excel"]'));
-          if (xlsLinks.length > 0) return (xlsLinks[0] as HTMLAnchorElement).href;
-          // Try: look for download icons/buttons in the table toolbar
-          const toolbarLinks = Array.from(document.querySelectorAll('.table-toolbar a, .table-actions a, .standardList-toolbar a, [class*="download"] a, a[class*="download"], a[title*="Download"], a[title*="Excel"]'));
-          if (toolbarLinks.length > 0) return (toolbarLinks[0] as HTMLAnchorElement).href;
-          return null;
-        });
-        // Debug: log what download-related elements exist on the page
+        // Also try to find an explicit DownloadExcel URL in the HTML
+        let xlsDownloadUrl: string | null = null;
+        const explicitMatch = pageHtml.match(/["']?(https?:\/\/[^"'\s]*DownloadExcel[^"'\s]*)["']?/i);
+        const explicitUrl = explicitMatch?.[1];
+        if (explicitUrl) {
+          const cleaned = explicitUrl.replace(/&amp;/g, '&');
+          xlsDownloadUrl = cleaned;
+          await log(job.id, 'info', 'STEP:invoiced_xls_url_explicit', { url: cleaned.slice(0, 200) });
+        }
+
+        // If no explicit URL but we have a UUID, construct the download URL ourselves
+        if (!xlsDownloadUrl && collectionUuid) {
+          // Column options: minimal set — we need Customer, Account, Country, Season, Qty, User Curr., Customer Curr.
+          // Spy's columns map: based on user-provided payload, select indices for the needed columns
+          const optionsObj = { check_all: false, columns: { '3': true, '4': true, '12': true, '20': true, '34': true, '36': true, '37': true } };
+          const optionsStr = encodeURIComponent(JSON.stringify(optionsObj));
+          xlsDownloadUrl = `${SPY_BASE_URL}/?controller=Shared%5CTable&action=DownloadExcel&strRendererClass=Spy%5CView%5CSale%5CInvoiced%5CInvoicedTableRenderer&strCollectionUUID=${encodeURIComponent(collectionUuid)}&type=xls&options=${optionsStr}`;
+          await log(job.id, 'info', 'STEP:invoiced_xls_url_constructed', { uuid: collectionUuid });
+        }
+
+        // Debug dump if we still don't have a URL
         if (!xlsDownloadUrl) {
-          const debugInfo = await page!.evaluate(() => {
-            const allLinks = Array.from(document.querySelectorAll('a')).slice(0, 50).map(a => ({ href: (a.href || '').slice(0, 100), text: (a.textContent || '').trim().slice(0, 50), title: a.title || '' }));
-            const allButtons = Array.from(document.querySelectorAll('button, [role="button"]')).slice(0, 20).map(b => ({ text: (b.textContent || '').trim().slice(0, 50), class: (b as HTMLElement).className?.slice(0, 80) || '' }));
-            return { linkCount: document.querySelectorAll('a').length, sampleLinks: allLinks.filter(l => l.href.includes('Download') || l.href.includes('xls') || l.href.includes('export') || l.text.toLowerCase().includes('download') || l.text.toLowerCase().includes('excel') || l.title.toLowerCase().includes('download')), buttonCount: document.querySelectorAll('button').length, sampleButtons: allButtons.filter(b => b.text.toLowerCase().includes('download') || b.text.toLowerCase().includes('excel') || b.text.toLowerCase().includes('export')) };
-          }).catch(() => ({ linkCount: 0, sampleLinks: [], buttonCount: 0, sampleButtons: [] }));
-          await log(job.id, 'info', 'STEP:invoiced_xls_debug_elements', debugInfo as any);
+          const htmlSample = pageHtml.slice(0, 3000);
+          await log(job.id, 'error', 'STEP:invoiced_no_xls_url', { htmlSample });
         }
 
         let xlsBuffer: Buffer | null = null;
 
         if (xlsDownloadUrl) {
           // Download via direct URL using the browser's cookies
-          await log(job.id, 'info', 'STEP:invoiced_xls_url_found', { url: xlsDownloadUrl.slice(0, 200) });
           try {
             const response = await page!.context().request.get(xlsDownloadUrl);
+            const status = response.status();
+            const contentType = response.headers()['content-type'] || '';
             xlsBuffer = Buffer.from(await response.body());
-            await log(job.id, 'info', 'STEP:invoiced_xls_downloaded', { bytes: xlsBuffer.length });
+            await log(job.id, 'info', 'STEP:invoiced_xls_downloaded', { bytes: xlsBuffer.length, status, contentType });
+            // Sanity check: an HTML error page would be much smaller than a real xlsx with thousands of rows
+            if (contentType.includes('text/html') || xlsBuffer.length < 5000) {
+              await log(job.id, 'error', 'STEP:invoiced_xls_suspect_small', { bytes: xlsBuffer.length, contentType, sample: xlsBuffer.toString('utf8').slice(0, 500) });
+              xlsBuffer = null;
+            }
           } catch (e: any) {
             await log(job.id, 'error', 'STEP:invoiced_xls_download_failed', { error: e?.message || String(e) });
           }
         }
 
-        // Fallback: trigger download via Playwright download event
+        // Fallback: trigger download via Playwright download event (if there's a clickable element)
         if (!xlsBuffer) {
           await log(job.id, 'info', 'STEP:invoiced_xls_trying_click_download');
           try {
             const [download] = await Promise.all([
               page!.waitForEvent('download', { timeout: 30_000 }),
               page!.evaluate(() => {
-                // Click the first Excel download element we can find
                 const el = document.querySelector('a[href*="DownloadExcel"]') as HTMLElement
                   || document.querySelector('[data-action*="DownloadExcel"]') as HTMLElement
                   || document.querySelector('.download-excel') as HTMLElement
