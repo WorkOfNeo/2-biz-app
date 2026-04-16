@@ -2257,7 +2257,10 @@ async function runJob(job: JobRow) {
       }
 
       // After seasonal totals per salesperson, fetch invoiced list for the same season
-      async function scrapeInvoicedLines(seasonId: string, spySeasonIdParam: string | null): Promise<Array<{
+      // Strategy: navigate to invoiced page with pre-order filter, download the Excel export,
+      // parse it with xlsx, and filter rows by the target season name.
+      // This is more reliable than DOM scraping since Spy's Select2 / URL params are unreliable.
+      async function scrapeInvoicedLines(seasonId: string, _spySeasonIdParam: string | null): Promise<Array<{
         customerName: string;
         qty: number;
         userCurrencyAmount: { amount: number; currency: string | null } | null;
@@ -2265,219 +2268,243 @@ async function runJob(job: JobRow) {
         invoiceNo?: string;
         invoiceDate?: string;
         matchedCustomerId?: string | null;
+        matchedAccount?: string | null;
         salespersonName?: string | null;
       }>> {
         await log(job.id, 'info', 'STEP:invoiced_begin');
-        // Navigate to invoiced page (order type=pre only; do NOT rely on iSeasonID URL param — Spy ignores it now)
-        const base = `?controller=Sale%5CInvoiced&action=List&Spy%5CModel%5CSale%5CInvoiced%5CInvoicedReportSearch%5BbForceSearch%5D=true&Spy%5CModel%5CSale%5CInvoiced%5CInvoicedReportSearch%5BstrOrderType%5D=pre`;
-        const url = new URL(base, SPY_BASE_URL).toString();
-        await page!.goto(url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
-        await page!.waitForTimeout(1000);
-        await log(job.id, 'info', 'STEP:invoiced_url', { url, spySeasonId: spySeasonIdParam ?? null });
 
-        // Determine display label like "26 HIGH SUMMER" from seasons table
-        // DB stores name as "HIGH SUMMER 2026", so we strip the trailing year and prepend 2-digit prefix
+        // Determine the season display label (as it appears in Spy's Excel, e.g. "26 HIGH SUMMER")
         let displayLabel: string | null = null;
         try {
           const { data: seasonRow } = await supabase.from('seasons').select('name, year, source_name').eq('id', seasonId).maybeSingle();
           const year = (seasonRow?.year as number | null) ?? undefined;
-          // Prefer source_name (stored as the raw Spy label) if available
           const sourceName = ((seasonRow?.source_name || '') as string).trim();
           if (sourceName) {
             displayLabel = sourceName.toUpperCase();
           } else {
             let name = (seasonRow?.name || '').toUpperCase().replace(/^BASIC\s*-\s*/i, '').trim();
-            // Strip trailing year like "HIGH SUMMER 2026" → "HIGH SUMMER"
             if (year) name = name.replace(new RegExp(`\\s*${year}\\s*$`), '').trim();
             if (year && name) displayLabel = String(year).slice(-2) + ' ' + name;
           }
         } catch {}
         await log(job.id, 'info', 'STEP:invoiced_season_label', { label: displayLabel ?? '(auto)' });
+        if (!displayLabel) {
+          await log(job.id, 'error', 'STEP:invoiced_no_display_label', { seasonId });
+          return [];
+        }
 
-        // ALWAYS select season via the page UI (URL params no longer filter on Spy's end)
-        if (displayLabel) {
+        // Navigate to invoiced page (pre-order only, no season URL param — Spy ignores it)
+        const base = `?controller=Sale%5CInvoiced&action=List&Spy%5CModel%5CSale%5CInvoiced%5CInvoicedReportSearch%5BbForceSearch%5D=true&Spy%5CModel%5CSale%5CInvoiced%5CInvoicedReportSearch%5BstrOrderType%5D=pre`;
+        const invoicedUrl = new URL(base, SPY_BASE_URL).toString();
+        await page!.goto(invoicedUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+        await page!.waitForTimeout(1500);
+        await log(job.id, 'info', 'STEP:invoiced_page_loaded', { url: invoicedUrl });
+
+        // Wait for the table to be present (so we know the page rendered and the download link exists)
+        try {
+          await page!.waitForSelector('table.standardList', { timeout: 30_000 });
+        } catch {
+          await log(job.id, 'error', 'STEP:invoiced_no_table');
+          return [];
+        }
+
+        // Find the Excel download link on the page and extract the download URL
+        // Spy renders a download icon/link that triggers the Excel export
+        const xlsDownloadUrl = await page!.evaluate(() => {
+          // Look for the Excel download link (typically an <a> with href containing DownloadExcel)
+          const links = Array.from(document.querySelectorAll('a[href*="DownloadExcel"]'));
+          if (links.length > 0) return (links[0] as HTMLAnchorElement).href;
+          // Fallback: look for download button with data attributes
+          const btns = Array.from(document.querySelectorAll('[data-action*="DownloadExcel"], [data-url*="DownloadExcel"]'));
+          for (const btn of btns) {
+            const url = (btn as HTMLElement).getAttribute('data-url') || (btn as HTMLElement).getAttribute('href');
+            if (url) return url;
+          }
+          return null;
+        });
+
+        let xlsBuffer: Buffer | null = null;
+
+        if (xlsDownloadUrl) {
+          // Download via direct URL using the browser's cookies
+          await log(job.id, 'info', 'STEP:invoiced_xls_url_found', { url: xlsDownloadUrl.slice(0, 200) });
           try {
-            // Try new Select2 widget first (#strSeasonGroupValue), fall back to legacy <select>
-            const hasSelect2 = await page!.evaluate(() => !!document.querySelector('#strSeasonGroupValue')).catch(() => false);
-            if (hasSelect2) {
-              // Click the Select2 container to open the dropdown
-              const select2Container = await page!.$('#s2id_strSeasonGroupValue');
-              if (select2Container) {
-                await select2Container.click();
-                // Wait for dropdown to appear (appended near </body>)
-                await page!.waitForSelector('.select2old-results li.select2old-result', { timeout: 10_000 });
-                // Find and click the matching option by text
-                const matched = await page!.evaluate((label: string) => {
-                  const items = Array.from(document.querySelectorAll('.select2old-results li.select2old-result'));
-                  // Exact match first
-                  for (const item of items) {
-                    const text = (item.textContent || '').trim().toUpperCase();
-                    if (text === label.toUpperCase()) {
-                      (item as HTMLElement).click();
-                      return { matched: true, text };
-                    }
-                  }
-                  // Partial match: check if the label text is contained in the option
-                  for (const item of items) {
-                    const text = (item.textContent || '').trim().toUpperCase();
-                    if (text.includes(label.toUpperCase()) || label.toUpperCase().includes(text)) {
-                      (item as HTMLElement).click();
-                      return { matched: true, text };
-                    }
-                  }
-                  // Log available options for debugging
-                  const available = items.map(i => (i.textContent || '').trim()).slice(0, 20);
-                  return { matched: false, available };
-                }, displayLabel);
-                if ((matched as any)?.matched) {
-                  await log(job.id, 'info', 'STEP:invoiced_select2_season_matched', { label: displayLabel, selectedText: (matched as any).text });
-                } else {
-                  await log(job.id, 'error', 'STEP:invoiced_select2_season_no_match', { label: displayLabel, available: (matched as any)?.available });
-                }
-                await page!.waitForTimeout(500);
-              }
-            } else {
-              // Legacy: native <select> element
-              try {
-                await page!.waitForSelector('select#Spy\\.Model\\.Sale\\.Invoiced\\.InvoicedReportSearch\\[iSeasonID\\]', { timeout: 10_000 });
-                await page!.evaluate((label: string | null) => {
-                  const sel = document.querySelector('select#Spy\\.Model\\.Sale\\.Invoiced\\.InvoicedReportSearch\\[iSeasonID\\]') as HTMLSelectElement | null;
-                  if (!sel || !label) return;
-                  for (const opt of Array.from(sel.options)) {
-                    const t = (opt.textContent || '').trim().toUpperCase();
-                    if (t === label.toUpperCase()) { sel.value = opt.value; sel.dispatchEvent(new Event('change', { bubbles: true })); break; }
-                  }
-                }, displayLabel);
-              } catch {}
-            }
-            // Click search button and wait for table to reload
-            const submitBtn = await findFirst(page!, [
-              'button[name="search"][type="submit"]',
-              'button[name="search"]',
-              'form button[name="search"]',
-              'form button[type="submit"]',
-              'form input[type="submit"]',
-              'button.search',
-              '.btn.btn-primary'
+            const response = await page!.context().request.get(xlsDownloadUrl);
+            xlsBuffer = Buffer.from(await response.body());
+            await log(job.id, 'info', 'STEP:invoiced_xls_downloaded', { bytes: xlsBuffer.length });
+          } catch (e: any) {
+            await log(job.id, 'error', 'STEP:invoiced_xls_download_failed', { error: e?.message || String(e) });
+          }
+        }
+
+        // Fallback: trigger download via Playwright download event
+        if (!xlsBuffer) {
+          await log(job.id, 'info', 'STEP:invoiced_xls_trying_click_download');
+          try {
+            const [download] = await Promise.all([
+              page!.waitForEvent('download', { timeout: 30_000 }),
+              page!.evaluate(() => {
+                // Click the first Excel download element we can find
+                const el = document.querySelector('a[href*="DownloadExcel"]') as HTMLElement
+                  || document.querySelector('[data-action*="DownloadExcel"]') as HTMLElement
+                  || document.querySelector('.download-excel') as HTMLElement
+                  || document.querySelector('a[title*="Excel"]') as HTMLElement
+                  || document.querySelector('a[title*="excel"]') as HTMLElement;
+                if (el) el.click();
+              })
             ]);
-            if (submitBtn) {
-              await submitBtn.click({ timeout: 30_000 }).catch(() => {});
-              await log(job.id, 'info', 'STEP:invoiced_search_clicked');
-              // Wait for page to reload with filtered results
-              try { await page!.waitForLoadState('networkidle', { timeout: 30_000 }); } catch {}
-            } else {
-              // Fallback: try submitting the first form on the page
-              try {
-                await page!.evaluate(() => {
-                  const f = document.querySelector('form') as HTMLFormElement | null;
-                  if (f) f.requestSubmit ? f.requestSubmit() : f.submit();
-                });
-                await log(job.id, 'info', 'STEP:invoiced_search_submit_fallback');
-                try { await page!.waitForLoadState('networkidle', { timeout: 30_000 }); } catch {}
-              } catch {}
+            const path = await download.path();
+            if (path) {
+              const { readFileSync } = require('fs');
+              xlsBuffer = readFileSync(path) as Buffer;
+              await log(job.id, 'info', 'STEP:invoiced_xls_downloaded_via_click', { bytes: xlsBuffer!.length });
             }
           } catch (e: any) {
-            await log(job.id, 'error', 'STEP:invoiced_season_select_failed', { error: e?.message || String(e) });
+            await log(job.id, 'error', 'STEP:invoiced_xls_click_download_failed', { error: e?.message || String(e) });
           }
-        } else {
-          await log(job.id, 'error', 'STEP:invoiced_no_display_label', { seasonId });
         }
 
-        // Wait for the results table; skip gracefully if none within ~5s
-        {
-          let found = false;
-          for (let attempt = 1; attempt <= 5; attempt++) {
-            try {
-              const cnt = await page!.$$eval('table.standardList tbody tr', (trs) => trs.length);
-              if (cnt > 0) { found = true; break; }
-            } catch {}
-            await page!.waitForTimeout(1000);
-          }
-          if (!found) {
-            await log(job.id, 'error', 'STEP:invoiced_no_rows_skip');
-            return [];
-          }
-        await log(job.id, 'info', 'STEP:invoiced_ready');
+        if (!xlsBuffer || xlsBuffer.length === 0) {
+          await log(job.id, 'error', 'STEP:invoiced_xls_no_data');
+          return [];
         }
 
-        // Attempt to load all rows: scroll to bottom repeatedly until count stabilizes
-        try {
-          let last = 0;
-          for (let i = 0; i < 20; i++) {
-            const count = await page!.$$eval('table.standardList tbody tr', (trs) => trs.length);
-            await log(job.id, 'info', 'STEP:invoiced_rows_count', { iteration: i + 1, count });
-            if (count > last) {
-              last = count;
-              await page!.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-              await page!.waitForTimeout(800);
-            } else {
-              break;
+        // Parse the Excel file
+        const XLSX = require('xlsx');
+        const wb = XLSX.read(xlsBuffer, { type: 'buffer' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const allRows: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1 });
+        await log(job.id, 'info', 'STEP:invoiced_xls_parsed', { totalRows: allRows.length, sheetName: wb.SheetNames[0] });
+
+        // Find the header row (contains "Customer", "Account", "Season", "Qty", etc.)
+        let headerIdx = -1;
+        let colMap: { customer: number; account: number; country: number; season: number; qty: number; userAmount: number; userCurrency: number; custAmount: number; custCurrency: number } | null = null;
+        for (let i = 0; i < Math.min(allRows.length, 5); i++) {
+          const row = (allRows[i] || []).map((c: any) => String(c || '').trim().toLowerCase());
+          const custIdx = row.indexOf('customer');
+          const acctIdx = row.indexOf('account');
+          const seasonIdx = row.indexOf('season');
+          const qtyIdx = row.indexOf('qty');
+          if (custIdx >= 0 && seasonIdx >= 0 && qtyIdx >= 0) {
+            headerIdx = i;
+            // Find amount/currency columns: "User Curr." and "Customer Curr." headers
+            // The layout is: ..., User Curr., [currency col], Customer Curr., [currency col]
+            let userAmtIdx = -1, userCurrIdx = -1, custAmtIdx = -1, custCurrIdx = -1;
+            for (let j = 0; j < row.length; j++) {
+              if ((row[j] || '').includes('user curr')) { userAmtIdx = j; userCurrIdx = j + 1; }
+              if ((row[j] || '').includes('customer curr')) { custAmtIdx = j; custCurrIdx = j + 1; }
             }
+            colMap = {
+              customer: custIdx,
+              account: acctIdx >= 0 ? acctIdx : -1,
+              country: row.indexOf('country'),
+              season: seasonIdx,
+              qty: qtyIdx,
+              userAmount: userAmtIdx,
+              userCurrency: userCurrIdx,
+              custAmount: custAmtIdx >= 0 ? custAmtIdx : userAmtIdx,
+              custCurrency: custCurrIdx >= 0 ? custCurrIdx : userCurrIdx,
+            };
+            break;
           }
-        } catch (e: any) {
-          await log(job.id, 'error', 'STEP:invoiced_scroll_error', { error: e?.message ?? String(e) });
         }
 
-        // Extract rows according to header mapping (Customer, Qty, amounts)
-        const rows: Array<{ customerName: string; qty: number; userCurr: string; custCurr: string; invoiceNo?: string; invoiceDate?: string }> = await page!.$$eval(
-          'table.standardList tbody tr',
-          (trs) => {
-            function parseNumEu(s: string): number { const n = (s || '').replace(/\./g, '').replace(/,/g, '.').replace(/[^0-9.\-]/g, ''); return Number(n) || 0; }
-            return Array.from(trs).map((tr) => {
-              const tds = Array.from(tr.querySelectorAll('td')) as HTMLElement[];
-              const customerDiv = tds[2]?.querySelector('div') as HTMLElement | null;
-              const customerName = (customerDiv?.textContent || tds[2]?.textContent || '').trim();
-              const qty = parseNumEu((tds[10]?.textContent || '').trim());
-              const userCurrText = (tds[12]?.textContent || '').trim();
-              const custCurrText = (tds[13]?.textContent || '').trim();
-              const invoiceNo = (tds[7]?.textContent || '').trim();
-              const invoiceDate = (tds[8]?.textContent || '').trim();
-              return { customerName, qty, userCurr: userCurrText, custCurr: custCurrText, invoiceNo, invoiceDate };
-            });
-          }
-        );
-        await (async () => { try { await log(job.id, 'info', 'STEP:invoiced_lines', { count: rows.length }); } catch {} })();
+        if (headerIdx < 0 || !colMap) {
+          await log(job.id, 'error', 'STEP:invoiced_xls_no_header', { firstRows: allRows.slice(0, 3).map(r => (r || []).slice(0, 10)) });
+          return [];
+        }
+        await log(job.id, 'info', 'STEP:invoiced_xls_header_found', { headerIdx, colMap });
 
-        const out: Array<{ customerName: string; qty: number; userCurrencyAmount: { amount: number; currency: string | null } | null; customerCurrencyAmount: { amount: number; currency: string | null } | null; invoiceNo?: string; invoiceDate?: string; matchedCustomerId?: string | null; matchedAccount?: string | null; salespersonName?: string | null; }> = [];
-        for (const r of rows) {
-          const user = parseAmount(r.userCurr);
-          const cust = parseAmount(r.custCurr);
+        // Parse EU-formatted numbers (e.g. "4,923.84" or "4.923,84")
+        function parseXlsNum(v: any): number {
+          if (typeof v === 'number') return v;
+          const s = String(v || '').replace(/\s/g, '').replace(/\./g, '').replace(/,/g, '.');
+          return Number(s) || 0;
+        }
+
+        // Filter data rows by season label and build output
+        const seasonUpper = displayLabel.toUpperCase();
+        const out: Array<{ customerName: string; qty: number; userCurrencyAmount: { amount: number; currency: string | null } | null; customerCurrencyAmount: { amount: number; currency: string | null } | null; invoiceNo?: string; invoiceDate?: string; matchedCustomerId?: string | null; matchedAccount?: string | null; salespersonName?: string | null }> = [];
+        let totalExcelRows = 0;
+        let matchedRows = 0;
+        let skippedSeasons = new Set<string>();
+
+        for (let i = headerIdx + 1; i < allRows.length; i++) {
+          const row = allRows[i];
+          if (!row || !Array.isArray(row)) continue;
+          const customerName = String(row[colMap.customer] || '').trim();
+          const seasonText = String(row[colMap.season] || '').trim().toUpperCase();
+          if (!customerName || !seasonText) continue;
+          // Skip the "Total:" summary row
+          if (customerName.toLowerCase().startsWith('total:')) continue;
+          totalExcelRows++;
+
+          if (seasonText !== seasonUpper) {
+            skippedSeasons.add(seasonText);
+            continue;
+          }
+          matchedRows++;
+
+          const accountNo = colMap.account >= 0 ? String(row[colMap.account] || '').trim() : '';
+          const qty = parseXlsNum(row[colMap.qty]);
+          const userAmount = parseXlsNum(row[colMap.userAmount]);
+          const userCurrency = colMap.userCurrency >= 0 ? String(row[colMap.userCurrency] || '').trim() || null : null;
+          const custAmount = parseXlsNum(row[colMap.custAmount]);
+          const custCurrency = colMap.custCurrency >= 0 ? String(row[colMap.custCurrency] || '').trim() || null : null;
+
+          // Match customer to our DB
           let matchedCustomerId: string | null = null;
-          let matchedAccount: string | null = null;
+          let matchedAccount: string | null = accountNo || null;
           let salespersonName: string | null = null;
-          if (r.customerName) {
+          if (accountNo) {
             try {
-              const { data: found } = await supabase.from('customers').select('id, customer_id, salespersons(name)').ilike('company', r.customerName).maybeSingle();
-              if (found?.id) matchedCustomerId = found.id as string;
-              // @ts-ignore
-              matchedAccount = (found as any)?.customer_id ?? null;
-              // @ts-ignore
-              salespersonName = (found as any)?.salespersons?.name ?? null;
+              const { data: found } = await supabase.from('customers').select('id, customer_id, salespersons(name)').eq('customer_id', accountNo).maybeSingle();
+              if (found?.id) {
+                matchedCustomerId = found.id as string;
+                matchedAccount = (found as any)?.customer_id ?? accountNo;
+                salespersonName = (found as any)?.salespersons?.name ?? null;
+              }
             } catch {}
           }
-          out.push({ customerName: r.customerName, qty: r.qty, userCurrencyAmount: { amount: user.amount, currency: user.currency }, customerCurrencyAmount: { amount: cust.amount, currency: cust.currency }, invoiceNo: r.invoiceNo, invoiceDate: r.invoiceDate, matchedCustomerId, matchedAccount, salespersonName });
+          if (!matchedCustomerId && customerName) {
+            try {
+              const { data: found } = await supabase.from('customers').select('id, customer_id, salespersons(name)').ilike('company', customerName).maybeSingle();
+              if (found?.id) {
+                matchedCustomerId = found.id as string;
+                matchedAccount = (found as any)?.customer_id ?? matchedAccount;
+                salespersonName = (found as any)?.salespersons?.name ?? null;
+              }
+            } catch {}
+          }
+
+          out.push({
+            customerName,
+            qty,
+            userCurrencyAmount: { amount: userAmount, currency: userCurrency },
+            customerCurrencyAmount: { amount: custAmount, currency: custCurrency },
+            invoiceNo: undefined, // Excel export doesn't include invoice number
+            invoiceDate: undefined, // Excel export doesn't include invoice date
+            matchedCustomerId,
+            matchedAccount,
+            salespersonName,
+          });
         }
+
+        await log(job.id, 'info', 'STEP:invoiced_xls_filtered', {
+          totalExcelRows,
+          matchedRows,
+          skippedSeasonCount: skippedSeasons.size,
+          skippedSeasons: Array.from(skippedSeasons).slice(0, 10),
+          targetSeason: seasonUpper,
+        });
+
         return out;
       }
 
-      // Ensure we have SPY season id before visiting invoiced page: prefer mapping if not yet set
-      if (!spySeasonId && targetSeasonId) {
-        try {
-          const { data: seasonRow } = await supabase.from('seasons').select('spy_season_id').eq('id', targetSeasonId).maybeSingle();
-          const spyId = (seasonRow?.spy_season_id as number | null) ?? null;
-          if (spyId && String(spyId).trim().length > 0) {
-            spySeasonId = String(spyId);
-            await log(job.id, 'info', 'STEP:invoiced_spy_id_from_mapping', { spySeasonId });
-          }
-        } catch {}
-      }
+      // Invoiced scraping no longer requires spySeasonId — we download the Excel and filter by season name
       await log(job.id, 'info', 'STEP:invoiced_call', { targetSeasonId, spySeasonId: spySeasonId ?? null });
       let invoicedLines: Array<{ customerName: string; qty: number; userCurrencyAmount: { amount: number; currency: string | null } | null; customerCurrencyAmount: { amount: number; currency: string | null } | null; invoiceNo?: string; invoiceDate?: string; matchedCustomerId?: string | null; matchedAccount?: string | null; salespersonName?: string | null; }>= [];
-      if (!spySeasonId) {
-        await log(job.id, 'info', 'STEP:invoiced_skipped_no_spy_id', { targetSeasonId });
-      } else {
-        invoicedLines = await scrapeInvoicedLines(targetSeasonId, spySeasonId);
-      }
+      invoicedLines = await scrapeInvoicedLines(targetSeasonId, spySeasonId);
 
       // Persist invoices idempotently: UPDATE existing unless frozen, else INSERT; add detailed logging
       try {
@@ -2491,8 +2518,8 @@ async function runJob(job: JobRow) {
             const qty = Number(inv.qty || 0) || 0;
           const amount = Number(pick?.amount || 0) || 0;
             const currency = pick?.currency || null;
-            if (!accountNo || !invoiceNo) return null;
-            return { accountNo, invoiceNo, qty, amount, currency, customerName: inv.customerName || null, invoiceDate: inv.invoiceDate || null };
+            if (!accountNo) return null;
+            return { accountNo, invoiceNo: invoiceNo || 'aggregated', qty, amount, currency, customerName: inv.customerName || null, invoiceDate: inv.invoiceDate || null };
           })
           .filter(Boolean) as Array<{ accountNo: string; invoiceNo: string; qty: number; amount: number; currency: string | null; customerName: string | null; invoiceDate: string | null }>;
         await log(job.id, 'info', 'STEP:invoiced_normalized', { total: scraped.length });
