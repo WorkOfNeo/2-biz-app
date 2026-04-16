@@ -51,8 +51,21 @@ export async function scrapeTopStyles(ctx: Ctx) {
     await log(job.id, 'info', 'STEP:topstyles_nav_ok', { url: webBase, readyState: ready, frames: frameUrls });
 
     // Read selected season from the page's Season select
+    // Spy uses either a legacy <select#s_season_id> or a newer Select2 widget (#strSeasonGroupValue)
+    // with values like "season|22" and visible text like "26 HIGH SUMMER"
     try {
       const seasonInfo = await page.evaluate(() => {
+        // Try new Select2 widget first (#strSeasonGroupValue with value "season|XX")
+        const select2Input = document.querySelector('#strSeasonGroupValue') as HTMLInputElement | null;
+        if (select2Input) {
+          const rawValue = (select2Input.value || '').trim();
+          const pipeMatch = rawValue.match(/season\|(\d+)/i);
+          const value = pipeMatch ? pipeMatch[1] : rawValue;
+          const chosenSpan = document.querySelector('#s2id_strSeasonGroupValue .select2old-chosen') as HTMLElement | null;
+          const text = (chosenSpan?.textContent || '').trim();
+          if (text) return { value, text };
+        }
+        // Fallback: legacy <select#s_season_id>
         const sel = document.querySelector('#s_season_id') as HTMLSelectElement | null;
         if (!sel) return null;
         const opt = sel.options[sel.selectedIndex] || null;

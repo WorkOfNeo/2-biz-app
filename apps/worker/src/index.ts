@@ -1818,10 +1818,25 @@ async function runJob(job: JobRow) {
       await page.goto(topsellerUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
       await page.waitForTimeout(500);
 
-      // If seasonId not provided, read from select#s_season_id (selected option text like "25 WINTER")
+      // If seasonId not provided, read from Spy's season selector
+      // Spy uses either a legacy <select#s_season_id> or a newer Select2 widget (#strSeasonGroupValue)
+      // with values like "season|22" and visible text like "26 HIGH SUMMER"
       if (!targetSeasonId) {
         try {
           const seasonInfo = await page.evaluate(() => {
+            // Try new Select2 widget first (#strSeasonGroupValue with value "season|XX")
+            const select2Input = document.querySelector('#strSeasonGroupValue') as HTMLInputElement | null;
+            if (select2Input) {
+              const rawValue = (select2Input.value || '').trim();
+              // Extract numeric ID from "season|22" format
+              const pipeMatch = rawValue.match(/season\|(\d+)/i);
+              const value = pipeMatch ? pipeMatch[1] : rawValue;
+              // Read visible label from the Select2 chosen span
+              const chosenSpan = document.querySelector('#s2id_strSeasonGroupValue .select2old-chosen') as HTMLElement | null;
+              const text = (chosenSpan?.textContent || '').trim();
+              if (text) return { value, text };
+            }
+            // Fallback: legacy <select#s_season_id>
             const sel = document.querySelector('#s_season_id') as HTMLSelectElement | null;
             if (!sel) return null;
             const selectedIndex = sel.selectedIndex >= 0 ? sel.selectedIndex : 0;
@@ -2260,28 +2275,76 @@ async function runJob(job: JobRow) {
         const url = new URL(base, SPY_BASE_URL).toString();
         await page!.goto(url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
         await log(job.id, 'info', 'STEP:invoiced_url', { url, spySeasonId: spySeasonIdParam ?? null });
-        // Determine display label like "25 WINTER" from seasons table
+        // Determine display label like "26 HIGH SUMMER" from seasons table
+        // DB stores name as "HIGH SUMMER 2026", so we strip the trailing year and prepend 2-digit prefix
         let displayLabel: string | null = null;
         try {
-          const { data: seasonRow } = await supabase.from('seasons').select('name, year').eq('id', seasonId).maybeSingle();
-          const name = (seasonRow?.name || '').toUpperCase().replace(/^BASIC\s*-\s*/i, '').trim();
+          const { data: seasonRow } = await supabase.from('seasons').select('name, year, source_name').eq('id', seasonId).maybeSingle();
           const year = (seasonRow?.year as number | null) ?? undefined;
-          if (year && name) displayLabel = String(year).slice(-2) + ' ' + name;
+          // Prefer source_name (stored as the raw Spy label) if available
+          const sourceName = ((seasonRow?.source_name || '') as string).trim();
+          if (sourceName) {
+            displayLabel = sourceName.toUpperCase();
+          } else {
+            let name = (seasonRow?.name || '').toUpperCase().replace(/^BASIC\s*-\s*/i, '').trim();
+            // Strip trailing year like "HIGH SUMMER 2026" → "HIGH SUMMER"
+            if (year) name = name.replace(new RegExp(`\\s*${year}\\s*$`), '').trim();
+            if (year && name) displayLabel = String(year).slice(-2) + ' ' + name;
+          }
         } catch {}
         await log(job.id, 'info', 'STEP:invoiced_season_label', { label: displayLabel ?? '(auto)' });
 
         // If we didn't include seasonId in URL, fall back to selecting by label and clicking Search
         if (!spySeasonIdParam) {
           try {
-            await page!.waitForSelector('select#Spy\\.Model\\.Sale\\.Invoiced\\.InvoicedReportSearch\\[iSeasonID\\]', { timeout: 30_000 });
-            await page!.evaluate((label: string | null) => {
-              const sel = document.querySelector('select#Spy\\.Model\\.Sale\\.Invoiced\\.InvoicedReportSearch\\[iSeasonID\\]') as HTMLSelectElement | null;
-              if (!sel || !label) return;
-              for (const opt of Array.from(sel.options)) {
-                const t = (opt.textContent || '').trim().toUpperCase();
-                if (t === label.toUpperCase()) { sel.value = opt.value; sel.dispatchEvent(new Event('change', { bubbles: true })); break; }
+            // Try new Select2 widget first (#strSeasonGroupValue), fall back to legacy <select>
+            const hasSelect2 = await page!.evaluate(() => !!document.querySelector('#strSeasonGroupValue')).catch(() => false);
+            if (hasSelect2 && displayLabel) {
+              // Click the Select2 container to open the dropdown
+              const select2Container = await page!.$('#s2id_strSeasonGroupValue');
+              if (select2Container) {
+                await select2Container.click();
+                // Wait for dropdown to appear (appended near </body>)
+                await page!.waitForSelector('.select2old-results li.select2old-result', { timeout: 10_000 });
+                // Find and click the matching option by text
+                const matched = await page!.evaluate((label: string) => {
+                  const items = Array.from(document.querySelectorAll('.select2old-results li.select2old-result'));
+                  for (const item of items) {
+                    const text = (item.textContent || '').trim().toUpperCase();
+                    if (text === label.toUpperCase()) {
+                      (item as HTMLElement).click();
+                      return true;
+                    }
+                  }
+                  // Partial match: check if the label text is contained in the option
+                  for (const item of items) {
+                    const text = (item.textContent || '').trim().toUpperCase();
+                    if (text.includes(label.toUpperCase()) || label.toUpperCase().includes(text)) {
+                      (item as HTMLElement).click();
+                      return true;
+                    }
+                  }
+                  return false;
+                }, displayLabel);
+                if (matched) {
+                  await log(job.id, 'info', 'STEP:invoiced_select2_season_matched', { label: displayLabel });
+                } else {
+                  await log(job.id, 'error', 'STEP:invoiced_select2_season_no_match', { label: displayLabel });
+                }
+                await page!.waitForTimeout(500);
               }
-            }, displayLabel);
+            } else {
+              // Legacy: native <select> element
+              await page!.waitForSelector('select#Spy\\.Model\\.Sale\\.Invoiced\\.InvoicedReportSearch\\[iSeasonID\\]', { timeout: 30_000 });
+              await page!.evaluate((label: string | null) => {
+                const sel = document.querySelector('select#Spy\\.Model\\.Sale\\.Invoiced\\.InvoicedReportSearch\\[iSeasonID\\]') as HTMLSelectElement | null;
+                if (!sel || !label) return;
+                for (const opt of Array.from(sel.options)) {
+                  const t = (opt.textContent || '').trim().toUpperCase();
+                  if (t === label.toUpperCase()) { sel.value = opt.value; sel.dispatchEvent(new Event('change', { bubbles: true })); break; }
+                }
+              }, displayLabel);
+            }
             // Click search (try to find a submit button)
             const submitBtn = await findFirst(page!, [
               'button[name="search"][type="submit"]',
