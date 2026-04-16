@@ -8,6 +8,8 @@ console.log('[worker] boot', { ts: new Date().toISOString() });
 import { createClient } from '@supabase/supabase-js';
 import { chromium } from 'playwright-core';
 import type { Browser, BrowserContext, Page } from 'playwright-core';
+import * as XLSX from 'xlsx';
+import { readFileSync } from 'fs';
 import type { JobRow, JobResult } from '@shared/types';
 import { scrapeStyles, enrichStyles } from './jobs/scrapeStyles.js';
 import { scrapeCustomers, applyCustomerScrapePreview } from './jobs/scrapeCustomers.js';
@@ -2448,7 +2450,6 @@ async function runJob(job: JobRow) {
             ]);
             const path = await download.path();
             if (path) {
-              const { readFileSync } = require('fs');
               xlsBuffer = readFileSync(path) as Buffer;
               await log(job.id, 'info', 'STEP:invoiced_xls_downloaded_via_click', { bytes: xlsBuffer!.length });
             }
@@ -2463,7 +2464,6 @@ async function runJob(job: JobRow) {
         }
 
         // Parse the Excel file
-        const XLSX = require('xlsx');
         const wb = XLSX.read(xlsBuffer, { type: 'buffer' });
         const ws = wb.Sheets[wb.SheetNames[0]];
         const allRows: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1 });
