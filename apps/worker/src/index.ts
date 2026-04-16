@@ -2465,9 +2465,18 @@ async function runJob(job: JobRow) {
 
         // Parse the Excel file
         const wb = XLSX.read(xlsBuffer, { type: 'buffer' });
-        const ws = wb.Sheets[wb.SheetNames[0]];
+        const firstSheetName = wb.SheetNames[0];
+        if (!firstSheetName) {
+          await log(job.id, 'error', 'STEP:invoiced_xls_no_sheets');
+          return [];
+        }
+        const ws = wb.Sheets[firstSheetName];
+        if (!ws) {
+          await log(job.id, 'error', 'STEP:invoiced_xls_no_worksheet', { sheetName: firstSheetName });
+          return [];
+        }
         const allRows: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1 });
-        await log(job.id, 'info', 'STEP:invoiced_xls_parsed', { totalRows: allRows.length, sheetName: wb.SheetNames[0] });
+        await log(job.id, 'info', 'STEP:invoiced_xls_parsed', { totalRows: allRows.length, sheetName: firstSheetName });
 
         // Find the header row (contains "Customer", "Account", "Season", "Qty", etc.)
         let headerIdx = -1;
