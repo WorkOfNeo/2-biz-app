@@ -2322,70 +2322,26 @@ async function runJob(job: JobRow) {
         await page!.waitForTimeout(2000);
         await log(job.id, 'info', 'STEP:invoiced_page_loaded', { url: invoicedUrl });
 
-        // Select season via Select2 widget, then click Search so the page filters and renders
+        // Skip Select2 season selection — the Excel download contains ALL pre-orders
+        // and we filter by Season column client-side. Just wait for the page to fully load.
         try {
-          // Wait for the season selector to appear
-          await page!.waitForSelector('#strSeasonGroupValue, #s_season_id, #s2id_strSeasonGroupValue', { timeout: 15_000 });
-          const hasSelect2 = await page!.evaluate(() => !!document.querySelector('#strSeasonGroupValue')).catch(() => false);
-          await log(job.id, 'info', 'STEP:invoiced_season_selector', { hasSelect2 });
-
-          if (hasSelect2) {
-            // Click the Select2 container to open the dropdown
-            const select2Container = await page!.$('#s2id_strSeasonGroupValue .select2old-choice, #s2id_strSeasonGroupValue');
-            if (select2Container) {
-              await select2Container.click();
-              await page!.waitForSelector('.select2old-results li.select2old-result', { timeout: 10_000 });
-              // Find and click the matching season option
-              const matched = await page!.evaluate((label: string) => {
-                const items = Array.from(document.querySelectorAll('.select2old-results li.select2old-result'));
-                for (const item of items) {
-                  const text = (item.textContent || '').trim().toUpperCase();
-                  if (text === label.toUpperCase()) { (item as HTMLElement).click(); return { matched: true, text }; }
-                }
-                for (const item of items) {
-                  const text = (item.textContent || '').trim().toUpperCase();
-                  if (text.includes(label.toUpperCase()) || label.toUpperCase().includes(text)) { (item as HTMLElement).click(); return { matched: true, text }; }
-                }
-                return { matched: false, available: items.map(i => (i.textContent || '').trim()).slice(0, 20) };
-              }, displayLabel);
-              await log(job.id, 'info', 'STEP:invoiced_season_select2_result', matched as any);
-              await page!.waitForTimeout(500);
-            }
-          }
-
-          // Click Search button to filter results
-          const submitBtn = await (async () => {
-            const selectors = ['button[name="search"][type="submit"]', 'button[name="search"]', 'form button[type="submit"]', 'form input[type="submit"]', '.btn.btn-primary'];
-            for (const sel of selectors) {
-              const el = await page!.$(sel);
-              if (el) return el;
-            }
-            return null;
-          })();
-          if (submitBtn) {
-            await submitBtn.click({ timeout: 30_000 }).catch(() => {});
-            await log(job.id, 'info', 'STEP:invoiced_search_clicked');
-            try { await page!.waitForLoadState('networkidle', { timeout: 60_000 }); } catch {}
-          } else {
-            // Fallback: submit first form
-            try {
-              await page!.evaluate(() => { const f = document.querySelector('form') as HTMLFormElement | null; if (f) f.requestSubmit ? f.requestSubmit() : f.submit(); });
-              await log(job.id, 'info', 'STEP:invoiced_form_submitted');
-              try { await page!.waitForLoadState('networkidle', { timeout: 60_000 }); } catch {}
-            } catch {}
-          }
-        } catch (e: any) {
-          await log(job.id, 'error', 'STEP:invoiced_season_select_error', { error: e?.message || String(e) });
-        }
-
-        // Wait for the table to be present (so we know results loaded and the download link exists)
-        try {
-          await page!.waitForSelector('table.standardList tbody tr', { timeout: 60_000 });
-          const rowCount = await page!.$$eval('table.standardList tbody tr', (trs) => trs.length).catch(() => 0);
-          await log(job.id, 'info', 'STEP:invoiced_table_ready', { rows: rowCount });
+          // Wait for networkidle so all JS/AJAX resources finish (up to 60s)
+          await page!.waitForLoadState('networkidle', { timeout: 60_000 });
         } catch {
-          await log(job.id, 'error', 'STEP:invoiced_no_table');
-          // Don't return early — try to find download link anyway
+          await log(job.id, 'info', 'STEP:invoiced_networkidle_timeout');
+        }
+        // Give the page a moment to render download toolbar
+        await page!.waitForTimeout(3000);
+
+        // Check if the download link is present (primary goal — table isn't required)
+        const hasDownloadLink = await page!.evaluate(() => !!document.querySelector('a[href*="DownloadExcel"]')).catch(() => false);
+        await log(job.id, 'info', 'STEP:invoiced_download_link_check', { hasDownloadLink });
+
+        // If no download link yet, wait a bit longer and try again
+        if (!hasDownloadLink) {
+          await page!.waitForTimeout(5000);
+          const retry = await page!.evaluate(() => !!document.querySelector('a[href*="DownloadExcel"]')).catch(() => false);
+          await log(job.id, 'info', 'STEP:invoiced_download_link_retry', { hasDownloadLink: retry });
         }
 
         // Find the Excel download link on the page and extract the download URL
