@@ -1816,13 +1816,31 @@ async function runJob(job: JobRow) {
 
       const topsellerUrl = new URL('confident.php?mode=Topseller', SPY_BASE_URL).toString();
       await page.goto(topsellerUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
-      await page.waitForTimeout(500);
+      // Wait for the season selector to be present (Select2 or legacy)
+      try {
+        await page.waitForSelector('#strSeasonGroupValue, #s_season_id', { timeout: 15_000 });
+      } catch {
+        // Extra wait and retry — page JS may still be initializing
+        await page.waitForTimeout(3000);
+      }
+      await log(job.id, 'info', 'STEP:topseller_page_ready', { url: topsellerUrl });
 
       // If seasonId not provided, read from Spy's season selector
       // Spy uses either a legacy <select#s_season_id> or a newer Select2 widget (#strSeasonGroupValue)
       // with values like "season|22" and visible text like "26 HIGH SUMMER"
       if (!targetSeasonId) {
         try {
+          // Log what selectors are present for debugging
+          const selectorCheck = await page.evaluate(() => {
+            return {
+              hasStrSeasonGroupValue: !!document.querySelector('#strSeasonGroupValue'),
+              hasSSeasonId: !!document.querySelector('#s_season_id'),
+              hasSelect2Container: !!document.querySelector('#s2id_strSeasonGroupValue'),
+              bodyTextSnippet: (document.body?.innerText || '').slice(0, 300),
+            };
+          }).catch(() => ({ hasStrSeasonGroupValue: false, hasSSeasonId: false, hasSelect2Container: false, bodyTextSnippet: 'evaluate-failed' }));
+          await log(job.id, 'info', 'STEP:season_selectors_check', selectorCheck as any);
+
           const seasonInfo = await page.evaluate(() => {
             // Try new Select2 widget first (#strSeasonGroupValue with value "season|XX")
             const select2Input = document.querySelector('#strSeasonGroupValue') as HTMLInputElement | null;
@@ -1942,7 +1960,9 @@ async function runJob(job: JobRow) {
             }
             await log(job.id, 'info', 'STEP:season_selected', { label: seasonInfo.text, seasonName: displayName, seasonId: targetSeasonId });
           }
-        } catch {}
+        } catch (seasonErr: any) {
+          await log(job.id, 'error', 'STEP:season_read_error', { error: seasonErr?.message || String(seasonErr) });
+        }
       }
 
       if (!targetSeasonId) throw new Error('seasonId could not be determined');
