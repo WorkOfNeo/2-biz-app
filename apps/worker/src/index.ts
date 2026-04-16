@@ -2268,13 +2268,13 @@ async function runJob(job: JobRow) {
         salespersonName?: string | null;
       }>> {
         await log(job.id, 'info', 'STEP:invoiced_begin');
-        // Always force season and set UTM source (iSearchID) to the season number we check
-        const base = spySeasonIdParam && spySeasonIdParam.trim().length > 0
-          ? `?controller=Sale%5CInvoiced&action=List&Spy%5CModel%5CSale%5CInvoiced%5CInvoicedReportSearch%5BbForceSearch%5D=true&Spy%5CModel%5CSale%5CInvoiced%5CInvoicedReportSearch%5BiSeasonID%5D=${encodeURIComponent(spySeasonIdParam)}&Spy%5CModel%5CSale%5CInvoiced%5CInvoicedReportSearch%5BiSearchID%5D=${encodeURIComponent(spySeasonIdParam)}&Spy%5CModel%5CSale%5CInvoiced%5CInvoicedReportSearch%5BstrOrderType%5D=pre`
-          : `?controller=Sale%5CInvoiced&action=List&Spy%5CModel%5CSale%5CInvoiced%5CInvoicedReportSearch%5BbForceSearch%5D=true&Spy%5CModel%5CSale%5CInvoiced%5CInvoicedReportSearch%5BstrOrderType%5D=pre`;
+        // Navigate to invoiced page (order type=pre only; do NOT rely on iSeasonID URL param — Spy ignores it now)
+        const base = `?controller=Sale%5CInvoiced&action=List&Spy%5CModel%5CSale%5CInvoiced%5CInvoicedReportSearch%5BbForceSearch%5D=true&Spy%5CModel%5CSale%5CInvoiced%5CInvoicedReportSearch%5BstrOrderType%5D=pre`;
         const url = new URL(base, SPY_BASE_URL).toString();
         await page!.goto(url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+        await page!.waitForTimeout(1000);
         await log(job.id, 'info', 'STEP:invoiced_url', { url, spySeasonId: spySeasonIdParam ?? null });
+
         // Determine display label like "26 HIGH SUMMER" from seasons table
         // DB stores name as "HIGH SUMMER 2026", so we strip the trailing year and prepend 2-digit prefix
         let displayLabel: string | null = null;
@@ -2294,12 +2294,12 @@ async function runJob(job: JobRow) {
         } catch {}
         await log(job.id, 'info', 'STEP:invoiced_season_label', { label: displayLabel ?? '(auto)' });
 
-        // If we didn't include seasonId in URL, fall back to selecting by label and clicking Search
-        if (!spySeasonIdParam) {
+        // ALWAYS select season via the page UI (URL params no longer filter on Spy's end)
+        if (displayLabel) {
           try {
             // Try new Select2 widget first (#strSeasonGroupValue), fall back to legacy <select>
             const hasSelect2 = await page!.evaluate(() => !!document.querySelector('#strSeasonGroupValue')).catch(() => false);
-            if (hasSelect2 && displayLabel) {
+            if (hasSelect2) {
               // Click the Select2 container to open the dropdown
               const select2Container = await page!.$('#s2id_strSeasonGroupValue');
               if (select2Container) {
@@ -2309,11 +2309,12 @@ async function runJob(job: JobRow) {
                 // Find and click the matching option by text
                 const matched = await page!.evaluate((label: string) => {
                   const items = Array.from(document.querySelectorAll('.select2old-results li.select2old-result'));
+                  // Exact match first
                   for (const item of items) {
                     const text = (item.textContent || '').trim().toUpperCase();
                     if (text === label.toUpperCase()) {
                       (item as HTMLElement).click();
-                      return true;
+                      return { matched: true, text };
                     }
                   }
                   // Partial match: check if the label text is contained in the option
@@ -2321,31 +2322,35 @@ async function runJob(job: JobRow) {
                     const text = (item.textContent || '').trim().toUpperCase();
                     if (text.includes(label.toUpperCase()) || label.toUpperCase().includes(text)) {
                       (item as HTMLElement).click();
-                      return true;
+                      return { matched: true, text };
                     }
                   }
-                  return false;
+                  // Log available options for debugging
+                  const available = items.map(i => (i.textContent || '').trim()).slice(0, 20);
+                  return { matched: false, available };
                 }, displayLabel);
-                if (matched) {
-                  await log(job.id, 'info', 'STEP:invoiced_select2_season_matched', { label: displayLabel });
+                if ((matched as any)?.matched) {
+                  await log(job.id, 'info', 'STEP:invoiced_select2_season_matched', { label: displayLabel, selectedText: (matched as any).text });
                 } else {
-                  await log(job.id, 'error', 'STEP:invoiced_select2_season_no_match', { label: displayLabel });
+                  await log(job.id, 'error', 'STEP:invoiced_select2_season_no_match', { label: displayLabel, available: (matched as any)?.available });
                 }
                 await page!.waitForTimeout(500);
               }
             } else {
               // Legacy: native <select> element
-              await page!.waitForSelector('select#Spy\\.Model\\.Sale\\.Invoiced\\.InvoicedReportSearch\\[iSeasonID\\]', { timeout: 30_000 });
-              await page!.evaluate((label: string | null) => {
-                const sel = document.querySelector('select#Spy\\.Model\\.Sale\\.Invoiced\\.InvoicedReportSearch\\[iSeasonID\\]') as HTMLSelectElement | null;
-                if (!sel || !label) return;
-                for (const opt of Array.from(sel.options)) {
-                  const t = (opt.textContent || '').trim().toUpperCase();
-                  if (t === label.toUpperCase()) { sel.value = opt.value; sel.dispatchEvent(new Event('change', { bubbles: true })); break; }
-                }
-              }, displayLabel);
+              try {
+                await page!.waitForSelector('select#Spy\\.Model\\.Sale\\.Invoiced\\.InvoicedReportSearch\\[iSeasonID\\]', { timeout: 10_000 });
+                await page!.evaluate((label: string | null) => {
+                  const sel = document.querySelector('select#Spy\\.Model\\.Sale\\.Invoiced\\.InvoicedReportSearch\\[iSeasonID\\]') as HTMLSelectElement | null;
+                  if (!sel || !label) return;
+                  for (const opt of Array.from(sel.options)) {
+                    const t = (opt.textContent || '').trim().toUpperCase();
+                    if (t === label.toUpperCase()) { sel.value = opt.value; sel.dispatchEvent(new Event('change', { bubbles: true })); break; }
+                  }
+                }, displayLabel);
+              } catch {}
             }
-            // Click search (try to find a submit button)
+            // Click search button and wait for table to reload
             const submitBtn = await findFirst(page!, [
               'button[name="search"][type="submit"]',
               'button[name="search"]',
@@ -2358,6 +2363,8 @@ async function runJob(job: JobRow) {
             if (submitBtn) {
               await submitBtn.click({ timeout: 30_000 }).catch(() => {});
               await log(job.id, 'info', 'STEP:invoiced_search_clicked');
+              // Wait for page to reload with filtered results
+              try { await page!.waitForLoadState('networkidle', { timeout: 30_000 }); } catch {}
             } else {
               // Fallback: try submitting the first form on the page
               try {
@@ -2366,9 +2373,14 @@ async function runJob(job: JobRow) {
                   if (f) f.requestSubmit ? f.requestSubmit() : f.submit();
                 });
                 await log(job.id, 'info', 'STEP:invoiced_search_submit_fallback');
+                try { await page!.waitForLoadState('networkidle', { timeout: 30_000 }); } catch {}
               } catch {}
             }
-          } catch {}
+          } catch (e: any) {
+            await log(job.id, 'error', 'STEP:invoiced_season_select_failed', { error: e?.message || String(e) });
+          }
+        } else {
+          await log(job.id, 'error', 'STEP:invoiced_no_display_label', { seasonId });
         }
 
         // Wait for the results table; skip gracefully if none within ~5s
