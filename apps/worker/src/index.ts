@@ -2342,29 +2342,92 @@ async function runJob(job: JobRow) {
         try { await page!.waitForLoadState('networkidle', { timeout: 120_000 }); } catch { await log(job.id, 'info', 'STEP:invoiced_networkidle_timeout'); }
         await page!.waitForTimeout(3000);
 
-        // Wait for the "Download List" link to exist
-        try {
-          await page!.waitForSelector('a.standardList-download', { timeout: 30_000, state: 'attached' as any });
-        } catch {
-          await log(job.id, 'error', 'STEP:invoiced_no_download_link');
+        // Poll up to ~90s for the download link using multiple selector variants.
+        // Log progress every 10s so we can see exactly where we're stuck.
+        let foundDownloadLink = false;
+        let downloadLinkSelector = 'a.standardList-download';
+        const selectorCandidates = [
+          'a.standardList-download',
+          'a.standardList-download.clickhandler--ok',
+          'a[href*="DownloadExcel"]',
+          'a.clickhandler--ok[href*="DownloadExcel"]',
+          'a[data-columns]',
+        ];
+        for (let attempt = 1; attempt <= 9; attempt++) {
+          const state = await page!.evaluate((sels) => {
+            const out: { sel: string; count: number; firstHref: string | null }[] = [];
+            for (const s of sels) {
+              const nodes = Array.from(document.querySelectorAll(s));
+              out.push({
+                sel: s,
+                count: nodes.length,
+                firstHref: nodes.length ? ((nodes[0] as HTMLAnchorElement).href || (nodes[0] as HTMLElement).getAttribute?.('href') || null) : null,
+              });
+            }
+            return {
+              url: window.location.href,
+              title: document.title,
+              readyState: document.readyState,
+              bodyTextFirst200: (document.body?.innerText || '').slice(0, 200),
+              hasLoginForm: !!document.querySelector('form[action*="login"], input[name="password"], input[name="strLogin"]'),
+              hasTable: !!document.querySelector('table.standardList'),
+              tableRows: document.querySelectorAll('table.standardList tbody tr').length,
+              candidates: out,
+              // Anything that even smells like a download
+              anyDownloadAnchors: Array.from(document.querySelectorAll('a'))
+                .filter(a => {
+                  const href = a.getAttribute('href') || '';
+                  const cls = a.className || '';
+                  const txt = (a.textContent || '').trim();
+                  return href.includes('DownloadExcel') || cls.includes('download') || /download/i.test(txt);
+                })
+                .slice(0, 5)
+                .map(a => ({ href: (a.getAttribute('href') || '').slice(0, 150), class: (a.className || '').slice(0, 100), text: (a.textContent || '').trim().slice(0, 50) })),
+            };
+          }, selectorCandidates).catch((e: any) => ({ error: String(e) }));
+
+          await log(job.id, 'info', 'STEP:invoiced_page_probe', { attempt, ...(state as any) });
+
+          const match = (state as any)?.candidates?.find((c: any) => c.count > 0);
+          if (match) { foundDownloadLink = true; downloadLinkSelector = match.sel; break; }
+
+          // If we're at a login page, the session expired — bail out clearly
+          if ((state as any)?.hasLoginForm) {
+            await log(job.id, 'error', 'STEP:invoiced_session_expired_login_form');
+            return [];
+          }
+
+          await page!.waitForTimeout(10_000);
+        }
+
+        if (!foundDownloadLink) {
+          // One last HTML dump so we can see exactly what's on the page
+          const htmlSample = await page!.content().catch(() => '');
+          await log(job.id, 'error', 'STEP:invoiced_no_download_link', {
+            htmlSize: htmlSample.length,
+            htmlHead: htmlSample.slice(0, 2000),
+            htmlMid: htmlSample.slice(Math.floor(htmlSample.length / 2), Math.floor(htmlSample.length / 2) + 2000),
+          });
           return [];
         }
+
+        await log(job.id, 'info', 'STEP:invoiced_download_link_found', { selector: downloadLinkSelector });
 
         let xlsBuffer: Buffer | null = null;
 
         // Step 1: click the "Download List" link to open the modal
         try {
-          await page!.evaluate(() => {
-            const link = document.querySelector('a.standardList-download') as HTMLElement | null;
+          await page!.evaluate((sel) => {
+            const link = document.querySelector(sel) as HTMLElement | null;
             if (link) link.click();
-          });
+          }, downloadLinkSelector);
           await log(job.id, 'info', 'STEP:invoiced_download_link_clicked');
 
           // Wait for the modal titled "Download Excel" to appear
           await page!.waitForFunction(() => {
             const titles = Array.from(document.querySelectorAll('.ui-dialog-title'));
             return titles.some(t => ((t.textContent || '').trim() === 'Download Excel'));
-          }, {}, { timeout: 15_000 });
+          }, {}, { timeout: 20_000 });
           await log(job.id, 'info', 'STEP:invoiced_modal_opened');
 
           // Step 2: click the "Download .xls" button in the modal (all columns are checked by default)
