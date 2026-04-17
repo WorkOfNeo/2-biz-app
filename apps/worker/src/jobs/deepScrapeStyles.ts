@@ -66,12 +66,32 @@ export async function deepScrapeStyles(ctx: Ctx) {
     return;
   }
   // Pre-fetch all seasons once (optimization: avoid repeated queries)
-  const { data: allSeasons } = await supabase.from('seasons').select('id, spy_season_id');
+  // IMPORTANT: Include seasons without spy_season_id too so we can log which ones are missing the mapping
+  const { data: allSeasons } = await supabase.from('seasons').select('id, name, year, spy_season_id');
   const globalSpyToApp = new Map<number, string>();
+  const missingSpyIdSeasons: Array<{ id: string; name: string; year: number | null }> = [];
   for (const r of (allSeasons ?? []) as any[]) {
-    globalSpyToApp.set(Number(r.spy_season_id), String(r.id));
+    if (r.spy_season_id !== null && r.spy_season_id !== undefined) {
+      globalSpyToApp.set(Number(r.spy_season_id), String(r.id));
+    } else {
+      missingSpyIdSeasons.push({ id: String(r.id), name: String(r.name || ''), year: r.year as number | null });
+    }
   }
-  await log(job.id, 'info', 'STEP:deep_styles_seasons_loaded', { count: globalSpyToApp.size });
+  await log(job.id, 'info', 'STEP:deep_styles_seasons_loaded', {
+    mapped: globalSpyToApp.size,
+    totalSeasonsInDb: (allSeasons ?? []).length,
+    missingSpyIdCount: missingSpyIdSeasons.length,
+    missingSpyIdSeasons: missingSpyIdSeasons.slice(0, 30),
+    mappedSpyIds: Array.from(globalSpyToApp.keys()).sort((a, b) => a - b),
+  });
+
+  // Track what's causing silent skips across the whole job
+  const skipStats = {
+    stylesWithNoStyleColors: 0,
+    unmappedSpyIds: new Map<number, number>(), // spy_id -> count
+    colorsNotInDb: new Map<string, number>(),  // color name -> count
+    pairsAlreadyExisting: 0,
+  };
   
   let updated = 0;
   let colorLinksInserted = 0;
@@ -371,12 +391,26 @@ export async function deepScrapeStyles(ctx: Ctx) {
           .limit(1000);
         const colorMap = new Map<string, { id: string; image_url: string | null }>();
         for (const r of (styleColorRows ?? []) as any[]) {
-          colorMap.set(String(r.color || '').trim().toLowerCase(), { 
-            id: String(r.id), 
-            image_url: r.image_url || null 
+          colorMap.set(String(r.color || '').trim().toLowerCase(), {
+            id: String(r.id),
+            image_url: r.image_url || null
           });
         }
-        
+
+        // ⚡ DIAGNOSTIC: If no style_colors rows exist for this style, we CANNOT link seasons
+        const styleColorsCount = colorMap.size;
+        if (styleColorsCount === 0) {
+          skipStats.stylesWithNoStyleColors++;
+          await log(job.id, 'info', 'STEP:deep_styles_no_style_colors_in_db', {
+            style_no: s.style_no,
+            style_id: s.id,
+            boxesOnPage: boxes.length,
+            spySeasonIdsOnPage: boxes.map(b => b.spySeasonId),
+            colorsOnPage: Array.from(new Set(boxes.flatMap(b => b.colorRows.map(r => r.color)))),
+            hint: 'style_colors table has no rows for this style — populate it first',
+          });
+        }
+
         // Collect color images (take first non-null image per color)
         const colorImages = new Map<string, string>(); // color lowercase -> imageUrl
         for (const box of boxes) {
@@ -387,7 +421,7 @@ export async function deepScrapeStyles(ctx: Ctx) {
             }
           }
         }
-        
+
         // Update style_colors.image_url if changed
         for (const [colorKey, newImageUrl] of colorImages) {
           const colorInfo = colorMap.get(colorKey);
@@ -399,19 +433,40 @@ export async function deepScrapeStyles(ctx: Ctx) {
             if (!imgErr) imagesUpdated++;
           }
         }
-        
+
+        // ⚡ DIAGNOSTIC: Track per-style skip reasons
+        const perStyleDiag: {
+          unmappedSpyIds: number[];
+          colorsNotInDb: string[];
+          mappedBoxes: number;
+        } = {
+          unmappedSpyIds: [],
+          colorsNotInDb: [],
+          mappedBoxes: 0,
+        };
+
         // Build desired target pairs for style_color_seasons: {style_color_id|season_id}
         const targetPairs = new Set<string>();
         for (const box of boxes) {
           const appSeasonId = globalSpyToApp.get(box.spySeasonId);
-          if (!appSeasonId) continue;
+          if (!appSeasonId) {
+            perStyleDiag.unmappedSpyIds.push(box.spySeasonId);
+            skipStats.unmappedSpyIds.set(box.spySeasonId, (skipStats.unmappedSpyIds.get(box.spySeasonId) || 0) + 1);
+            continue;
+          }
+          perStyleDiag.mappedBoxes++;
           for (const row of box.colorRows) {
-            const colorInfo = colorMap.get(row.color.toLowerCase());
-            if (!colorInfo) continue;
+            const colorKey = row.color.toLowerCase();
+            const colorInfo = colorMap.get(colorKey);
+            if (!colorInfo) {
+              perStyleDiag.colorsNotInDb.push(row.color);
+              skipStats.colorsNotInDb.set(row.color, (skipStats.colorsNotInDb.get(row.color) || 0) + 1);
+              continue;
+            }
             targetPairs.add(`${colorInfo.id}|${appSeasonId}`);
           }
         }
-        
+
         // Fetch existing pairs for this style
         const styleColorIds = Array.from(colorMap.values()).map(c => c.id);
         let existing: Array<{ style_color_id: string; season_id: string }> = [];
@@ -423,7 +478,7 @@ export async function deepScrapeStyles(ctx: Ctx) {
           existing = (existRows ?? []) as any[];
         }
         const existingSet = new Set(existing.map((r) => `${r.style_color_id}|${r.season_id}`));
-        
+
         // Inserts (in target but not existing) - batch insert for performance
         const toInsert = Array.from(targetPairs)
           .filter(pair => !existingSet.has(pair))
@@ -431,14 +486,34 @@ export async function deepScrapeStyles(ctx: Ctx) {
             const [cid, sid] = pair.split('|');
             return { style_color_id: cid, season_id: sid };
           });
-        
+
+        const alreadyExistingCount = targetPairs.size - toInsert.length;
+        skipStats.pairsAlreadyExisting += alreadyExistingCount;
+
+        // ⚡ DIAGNOSTIC: Log per-style outcome so we can see WHY no links are being inserted
+        await log(job.id, 'info', 'STEP:deep_styles_color_link_diag', {
+          style_no: s.style_no,
+          boxesOnPage: boxes.length,
+          styleColorsInDb: styleColorsCount,
+          spySeasonIdsOnPage: boxes.map(b => b.spySeasonId),
+          mappedBoxes: perStyleDiag.mappedBoxes,
+          unmappedSpyIds: perStyleDiag.unmappedSpyIds,
+          colorsNotInDb: Array.from(new Set(perStyleDiag.colorsNotInDb)),
+          targetPairsBuilt: targetPairs.size,
+          existingInDb: existingSet.size,
+          toInsert: toInsert.length,
+          alreadyExisting: alreadyExistingCount,
+        });
+
         if (toInsert.length > 0) {
           const { error: upErr } = await supabase.from('style_color_seasons').insert(toInsert as any);
-          if (!upErr) {
+          if (upErr) {
+            await log(job.id, 'error', 'STEP:deep_styles_color_link_insert_failed', { style_no: s.style_no, error: upErr.message });
+          } else {
             colorLinksInserted += toInsert.length;
           }
         }
-        
+
         // Deletions (in existing but not target): remove seasons that are not shown in any materials box
         for (const pair of Array.from(existingSet)) {
           if (!targetPairs.has(pair)) {
@@ -449,6 +524,9 @@ export async function deepScrapeStyles(ctx: Ctx) {
       } catch (e: any) {
         await log(job.id, 'error', 'STEP:deep_styles_color_link_failed', { style_no: s.style_no, error: e?.message || String(e) });
       }
+    } else {
+      // No boxes on page at all — no seasons/colors to link
+      await log(job.id, 'info', 'STEP:deep_styles_no_boxes_on_page', { style_no: s.style_no });
     }
     const uniq = Array.from(new Set(seasons));
     const { data: exist } = await supabase.from('style_seasons').select('id, seasons').eq('style_no', s.style_no).maybeSingle();
@@ -460,6 +538,27 @@ export async function deepScrapeStyles(ctx: Ctx) {
     }
     updated++;
   }
+
+  // ⚡ DIAGNOSTIC: Final summary — aggregates every silent-skip reason across the whole run
+  // Top 20 by frequency so the log stays readable even with large runs
+  const topUnmappedSpyIds = Array.from(skipStats.unmappedSpyIds.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 20)
+    .map(([spyId, count]) => ({ spyId, count }));
+  const topColorsNotInDb = Array.from(skipStats.colorsNotInDb.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 20)
+    .map(([color, count]) => ({ color, count }));
+  await log(job.id, 'info', 'STEP:deep_styles_skip_summary', {
+    stylesWithNoStyleColors: skipStats.stylesWithNoStyleColors,
+    unmappedSpyIdsTotal: Array.from(skipStats.unmappedSpyIds.values()).reduce((a, b) => a + b, 0),
+    topUnmappedSpyIds,
+    colorsNotInDbTotal: Array.from(skipStats.colorsNotInDb.values()).reduce((a, b) => a + b, 0),
+    topColorsNotInDb,
+    pairsAlreadyExisting: skipStats.pairsAlreadyExisting,
+    hint: 'unmappedSpyIds = SPY season IDs on style pages that do not exist in our seasons.spy_season_id. colorsNotInDb = color names on materials tab that have no matching row in style_colors.',
+  });
+
   await saveResult(job.id, 'Deep styles completed', { updated, colorLinksInserted, imagesUpdated });
   await log(job.id, 'info', 'STEP:complete', { updated, colorLinksInserted, imagesUpdated });
 }
