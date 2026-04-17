@@ -5,6 +5,19 @@ dotenv.config({ path: '.env.local' });
 // eslint-disable-next-line no-console
 console.log('[worker] boot', { ts: new Date().toISOString() });
 
+// Prevent the worker process from crashing when a stray Playwright promise
+// (e.g. a page.waitForEvent that was never awaited because we bailed out
+// early) rejects after the page is closed. Just log and carry on.
+process.on('unhandledRejection', (reason: any) => {
+  const msg = (reason && (reason.message || String(reason))) || 'unknown';
+  // eslint-disable-next-line no-console
+  console.error('[worker] unhandledRejection (swallowed)', msg);
+});
+process.on('uncaughtException', (err: any) => {
+  // eslint-disable-next-line no-console
+  console.error('[worker] uncaughtException (swallowed)', err?.message || String(err));
+});
+
 import { createClient } from '@supabase/supabase-js';
 import { chromium } from 'playwright-core';
 import type { Browser, BrowserContext, Page } from 'playwright-core';
@@ -2415,89 +2428,79 @@ async function runJob(job: JobRow) {
 
         let xlsBuffer: Buffer | null = null;
 
-        // Click the "Download List" link. Two outcomes are possible depending on how SPY handles it:
-        //   (a) A jQuery modal opens and we then click the "Download .xls" button inside it.
-        //   (b) The browser directly fires a download (i.e. the <a href> is a direct DownloadExcel link).
-        // We race both so whichever happens first wins.
+        // SIMPLEST RELIABLE APPROACH: skip the click/modal dance entirely.
+        // The <a> link's href is the DownloadExcel URL. Its data-columns attribute lists
+        // exactly which columns the modal would include. We build the final URL with
+        // &type=xls&options={...} ourselves (matching what the modal would submit),
+        // then fetch it via the authenticated browser context.
         try {
-          // Set up download + modal watchers BEFORE the click — the click is a real mouse event
-          // (page.click dispatches trusted events, so jQuery click handlers fire properly, unlike element.click())
-          const downloadPromise = page!.waitForEvent('download', { timeout: 300_000 });
-          const modalPromise = page!.waitForFunction(() => {
-            const titles = Array.from(document.querySelectorAll('.ui-dialog-title'));
-            return titles.some(t => ((t.textContent || '').trim() === 'Download Excel'));
-          }, {}, { timeout: 30_000 });
+          const linkInfo = await page!.$eval(downloadLinkSelector, (a: any) => ({
+            href: (a as HTMLAnchorElement).href || a.getAttribute('href') || '',
+            dataColumns: a.getAttribute('data-columns') || '',
+          })).catch((e: any) => ({ href: '', dataColumns: '', error: String(e) }));
 
-          // Real mouse click (needed to fire jQuery-bound click handlers)
-          await page!.click(downloadLinkSelector, { timeout: 15_000 });
-          await log(job.id, 'info', 'STEP:invoiced_download_link_clicked');
+          await log(job.id, 'info', 'STEP:invoiced_link_read', {
+            hrefLen: linkInfo.href.length,
+            dataColumnsLen: (linkInfo as any).dataColumns?.length || 0,
+          });
 
-          // Race: whichever resolves first tells us the path Spy took
-          const firstOutcome = await Promise.race([
-            downloadPromise.then(d => ({ kind: 'download' as const, download: d })).catch((e: any) => ({ kind: 'download_error' as const, error: e })),
-            modalPromise.then(() => ({ kind: 'modal' as const })).catch((e: any) => ({ kind: 'modal_error' as const, error: e })),
-          ]);
-
-          if (firstOutcome.kind === 'download') {
-            await log(job.id, 'info', 'STEP:invoiced_direct_download');
-            const downloadPath = await (firstOutcome as any).download.path();
-            if (downloadPath) {
-              xlsBuffer = readFileSync(downloadPath) as Buffer;
-              await log(job.id, 'info', 'STEP:invoiced_xls_downloaded', { bytes: xlsBuffer.length });
-            } else {
-              await log(job.id, 'error', 'STEP:invoiced_xls_no_path');
-            }
-          } else if (firstOutcome.kind === 'modal') {
-            await log(job.id, 'info', 'STEP:invoiced_modal_opened');
-            // Click the "Download .xls" button inside the modal.
-            // The downloadPromise is still pending and will resolve when the button triggers the download.
-            await page!.evaluate(() => {
-              const dialogs = Array.from(document.querySelectorAll('.ui-dialog'));
-              let target: Element | null = null;
-              for (const d of dialogs) {
-                const title = d.querySelector('.ui-dialog-title');
-                if ((title?.textContent || '').trim() === 'Download Excel') { target = d; break; }
-              }
-              if (!target) return;
-              const buttons = Array.from(target.querySelectorAll('.ui-dialog-buttonpane button, .ui-dialog-buttonset button'));
-              const xlsBtn = buttons.find(b => {
-                const t = (b.textContent || '').trim().toLowerCase();
-                return t.includes('.xls') && !t.includes('csv');
-              });
-              if (xlsBtn) (xlsBtn as HTMLElement).click();
-            });
-            await log(job.id, 'info', 'STEP:invoiced_modal_xls_clicked');
-
-            const download = await downloadPromise;
-            const downloadPath = await download.path();
-            if (downloadPath) {
-              xlsBuffer = readFileSync(downloadPath) as Buffer;
-              await log(job.id, 'info', 'STEP:invoiced_xls_downloaded', { bytes: xlsBuffer.length });
-            } else {
-              await log(job.id, 'error', 'STEP:invoiced_xls_no_path');
-            }
-          } else {
-            // Both timed out — fall back to fetching the href directly using the authenticated session.
-            // The <a href> we saw in the page probe IS the DownloadExcel URL (with UUID baked in).
-            await log(job.id, 'info', 'STEP:invoiced_fallback_direct_fetch', { reason: firstOutcome.kind });
-            const href = await page!.$eval(downloadLinkSelector, (a: any) => (a as HTMLAnchorElement).href).catch(() => null);
-            if (href) {
-              const finalUrl = String(href).replace(/&amp;/g, '&');
-              await log(job.id, 'info', 'STEP:invoiced_fetch_href', { url: finalUrl.slice(0, 300) });
-              const response = await page!.context().request.get(finalUrl);
-              const status = response.status();
-              const contentType = response.headers()['content-type'] || '';
-              const body = Buffer.from(await response.body());
-              if (contentType.includes('text/html') || body.length < 5000) {
-                await log(job.id, 'error', 'STEP:invoiced_fetch_suspect_small', { bytes: body.length, status, contentType, sample: body.toString('utf8').slice(0, 500) });
-              } else {
-                xlsBuffer = body;
-                await log(job.id, 'info', 'STEP:invoiced_xls_downloaded', { bytes: xlsBuffer.length, status, contentType, via: 'direct_fetch' });
-              }
-            } else {
-              await log(job.id, 'error', 'STEP:invoiced_no_href');
-            }
+          if (!linkInfo.href) {
+            await log(job.id, 'error', 'STEP:invoiced_no_href');
+            return [];
           }
+
+          // Build options JSON: check_all + every enabled column from data-columns set to true
+          // Fallback: empty columns map with check_all=true (server default-includes everything)
+          const options: { check_all: boolean; columns: Record<string, boolean> } = {
+            check_all: true,
+            columns: {},
+          };
+          try {
+            if ((linkInfo as any).dataColumns) {
+              const cols = JSON.parse((linkInfo as any).dataColumns);
+              if (Array.isArray(cols)) {
+                for (const c of cols) {
+                  if (c && c.enabled && c.no !== undefined && c.no !== null) {
+                    options.columns[String(c.no)] = true;
+                  }
+                }
+              }
+            }
+          } catch (parseErr: any) {
+            await log(job.id, 'info', 'STEP:invoiced_data_columns_parse_failed', { error: parseErr?.message || String(parseErr) });
+          }
+
+          const cleanHref = linkInfo.href.replace(/&amp;/g, '&');
+          const sep = cleanHref.includes('?') ? '&' : '?';
+          const finalUrl = `${cleanHref}${sep}type=xls&options=${encodeURIComponent(JSON.stringify(options))}`;
+
+          await log(job.id, 'info', 'STEP:invoiced_fetching_xls', {
+            baseUrl: cleanHref.slice(0, 200),
+            columnsCount: Object.keys(options.columns).length,
+            finalUrlLen: finalUrl.length,
+          });
+
+          // Fetch directly — carries the session's auth cookies automatically
+          // Big files can take ~30s on the server side, allow up to 5 minutes
+          const response = await page!.context().request.get(finalUrl, { timeout: 300_000 });
+          const status = response.status();
+          const contentType = response.headers()['content-type'] || '';
+          const body = Buffer.from(await response.body());
+          await log(job.id, 'info', 'STEP:invoiced_xls_response', { status, contentType, bytes: body.length });
+
+          // Sanity check: an error/HTML response would be much smaller than a real xlsx
+          if (contentType.toLowerCase().includes('text/html') || body.length < 5000) {
+            await log(job.id, 'error', 'STEP:invoiced_xls_suspect_small', {
+              bytes: body.length,
+              status,
+              contentType,
+              sample: body.toString('utf8').slice(0, 500),
+            });
+            return [];
+          }
+
+          xlsBuffer = body;
+          await log(job.id, 'info', 'STEP:invoiced_xls_downloaded', { bytes: xlsBuffer.length, via: 'direct_fetch' });
         } catch (e: any) {
           await log(job.id, 'error', 'STEP:invoiced_download_failed', { error: e?.message || String(e) });
           return [];
