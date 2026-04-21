@@ -2368,19 +2368,31 @@ async function runJob(job: JobRow) {
           await log(job.id, 'error', 'STEP:invoiced_scroll_error', { error: e?.message || String(e) });
         }
 
-        // Build column_no → td-position map from the second <thead><tr>
-        // This is robust against Spy reordering columns (the data-column_no attribute is stable)
-        const colMap: Record<string, number> = await page!.$$eval(
-          'table.standardList thead tr:last-child th',
-          (ths: any[]) => {
-            const map: Record<string, number> = {};
-            for (let i = 0; i < ths.length; i++) {
-              const colNo = (ths[i].getAttribute('data-column_no') || '').trim();
-              if (colNo) map[colNo] = i;
+        // Build column_no → td-position map from the actual header <tr> that contains data-column_no.
+        // Spy renders TWO <thead> blocks per table.standardList (one for sticky header, one real),
+        // so a naive `thead tr:last-child th` selector matches BOTH and gives cumulative indices
+        // that don't match the tbody <td> positions. We need positions WITHIN one specific row.
+        const colMap: Record<string, number> = await page!.evaluate(() => {
+          const map: Record<string, number> = {};
+          const tables = Array.from(document.querySelectorAll('table.standardList'));
+          for (const table of tables) {
+            const headerRows = Array.from(table.querySelectorAll('thead tr'));
+            for (const row of headerRows) {
+              // direct <th> children only (avoid descending into sub-tables)
+              const ths = Array.from(row.children).filter(c => c.tagName === 'TH');
+              const hasColNo = ths.some(th => th.hasAttribute('data-column_no'));
+              if (!hasColNo) continue;
+              for (let i = 0; i < ths.length; i++) {
+                const th = ths[i];
+                if (!th) continue;
+                const colNo = (th.getAttribute('data-column_no') || '').trim();
+                if (colNo) map[colNo] = i;
+              }
+              return map; // first matching row wins
             }
-            return map;
           }
-        ).catch(() => ({} as Record<string, number>));
+          return map;
+        }).catch(() => ({} as Record<string, number>));
 
         await log(job.id, 'info', 'STEP:invoiced_column_map', { colMap });
 
