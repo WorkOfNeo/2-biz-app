@@ -1685,8 +1685,8 @@ async function runJob(job: JobRow) {
     await log(job.id, 'info', 'STEP:seasons_scrape_begin');
     const seasonsUrl = new URL('?controller=Admin%5CSettings%5CStyle%5CSeason&action=List', SPY_BASE_URL).toString();
     await page.goto(seasonsUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
-    await page.waitForSelector('table.standardList tbody tr', { timeout: 60_000 });
-    const rows = await page.$$eval('table.standardList tbody tr', (trs) => {
+    await page.waitForSelector('.season-list-item', { timeout: 60_000 });
+    const rows = await page.$$eval('.season-list-item', (items) => {
       function parseSeason(text: string): { yy: number; name: string } | null {
         const t = (text || '').trim();
         const m = t.match(/^(\d{2})\s+(.+)$/);
@@ -1698,6 +1698,8 @@ async function runJob(job: JobRow) {
       function normDate(raw: string): string | null {
         const t = (raw || '').trim();
         if (!t) return null;
+        // Treat SPY's empty-date placeholder as null
+        if (/^0{4}-0{2}-0{2}$/.test(t)) return null;
         // Accept formats like dd.mm.yyyy, dd/mm/yyyy, yyyy-mm-dd
         const m1 = t.match(/^(\d{1,2})[\.\/-](\d{1,2})[\.\/-](\d{2,4})$/);
         if (m1) {
@@ -1717,16 +1719,15 @@ async function runJob(job: JobRow) {
         return null;
       }
       const out: { spyId: string; label: string; parsed: { yy: number; name: string } | null; start?: string | null; end?: string | null }[] = [];
-      for (const tr of Array.from(trs)) {
-        const tds = Array.from(tr.querySelectorAll('td')) as HTMLElement[];
-        const a = tds[1]?.querySelector('a[href*="season_id="]') as HTMLAnchorElement | null;
-        if (!a) continue;
-        const href = a.getAttribute('href') || '';
-        const m = href.match(/season_id=(\d+)/);
-        const spyId: string = (m?.[1] ?? '') + '';
-        const label = (a.textContent || '').trim();
-        const startRaw = (tds[2]?.textContent || '').trim();
-        const endRaw = (tds[3]?.textContent || '').trim();
+      for (const item of Array.from(items) as HTMLElement[]) {
+        const spyId = (item.getAttribute('data-season_id') || '').trim();
+        if (!spyId) continue;
+        const nameAnchor = item.querySelector('.header-group--season-name a') as HTMLAnchorElement | null;
+        const label = (nameAnchor?.textContent || '').trim();
+        if (!label) continue;
+        const dateEls = Array.from(item.querySelectorAll('.season-group-dates .season-group-date')) as HTMLElement[];
+        const startRaw = (dateEls[0]?.textContent || '').trim();
+        const endRaw = (dateEls[1]?.textContent || '').trim();
         out.push({ spyId, label, parsed: parseSeason(label), start: normDate(startRaw), end: normDate(endRaw) });
       }
       return out;
