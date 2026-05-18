@@ -32,6 +32,62 @@ function normalizeHeader(h: any): string {
 		.replace(/å/g, 'aa');
 }
 
+type ColIdx = {
+	linjenr: number;
+	rapportnr: number;
+	landekode: number;
+	moms: number;
+	vaerdi: number;
+	trans: number;
+};
+
+type RequiredCol = 'linjenr' | 'landekode' | 'moms' | 'vaerdi';
+
+const REQUIRED_COLS: readonly RequiredCol[] = ['linjenr', 'landekode', 'moms', 'vaerdi'] as const;
+
+const COL_LABELS: Record<keyof ColIdx, string> = {
+	linjenr: 'Linjenr',
+	rapportnr: 'Rapportnr',
+	landekode: 'Lande-/områdekode',
+	moms: 'Debitors momsregistreringsnr',
+	vaerdi: 'Samlede værdi af forsyninger',
+	trans: 'Transaktionsindikator',
+};
+
+function extractRows(data: any[][], idx: ColIdx): InRow[] {
+	const rows: InRow[] = [];
+	for (let i = 1; i < data.length; i++) {
+		const r = data[i] || [];
+		const linjenr = Number(r[idx.linjenr] ?? 0);
+		if (!Number.isFinite(linjenr)) continue;
+		const land = String(r[idx.landekode] ?? '').trim();
+		const momsRaw = String(r[idx.moms] ?? '').trim();
+		// For NL countries, preserve letters in VAT numbers; for others, strip letters
+		const moms = momsRaw ? (land.toUpperCase() === 'NL' ? momsRaw : momsRaw.replace(/[A-Za-z]/g, '')) : null;
+		const val = toNumberDK(r[idx.vaerdi]);
+		const rapport = r[idx.rapportnr] ?? null;
+		const trans = r[idx.trans] ?? null;
+		rows.push({
+			linjenr: Number(linjenr),
+			rapportnr: rapport,
+			landekode: land,
+			momsnr: moms,
+			vaerdi: val,
+			transInd: trans ? String(trans) : null,
+		});
+	}
+	return rows;
+}
+
+type PendingMapping = {
+	data: any[][];
+	rawHeader: any[];
+	normalizedHeader: string[];
+	idx: ColIdx;
+	missing: RequiredCol[];
+	fileName: string;
+};
+
 export default function CsvSkatPage() {
 	const [dateStr, setDateStr] = React.useState<string>(() => {
 		const d = new Date();
@@ -45,11 +101,15 @@ export default function CsvSkatPage() {
 	const [busy, setBusy] = React.useState(false);
 	const [error, setError] = React.useState<string | null>(null);
 	const [showAll, setShowAll] = React.useState(false);
+	const [pending, setPending] = React.useState<PendingMapping | null>(null);
+	const [manualIdx, setManualIdx] = React.useState<Partial<Record<RequiredCol, number>>>({});
 
 	async function onFilesSelected(files: File[]) {
 		setError(null);
 		setRowsIn([]);
 		setRowsOut([]);
+		setPending(null);
+		setManualIdx({});
 		if (!files || files.length === 0) return;
 		setBusy(true);
 		try {
@@ -80,40 +140,19 @@ export default function CsvSkatPage() {
 				normalizedHeader: header,
 				idx,
 			});
-			const requiredCols = ['linjenr', 'landekode', 'moms', 'vaerdi'] as const;
-			const missing = requiredCols.filter((k) => idx[k] === -1);
+			const missing = REQUIRED_COLS.filter((k) => idx[k] === -1);
 			if (missing.length > 0) {
-				console.error('[CsvSkat] Required columns not found in header', {
+				console.error('[CsvSkat] Required columns not found in header — opening manual mapping wizard', {
 					missing,
 					idx,
 					normalizedHeader: header,
 					rawHeader,
 				});
-				throw new Error(
-					`Required columns not found: ${missing.join(', ')}. Header seen: "${rawHeader.map((c: any) => String(c ?? '')).join(' | ')}"`
-				);
+				setPending({ data, rawHeader, normalizedHeader: header, idx, missing, fileName: f.name });
+				setManualIdx({});
+				return;
 			}
-			const rows: InRow[] = [];
-			for (let i = 1; i < data.length; i++) {
-				const r = data[i] || [];
-				const linjenr = Number(r[idx.linjenr] ?? 0);
-				if (!Number.isFinite(linjenr)) continue;
-				const land = String(r[idx.landekode] ?? '').trim();
-				const momsRaw = String(r[idx.moms] ?? '').trim();
-				// For NL countries, preserve letters in VAT numbers; for others, strip letters
-				const moms = momsRaw ? (land.toUpperCase() === 'NL' ? momsRaw : momsRaw.replace(/[A-Za-z]/g, '')) : null;
-				const val = toNumberDK(r[idx.vaerdi]);
-				const rapport = r[idx.rapportnr] ?? null;
-				const trans = r[idx.trans] ?? null;
-				rows.push({
-					linjenr: Number(linjenr),
-					rapportnr: rapport,
-					landekode: land,
-					momsnr: moms,
-					vaerdi: val,
-					transInd: trans ? String(trans) : null,
-				});
-			}
+			const rows = extractRows(data, idx);
 			if (data.length > 1 && rows.length === 0) {
 				console.warn('[CsvSkat] No rows extracted from file', {
 					dataRows: data.length - 1,
@@ -127,6 +166,42 @@ export default function CsvSkatPage() {
 		} finally {
 			setBusy(false);
 		}
+	}
+
+	const manualMappingComplete: boolean =
+		!!pending &&
+		pending.missing.every(
+			(k: RequiredCol) => typeof manualIdx[k] === 'number' && (manualIdx[k] as number) >= 0
+		);
+
+	function proceedWithManualMapping() {
+		if (!pending || !manualMappingComplete) return;
+		const finalIdx: ColIdx = { ...pending.idx };
+		for (const k of pending.missing as RequiredCol[]) {
+			finalIdx[k] = manualIdx[k] as number;
+		}
+		console.log('[CsvSkat] Resuming with manual mapping', {
+			fileName: pending.fileName,
+			manualIdx,
+			finalIdx,
+		});
+		const rows = extractRows(pending.data, finalIdx);
+		if (pending.data.length > 1 && rows.length === 0) {
+			console.warn('[CsvSkat] No rows extracted from file (after manual mapping)', {
+				dataRows: pending.data.length - 1,
+				idx: finalIdx,
+			});
+		}
+		setRowsIn(rows);
+		buildOutput(rows, dateStr);
+		setPending(null);
+		setManualIdx({});
+		setError(null);
+	}
+
+	function cancelManualMapping() {
+		setPending(null);
+		setManualIdx({});
 	}
 
 	function buildOutput(src: InRow[], dateStrParam: string) {
@@ -282,6 +357,58 @@ export default function CsvSkatPage() {
 					</div>
 				</CardContent>
 			</Card>
+
+			{pending && (
+				<Card>
+					<CardHeader>
+						<CardTitle className="text-sm">Map missing columns</CardTitle>
+					</CardHeader>
+					<CardContent className="space-y-3">
+						<div className="text-xs text-gray-700">
+							We couldn't auto-detect {pending.missing.length} required column{pending.missing.length === 1 ? '' : 's'} in <span className="font-mono">{pending.fileName}</span>. Pick which column in your file corresponds to each, then click Proceed.
+						</div>
+						<div className="space-y-2">
+							{pending.missing.map((key) => (
+								<div key={key} className="grid grid-cols-1 md:grid-cols-[260px_1fr] gap-2 items-center">
+									<label className="text-xs">
+										<span className="font-medium">{COL_LABELS[key]}</span>{' '}
+										<span className="text-gray-500">({key})</span>
+									</label>
+									<select
+										className="border rounded px-2 py-1 text-xs"
+										value={manualIdx[key] ?? ''}
+										onChange={(e) => {
+											const v = e.currentTarget.value;
+											setManualIdx((m) => ({ ...m, [key]: v === '' ? (undefined as any) : Number(v) }));
+										}}
+									>
+										<option value="">— select column —</option>
+										{pending.rawHeader.map((h: any, i: number) => (
+											<option key={i} value={i}>
+												{i + 1}. {String(h ?? '')}
+											</option>
+										))}
+									</select>
+								</div>
+							))}
+						</div>
+						<div className="text-xs text-gray-500">
+							Auto-detected: {(Object.keys(pending.idx) as (keyof ColIdx)[])
+								.filter((k) => pending.idx[k] !== -1)
+								.map((k) => `${COL_LABELS[k]} → col ${pending.idx[k] + 1}`)
+								.join(', ') || '(none)'}
+						</div>
+						<div className="flex items-center gap-2">
+							<Button size="sm" onClick={proceedWithManualMapping} disabled={!manualMappingComplete || busy}>
+								Proceed
+							</Button>
+							<Button size="sm" variant="outline" onClick={cancelManualMapping} disabled={busy}>
+								Cancel
+							</Button>
+						</div>
+					</CardContent>
+				</Card>
+			)}
 
 			{rowsOut.length > 0 && (
 				<Card>
