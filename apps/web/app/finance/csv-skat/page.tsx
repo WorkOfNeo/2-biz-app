@@ -63,7 +63,8 @@ export default function CsvSkatPage() {
 			if (!sheet) throw new Error('Empty sheet');
 			const data = XLSX.utils.sheet_to_json(sheet as any, { header: 1 }) as any[][];
 			if (data.length === 0) throw new Error('Empty sheet');
-			const header = (data[0] || []).map((h) => normalizeHeader(h));
+			const rawHeader = data[0] || [];
+			const header = rawHeader.map((h) => normalizeHeader(h));
 			const idx = {
 				linjenr: header.findIndex((h) => /linjenr/.test(h)),
 				rapportnr: header.findIndex((h) => /rapportnr/.test(h)),
@@ -72,6 +73,26 @@ export default function CsvSkatPage() {
 				vaerdi: header.findIndex((h) => h.includes('samlede vaerdi af forsyninger') || h.includes('samlede værdi af forsyninger'.normalize('NFKD').replace(/[\u0300-\u036f]/g,''))),
 				trans: header.findIndex((h) => h.includes('transaktionsindikator')),
 			};
+			console.log('[CsvSkat] Header detected', {
+				fileName: f.name,
+				totalRows: data.length,
+				rawHeader,
+				normalizedHeader: header,
+				idx,
+			});
+			const requiredCols = ['linjenr', 'landekode', 'moms', 'vaerdi'] as const;
+			const missing = requiredCols.filter((k) => idx[k] === -1);
+			if (missing.length > 0) {
+				console.error('[CsvSkat] Required columns not found in header', {
+					missing,
+					idx,
+					normalizedHeader: header,
+					rawHeader,
+				});
+				throw new Error(
+					`Required columns not found: ${missing.join(', ')}. Header seen: "${rawHeader.map((c: any) => String(c ?? '')).join(' | ')}"`
+				);
+			}
 			const rows: InRow[] = [];
 			for (let i = 1; i < data.length; i++) {
 				const r = data[i] || [];
@@ -93,6 +114,12 @@ export default function CsvSkatPage() {
 					transInd: trans ? String(trans) : null,
 				});
 			}
+			if (data.length > 1 && rows.length === 0) {
+				console.warn('[CsvSkat] No rows extracted from file', {
+					dataRows: data.length - 1,
+					idx,
+				});
+			}
 			setRowsIn(rows);
 			buildOutput(rows, dateStr);
 		} catch (e: any) {
@@ -107,16 +134,38 @@ export default function CsvSkatPage() {
 		// - Exclude rows where country code equals 'NO'
 		// - Exclude rows missing Lande-/områdekode
 		// - Exclude rows missing Debitors momsregistreringsnr (after stripping letters)
-		const filtered = src.filter((r) => {
+		const filtered: InRow[] = [];
+		let excludedEmptyLand = 0;
+		let excludedNO = 0;
+		let excludedEmptyMoms = 0;
+		for (const r of src) {
 			const land = String(r.landekode || '').trim();
 			// For NL countries, preserve letters in VAT numbers; for others, strip letters
 			const moms = String(r.momsnr || '').trim();
 			const momsCleaned = land.toUpperCase() === 'NL' ? moms : moms.replace(/[A-Za-z]/g, '');
-			if (!land) return false;
-			if (land.toUpperCase() === 'NO') return false;
-			if (!momsCleaned) return false;
-			return true;
+			if (!land) { excludedEmptyLand++; continue; }
+			if (land.toUpperCase() === 'NO') { excludedNO++; continue; }
+			if (!momsCleaned) { excludedEmptyMoms++; continue; }
+			filtered.push(r);
+		}
+		console.log('[CsvSkat] Filter results', {
+			total: src.length,
+			kept: filtered.length,
+			excludedNO,
+			excludedEmptyLand,
+			excludedEmptyMoms,
 		});
+		if (filtered.length === 0 && src.length > 0) {
+			console.warn('[CsvSkat] All rows filtered out', {
+				total: src.length,
+				excludedNO,
+				excludedEmptyLand,
+				excludedEmptyMoms,
+			});
+			setError(
+				`All ${src.length} rows were filtered out (NO: ${excludedNO}, empty country: ${excludedEmptyLand}, empty VAT: ${excludedEmptyMoms}).`
+			);
+		}
 		// Keep incoming order; we'll compute Linjenr sequentially starting at 1
 		const header = [0, 27492185, 'LISTE', '', '', '', '', '', ''];
 		const out: any[][] = [header];
@@ -149,6 +198,12 @@ export default function CsvSkatPage() {
 			'', '', '', '', '', '',
 		]);
 		setRowsOut(out);
+		console.log('[CsvSkat] Output built', {
+			headerRow: 1,
+			dataRows: out.length - 2,
+			summaryRow: 1,
+			sum,
+		});
 	}
 
 	React.useEffect(() => {
